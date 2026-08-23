@@ -484,6 +484,45 @@ class StudyBlockListResponse(BaseModel):
     hasMore: bool
 
 
+class CalendarStatusResponse(BaseModel):
+    """Whether this learner's Google Calendar is connected, and whether it still works.
+
+    **Carries no token and no token fragment.** A client needs to know the state of the connection, not
+    the credential behind it.
+
+    `needsReconnect` is separate from `connected` on purpose. A stored access token that has expired with
+    no refresh token alongside it cannot be renewed, so the connection exists and is useless. Reporting
+    that as "not connected" would send the learner through a flow that appears to succeed and changes
+    nothing; reporting it as connected would leave them waiting for events that never arrive.
+    """
+
+    connected: bool = False
+    syncEnabled: bool = False
+    #: The dedicated "Maigie Schedule" calendar, created on connect. `None` before the first connect.
+    calendarId: str | None = None
+    expiresAt: str | None = None
+    needsReconnect: bool = False
+
+
+class CalendarConnectResponse(BaseModel):
+    """Where to send the learner to grant calendar access.
+
+    `state` is returned so the client can store it and compare it when the learner comes back, which is
+    what makes the callback resistant to being forged. The server encodes its own copy inside the value.
+    """
+
+    authorizationUrl: str
+    state: str
+
+
+class CalendarDisconnectResponse(BaseModel):
+    """The result of forgetting the learner's calendar credentials."""
+
+    disconnected: bool = True
+    #: Events already written to Google are left alone — see `GoogleCalendarService.disconnect`.
+    message: str
+
+
 # ===========================================================================
 # Study Sessions (Activity tracking)
 # ===========================================================================

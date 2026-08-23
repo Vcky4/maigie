@@ -24,6 +24,7 @@ from src.domains.knowledge.db_models import Course, Module, Topic
 from src.domains.progress.db_models import Goal
 from src.domains.progress.services import goal_metrics
 from src.shared.database import get_session_factory
+from src.shared.time import ensure_utc
 
 from . import prep_readiness
 
@@ -719,6 +720,21 @@ class EvidenceItem:
     #: correct or incorrect.
     correct: bool | None = None
 
+    def __post_init__(self) -> None:
+        """Normalise `occurred_at` to an aware UTC instant.
+
+        **This is load-bearing, and it is here rather than at each call site for a reason.** These items
+        are merged from four tables and then sorted as one list, and the tables disagree about whether
+        their timestamp column carries an offset: `Topic.completedAt`, `TopicSection.completedAt` and
+        `TopicCheckAttempt.createdAt` are `timestamptz` while `StudySession.startTime` is not. `sort`
+        cannot order a naive instant against an aware one, so subject detail and subject insight returned
+        **500 for any course that had both a dated topic completion and a study session** — which is why
+        it passed review and passed the courses this was first checked against.
+
+        Doing it in `__post_init__` means a fifth evidence kind cannot reintroduce the bug by forgetting.
+        """
+        object.__setattr__(self, "occurred_at", ensure_utc(self.occurred_at))
+
 
 async def list_course_evidence(
     *, user_id: str, course_id: str, limit: int = 12
@@ -1085,6 +1101,16 @@ class GrowthMilestone:
     unlocked_at: datetime
     #: Which table this came from, so a reader can tell live records from frozen ones.
     source: Literal["milestone", "achievement"]
+
+    def __post_init__(self) -> None:
+        """Normalise `unlocked_at`, for the same reason `EvidenceItem` does.
+
+        This list is merged from two tables that disagree: `Achievement.unlockedAt` carries no offset
+        while `LearningMilestone` does. Sorting them together would raise `TypeError` for the first
+        learner holding rows in both — nobody does yet, which is exactly what makes it worth fixing now
+        rather than when it happens.
+        """
+        object.__setattr__(self, "unlocked_at", ensure_utc(self.unlocked_at))
 
 
 async def list_growth_milestones(

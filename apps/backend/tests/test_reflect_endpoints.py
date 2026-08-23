@@ -1723,3 +1723,148 @@ class TestPrepLinkedGoalReachesTheReader:
         )
 
         assert items == [course_item]
+
+
+class TestEvidenceMixesStoredTimestampKinds:
+    """The merge has to survive tables that disagree about offsets.
+
+    **This was a live 500.** `GET /learning/growth/subjects/{id}` and its `/insight` sibling failed for any
+    course holding both a dated topic completion and a study session, because `Topic.completedAt` is
+    `timestamptz` in this database while `StudySession.startTime` is `timestamp without time zone`. asyncpg
+    honours the column, so one source returned aware datetimes and the other naive ones, and
+    `items.sort(key=...occurred_at)` cannot order the two against each other.
+
+    176 of this database's 283 datetime columns are naive, so this is a property of the schema rather than
+    a quirk of one table. `EvidenceItem.__post_init__` normalises on the way in.
+    """
+
+    def test_an_item_from_a_naive_column_becomes_aware(self):
+        from src.domains.personal_learning.services.reflect_aggregates import EvidenceItem
+
+        item = EvidenceItem(
+            id="session:1",
+            kind="study_session",
+            title="Study session",
+            detail=None,
+            occurred_at=datetime(2026, 8, 14, 9, 0),  # naive, as `StudySession.startTime` arrives
+        )
+
+        assert item.occurred_at.tzinfo is not None
+        assert item.occurred_at == datetime(2026, 8, 14, 9, 0, tzinfo=UTC), "read as UTC, not shifted"
+
+    def test_an_item_from_an_aware_column_is_left_alone(self):
+        from src.domains.personal_learning.services.reflect_aggregates import EvidenceItem
+
+        item = EvidenceItem(
+            id="topic:1",
+            kind="topic_completed",
+            title="Recursion",
+            detail="Module 2",
+            occurred_at=datetime(2026, 8, 14, 9, 0, tzinfo=UTC),
+        )
+
+        assert item.occurred_at == datetime(2026, 8, 14, 9, 0, tzinfo=UTC)
+
+    def test_the_two_kinds_sort_together_rather_than_raising(self):
+        """The assertion the shipped code could not make."""
+        from src.domains.personal_learning.services.reflect_aggregates import EvidenceItem
+
+        naive = EvidenceItem(
+            id="session:1",
+            kind="study_session",
+            title="Study session",
+            detail=None,
+            occurred_at=datetime(2026, 8, 14, 9, 0),
+        )
+        aware = EvidenceItem(
+            id="topic:1",
+            kind="topic_completed",
+            title="Recursion",
+            detail=None,
+            occurred_at=datetime(2026, 8, 15, 9, 0, tzinfo=UTC),
+        )
+
+        items = [naive, aware]
+        items.sort(key=lambda item: item.occurred_at, reverse=True)
+
+        assert [item.id for item in items] == ["topic:1", "session:1"]
+
+    async def test_the_course_reader_merges_both_kinds(self):
+        """End to end through `list_course_evidence`, with the four queries faked to return the mix that
+        crashed live: an aware topic completion and a naive study session."""
+        from unittest.mock import patch
+
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        batches = [
+            [("t1", "Recursion", "Module 2", datetime(2026, 8, 10, 9, 0, tzinfo=UTC))],
+            [],
+            [("ss1", datetime(2026, 8, 14, 9, 0), 34.0)],  # naive
+            [],
+        ]
+        calls = {"n": 0}
+
+        class _Result:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def all(self):
+                return self._rows
+
+        class _Session:
+            async def execute(self, *_a, **_k):
+                rows = batches[calls["n"]] if calls["n"] < len(batches) else []
+                calls["n"] += 1
+                return _Result(rows)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        with patch.object(reflect_aggregates, "get_session_factory", lambda: _Session):
+            items = await reflect_aggregates.list_course_evidence(user_id="u", course_id="c")
+
+        assert [item.kind for item in items] == ["study_session", "topic_completed"]
+        assert all(item.occurred_at.tzinfo is not None for item in items)
+
+    def test_a_milestone_from_the_naive_table_becomes_aware(self):
+        """`Achievement.unlockedAt` is naive; `LearningMilestone` is not. Same merge, same trap — it just
+        has not fired yet, because no learner holds rows in both tables."""
+        from src.domains.personal_learning.services.reflect_aggregates import GrowthMilestone
+
+        item = GrowthMilestone(
+            id="achievement:1",
+            kind="TOPIC_COMPLETION",
+            title="10 Topics Completed",
+            description=None,
+            icon=None,
+            unlocked_at=datetime(2026, 4, 8, 12, 0),
+            source="achievement",
+        )
+
+        assert item.unlocked_at == datetime(2026, 4, 8, 12, 0, tzinfo=UTC)
+
+
+class TestStoredInstants:
+    def test_ensure_utc_is_idempotent(self):
+        from src.shared.time import ensure_utc
+
+        once = ensure_utc(datetime(2026, 8, 14, 9, 0))
+        assert ensure_utc(once) == once
+
+    def test_ensure_utc_converts_rather_than_overwrites_an_offset(self):
+        """An aware value from a `timestamptz` column keeps its instant. Overwriting the offset instead of
+        converting would move the event by hours."""
+        from datetime import timedelta, timezone
+
+        from src.shared.time import ensure_utc
+
+        lagos = datetime(2026, 8, 14, 10, 0, tzinfo=timezone(timedelta(hours=1)))
+        assert ensure_utc(lagos) == datetime(2026, 8, 14, 9, 0, tzinfo=UTC)
+
+    def test_an_absent_instant_stays_absent(self):
+        from src.shared.time import ensure_utc_optional
+
+        assert ensure_utc_optional(None) is None

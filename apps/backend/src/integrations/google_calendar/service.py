@@ -305,6 +305,138 @@ class GoogleCalendarService:
                 exc_info=True,
             )
 
+    async def delete_event(self, user_id: str, event_id: str) -> bool:
+        """Remove one event from the learner's Maigie calendar.
+
+        Takes the event id rather than a block id because the caller deletes the block row: after that
+        there is nothing left to read the id from. Deleting a study block and leaving its event behind
+        would put a session on the learner's calendar that no longer exists in Maigie, and the only way
+        to get rid of it would be to edit Google directly.
+
+        `410 Gone` counts as success — the event was already deleted, which is the state we wanted.
+        """
+        factory = get_session_factory()
+        async with factory() as session:
+            user = (
+                await session.execute(select(User).where(User.id == user_id))
+            ).scalar_one_or_none()
+
+        if user is None or not user.google_calendar_id:
+            return False
+
+        access_token = await self.get_valid_access_token(user_id)
+        if not access_token:
+            return False
+
+        try:
+            async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
+                response = await client.delete(
+                    f"{GOOGLE_CALENDAR_API_BASE}/calendars/{user.google_calendar_id}"
+                    f"/events/{event_id}",
+                    headers=self._headers(access_token),
+                )
+        except Exception:
+            logger.warning("Deleting calendar event %s failed", event_id, exc_info=True)
+            return False
+
+        if response.status_code in (200, 204, 404, 410):
+            return True
+
+        logger.error(
+            "Deleting calendar event %s failed: HTTP %s %s",
+            event_id,
+            response.status_code,
+            response.text[:500],
+        )
+        return False
+
+    # -- connection state --------------------------------------------------
+
+    async def get_status(self, user_id: str) -> dict[str, Any]:
+        """What the learner's calendar connection currently is.
+
+        **No token value is returned, and none is logged.** The client needs to know whether a
+        connection exists and whether it still works, not what the credential is.
+
+        `needsReconnect` is the case worth separating: a stored token that has expired with no refresh
+        token cannot be renewed, so the connection is present but useless, and the learner has to grant
+        access again. Reporting that as simply "not connected" would send them round a loop that appears
+        to succeed and changes nothing.
+        """
+        factory = get_session_factory()
+        async with factory() as session:
+            user = (
+                await session.execute(select(User).where(User.id == user_id))
+            ).scalar_one_or_none()
+
+        if user is None:
+            return {
+                "connected": False,
+                "syncEnabled": False,
+                "calendarId": None,
+                "expiresAt": None,
+                "needsReconnect": False,
+            }
+
+        has_access = bool(user.google_calendar_access_token)
+        has_refresh = bool(user.google_calendar_refresh_token)
+        expires_at = user.google_calendar_token_expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+
+        expired = expires_at is not None and expires_at <= datetime.now(UTC)
+
+        return {
+            "connected": has_access or has_refresh,
+            "syncEnabled": bool(user.google_calendar_sync_enabled),
+            "calendarId": user.google_calendar_id,
+            "expiresAt": expires_at.isoformat() if expires_at else None,
+            "needsReconnect": expired and not has_refresh,
+        }
+
+    async def disconnect(self, user_id: str) -> None:
+        """Forget the learner's calendar credentials and every event id written against them.
+
+        The event ids go too. They name events inside a calendar this learner may be about to revoke
+        access to, or delete outright, so keeping them would leave the schedule holding references into
+        somewhere it can no longer reach. A later reconnect creates a fresh calendar and syncs again.
+
+        Deliberately does **not** delete the events from Google. The learner is disconnecting Maigie, not
+        asking Maigie to erase what it already put in their calendar — and after revoking the grant we
+        could not do it anyway.
+        """
+        factory = get_session_factory()
+        async with factory() as session:
+            user = (
+                await session.execute(select(User).where(User.id == user_id))
+            ).scalar_one_or_none()
+            if user is not None:
+                user.google_calendar_access_token = None
+                user.google_calendar_refresh_token = None
+                user.google_calendar_token_expires_at = None
+                user.google_calendar_sync_enabled = False
+                user.google_calendar_id = None
+
+            blocks = (
+                (
+                    await session.execute(
+                        select(ScheduleBlock).where(
+                            ScheduleBlock.user_id == user_id,
+                            ScheduleBlock.google_calendar_event_id.is_not(None),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for block in blocks:
+                block.google_calendar_event_id = None
+                block.google_calendar_synced_at = None
+
+            await session.commit()
+
+        logger.info("Disconnected Google Calendar for user %s", user_id)
+
     async def sync_existing_schedules(self, user_id: str) -> dict[str, Any]:
         """Push a user's upcoming study blocks to their calendar.
 

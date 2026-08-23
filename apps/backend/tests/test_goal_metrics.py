@@ -744,3 +744,67 @@ class TestPortfolioHeadline:
         }
         assert read
         assert read <= published
+
+
+class TestBlockResponseCarriesAnOffset:
+    """A schedule block's times reach the client with an explicit offset.
+
+    `ScheduleBlock.startAt` is `timestamp without time zone`, so it arrives naive and a bare
+    `.isoformat()` produced `"2026-08-23T09:00:00"`. A browser reads an offset-less string as *local*
+    time, while the planner writes blocks at 09:00 **UTC** — so every learner not on UTC was shown the
+    wrong time for their own sessions, off by exactly their offset.
+    """
+
+    def _block(self, **overrides):
+        from types import SimpleNamespace
+
+        base = {
+            "id": "block-1",
+            "user_id": "u1",
+            "title": "Study session",
+            "description": None,
+            "start_at": datetime(2026, 8, 23, 9, 0),  # naive, as the column returns it
+            "end_at": datetime(2026, 8, 23, 10, 0),
+            "recurring_rule": None,
+            "course_id": None,
+            "topic_id": None,
+            "goal_id": None,
+            "review_item_id": None,
+            "google_calendar_event_id": None,
+            "google_calendar_synced_at": None,
+            "completed_at": None,
+            "created_at": datetime(2026, 8, 1, 0, 0),
+            "updated_at": datetime(2026, 8, 1, 0, 0),
+        }
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def test_every_instant_is_published_with_an_offset(self):
+        from src.domains.progress.routes import _to_block_response
+
+        response = _to_block_response(self._block())
+
+        assert response.startAt == "2026-08-23T09:00:00+00:00"
+        assert response.endAt == "2026-08-23T10:00:00+00:00"
+        assert response.createdAt.endswith("+00:00")
+        assert response.updatedAt.endswith("+00:00")
+
+    def test_an_aware_column_keeps_its_instant(self):
+        """`completedAt` is written by the app with `datetime.now(UTC)`, so it may already be aware.
+        Normalising must convert, not relabel — relabelling would move the event."""
+        from datetime import timedelta, timezone
+
+        from src.domains.progress.routes import _to_block_response
+
+        lagos = datetime(2026, 8, 23, 11, 0, tzinfo=timezone(timedelta(hours=1)))
+        response = _to_block_response(self._block(completed_at=lagos))
+
+        assert response.completedAt == "2026-08-23T10:00:00+00:00"
+
+    def test_a_block_that_was_never_completed_reports_null(self):
+        from src.domains.progress.routes import _to_block_response
+
+        response = _to_block_response(self._block(completed_at=None))
+
+        assert response.completedAt is None
+        assert response.googleCalendarSyncedAt is None

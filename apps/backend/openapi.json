@@ -395,14 +395,12 @@
           "preferredTimes": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/PreferredTimesResponse"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Preferredtimes"
+            ]
           }
         },
         "title": "BehaviourProfileResponse",
@@ -548,6 +546,88 @@
           "file"
         ],
         "title": "Body_upload_material_file_api_v1_learning_preparations__prep_id__materials_upload_post",
+        "type": "object"
+      },
+      "CalendarConnectResponse": {
+        "description": "Where to send the learner to grant calendar access.\n\n`state` is returned so the client can store it and compare it when the learner comes back, which is\nwhat makes the callback resistant to being forged. The server encodes its own copy inside the value.",
+        "properties": {
+          "authorizationUrl": {
+            "title": "Authorizationurl",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorizationUrl",
+          "state"
+        ],
+        "title": "CalendarConnectResponse",
+        "type": "object"
+      },
+      "CalendarDisconnectResponse": {
+        "description": "The result of forgetting the learner's calendar credentials.",
+        "properties": {
+          "disconnected": {
+            "default": true,
+            "title": "Disconnected",
+            "type": "boolean"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "CalendarDisconnectResponse",
+        "type": "object"
+      },
+      "CalendarStatusResponse": {
+        "description": "Whether this learner's Google Calendar is connected, and whether it still works.\n\n**Carries no token and no token fragment.** A client needs to know the state of the connection, not\nthe credential behind it.\n\n`needsReconnect` is separate from `connected` on purpose. A stored access token that has expired with\nno refresh token alongside it cannot be renewed, so the connection exists and is useless. Reporting\nthat as \"not connected\" would send the learner through a flow that appears to succeed and changes\nnothing; reporting it as connected would leave them waiting for events that never arrive.",
+        "properties": {
+          "calendarId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calendarid"
+          },
+          "connected": {
+            "default": false,
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "needsReconnect": {
+            "default": false,
+            "title": "Needsreconnect",
+            "type": "boolean"
+          },
+          "syncEnabled": {
+            "default": false,
+            "title": "Syncenabled",
+            "type": "boolean"
+          }
+        },
+        "title": "CalendarStatusResponse",
         "type": "object"
       },
       "CancelDeletionRequest": {
@@ -8339,6 +8419,67 @@
           }
         },
         "title": "PreferencesUpdateRequest",
+        "type": "object"
+      },
+      "PreferredTimeBuckets": {
+        "description": "Share of the learner's sessions that started in each part of the day. Sums to 100.",
+        "properties": {
+          "afternoon": {
+            "default": 0.0,
+            "title": "Afternoon",
+            "type": "number"
+          },
+          "evening": {
+            "default": 0.0,
+            "title": "Evening",
+            "type": "number"
+          },
+          "morning": {
+            "default": 0.0,
+            "title": "Morning",
+            "type": "number"
+          },
+          "night": {
+            "default": 0.0,
+            "title": "Night",
+            "type": "number"
+          }
+        },
+        "title": "PreferredTimeBuckets",
+        "type": "object"
+      },
+      "PreferredTimesResponse": {
+        "description": "When this learner actually studies, as a distribution over the day.\n\nWas published as a bare `dict`, so a client rendering it was guessing at the shape — and worse, was\nfree to ignore `basis`, which is the field that decides whether the numbers may be shown to the\nlearner at all.\n\n**`basis` is load-bearing.** `local` means the hours were converted to the learner's own wall clock\nand a claim like \"you study best in the afternoon\" is supportable. `utc_assumed` means their timezone\nwas never captured, the hours are UTC, and the distribution describes the server's day rather than\ntheirs — telemetry, not something to tell them about themselves. A client must not present it as\nself-knowledge in that case.\n\n`sessionCount` is the denominator. The whole object is `None` below the minimum session count, rather\nthan a distribution computed from two data points.",
+        "properties": {
+          "basis": {
+            "title": "Basis",
+            "type": "string"
+          },
+          "buckets": {
+            "$ref": "#/components/schemas/PreferredTimeBuckets"
+          },
+          "sessionCount": {
+            "default": 0,
+            "title": "Sessioncount",
+            "type": "integer"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          }
+        },
+        "required": [
+          "buckets",
+          "basis"
+        ],
+        "title": "PreferredTimesResponse",
         "type": "object"
       },
       "PrepCreateRequest": {
@@ -30758,6 +30899,118 @@
           }
         ],
         "summary": "Create Block",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
+    "/api/v1/progress/schedule/google-calendar/connect": {
+      "post": {
+        "description": "Begin the Google Calendar grant, returning the URL to send the learner to.\n\nThis is the *authorisation* half of a flow whose *callback* half already existed:\n`identity/oauth_routes.oauth_callback` has a `purpose == \"calendar_sync\"` branch that stores the\ntokens, creates the \"Maigie Schedule\" calendar and pushes the learner's upcoming blocks. Nothing\ncould ever reach it, because nothing produced a state carrying that purpose. This does.\n\nThe state encodes `purpose` and `user_id` and is signed by nothing — it is base64, exactly as the\nlogin flow builds it, and the callback re-reads it. The `random` component is what the client\ncompares on return, so a callback that did not originate here can be rejected.\n\nCalendar scopes are requested through `include_calendar`, which asks only for `calendar.app.created`\nand `calendar.freebusy` — enough to manage a calendar Maigie creates, and not enough to read the\nlearner's existing ones.",
+        "operationId": "calendar_connect_api_v1_progress_schedule_google_calendar_connect_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "redirect_uri",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Redirect Uri"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarConnectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Calendar Connect",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
+    "/api/v1/progress/schedule/google-calendar/disconnect": {
+      "post": {
+        "description": "Forget this learner's calendar credentials and the event ids written against them.\n\nEvents already in Google are left where they are. The learner is disconnecting Maigie, not asking it\nto erase what it has already written — and once the grant is revoked it could not do so anyway.",
+        "operationId": "calendar_disconnect_api_v1_progress_schedule_google_calendar_disconnect_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarDisconnectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Calendar Disconnect",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
+    "/api/v1/progress/schedule/google-calendar/status": {
+      "get": {
+        "description": "Whether this learner's Google Calendar is connected.\n\nThe client called this endpoint before it existed. `CalendarConnectButton` has always issued these\nthree requests; every one of them 404'd, and because the status check swallows its own errors the\nbutton simply rendered as \"not connected\" for ever. The integration underneath — token refresh,\ncalendar creation, event push, recurring rules — was already written and reachable only from the\nOAuth callback.",
+        "operationId": "calendar_status_api_v1_progress_schedule_google_calendar_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Calendar Status",
         "tags": [
           "progress",
           "progress"

@@ -2999,8 +2999,42 @@ class CourseProgressResponse(BaseModel):
 # ===========================================================================
 
 
+class PreferredTimeBuckets(BaseModel):
+    """Share of the learner's sessions that started in each part of the day. Sums to 100."""
+
+    morning: float = 0.0
+    afternoon: float = 0.0
+    evening: float = 0.0
+    night: float = 0.0
+
+
+class PreferredTimesResponse(BaseModel):
+    """When this learner actually studies, as a distribution over the day.
+
+    Was published as a bare `dict`, so a client rendering it was guessing at the shape — and worse, was
+    free to ignore `basis`, which is the field that decides whether the numbers may be shown to the
+    learner at all.
+
+    **`basis` is load-bearing.** `local` means the hours were converted to the learner's own wall clock
+    and a claim like "you study best in the afternoon" is supportable. `utc_assumed` means their timezone
+    was never captured, the hours are UTC, and the distribution describes the server's day rather than
+    theirs — telemetry, not something to tell them about themselves. A client must not present it as
+    self-knowledge in that case.
+
+    `sessionCount` is the denominator. The whole object is `None` below the minimum session count, rather
+    than a distribution computed from two data points.
+    """
+
+    buckets: PreferredTimeBuckets
+    #: `local` | `utc_assumed`.
+    basis: str
+    #: The IANA zone the buckets were computed in, or `None` when it was never captured.
+    timezone: str | None = None
+    sessionCount: int = 0
+
+
 class BehaviourProfileResponse(BaseModel):
-    preferredTimes: dict | None = None
+    preferredTimes: PreferredTimesResponse | None = None
     avgSessionMinutes: float | None = None
     consistencyScore: float | None = None
     bestDayOfWeek: str | None = None

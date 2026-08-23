@@ -66,13 +66,41 @@ async def update_block(*, block_id: str, user_id: str, data: dict[str, Any]) -> 
     except ValueError as exc:
         raise ValidationError(str(exc)) from exc
     update_data = data
-    if update_data:
-        return await progress_repo.update_block(block_id, update_data)
-    return block
+    if not update_data:
+        return block
+
+    updated = await progress_repo.update_block(block_id, update_data)
+
+    # **Re-sync, because only creation used to.** A block moved to a different hour kept its original
+    # time in Google for ever, so the learner's calendar and their schedule disagreed and the calendar
+    # was the one they had chosen to trust. Same tolerance as creation: a Google failure must not fail an
+    # edit that is already saved locally.
+    try:
+        from src.integrations.google_calendar import sync_schedule_block
+
+        await sync_schedule_block(user_id, block_id)
+    except Exception as e:
+        logger.debug(f"Calendar sync skipped: {e}")
+
+    return updated
 
 
 async def delete_block(*, block_id: str, user_id: str) -> None:
     block = await progress_repo.find_block(block_id, user_id)
     if not block:
         raise NotFoundError("StudyBlock", block_id)
+
+    # Read the event id before the row goes, because afterwards there is nothing to read it from.
+    # Without this the event stayed in the learner's calendar for a session Maigie no longer has, and
+    # only editing Google directly would remove it.
+    event_id = getattr(block, "google_calendar_event_id", None)
+
     await progress_repo.delete_block(block_id)
+
+    if event_id:
+        try:
+            from src.integrations.google_calendar import delete_schedule_block_event
+
+            await delete_schedule_block_event(user_id, event_id)
+        except Exception as e:
+            logger.debug(f"Calendar event removal skipped: {e}")

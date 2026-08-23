@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Body, HTTPException, Query, status
 
 from src.shared.auth import CurrentUser
+from src.shared.time import ensure_utc
 
 from . import models
 from .repository import progress_repo
@@ -514,6 +515,97 @@ async def create_block(body: models.StudyBlockCreate, current_user: CurrentUser)
     return _to_block_response(block)
 
 
+#: Declared before `/schedule/{block_id}` deliberately. FastAPI matches in declaration order, so with
+#: these below it a request for `/schedule/google-calendar/status` would be read as a block id — the same
+#: trap `/goals/summary` had, where the wrong order 404s with nothing looking wrong.
+
+
+@router.get("/schedule/google-calendar/status", response_model=models.CalendarStatusResponse)
+async def calendar_status(current_user: CurrentUser):
+    """Whether this learner's Google Calendar is connected.
+
+    The client called this endpoint before it existed. `CalendarConnectButton` has always issued these
+    three requests; every one of them 404'd, and because the status check swallows its own errors the
+    button simply rendered as "not connected" for ever. The integration underneath — token refresh,
+    calendar creation, event push, recurring rules — was already written and reachable only from the
+    OAuth callback.
+    """
+    from src.integrations.google_calendar import get_calendar_status
+
+    return models.CalendarStatusResponse(**await get_calendar_status(current_user.id))
+
+
+@router.post("/schedule/google-calendar/connect", response_model=models.CalendarConnectResponse)
+async def calendar_connect(current_user: CurrentUser, redirect_uri: str | None = Query(None)):
+    """Begin the Google Calendar grant, returning the URL to send the learner to.
+
+    This is the *authorisation* half of a flow whose *callback* half already existed:
+    `identity/oauth_routes.oauth_callback` has a `purpose == "calendar_sync"` branch that stores the
+    tokens, creates the "Maigie Schedule" calendar and pushes the learner's upcoming blocks. Nothing
+    could ever reach it, because nothing produced a state carrying that purpose. This does.
+
+    The state encodes `purpose` and `user_id` and is signed by nothing — it is base64, exactly as the
+    login flow builds it, and the callback re-reads it. The `random` component is what the client
+    compares on return, so a callback that did not originate here can be rejected.
+
+    Calendar scopes are requested through `include_calendar`, which asks only for `calendar.app.created`
+    and `calendar.freebusy` — enough to manage a calendar Maigie creates, and not enough to read the
+    learner's existing ones.
+    """
+    import base64
+    import json
+    import secrets
+
+    from src.config import get_settings
+    from src.core.oauth import OAuthProviderFactory
+
+    settings = get_settings()
+    provider = OAuthProviderFactory.get_provider("google")
+
+    if redirect_uri:
+        callback_uri = redirect_uri.rstrip("/")
+    else:
+        base_url = (settings.OAUTH_BASE_URL or "").rstrip("/")
+        if not base_url:
+            raise HTTPException(
+                status_code=503,
+                detail="Calendar connection is not configured on this server",
+            )
+        callback_uri = f"{base_url}/api/v1/auth/oauth/google/callback"
+
+    state_data = {
+        "redirect_uri": callback_uri,
+        "purpose": "calendar_sync",
+        "user_id": current_user.id,
+        "random": secrets.token_urlsafe(32),
+    }
+    state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode().rstrip("=")
+
+    authorization_url = await provider.get_authorization_url(
+        redirect_uri=callback_uri, state=state, include_calendar=True
+    )
+
+    return models.CalendarConnectResponse(authorizationUrl=authorization_url, state=state)
+
+
+@router.post(
+    "/schedule/google-calendar/disconnect", response_model=models.CalendarDisconnectResponse
+)
+async def calendar_disconnect(current_user: CurrentUser):
+    """Forget this learner's calendar credentials and the event ids written against them.
+
+    Events already in Google are left where they are. The learner is disconnecting Maigie, not asking it
+    to erase what it has already written — and once the grant is revoked it could not do so anyway.
+    """
+    from src.integrations.google_calendar import disconnect_calendar
+
+    await disconnect_calendar(current_user.id)
+    return models.CalendarDisconnectResponse(
+        disconnected=True,
+        message="Google Calendar disconnected. Events already added to your calendar were left in place.",
+    )
+
+
 @router.put("/schedule/{block_id}", response_model=models.StudyBlockResponse)
 async def update_block(block_id: str, body: models.StudyBlockUpdate, current_user: CurrentUser):
     """Update a study block."""
@@ -669,23 +761,37 @@ async def _goal_responses(goals: list, *, now: datetime | None = None) -> list[m
 
 
 def _to_block_response(block) -> models.StudyBlockResponse:
+    """Serialise a block with an explicit offset on every instant.
+
+    **`ScheduleBlock`'s datetime columns are `timestamp without time zone`**, so asyncpg returns them
+    naive and a bare `.isoformat()` published `"2026-08-23T09:00:00"` — a string with no offset, which
+    `new Date(...)` in a browser reads as *local* time. The planner writes blocks at 09:00 UTC, so a
+    learner an hour ahead of Greenwich was shown 09:00 for a session that starts at 10:00 their time, and
+    the error grew with the offset. Nothing about the response looked wrong.
+
+    `ensure_utc` makes the offset explicit rather than implied. It does not change which instant is meant;
+    it stops the client having to guess, and a client cannot guess correctly.
+    """
     return models.StudyBlockResponse(
         id=block.id,
         userId=block.user_id,
         title=block.title,
         description=block.description,
-        startAt=block.start_at.isoformat(),
-        endAt=block.end_at.isoformat(),
+        startAt=ensure_utc(block.start_at).isoformat(),
+        endAt=ensure_utc(block.end_at).isoformat(),
         recurringRule=block.recurring_rule,
         courseId=block.course_id,
         topicId=block.topic_id,
         goalId=block.goal_id,
         reviewItemId=block.review_item_id,
         googleCalendarEventId=block.google_calendar_event_id,
-        googleCalendarSyncedAt=(
-            block.google_calendar_synced_at.isoformat() if block.google_calendar_synced_at else None
-        ),
-        completedAt=block.completed_at.isoformat() if block.completed_at else None,
-        createdAt=block.created_at.isoformat(),
-        updatedAt=block.updated_at.isoformat(),
+        googleCalendarSyncedAt=_isoformat_or_none(block.google_calendar_synced_at),
+        completedAt=_isoformat_or_none(block.completed_at),
+        createdAt=ensure_utc(block.created_at).isoformat(),
+        updatedAt=ensure_utc(block.updated_at).isoformat(),
     )
+
+
+def _isoformat_or_none(value) -> str | None:
+    """A nullable instant, with its offset, or `None`. An absent instant is not an instant."""
+    return None if value is None else ensure_utc(value).isoformat()
