@@ -28,15 +28,33 @@ from src.shared.events.registry import HANDLER_MODULES, register_handlers
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 
 
-def _event_names() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """`(emitted, listened)`, each `{event_name: [module dotted paths]}`, read from the source tree.
+def _constant_values() -> dict[tuple[str, str], str]:
+    """`{(ClassName, ATTR): "event.name"}` for every constant in `shared/events/types`."""
+    from src.shared.events import types
+
+    values: dict[tuple[str, str], str] = {}
+    for class_name in dir(types):
+        cls = getattr(types, class_name)
+        if not (isinstance(cls, type) and class_name.endswith("Events")):
+            continue
+        for attr, value in vars(cls).items():
+            if not attr.startswith("_") and isinstance(value, str):
+                values[(class_name, attr)] = value
+    return values
+
+
+def _call_sites() -> list[tuple[str, str, str, int]]:
+    """Every `emit` / `listen` call in the tree as `(kind, module, resolved_name_or_None, lineno)`.
 
     Static rather than runtime, deliberately: a runtime check can only see what the current process
     imported, which is the exact blind spot that let this rot. Every call site in the tree counts,
     whether or not anything imported it.
+
+    A first argument written as `Class.ATTR` is resolved through `types`; a raw string literal resolves
+    to itself; anything else resolves to `None` so the "must use a constant" test can name it.
     """
-    emitted: dict[str, list[str]] = {}
-    listened: dict[str, list[str]] = {}
+    constants = _constant_values()
+    sites: list[tuple[str, str, str, int]] = []
 
     for path in SRC.rglob("*.py"):
         try:
@@ -50,11 +68,31 @@ def _event_names() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
                 continue
             if node.func.id not in {"emit", "listen"} or not node.args:
                 continue
+
             first = node.args[0]
-            if not isinstance(first, ast.Constant) or not isinstance(first.value, str):
-                continue
-            target = emitted if node.func.id == "emit" else listened
-            target.setdefault(first.value, []).append(dotted)
+            resolved: str | None = None
+            if isinstance(first, ast.Attribute) and isinstance(first.value, ast.Name):
+                resolved = constants.get((first.value.id, first.attr))
+            elif isinstance(first, ast.Constant) and isinstance(first.value, str):
+                # A literal. Resolves to itself so the pairing checks still work, and the
+                # `test_no_call_site_uses_a_raw_string` below is what refuses it.
+                resolved = first.value
+
+            sites.append((node.func.id, dotted, resolved, node.lineno))
+
+    return sites
+
+
+def _event_names() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """`(emitted, listened)`, each `{event_name: [module dotted paths]}`."""
+    emitted: dict[str, list[str]] = {}
+    listened: dict[str, list[str]] = {}
+
+    for kind, module, name, _lineno in _call_sites():
+        if name is None:
+            continue
+        target = emitted if kind == "emit" else listened
+        target.setdefault(name, []).append(module)
 
     return emitted, listened
 
@@ -79,6 +117,107 @@ LISTENERS_WITHOUT_AN_EMITTER: dict[str, str] = {
         "Same as `classroom.session_ended`: no emitter, and the handler only logs."
     ),
 }
+
+
+#: Events emitted with nothing subscribed, and why each is acceptable.
+#:
+#: An event with no subscriber is legitimate — publishing a fact and letting consumers appear later is
+#: the point of a bus. An *unnoticed* one is not, which is the difference this inventory makes: adding a
+#: fire-and-forget emit costs one line here, and wiring a listener means deleting one. Twenty-five of
+#: these existed before anybody counted them.
+#:
+#: Two distinct situations are recorded, because they are not equally harmless:
+#:
+#: - `fires` — the emit runs on a real code path and lands nowhere. A signal waiting for a consumer.
+#: - `unreachable` — the emit sits inside a wrapper function that **nothing calls**, so it never runs at
+#:   all. The event name is declared, the helper is written, and no code reaches it. That is dead code
+#:   wearing the shape of a feature, and it is how `create_schedule_block_for_review` and
+#:   `update_progress` read too.
+EMITTERS_WITHOUT_A_LISTENER: dict[str, tuple[str, str]] = {
+    # --- fire from real code paths ---
+    "billing.credits_purchased": ("fires", "Emitted inline by `credit_service` on a real purchase."),
+    "billing.subscription_cancelled": ("fires", "Emitted inline by `subscription_service`."),
+    "billing.referral_linked": ("fires", "Emitted inline by `identity.services` when a referral lands."),
+    "classroom.created": ("fires", "Emitted inline by `classroom_service`."),
+    "classroom.session_started": ("fires", "Emitted inline by `session_service`."),
+    "space.created": ("fires", "Emitted by `space_service` as well as the wrapper."),
+    "space.member_left": ("fires", "Emitted by `membership_service` in two places."),
+    "space.role_changed": ("fires", "Emitted by `membership_service`."),
+    "resource.added": ("fires", "Emitted from two call sites in the knowledge domain."),
+    "topic.uncompleted": (
+        "fires",
+        "Emitted whenever a learner reopens a topic. Deliberately unhandled: completing a topic now "
+        "opens a spaced-repetition schedule, and the tempting symmetry — delete the review when the "
+        "topic reopens — would throw away the SM-2 history (ease factor, repetitions, lapses) that "
+        "makes the schedule worth anything. Reviewing a topic you are restudying is not a defect, and "
+        "`create_review_item_for_topic` is idempotent, so re-completing does not duplicate or reset it.",
+    ),
+    "user.verified": ("fires", "Emitted on email verification from two call sites."),
+    "personal_learning.milestone_reached": (
+        "fires",
+        "Now genuinely emitted: `handle_streak_updated` publishes it after celebrating a streak "
+        "milestone. Nothing subscribes yet, which is the honest state — a milestone feed would be a "
+        "product decision, not a wiring one.",
+    ),
+    # --- the emit is inside a wrapper nothing calls ---
+    "course.completed": (
+        "unreachable",
+        "`emit_course_completed` has no callers. Nothing marks a course complete as an event, though "
+        "`Course.progress` reaching 100 is derivable — see the goal derivation work in §9.11.",
+    ),
+    "user.onboarded": ("unreachable", "`emit_user_onboarded` has no callers."),
+    "user.tier_changed": ("unreachable", "`emit_user_tier_changed` has no callers."),
+    "user.deletion_requested": ("unreachable", "`emit_deletion_requested` has no callers."),
+    "user.deletion_cancelled": ("unreachable", "`emit_deletion_cancelled` has no callers."),
+    "personal_learning.note_created": ("unreachable", "Wrapper has no callers."),
+    "personal_learning.topic_studied": ("unreachable", "Wrapper has no callers."),
+    "personal_learning.topic_completed": (
+        "unreachable",
+        "Wrapper has no callers. Its one caller was `POST /learning/.../topics/{id}/complete`, which "
+        "announced this instead of completing anything; that route delegates to the knowledge service "
+        "now and the knowledge domain's `topic.completed` is the name two listeners act on.",
+    ),
+    "personal_learning.quiz_completed": ("unreachable", "Wrapper has no callers."),
+    "personal_learning.study_session_ended": ("unreachable", "Wrapper has no callers."),
+    "personal_learning.flashcard_reviewed": ("unreachable", "Wrapper has no callers."),
+    "personal_learning.preparation_completed": ("unreachable", "Wrapper has no callers."),
+    "personal_learning.study_plan_item_completed": ("unreachable", "Wrapper has no callers."),
+}
+
+
+class TestTheEmitterInventoryIsHonest:
+    def test_every_unheard_event_is_listed(self):
+        emitted, listened = _event_names()
+
+        unheard = {name for name in emitted if name not in listened}
+        missing = unheard - set(EMITTERS_WITHOUT_A_LISTENER)
+        assert not missing, (
+            "These events are emitted with nothing listening and are not recorded. Add a listener, or "
+            f"add a line to EMITTERS_WITHOUT_A_LISTENER saying why not: {sorted(missing)}"
+        )
+
+    def test_the_inventory_does_not_outlive_its_entries(self):
+        """A listed event that now has a listener should leave the list, or the next reader trusts a
+        stale description of the system."""
+        emitted, listened = _event_names()
+
+        resolved = sorted(name for name in EMITTERS_WITHOUT_A_LISTENER if name in listened)
+        assert not resolved, (
+            f"These have listeners now and should be removed from EMITTERS_WITHOUT_A_LISTENER: {resolved}"
+        )
+
+    def test_the_inventory_only_names_emitted_events(self):
+        emitted, _listened = _event_names()
+
+        orphans = sorted(name for name in EMITTERS_WITHOUT_A_LISTENER if name not in emitted)
+        assert not orphans, f"EMITTERS_WITHOUT_A_LISTENER names events nothing emits: {orphans}"
+
+    @pytest.mark.parametrize("name", sorted(EMITTERS_WITHOUT_A_LISTENER))
+    def test_each_entry_states_a_category_and_a_reason(self, name):
+        category, reason = EMITTERS_WITHOUT_A_LISTENER[name]
+
+        assert category in {"fires", "unreachable"}, f"{name}: unknown category {category!r}"
+        assert len(reason) > 20, f"{name}: the reason is not a reason"
 
 
 class TestTheRegistryCoversEveryHandler:
@@ -139,6 +278,65 @@ class TestEveryListenerHasSomethingToListenTo:
 
         orphans = sorted(set(LISTENERS_WITHOUT_AN_EMITTER) - set(listened))
         assert not orphans, f"LISTENERS_WITHOUT_AN_EMITTER names nothing listens for: {orphans}"
+
+
+class TestEventNamesComeFromOneList:
+    """The durable fix for the fault that cost ten handlers.
+
+    `shared/events/types` says "Domains reference these constants rather than raw strings" and, until
+    now, **nothing did** — all forty-seven call sites passed literals and the classes were referenced
+    nowhere. Two strings written months apart in different files disagreed by one word
+    (`knowledge.topic_completed` against `topic.completed`) and the result was a handler that could
+    never fire, with nothing to notice it.
+
+    With constants, that mistake is an `AttributeError` at import time instead.
+    """
+
+    def test_no_call_site_uses_a_raw_string(self):
+        literals = [
+            (kind, module, name, lineno)
+            for kind, module, name, lineno in _call_sites()
+            if name is not None and name not in _constant_values().values()
+        ]
+        assert not literals, (
+            "These emit/listen sites pass a raw string. Add the name to shared/events/types and use "
+            f"the constant, so a typo cannot become a handler that waits forever: {literals}"
+        )
+
+    def test_every_call_site_resolves_to_a_known_constant(self):
+        """Catches `SomeEvents.MISPELLED`, which resolves to nothing."""
+        unresolved = [
+            (kind, module, lineno)
+            for kind, module, name, lineno in _call_sites()
+            if name is None
+        ]
+        assert not unresolved, (
+            f"These emit/listen sites name something that is not a constant in shared/events/types: "
+            f"{unresolved}"
+        )
+
+    def test_no_two_constants_share_a_value(self):
+        """Two names for one event would let a listener and an emitter look paired and not be."""
+        values = _constant_values()
+        seen: dict[str, tuple[str, str]] = {}
+        duplicates: list[tuple[str, tuple[str, str], tuple[str, str]]] = []
+
+        for key, value in values.items():
+            if value in seen:
+                duplicates.append((value, seen[value], key))
+            else:
+                seen[value] = key
+
+        assert not duplicates, f"Duplicate event values: {duplicates}"
+
+    def test_the_call_sites_are_all_still_found(self):
+        """A guard on the guard. If the resolver stops recognising the call shape, every check above
+        passes vacuously — which is exactly how a census test becomes decoration."""
+        sites = _call_sites()
+
+        assert len(sites) >= 45, f"only found {len(sites)} emit/listen sites; the resolver has drifted"
+        assert any(kind == "emit" for kind, _m, _n, _l in sites)
+        assert any(kind == "listen" for kind, _m, _n, _l in sites)
 
 
 class TestRegistration:

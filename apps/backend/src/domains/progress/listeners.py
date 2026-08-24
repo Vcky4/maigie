@@ -21,12 +21,12 @@ from __future__ import annotations
 
 import logging
 
-from src.shared.events import listen
+from src.shared.events import KnowledgeEvents, listen
 
 logger = logging.getLogger(__name__)
 
 
-@listen("topic.completed")
+@listen(KnowledgeEvents.TOPIC_COMPLETED)
 async def schedule_first_review(data: dict) -> None:
     """Open a spaced-repetition schedule for a topic the learner has just finished.
 

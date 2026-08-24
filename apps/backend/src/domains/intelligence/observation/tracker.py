@@ -9,12 +9,18 @@ reasoning, and planning.
 
 import logging
 
-from src.shared.events import listen
+from src.shared.events import (
+    IdentityEvents,
+    KnowledgeEvents,
+    LearningSpaceEvents,
+    ProgressEvents,
+    listen,
+)
 
 logger = logging.getLogger(__name__)
 
 
-@listen("topic.completed")
+@listen(KnowledgeEvents.TOPIC_COMPLETED)
 async def on_topic_completed(data: dict) -> None:
     """Observe when a learner completes a topic."""
     user_id = data.get("user_id")
@@ -23,7 +29,7 @@ async def on_topic_completed(data: dict) -> None:
     # Future: update learning velocity, trigger spaced rep scheduling
 
 
-@listen("course.created")
+@listen(KnowledgeEvents.COURSE_CREATED)
 async def on_course_created(data: dict) -> None:
     """Observe when a new course is created."""
     user_id = data.get("user_id")
@@ -32,7 +38,7 @@ async def on_course_created(data: dict) -> None:
     # Future: analyze course structure, prepare learning path
 
 
-@listen("user.registered")
+@listen(IdentityEvents.USER_REGISTERED)
 async def on_user_registered(data: dict) -> None:
     """Observe when a new user registers."""
     user_id = data.get("user_id")
@@ -40,7 +46,7 @@ async def on_user_registered(data: dict) -> None:
     # Future: initialize learner profile, prepare onboarding context
 
 
-@listen("space.member_joined")
+@listen(LearningSpaceEvents.MEMBER_JOINED)
 async def on_member_joined(data: dict) -> None:
     """Observe when someone joins a Learning Space."""
     user_id = data.get("user_id")
@@ -49,7 +55,7 @@ async def on_member_joined(data: dict) -> None:
     # Future: recommend introductions, suggest relevant classrooms
 
 
-@listen("progress.study_session_completed")
+@listen(ProgressEvents.STUDY_SESSION_COMPLETED)
 async def on_study_session_completed(data: dict) -> None:
     """Observe when a study session ends."""
     user_id = data.get("user_id")

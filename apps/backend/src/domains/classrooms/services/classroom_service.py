@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from src.domains.learning_spaces.db_models import SpaceChatGroup
-from src.shared.events import emit
+from src.shared.events import ClassroomEvents, emit
 from src.shared.exceptions import ForbiddenError, NotFoundError, ValidationError
 from src.shared.field_mapping import reject_unclearable
 
@@ -42,7 +42,7 @@ async def create_classroom(*, space_id: str, user_id: str, data: dict[str, Any])
         await classroom_repo.add_members(classroom.id, data["memberIds"])
 
     await emit(
-        "classroom.created",
+        ClassroomEvents.CLASSROOM_CREATED,
         {"space_id": space_id, "classroom_id": classroom.id, "user_id": user_id},
     )
     return classroom

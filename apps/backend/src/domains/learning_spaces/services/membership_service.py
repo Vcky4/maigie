@@ -1,11 +1,11 @@
-﻿"""
+"""
 Learning Space membership — join, leave, invite, roles, transfer ownership.
 """
 
 import logging
 from typing import Any
 
-from src.shared.events import emit
+from src.shared.events import LearningSpaceEvents, emit
 from src.shared.exceptions import ForbiddenError, NotFoundError, ValidationError
 
 from ..repository import space_repo
@@ -38,7 +38,7 @@ async def accept_invite(*, invite_id: str, user_id: str) -> Any:
         raise NotFoundError("Space invitation", invite_id)
 
     result = await _accept(None, invite.space_id, invite_id, user_id)
-    await emit("space.member_joined", {"user_id": user_id, "space_id": invite.space_id})
+    await emit(LearningSpaceEvents.MEMBER_JOINED, {"user_id": user_id, "space_id": invite.space_id})
     return result
 
 
@@ -47,7 +47,7 @@ async def leave_space(*, space_id: str, user_id: str) -> None:
     from src.domains.learning_spaces.services.space_impl import remove_member as _leave
 
     await _leave(None, space_id, user_id, user_id)
-    await emit("space.member_left", {"user_id": user_id, "space_id": space_id})
+    await emit(LearningSpaceEvents.MEMBER_LEFT, {"user_id": user_id, "space_id": space_id})
 
 
 async def update_member_role(
@@ -58,7 +58,7 @@ async def update_member_role(
 
     result = await _update(None, space_id, user_id, target_user_id, new_role)
     await emit(
-        "space.role_changed",
+        LearningSpaceEvents.ROLE_CHANGED,
         {
             "space_id": space_id,
             "user_id": target_user_id,
@@ -73,7 +73,7 @@ async def remove_member(*, space_id: str, user_id: str, target_user_id: str) -> 
     from src.domains.learning_spaces.services.space_impl import remove_member as _remove
 
     await _remove(None, space_id, user_id, target_user_id)
-    await emit("space.member_left", {"user_id": target_user_id, "space_id": space_id})
+    await emit(LearningSpaceEvents.MEMBER_LEFT, {"user_id": target_user_id, "space_id": space_id})
 
 
 async def transfer_ownership(*, space_id: str, user_id: str, new_owner_id: str) -> Any:

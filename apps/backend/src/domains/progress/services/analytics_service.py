@@ -1,4 +1,4 @@
-﻿"""
+"""
 Analytics — study sessions, streaks, achievements, and reporting.
 """
 
@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from src.shared.events import emit
+from src.shared.events import ProgressEvents, emit
 
 from ..repository import progress_repo
 
@@ -71,7 +71,7 @@ async def stop_study_session(*, session_id: str, user_id: str) -> dict[str, Any]
     await _update_streak(user_id, end_time)
 
     await emit(
-        "progress.study_session_completed",
+        ProgressEvents.STUDY_SESSION_COMPLETED,
         {"user_id": user_id, "session_id": session_id, "duration_minutes": duration_minutes},
     )
 

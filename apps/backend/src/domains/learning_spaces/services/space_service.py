@@ -1,11 +1,11 @@
-﻿"""
+"""
 Learning Space lifecycle — create, update, delete, list.
 """
 
 import logging
 from typing import Any
 
-from src.shared.events import emit
+from src.shared.events import LearningSpaceEvents, emit
 from src.shared.exceptions import ForbiddenError, NotFoundError
 
 from ..models import SpaceCreate, SpaceUpdate
@@ -21,7 +21,7 @@ async def create_space(*, user, data: dict[str, Any]) -> Any:
     create_model = SpaceCreate(**data)
     space = await create_space_impl(None, user.id, str(user.tier), create_model)
 
-    await emit("space.created", {"user_id": user.id, "space_id": space.id})
+    await emit(LearningSpaceEvents.SPACE_CREATED, {"user_id": user.id, "space_id": space.id})
     return space
 
 

@@ -8,6 +8,7 @@ from .types import (
     IntelligenceEvents,
     KnowledgeEvents,
     LearningSpaceEvents,
+    PersonalLearningEvents,
     ProgressEvents,
 )
 
@@ -21,6 +22,7 @@ __all__ = [
     "LearningSpaceEvents",
     "ClassroomEvents",
     "IntelligenceEvents",
+    "PersonalLearningEvents",
     "ProgressEvents",
     "BillingEvents",
 ]

@@ -9,7 +9,7 @@ import logging
 from typing import Any
 
 from src.domains.identity.db_models import User
-from src.shared.events import emit
+from src.shared.events import BillingEvents, emit
 
 from ..repository import billing_repo
 
@@ -85,7 +85,7 @@ async def cancel_subscription(*, user: User) -> dict[str, Any]:
 
         result = await _stripe_cancel(user=user)
 
-    await emit("billing.subscription_cancelled", {"user_id": user.id, "provider": provider})
+    await emit(BillingEvents.SUBSCRIPTION_CANCELLED, {"user_id": user.id, "provider": provider})
     return result
 
 

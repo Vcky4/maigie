@@ -7,7 +7,14 @@ Events consumed from other domains (progress, classrooms, knowledge).
 
 import logging
 
-from src.shared.events import emit, listen
+from src.shared.events import (
+    ClassroomEvents,
+    KnowledgeEvents,
+    PersonalLearningEvents,
+    ProgressEvents,
+    emit,
+    listen,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +33,7 @@ async def emit_note_created(
     topic_id: str | None = None,
 ) -> None:
     await emit(
-        "personal_learning.note_created",
+        PersonalLearningEvents.NOTE_CREATED,
         {
             "user_id": user_id,
             "note_id": note_id,
@@ -41,7 +48,7 @@ async def emit_topic_studied(
     user_id: str, topic_id: str, course_id: str, duration_seconds: int
 ) -> None:
     await emit(
-        "personal_learning.topic_studied",
+        PersonalLearningEvents.TOPIC_STUDIED,
         {
             "user_id": user_id,
             "topic_id": topic_id,
@@ -53,7 +60,7 @@ async def emit_topic_studied(
 
 async def emit_topic_completed(user_id: str, topic_id: str, course_id: str) -> None:
     await emit(
-        "personal_learning.topic_completed",
+        PersonalLearningEvents.TOPIC_COMPLETED,
         {
             "user_id": user_id,
             "topic_id": topic_id,
@@ -66,7 +73,7 @@ async def emit_quiz_completed(
     user_id: str, prep_id: str, quiz_id: str, score: float, weak_topics: list[str]
 ) -> None:
     await emit(
-        "personal_learning.quiz_completed",
+        PersonalLearningEvents.QUIZ_COMPLETED,
         {
             "user_id": user_id,
             "prep_id": prep_id,
@@ -81,7 +88,7 @@ async def emit_study_session_ended(
     user_id: str, session_id: str, duration: float, context: dict | None = None
 ) -> None:
     await emit(
-        "personal_learning.study_session_ended",
+        PersonalLearningEvents.STUDY_SESSION_ENDED,
         {
             "user_id": user_id,
             "session_id": session_id,
@@ -95,7 +102,7 @@ async def emit_flashcard_reviewed(
     user_id: str, card_id: str, quality: int, deck_id: str | None = None
 ) -> None:
     await emit(
-        "personal_learning.flashcard_reviewed",
+        PersonalLearningEvents.FLASHCARD_REVIEWED,
         {
             "user_id": user_id,
             "card_id": card_id,
@@ -107,7 +114,7 @@ async def emit_flashcard_reviewed(
 
 async def emit_preparation_completed(user_id: str, prep_id: str, subject: str) -> None:
     await emit(
-        "personal_learning.preparation_completed",
+        PersonalLearningEvents.PREPARATION_COMPLETED,
         {
             "user_id": user_id,
             "prep_id": prep_id,
@@ -120,7 +127,7 @@ async def emit_milestone_reached(
     user_id: str, milestone_type: str, milestone_value: int | str
 ) -> None:
     await emit(
-        "personal_learning.milestone_reached",
+        PersonalLearningEvents.MILESTONE_REACHED,
         {
             "user_id": user_id,
             "milestone_type": milestone_type,
@@ -131,7 +138,7 @@ async def emit_milestone_reached(
 
 async def emit_study_plan_item_completed(user_id: str, plan_id: str, item_id: str) -> None:
     await emit(
-        "personal_learning.study_plan_item_completed",
+        PersonalLearningEvents.STUDY_PLAN_ITEM_COMPLETED,
         {
             "user_id": user_id,
             "plan_id": plan_id,
@@ -145,7 +152,7 @@ async def emit_study_plan_item_completed(user_id: str, plan_id: str, item_id: st
 # ===========================================================================
 
 
-@listen("progress.streak_updated")
+@listen(ProgressEvents.STREAK_UPDATED)
 async def handle_streak_updated(data: dict) -> None:
     """Check for streak milestones and generate celebration notifications."""
     from .services import notification_service
@@ -168,7 +175,7 @@ async def handle_streak_updated(data: dict) -> None:
         await emit_milestone_reached(user_id, "streak", streak_count)
 
 
-@listen("progress.achievement_unlocked")
+@listen(ProgressEvents.ACHIEVEMENT_UNLOCKED)
 async def handle_achievement_unlocked(data: dict) -> None:
     """Surface achievement in activity feed and create notification."""
     from .services import notification_service
@@ -188,7 +195,7 @@ async def handle_achievement_unlocked(data: dict) -> None:
     )
 
 
-@listen("classroom.session_ended")
+@listen(ClassroomEvents.SESSION_ENDED)
 async def handle_classroom_session(data: dict) -> None:
     """Surface classroom connections in personal learning home."""
     # Check if the classroom topic matches any personal learning topics
@@ -196,13 +203,13 @@ async def handle_classroom_session(data: dict) -> None:
     logger.debug(f"Classroom session ended: {data}")
 
 
-@listen("classroom.discussion_created")
+@listen(ClassroomEvents.DISCUSSION_CREATED)
 async def handle_classroom_discussion(data: dict) -> None:
     """Surface relevant classroom discussions."""
     logger.debug(f"Classroom discussion created: {data}")
 
 
-@listen("topic.completed")
+@listen(KnowledgeEvents.TOPIC_COMPLETED)
 async def handle_knowledge_topic_completed(data: dict) -> None:
     """Create flashcard suggestions when a topic is completed.
 

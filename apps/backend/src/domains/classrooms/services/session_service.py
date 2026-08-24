@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from src.domains.learning_spaces.db_models import SpaceSession
-from src.shared.events import emit
+from src.shared.events import ClassroomEvents, emit
 from src.shared.exceptions import NotFoundError, ValidationError
 from src.shared.field_mapping import reject_unclearable
 
@@ -37,7 +37,7 @@ async def create_session(*, space_id: str, user_id: str, data: dict[str, Any]) -
     )
 
     await emit(
-        "classroom.session_started",
+        ClassroomEvents.SESSION_STARTED,
         {
             "space_id": space_id,
             "session_id": session.id,

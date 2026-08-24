@@ -325,10 +325,10 @@ async def link_referral(*, user: User, referral_code: str) -> dict:
 
     # Track referral reward via domain event (billing domain handles rewards)
     try:
-        from src.shared.events import emit
+        from src.shared.events import BillingEvents, emit
 
         await emit(
-            "billing.referral_linked",
+            BillingEvents.REFERRAL_LINKED,
             {
                 "user_id": user.id,
                 "referral_code": code,

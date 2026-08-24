@@ -51,9 +51,9 @@ async def record_activity(user_id: str) -> None:
     # Emitted outside the `try` above on purpose: a dispatch failure is not a failure to update the
     # streak, and logging it as one would send the next reader to the wrong place. The bus isolates
     # handler failures itself.
-    from src.shared.events import emit
+    from src.shared.events import ProgressEvents, emit
 
-    await emit("progress.streak_updated", {"user_id": user_id, "streak_count": new_streak})
+    await emit(ProgressEvents.STREAK_UPDATED, {"user_id": user_id, "streak_count": new_streak})
 
 
 async def _update_streak(user_id: str, today) -> int | None:

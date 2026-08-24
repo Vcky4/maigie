@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timezone
 from typing import Any
 
 from src.domains.identity.db_models import User
-from src.shared.events import emit
+from src.shared.events import BillingEvents, emit
 from src.shared.exceptions import NotFoundError, ValidationError
 
 from ..repository import billing_repo
@@ -118,7 +118,7 @@ async def claim_ad_reward(
     )
 
     await emit(
-        "billing.credits_purchased", {"user_id": user_id, "credits": credits, "source": "ad"}
+        BillingEvents.CREDITS_PURCHASED, {"user_id": user_id, "credits": credits, "source": "ad"}
     )
 
     return {
