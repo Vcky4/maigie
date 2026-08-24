@@ -249,6 +249,61 @@ class PersonalLearningRepository:
     # Learn dashboard (bounded read helpers)
     # -----------------------------------------------------------------------
 
+    async def count_due_flashcards_by_deck_day(
+        self,
+        user_id: str,
+        *,
+        since: datetime,
+        until: datetime,
+        timezone_name: str = "UTC",
+        session: AsyncSession | None = None,
+    ) -> list[dict[str, Any]]:
+        """Cards due in a window, counted per deck per **learner-local** day.
+
+        Grouped in the database rather than read row by row: the agenda needs one review entry per deck per
+        day, not one per card, and a heavy learner can have thousands of cards due. This returns a handful
+        of rows whatever the queue looks like.
+
+        The day boundary is computed in the learner's zone (`AT TIME ZONE`), not UTC. Bucketing by UTC date
+        would file a card due at 23:30 Lagos time under the following day, so a learner near midnight would
+        see tomorrow's review sitting on today.
+
+        `dueAt` is the earliest card in the group, which is what the batch should be scheduled against —
+        the most decayed card is the one that sets the urgency.
+        """
+        async with self._read_session(session) as s:
+            local_day = func.date(
+                func.timezone(timezone_name, Flashcard.next_review_at)
+            ).label("localDay")
+            rows = await s.execute(
+                select(
+                    Flashcard.deck_id,
+                    FlashcardDeck.title,
+                    local_day,
+                    func.min(Flashcard.next_review_at).label("dueAt"),
+                    func.count().label("count"),
+                )
+                .select_from(Flashcard)
+                .outerjoin(FlashcardDeck, FlashcardDeck.id == Flashcard.deck_id)
+                .where(
+                    Flashcard.user_id == user_id,
+                    Flashcard.next_review_at >= since,
+                    Flashcard.next_review_at <= until,
+                )
+                .group_by(Flashcard.deck_id, FlashcardDeck.title, local_day)
+                .order_by(local_day, func.min(Flashcard.next_review_at))
+            )
+            return [
+                {
+                    "deckId": deck_id,
+                    "deckTitle": deck_title,
+                    "localDay": day,
+                    "dueAt": due_at,
+                    "count": int(count or 0),
+                }
+                for deck_id, deck_title, day, due_at, count in rows.all()
+            ]
+
     async def count_overdue_flashcards(
         self, user_id: str, *, session: AsyncSession | None = None
     ) -> int:

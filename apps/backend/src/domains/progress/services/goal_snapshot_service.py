@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from src.shared.database import get_session_factory
 from src.shared.time import resolve_many, to_learner_local
@@ -140,9 +140,13 @@ async def _upsert_day(
         )
         existing = {row.goal_id: row for row in existing_rows}
 
+        #: `{id, progress}` for goals whose stored column has fallen behind, written in one statement
+        #: after the loop rather than re-selecting each row.
+        drifted: list[dict[str, object]] = []
+
         for goal in goals:
             measurement = measurements.get(goal.id)
-            progress = float(goal.progress or 0.0)
+            progress = goal_metrics.derived_progress(goal, measurement)
             # A `manual` goal's value lives on the row; every other kind's is derived. `measured`
             # records which, because `metricKind` can be edited later and a reader could not tell.
             current_value = (
@@ -168,6 +172,29 @@ async def _upsert_day(
                 row.current_value = current_value
                 row.current_value_measured = measured
                 row.status = goal.status
+
+            # Bring the stored column to the derived figure.
+            #
+            # Every reader that matters now derives progress, so this is not what makes the API
+            # correct. It is here so the column stops being a lie: `Goal.progress` is selected
+            # directly by anything not yet routed through `derived_progress`, and it is what an
+            # export, a migration or a hand-written query will read. `update_progress` was its only
+            # writer and has never been called from anywhere in `src`.
+            #
+            # Only for measured kinds, and only on a real change. A `manual` goal's figure is the
+            # learner's own and is never touched, and writing an unchanged value would move
+            # `updatedAt` on every goal every night.
+            if (
+                (goal.metric_kind or "manual") != "manual"
+                and measurement is not None
+                and measurement.current_value is not None
+                and abs(float(goal.progress or 0.0) - progress) > 0.05
+            ):
+                drifted.append({"id": goal.id, "progress": progress})
+
+        if drifted:
+            # One executemany against the primary key, not a select-then-assign per goal.
+            await session.execute(update(Goal), drifted)
 
         await session.commit()
 

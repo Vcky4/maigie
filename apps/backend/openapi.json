@@ -257,6 +257,176 @@
         "title": "ActivityTypeCount",
         "type": "object"
       },
+      "AgendaAcceptRequest": {
+        "description": "Accept a suggested placement, turning it into a scheduled block.\n\n`entryId` is the agenda entry's own namespaced id (`plan_item:…`, `review:…`), which is what tells the\nserver what the block should be linked to. `startAt` and `minutes` are sent rather than assumed, so a\nlearner who nudged the suggestion to a different hour gets the hour they chose.",
+        "properties": {
+          "entryId": {
+            "title": "Entryid",
+            "type": "string"
+          },
+          "minutes": {
+            "maximum": 480.0,
+            "minimum": 5.0,
+            "title": "Minutes",
+            "type": "integer"
+          },
+          "startAt": {
+            "format": "date-time",
+            "title": "Startat",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "entryId",
+          "startAt",
+          "minutes"
+        ],
+        "title": "AgendaAcceptRequest",
+        "type": "object"
+      },
+      "AgendaEntryResponse": {
+        "description": "One thing on the learner's day, from whichever store schedules it.\n\n`startAt`/`endAt` are always present so a client can lay a day out, but they only *mean* a clock\nreading when `timed` is true:\n\n- `timed: true` — a schedule block or a live class. Someone put it at that hour.\n- `timed: false` with `placement: preferred_window | default_window` — day-scoped work that this\n  response is *suggesting* a time for, around what is already fixed. Nothing is stored; accepting the\n  suggestion is a separate call, and until then the learner owes it nothing.\n- `timed: false` with `placement: no_room` — the day had no gap long enough. The work stays on its day\n  with no suggested clock, rather than being crammed into a slot it does not fit.\n\n`placement` and `window` are **tokens, not copy**. The service decides where the work goes and why; the\nclient writes the sentence — the same split the goals greeting and the growth driver impacts use.",
+        "properties": {
+          "completed": {
+            "default": false,
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "endAt": {
+            "title": "Endat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "links": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Links",
+            "type": "object"
+          },
+          "minutes": {
+            "title": "Minutes",
+            "type": "integer"
+          },
+          "placement": {
+            "title": "Placement",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "startAt": {
+            "title": "Startat",
+            "type": "string"
+          },
+          "timed": {
+            "title": "Timed",
+            "type": "boolean"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "title",
+          "startAt",
+          "endAt",
+          "minutes",
+          "timed",
+          "placement"
+        ],
+        "title": "AgendaEntryResponse",
+        "type": "object"
+      },
+      "AgendaResponse": {
+        "description": "The learner's agenda across a window, and what the placements were based on.\n\n`placementBasis` is published because it changes what a client may claim. `learner` means the windows\ncame from this learner's own recorded study times; `default` means nothing is known yet and the work\nwas placed in neutral daytime hours — so the page can offer to learn rather than implying it already\nhas.",
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/AgendaEntryResponse"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "from": {
+            "title": "From",
+            "type": "string"
+          },
+          "placementBasis": {
+            "default": "default",
+            "title": "Placementbasis",
+            "type": "string"
+          },
+          "to": {
+            "title": "To",
+            "type": "string"
+          },
+          "totals": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Totals",
+            "type": "object"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "entries"
+        ],
+        "title": "AgendaResponse",
+        "type": "object"
+      },
       "AnswerResultResponse": {
         "description": "Result for the one question just submitted, including its key.\n\nThis is the only place an answer key is disclosed before the session\ncompletes, and only for a question the learner has now answered.",
         "properties": {
@@ -2472,6 +2642,119 @@
           }
         },
         "title": "DeckUpdate",
+        "type": "object"
+      },
+      "DerivableGoalResponse": {
+        "description": "A goal the learner's stated intent implies, before anything is written.\n\nReturned by the preview endpoint so a client can ask before creating. `basis` is a TOKEN\n(`course` | `preparation`) naming what the goal was read from; the client writes the sentence.",
+        "properties": {
+          "basis": {
+            "title": "Basis",
+            "type": "string"
+          },
+          "courseId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courseid"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "metricKind": {
+            "title": "Metrickind",
+            "type": "string"
+          },
+          "prepId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prepid"
+          },
+          "targetDate": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetdate"
+          },
+          "targetValue": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetvalue"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "description",
+          "metricKind",
+          "unit",
+          "basis"
+        ],
+        "title": "DerivableGoalResponse",
+        "type": "object"
+      },
+      "DerivableGoalsResponse": {
+        "description": "Empty `goals` means every piece of stated intent already has a goal, which is the ordinary\nanswer once derivation has run once.",
+        "properties": {
+          "goals": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DerivableGoalResponse"
+            },
+            "title": "Goals",
+            "type": "array"
+          }
+        },
+        "title": "DerivableGoalsResponse",
+        "type": "object"
+      },
+      "DerivedGoalsResponse": {
+        "properties": {
+          "created": {
+            "default": 0,
+            "title": "Created",
+            "type": "integer"
+          },
+          "goals": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GoalResponse"
+            },
+            "title": "Goals",
+            "type": "array"
+          }
+        },
+        "title": "DerivedGoalsResponse",
         "type": "object"
       },
       "DeviceTimezoneRequest": {
@@ -13375,6 +13658,7 @@
         "type": "object"
       },
       "ScheduleBlockResponse": {
+        "description": "One thing on the learner's day, from either of the two places days are planned.\n\n**These used to be study-plan items only, published under a name that means something else.** The\nhome surface printed them as \"Today's schedule\" beside a link to the schedule page — which reads\n`ScheduleBlock` — so a learner with plan items due today and no blocks this week saw four sessions on\none screen and \"nothing scheduled\" on the other. Both were correct about their own table.\n\n`source` says which, and `timed` says whether the clock is real:\n\n- A `ScheduleBlock` was placed at an hour, so it is `timed` and its `startAt` means what it says.\n- A `StudyPlanItem` is scheduled for a **day**. Its `scheduledDate` carries whatever time the plan\n  happened to be generated at — live, this learner's items cluster at `01:06`, `12:10`, `12:11` and\n  `23:26`, which are generation timestamps, not chosen study times. Rendering one as \"00:26\" invents\n  an appointment. They arrive `timed: false` so a client shows the day and not a clock reading.",
         "properties": {
           "actionData": {
             "anyOf": [
@@ -13397,10 +13681,25 @@
             "title": "Id",
             "type": "string"
           },
+          "placement": {
+            "default": "fixed",
+            "title": "Placement",
+            "type": "string"
+          },
+          "source": {
+            "default": "schedule",
+            "title": "Source",
+            "type": "string"
+          },
           "startAt": {
             "format": "date-time",
             "title": "Startat",
             "type": "string"
+          },
+          "timed": {
+            "default": true,
+            "title": "Timed",
+            "type": "boolean"
           },
           "title": {
             "title": "Title",
@@ -29867,6 +30166,62 @@
         ]
       }
     },
+    "/api/v1/progress/goals/derivable": {
+      "get": {
+        "description": "The goals this learner's stated intent implies and that do not exist yet.\n\nA read. Nothing is written, so a client may show the learner what would be created and let them\ndecide. Declared before `/goals/{goal_id}` so `derivable` is not read as a goal id.",
+        "operationId": "list_derivable_goals_api_v1_progress_goals_derivable_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DerivableGoalsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Derivable Goals",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
+    "/api/v1/progress/goals/derive": {
+      "post": {
+        "description": "Create the goals this learner's stated intent implies.\n\nIdempotent: a second call creates nothing and returns `created: 0`, because a link that already\nhas a goal is never given another one.",
+        "operationId": "derive_goals_api_v1_progress_goals_derive_post",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DerivedGoalsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Derive Goals",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
     "/api/v1/progress/goals/summary": {
       "get": {
         "description": "Everything above the goals list: the portfolio counts, the momentum chart, and what to lead with.\n\n**Declared before `/goals/{goal_id}`** deliberately: FastAPI matches in declaration order, so the\nother way round this path would arrive as a goal called \"summary\" and 404.\n\nThe counts come from one query over the whole portfolio. The list endpoint cannot answer them — it is\npaginated, so its twenty rows would give an average that changed as the learner paged.\n\n**`headline` is a token and the client writes the sentence.** The fixture's hero baked two numbers\ninto prose, which is a claim that can disagree with the tiles beneath it; the token says which\nsituation applies and the counts beside it supply every figure the sentence needs.\n\n`momentum` is composed here rather than in a sibling endpoint because it is part of the same header:\nthe chart, the tiles and the greeting are one block of the page and are better read in one request\nthan assembled from three that could describe different moments.",
@@ -30899,6 +31254,128 @@
           }
         ],
         "summary": "Create Block",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
+    "/api/v1/progress/schedule/agenda": {
+      "get": {
+        "description": "Everything scheduled for the learner across a window, from every store that schedules it.\n\n**`GET /schedule` is not the learner's schedule, and this is.** That endpoint reads `ScheduleBlock`,\nwhich only the goal planner and manual creation ever write. Study-plan items, due flashcard reviews and\nlive sessions in the learner's spaces are three more sources, and none of them produced a block — so a\nlearner with four plan items due today and 65 cards due this week was told \"nothing scheduled\" while\nthe home surface showed four sessions from a different table.\n\nDay-scoped work is placed inside its day around what is already fixed. **A placement is a suggestion\ncomputed on read and stored nowhere** — `POST /schedule/agenda/accept` is what turns one into a real\nblock. That keeps one record per commitment: the alternative, writing blocks for everything, needs\nevery planner to remember and leaves a stale block behind whenever a due date moves.\n\nDefaults to the seven days starting today, which is the window both schedule pages read.",
+        "operationId": "get_agenda_api_v1_progress_schedule_agenda_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "startDate",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Startdate"
+            }
+          },
+          {
+            "in": "query",
+            "name": "endDate",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Enddate"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgendaResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Agenda",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
+    "/api/v1/progress/schedule/agenda/accept": {
+      "post": {
+        "description": "Turn a suggested placement into a real commitment.\n\nUntil this is called, a placement is a computed suggestion and the learner owes it nothing. Accepting\nwrites a `ScheduleBlock` at the chosen time, linked back to whatever produced the suggestion — so from\nthen on it is a fixed entry, it survives a reload, it can be completed, and it syncs to Google Calendar\nlike any other block.\n\n**This is the one point where the agenda materialises anything**, and it does so because the learner\nasked, which is the difference between a record and a guess.",
+        "operationId": "accept_agenda_placement_api_v1_progress_schedule_agenda_accept_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgendaAcceptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyBlockResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Accept Agenda Placement",
         "tags": [
           "progress",
           "progress"

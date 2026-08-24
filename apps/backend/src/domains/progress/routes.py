@@ -18,7 +18,9 @@ from src.shared.time import ensure_utc
 from . import models
 from .repository import progress_repo
 from .services import (
+    agenda_service,
     analytics_service,
+    goal_derivation_service,
     goal_insight_service,
     goal_metrics,
     goal_service,
@@ -129,6 +131,45 @@ async def create_goal(body: models.GoalCreate, current_user: CurrentUser):
         user_id=current_user.id, data=body.model_dump(exclude_unset=True)
     )
     return (await _goal_responses([goal]))[0]
+
+
+@router.get("/goals/derivable", response_model=models.DerivableGoalsResponse)
+async def list_derivable_goals(current_user: CurrentUser):
+    """The goals this learner's stated intent implies and that do not exist yet.
+
+    A read. Nothing is written, so a client may show the learner what would be created and let them
+    decide. Declared before `/goals/{goal_id}` so `derivable` is not read as a goal id.
+    """
+    specs = await goal_derivation_service.plan_derivations(current_user.id)
+    return models.DerivableGoalsResponse(
+        goals=[
+            models.DerivableGoalResponse(
+                title=spec.title,
+                description=spec.description,
+                metricKind=spec.metric_kind,
+                unit=spec.unit,
+                basis=spec.basis,
+                courseId=spec.course_id,
+                prepId=spec.prep_id,
+                targetValue=spec.target_value,
+                targetDate=spec.target_date,
+            )
+            for spec in specs
+        ]
+    )
+
+
+@router.post("/goals/derive", response_model=models.DerivedGoalsResponse, status_code=201)
+async def derive_goals(current_user: CurrentUser):
+    """Create the goals this learner's stated intent implies.
+
+    Idempotent: a second call creates nothing and returns `created: 0`, because a link that already
+    has a goal is never given another one.
+    """
+    goals = await goal_derivation_service.derive_goals_for_user(current_user.id)
+    return models.DerivedGoalsResponse(
+        goals=await _goal_responses(goals), created=len(goals)
+    )
 
 
 @router.get("/goals/summary", response_model=models.GoalSummaryResponse)
@@ -516,8 +557,101 @@ async def create_block(body: models.StudyBlockCreate, current_user: CurrentUser)
 
 
 #: Declared before `/schedule/{block_id}` deliberately. FastAPI matches in declaration order, so with
-#: these below it a request for `/schedule/google-calendar/status` would be read as a block id — the same
-#: trap `/goals/summary` had, where the wrong order 404s with nothing looking wrong.
+#: these below it a request for `/schedule/agenda` or `/schedule/google-calendar/status` would be read as a
+#: block id — the same trap `/goals/summary` had, where the wrong order 404s with nothing looking wrong.
+
+
+@router.get("/schedule/agenda", response_model=models.AgendaResponse)
+async def get_agenda(
+    current_user: CurrentUser,
+    startDate: datetime | None = Query(None),
+    endDate: datetime | None = Query(None),
+):
+    """Everything scheduled for the learner across a window, from every store that schedules it.
+
+    **`GET /schedule` is not the learner's schedule, and this is.** That endpoint reads `ScheduleBlock`,
+    which only the goal planner and manual creation ever write. Study-plan items, due flashcard reviews and
+    live sessions in the learner's spaces are three more sources, and none of them produced a block — so a
+    learner with four plan items due today and 65 cards due this week was told "nothing scheduled" while
+    the home surface showed four sessions from a different table.
+
+    Day-scoped work is placed inside its day around what is already fixed. **A placement is a suggestion
+    computed on read and stored nowhere** — `POST /schedule/agenda/accept` is what turns one into a real
+    block. That keeps one record per commitment: the alternative, writing blocks for everything, needs
+    every planner to remember and leaves a stale block behind whenever a due date moves.
+
+    Defaults to the seven days starting today, which is the window both schedule pages read.
+    """
+    window_start = startDate or datetime.now(UTC)
+    window_end = endDate or (window_start + timedelta(days=7))
+    if window_end < window_start:
+        raise HTTPException(status_code=400, detail="endDate must be after startDate")
+
+    entries = await agenda_service.get_agenda(
+        user_id=current_user.id, since=window_start, until=window_end
+    )
+
+    totals: dict[str, int] = {}
+    for entry in entries:
+        totals[entry.source] = totals.get(entry.source, 0) + 1
+
+    placed = [entry for entry in entries if not entry.timed]
+    basis = (
+        "learner"
+        if any(entry.placement == "preferred_window" for entry in placed)
+        else "default"
+    )
+
+    return models.AgendaResponse(
+        **{"from": window_start.isoformat()},
+        to=window_end.isoformat(),
+        placementBasis=basis,
+        totals=totals,
+        entries=[
+            models.AgendaEntryResponse(
+                id=entry.id,
+                source=entry.source,
+                title=entry.title,
+                detail=entry.detail,
+                startAt=entry.start_at.isoformat(),
+                endAt=entry.end_at.isoformat(),
+                minutes=entry.minutes,
+                timed=entry.timed,
+                placement=entry.placement,
+                window=entry.window,
+                completed=entry.completed,
+                count=entry.count,
+                links=entry.links,
+            )
+            for entry in entries
+        ],
+    )
+
+
+@router.post(
+    "/schedule/agenda/accept", response_model=models.StudyBlockResponse, status_code=201
+)
+async def accept_agenda_placement(
+    current_user: CurrentUser, body: models.AgendaAcceptRequest
+):
+    """Turn a suggested placement into a real commitment.
+
+    Until this is called, a placement is a computed suggestion and the learner owes it nothing. Accepting
+    writes a `ScheduleBlock` at the chosen time, linked back to whatever produced the suggestion — so from
+    then on it is a fixed entry, it survives a reload, it can be completed, and it syncs to Google Calendar
+    like any other block.
+
+    **This is the one point where the agenda materialises anything**, and it does so because the learner
+    asked, which is the difference between a record and a guess.
+    """
+    block = await agenda_service.accept_placement(
+        user_id=current_user.id,
+        entry_id=body.entryId,
+        start_at=body.startAt,
+        minutes=body.minutes,
+        title=body.title,
+    )
+    return _to_block_response(block)
 
 
 @router.get("/schedule/google-calendar/status", response_model=models.CalendarStatusResponse)
@@ -679,7 +813,10 @@ def _to_goal_response(
     for the rest — honest in both cases, and never a fabricated zero.
     """
     moment = now or datetime.now(UTC)
-    progress = goal.progress or 0.0
+    # Derived from the measurement rather than read from the stored column, which nothing writes. A
+    # `manual` goal and an unmeasured one both fall back to the row, so this never overwrites a
+    # learner's own figure or invents one.
+    progress = goal_metrics.derived_progress(goal, measurement)
     achieved, total = milestones
 
     return models.GoalResponse(

@@ -49,8 +49,11 @@ def _goal(**overrides) -> SimpleNamespace:
     return SimpleNamespace(**{**defaults, **overrides})
 
 
-def _rows_session(*, rows: list, added: list):
-    """An async-context session whose one query returns `rows` and whose `add` appends to `added`."""
+def _rows_session(*, rows: list, added: list, executed: list | None = None):
+    """An async-context session whose one query returns `rows` and whose `add` appends to `added`.
+
+    `executed` records every statement, which is how the write-back onto `Goal.progress` is observed.
+    """
 
     class _Scalars:
         def all(self):
@@ -61,7 +64,9 @@ def _rows_session(*, rows: list, added: list):
             return _Scalars()
 
     class _Session:
-        async def execute(self, *_a, **_k):
+        async def execute(self, *args, **_k):
+            if executed is not None:
+                executed.append(args)
             return _Result()
 
         def add(self, row):
@@ -79,17 +84,20 @@ def _rows_session(*, rows: list, added: list):
     return _Session()
 
 
-async def _capture(*, timezone_, now, goals, existing=None):
+async def _capture(*, timezone_, now, goals, existing=None, measured_value=99.0):
     """Run `capture_for_users` with the database and the measurement step stubbed out.
 
-    Returns the list of rows the writer would have inserted.
+    Returns the rows the writer would have inserted, plus the statements it executed.
     """
     added: list = []
+    executed: list = []
 
     async def _fake_derive(goal_list, *, now=None):
         from src.domains.progress.services.goal_metrics import GoalMeasurement
 
-        return {g.id: GoalMeasurement(current_value=99.0, measured=True) for g in goal_list}
+        return {
+            g.id: GoalMeasurement(current_value=measured_value, measured=True) for g in goal_list
+        }
 
     calls = {"n": 0}
 
@@ -98,7 +106,7 @@ async def _capture(*, timezone_, now, goals, existing=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return _rows_session(rows=goals, added=added)
-        return _rows_session(rows=existing or [], added=added)
+        return _rows_session(rows=existing or [], added=added, executed=executed)
 
     with (
         patch.object(goal_snapshot_service, "get_session_factory", lambda: _factory),
@@ -107,7 +115,13 @@ async def _capture(*, timezone_, now, goals, existing=None):
     ):
         await goal_snapshot_service.capture_for_users(["u"], now=now)
 
-    return SimpleNamespace(added=added)
+    #: Statements carrying a list of `{id, progress}` payloads — the write-back onto `Goal.progress`.
+    write_backs = [
+        args[1]
+        for args in executed
+        if len(args) > 1 and isinstance(args[1], list) and args[1] and isinstance(args[1][0], dict)
+    ]
+    return SimpleNamespace(added=added, write_backs=write_backs)
 
 
 def _stub_resolve(timezone_):
@@ -201,6 +215,65 @@ class TestWhatIsRecorded:
         assert existing.progress == 55.0
         assert existing.current_value == 99.0
         assert existing.current_value_measured is True
+
+    async def test_a_measured_goals_progress_is_derived_not_read_from_the_column(self):
+        """`Goal.progress` is a column nothing writes. Recording it would give the trajectory table a
+        flat line for a goal that was moving."""
+        recorder = await _capture(
+            timezone_=LAGOS,
+            now=datetime(2026, 8, 24, 1, 30, tzinfo=UTC),
+            goals=[
+                _goal(progress=0.0, metric_kind="course_progress", course_id="c1", target_value=100.0)
+            ],
+            measured_value=64.0,
+        )
+
+        assert recorder.added[0].progress == 64.0
+
+
+class TestTheStoredColumnIsBroughtUpToDate:
+    """The nightly write-back. Every reader that matters derives progress now, so this is not what
+    makes the API correct — it is what stops `Goal.progress` being a lie for an export, a migration or
+    a hand-written query. `update_progress` was its only writer and has never been called."""
+
+    async def test_a_drifted_measured_goal_is_written_back(self):
+        recorder = await _capture(
+            timezone_=LAGOS,
+            now=datetime(2026, 8, 24, 1, 30, tzinfo=UTC),
+            goals=[
+                _goal(progress=0.0, metric_kind="course_progress", course_id="c1", target_value=100.0)
+            ],
+            measured_value=64.0,
+        )
+
+        assert recorder.write_backs == [[{"id": "goal-1", "progress": 64.0}]]
+
+    async def test_a_manual_goal_is_never_written_back(self):
+        """Its figure is the learner's own. Overwriting it would discard what they typed."""
+        recorder = await _capture(
+            timezone_=LAGOS,
+            now=datetime(2026, 8, 24, 1, 30, tzinfo=UTC),
+            goals=[_goal(progress=20.0, metric_kind="manual")],
+            measured_value=64.0,
+        )
+
+        assert recorder.write_backs == []
+
+    async def test_an_unchanged_figure_is_not_rewritten(self):
+        """Writing an unchanged value would move `updatedAt` on every goal every night, which would
+        make "recently changed" meaningless."""
+        recorder = await _capture(
+            timezone_=LAGOS,
+            now=datetime(2026, 8, 24, 1, 30, tzinfo=UTC),
+            goals=[
+                _goal(
+                    progress=64.0, metric_kind="course_progress", course_id="c1", target_value=100.0
+                )
+            ],
+            measured_value=64.0,
+        )
+
+        assert recorder.write_backs == []
 
     async def test_no_goals_writes_nothing(self):
         recorder = await _capture(

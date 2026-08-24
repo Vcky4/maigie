@@ -439,6 +439,16 @@ async def process_due_reviews() -> dict[str, int]:
     unlinked first, which frees the unique slot for the new block.
 
     Returns counts so an empty run is distinguishable from a broken one.
+
+    **Superseded, and deliberately not on a beat schedule.** `agenda_service` now surfaces due reviews by
+    reading them, so a learner sees them on their day without any block being written — and it skips items
+    that already hold a block, so running this sweep does not double them up. Materialising was the older
+    design and it carries the cost this docstring already describes: a second record of one commitment,
+    which has to be unlinked and rewritten whenever a due date moves. Scheduling this would put that
+    maintenance back for no gain a reader would notice.
+
+    It stays because the Celery task is registered and a caller may want a one-off sweep — for instance to
+    push reviews into a connected Google Calendar, which only blocks reach.
     """
     now = datetime.now(UTC)
     end_of_tomorrow = (now + timedelta(days=2)).replace(hour=0, minute=0, second=0, microsecond=0)

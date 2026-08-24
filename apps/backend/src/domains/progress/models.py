@@ -403,6 +403,37 @@ class GoalListResponse(BaseModel):
     hasMore: bool
 
 
+class DerivableGoalResponse(BaseModel):
+    """A goal the learner's stated intent implies, before anything is written.
+
+    Returned by the preview endpoint so a client can ask before creating. `basis` is a TOKEN
+    (`course` | `preparation`) naming what the goal was read from; the client writes the sentence.
+    """
+
+    title: str
+    description: str
+    metricKind: str
+    unit: str
+    basis: str
+    courseId: str | None = None
+    prepId: str | None = None
+    #: Absent when the learner never stated one. Not guessed — see `goal_derivation_service`.
+    targetValue: float | None = None
+    targetDate: datetime | None = None
+
+
+class DerivableGoalsResponse(BaseModel):
+    """Empty `goals` means every piece of stated intent already has a goal, which is the ordinary
+    answer once derivation has run once."""
+
+    goals: list[DerivableGoalResponse] = []
+
+
+class DerivedGoalsResponse(BaseModel):
+    goals: list[GoalResponse] = []
+    created: int = 0
+
+
 class GoalRegeneratePlanRequest(BaseModel):
     duration_weeks: int = Field(default=4, ge=1, le=16)
     request: str | None = Field(default=None, max_length=500)
@@ -482,6 +513,79 @@ class StudyBlockListResponse(BaseModel):
     page: int
     pageSize: int
     hasMore: bool
+
+
+class AgendaAcceptRequest(BaseModel):
+    """Accept a suggested placement, turning it into a scheduled block.
+
+    `entryId` is the agenda entry's own namespaced id (`plan_item:…`, `review:…`), which is what tells the
+    server what the block should be linked to. `startAt` and `minutes` are sent rather than assumed, so a
+    learner who nudged the suggestion to a different hour gets the hour they chose.
+    """
+
+    entryId: str
+    startAt: datetime
+    minutes: int = Field(ge=5, le=480)
+    #: Optional override. Defaults to the title the agenda proposed.
+    title: str | None = Field(default=None, max_length=200)
+
+
+class AgendaEntryResponse(BaseModel):
+    """One thing on the learner's day, from whichever store schedules it.
+
+    `startAt`/`endAt` are always present so a client can lay a day out, but they only *mean* a clock
+    reading when `timed` is true:
+
+    - `timed: true` — a schedule block or a live class. Someone put it at that hour.
+    - `timed: false` with `placement: preferred_window | default_window` — day-scoped work that this
+      response is *suggesting* a time for, around what is already fixed. Nothing is stored; accepting the
+      suggestion is a separate call, and until then the learner owes it nothing.
+    - `timed: false` with `placement: no_room` — the day had no gap long enough. The work stays on its day
+      with no suggested clock, rather than being crammed into a slot it does not fit.
+
+    `placement` and `window` are **tokens, not copy**. The service decides where the work goes and why; the
+    client writes the sentence — the same split the goals greeting and the growth driver impacts use.
+    """
+
+    id: str
+    #: `schedule` | `study_plan` | `review` | `space_session`.
+    source: str
+    title: str
+    detail: str | None = None
+    startAt: str
+    endAt: str
+    minutes: int
+    timed: bool
+    #: `fixed` | `preferred_window` | `default_window` | `no_room`.
+    placement: str
+    #: `morning` | `afternoon` | `evening` | `night`, for a placed entry. `None` otherwise.
+    window: str | None = None
+    completed: bool = False
+    #: How many underlying items this entry stands for — cards in a review batch. `None` when it is one.
+    count: int | None = None
+    #: Whatever the source knows the work is attached to, so a client can route from the row. Keys vary by
+    #: `source`, which is why this is a free mapping rather than a fixed set of nullable columns.
+    links: dict = {}
+
+
+class AgendaResponse(BaseModel):
+    """The learner's agenda across a window, and what the placements were based on.
+
+    `placementBasis` is published because it changes what a client may claim. `learner` means the windows
+    came from this learner's own recorded study times; `default` means nothing is known yet and the work
+    was placed in neutral daytime hours — so the page can offer to learn rather than implying it already
+    has.
+    """
+
+    from_: str = Field(alias="from")
+    to: str
+    entries: list[AgendaEntryResponse]
+    #: `learner` | `default`.
+    placementBasis: str = "default"
+    #: Counts by source, so a client can caption the day without re-deriving them from the list.
+    totals: dict = {}
+
+    model_config = {"populate_by_name": True}
 
 
 class CalendarStatusResponse(BaseModel):

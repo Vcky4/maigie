@@ -448,6 +448,49 @@ async def derive_current_values(
     return results
 
 
+def derived_progress(goal: Any, measurement: GoalMeasurement | None = None) -> float:
+    """How far this goal has come, as a percent, from what actually measures it.
+
+    **The one definition.** `Goal.progress` is a stored column that nothing writes: `update_progress`
+    exists and has no callers anywhere in `src`, so before this a measured goal's `currentValue`
+    moved while its `progress` sat at its default. Everything shaped by progress — the ring, the pace
+    figure, `statusLabel`, `projectedOutcome`, at-risk and overdue counts, the portfolio average and
+    every nightly snapshot — read the column, so all of them reported a goal that never moved. The
+    first four derived goals in the database measure `currentValue=4.0` against `progress=0.0`.
+
+    The rules, and what each refuses to invent:
+
+    - A `manual` goal's progress is the learner's own figure, returned untouched. Nothing measures it,
+      and overwriting it would discard what they typed.
+    - An unmeasured goal keeps its stored value. A `course_progress` goal with no `courseId` has
+      nothing to read, and reporting `0` would claim no progress where the truth is no measurement.
+    - Progress is measured **against the learner's stated target**, so a preparation aiming at 85
+      percent readiness is finished at 85, not at 100. That is what makes `statusLabel` turn
+      `COMPLETED` when the learner said they were done rather than when the scale runs out.
+    - When a *state* kind has no stated target, the target is 100 — the maximum of the scale the value
+      is already expressed in, not a guess about the learner. `course_progress` and `prep_readiness`
+      are both percentages. An *accumulating* kind gets no such default: minutes and cards have no
+      natural maximum, so without a target there is no fraction to compute and the stored value
+      stands.
+    - Clamped to 0-100, matching `GoalResponse.progress` (`ge=0.0, le=100.0`), and rounded to one
+      decimal like `pace_percent`.
+    """
+    stored = float(getattr(goal, "progress", 0.0) or 0.0)
+    kind = getattr(goal, "metric_kind", None) or "manual"
+
+    if kind == "manual" or measurement is None or measurement.current_value is None:
+        return stored
+
+    target = getattr(goal, "target_value", None)
+    if target is None and kind in _STATE_KINDS:
+        target = 100.0
+    if target is None or float(target) <= 0:
+        return stored
+
+    fraction = float(measurement.current_value) / float(target) * 100.0
+    return round(min(max(fraction, 0.0), 100.0), 1)
+
+
 async def count_achieved_milestones(goal_ids: list[str]) -> dict[str, tuple[int, int]]:
     """`{goalId: (achieved, total)}` for a set of goals, in one query."""
     if not goal_ids:
@@ -494,21 +537,25 @@ async def get_goal_portfolio(*, user_id: str, now: datetime | None = None) -> Go
 
     factory = get_session_factory()
     async with factory() as session:
-        rows = (
-            await session.execute(
-                select(
-                    Goal.status, Goal.progress, Goal.created_at, Goal.target_date
-                ).where(Goal.user_id == user_id)
-            )
-        ).all()
+        goals = list(
+            (await session.execute(select(Goal).where(Goal.user_id == user_id))).scalars().all()
+        )
+
+    # Whole rows and a measurement pass, where this used to select four columns and average the
+    # stored `progress`. It has to: that column is never written, so the average was the average of a
+    # number that never moved, and a learner whose course went from 0 to 60 percent saw no change in
+    # the figure their goals section leads with. Still bounded — `derive_current_values` issues one
+    # query per metric kind present, not one per goal.
+    measurements = await derive_current_values(goals, now=moment) if goals else {}
 
     active = completed = at_risk = due_soon = overdue = 0
     progress_values: list[float] = []
 
-    for status, progress, created_at, target_date in rows:
+    for goal in goals:
+        status, created_at, target_date = goal.status, goal.created_at, goal.target_date
         if status in ("ARCHIVED", "CANCELLED"):
             continue
-        value = float(progress or 0.0)
+        value = derived_progress(goal, measurements.get(goal.id))
         progress_values.append(value)
 
         if status == "COMPLETED":

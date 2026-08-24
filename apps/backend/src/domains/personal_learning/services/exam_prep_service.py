@@ -58,6 +58,13 @@ async def create_preparation(*, user_id: str, data: dict[str, Any]) -> Any:
         context={"source": "personal", "prepId": prep.id, "type": prep_data["type"]},
     )
 
+    # A preparation is a stated commitment with a date on it, so it earns a goal that measures its
+    # own readiness. Quietly, because the preparation has already been created: failing this request
+    # over the goal beside it would throw away work the learner just did.
+    from src.domains.progress.services import goal_derivation_service
+
+    await goal_derivation_service.derive_goals_quietly(user_id, prep_id=prep.id)
+
     return prep
 
 

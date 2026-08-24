@@ -324,6 +324,19 @@ async def create_course(*, user: User, data: dict[str, Any]) -> Any:
 
     course = await knowledge_repo.create_course(create_data)
     await emit_course_created(user.id, course.id, is_ai_generated=create_data["isAIGenerated"])
+
+    # Enrolling in a course states what the learner is working towards, so it earns a goal that
+    # measures the course's own progress. Idempotent, and it never touches a course that already has
+    # a goal.
+    #
+    # Called directly rather than hung off `course.created`. The event bus dispatches to whichever
+    # handler modules happen to have been imported, and after importing the app that set is empty —
+    # every `@listen` handler in this codebase is currently unreachable. A goal that silently never
+    # appears because a module was not imported is the same defect as a schedule block writer nobody
+    # ever called.
+    from src.domains.progress.services import goal_derivation_service
+
+    await goal_derivation_service.derive_goals_quietly(user.id, course_id=course.id)
     return course
 
 

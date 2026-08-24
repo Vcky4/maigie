@@ -22,6 +22,7 @@ from src.domains.identity.repository import IdentityRepository
 from src.domains.intelligence.action.action_service import action_service
 from src.domains.knowledge.repository import knowledge_repo
 from src.domains.progress.repository import progress_repo
+from src.shared.time import ensure_utc
 
 logger = logging.getLogger(__name__)
 
@@ -512,10 +513,20 @@ async def check_plan_progress(user_id: str, course_id: str | None = None) -> dic
             where["courseId"] = course_id
         goals, _ = await progress_repo.list_goals(user_id, where=where, skip=0, take=10)
 
+        # Measured, because `Goal.progress` is a column nothing writes. Without this the advice below
+        # tells a learner to add study sessions to a goal their course says is nearly finished. One
+        # batched call, one query per metric kind present.
+        from src.domains.progress.services import goal_metrics
+
+        measurements = await goal_metrics.derive_current_values(goals, now=now)
+
         for goal in goals:
             if goal.target_date:
-                days_left = (goal.target_date - now).days
-                progress = goal.progress or 0
+                # `Goal.targetDate` is `timestamp without time zone` while the model declares
+                # `DateTime(timezone=True)`, so the value arrives naive and subtracting it from an
+                # aware `now` raises `TypeError`. Sixth defect of this class.
+                days_left = (ensure_utc(goal.target_date) - now).days
+                progress = goal_metrics.derived_progress(goal, measurements.get(goal.id))
 
                 if days_left <= 7 and progress < 50:
                     results["overall"] = "behind"

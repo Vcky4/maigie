@@ -179,6 +179,12 @@ async def handle_get_user_goals(
         user_id, where=where, skip=0, take=int(limit), order={"createdAt": "desc"}
     )
 
+    # Measured rather than read off the row: `Goal.progress` is a column nothing writes, so the
+    # assistant would quote a figure that never moves while the learner's course advanced.
+    from src.domains.progress.services import goal_metrics
+
+    measurements = await goal_metrics.derive_current_values(goals)
+
     goals_data = []
     for goal in goals:
         goals_data.append(
@@ -188,7 +194,7 @@ async def handle_get_user_goals(
                 "title": goal.title,
                 "description": goal.description or "",
                 "targetDate": goal.target_date.isoformat() if goal.target_date else None,
-                "progress": goal.progress or 0,
+                "progress": goal_metrics.derived_progress(goal, measurements.get(goal.id)),
                 "status": goal.status,
                 "courseId": goal.course_id,
                 "topicId": goal.topic_id,
@@ -900,10 +906,15 @@ async def handle_get_my_profile(
         goals, _ = await progress_repo.list_goals(
             user_id, where={"status": "ACTIVE"}, skip=0, take=10
         )
+        # Same reason as `list_goals` above: the profile handed to the model must not carry a figure
+        # the goals screen no longer shows.
+        from src.domains.progress.services import goal_metrics
+
+        goal_measurements = await goal_metrics.derive_current_values(goals)
         profile["activeGoals"] = [
             {
                 "title": g.title,
-                "progress": g.progress or 0,
+                "progress": goal_metrics.derived_progress(g, goal_measurements.get(g.id)),
                 "targetDate": g.target_date.isoformat() if g.target_date else None,
             }
             for g in goals

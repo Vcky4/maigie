@@ -370,11 +370,33 @@ class DueReviewResponse(BaseModel):
 
 
 class ScheduleBlockResponse(BaseModel):
+    """One thing on the learner's day, from either of the two places days are planned.
+
+    **These used to be study-plan items only, published under a name that means something else.** The
+    home surface printed them as "Today's schedule" beside a link to the schedule page — which reads
+    `ScheduleBlock` — so a learner with plan items due today and no blocks this week saw four sessions on
+    one screen and "nothing scheduled" on the other. Both were correct about their own table.
+
+    `source` says which, and `timed` says whether the clock is real:
+
+    - A `ScheduleBlock` was placed at an hour, so it is `timed` and its `startAt` means what it says.
+    - A `StudyPlanItem` is scheduled for a **day**. Its `scheduledDate` carries whatever time the plan
+      happened to be generated at — live, this learner's items cluster at `01:06`, `12:10`, `12:11` and
+      `23:26`, which are generation timestamps, not chosen study times. Rendering one as "00:26" invents
+      an appointment. They arrive `timed: false` so a client shows the day and not a clock reading.
+    """
+
     id: str
     title: str
     startAt: datetime
     endAt: datetime
     type: str
+    #: `schedule` | `study_plan` | `review` | `space_session`.
+    source: str = "schedule"
+    #: `False` when the item is scheduled for a day and the clock is a placement, not a commitment.
+    timed: bool = True
+    #: `fixed` | `preferred_window` | `default_window` | `no_room` — see `AgendaEntryResponse`.
+    placement: str = "fixed"
     actionData: dict | None = None
 
 

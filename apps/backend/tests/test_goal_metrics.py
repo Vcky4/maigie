@@ -297,17 +297,55 @@ class TestDerivedCurrentValue:
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
 
-async def _portfolio_from_rows(rows) -> goal_metrics.GoalPortfolio:
+def _portfolio_goal(status, progress, created_at, target_date, **overrides):
+    """A goal row as the portfolio now reads it: the whole row, not four columns.
+
+    `manual` by default, so `derived_progress` returns the stored figure and the counting rules these
+    tests are about are unaffected by the measurement layer.
+    """
+    from types import SimpleNamespace
+
+    fields = {
+        "id": overrides.pop("id", f"goal-{progress}-{status}"),
+        "user_id": "u",
+        "status": status,
+        "progress": progress,
+        "created_at": created_at,
+        "target_date": target_date,
+        "metric_kind": "manual",
+        "target_value": None,
+        "current_value": None,
+        "course_id": None,
+        "topic_id": None,
+        "prep_id": None,
+    }
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
+async def _portfolio_from_rows(rows, *, measurements=None) -> goal_metrics.GoalPortfolio:
     """Run `get_goal_portfolio`'s folding over given `(status, progress, createdAt, targetDate)` rows.
 
     The query needs Postgres; the counting rules are what these tests are about, so the rows are
     supplied and only the arithmetic runs. Same device as `test_daily_snapshots._mastery_from_rows`.
+
+    Tuples are accepted for the rules that predate measured progress; pass `_portfolio_goal(...)`
+    objects to exercise a goal whose progress is measured rather than stored.
     """
     from unittest.mock import patch
 
+    goals = [row if not isinstance(row, tuple) else _portfolio_goal(*row) for row in rows]
+
+    class _Scalars:
+        def all(self):
+            return goals
+
     class _Result:
         def all(self):
-            return rows
+            return goals
+
+        def scalars(self):
+            return _Scalars()
 
     class _Session:
         async def execute(self, *_args, **_kwargs):
@@ -319,7 +357,13 @@ async def _portfolio_from_rows(rows) -> goal_metrics.GoalPortfolio:
         async def __aexit__(self, *_exc):
             return False
 
+    async def _measure(_goals, *, now=None):
+        return measurements or {}
+
     with patch.object(goal_metrics, "get_session_factory", lambda: _Session):
+        if measurements is not None:
+            with patch.object(goal_metrics, "derive_current_values", _measure):
+                return await goal_metrics.get_goal_portfolio(user_id="u", now=NOW)
         return await goal_metrics.get_goal_portfolio(user_id="u", now=NOW)
 
 
@@ -428,6 +472,144 @@ class TestGoalPortfolio:
         assert portfolio.overdue == 1
         # The overdue one and the behind-pace one are both at risk; the 90% one is not.
         assert portfolio.at_risk == 2
+
+
+class TestTheAverageIsMeasuredNotStored:
+    """`Goal.progress` is a column nothing writes — `update_progress` has no callers anywhere in
+    `src`. The portfolio average used to be the average of that column, so a learner whose course went
+    from 0 to 60 percent saw the figure their goals section leads with stay exactly where it was."""
+
+    async def test_a_measured_goal_contributes_its_measured_progress(self):
+        created = NOW - timedelta(days=10)
+        goal = _portfolio_goal(
+            "ACTIVE",
+            0.0,  # the stored column, never written
+            created,
+            None,
+            id="g1",
+            metric_kind="course_progress",
+            course_id="c1",
+            target_value=100.0,
+        )
+        portfolio = await _portfolio_from_rows(
+            [goal],
+            measurements={"g1": goal_metrics.GoalMeasurement(current_value=60.0, measured=True)},
+        )
+
+        assert portfolio.average_progress == 60.0
+
+    async def test_a_measured_goal_at_its_target_counts_as_complete_for_deadline_pressure(self):
+        """`is_due_soon` and `is_overdue` both exclude a goal at 100. Reading the stale column would
+        chase a learner about a deadline for work they have already finished."""
+        created = NOW - timedelta(days=30)
+        goal = _portfolio_goal(
+            "ACTIVE",
+            0.0,
+            created,
+            NOW + timedelta(days=2),
+            id="g1",
+            metric_kind="prep_readiness",
+            prep_id="p1",
+            target_value=85.0,
+        )
+        portfolio = await _portfolio_from_rows(
+            [goal],
+            measurements={"g1": goal_metrics.GoalMeasurement(current_value=85.0, measured=True)},
+        )
+
+        assert portfolio.average_progress == 100.0
+        assert portfolio.due_soon == 0
+        assert portfolio.at_risk == 0
+
+    async def test_an_unmeasured_goal_keeps_its_stored_figure(self):
+        created = NOW - timedelta(days=10)
+        goal = _portfolio_goal(
+            "ACTIVE", 40.0, created, None, id="g1", metric_kind="course_progress", course_id=None
+        )
+        portfolio = await _portfolio_from_rows(
+            [goal],
+            measurements={"g1": goal_metrics.GoalMeasurement(current_value=None, measured=False)},
+        )
+
+        assert portfolio.average_progress == 40.0
+
+
+class TestDerivedProgress:
+    """One definition, used by the route, the portfolio and the nightly snapshot."""
+
+    def _goal(self, **overrides):
+        return _portfolio_goal(
+            "ACTIVE", overrides.pop("progress", 0.0), NOW, None, **overrides
+        )
+
+    def test_a_manual_goal_keeps_the_learners_own_figure(self):
+        goal = self._goal(progress=35.0, metric_kind="manual")
+        measurement = goal_metrics.GoalMeasurement(current_value=99.0, measured=False)
+
+        assert goal_metrics.derived_progress(goal, measurement) == 35.0
+
+    def test_a_state_kind_with_no_stated_target_uses_the_scale_maximum(self):
+        """`course_progress` is already a percentage, so 100 is the scale's maximum rather than a
+        guess about what the learner wants."""
+        goal = self._goal(metric_kind="course_progress", course_id="c1", target_value=None)
+        measurement = goal_metrics.GoalMeasurement(current_value=42.0, measured=True)
+
+        assert goal_metrics.derived_progress(goal, measurement) == 42.0
+
+    def test_progress_is_measured_against_the_stated_target(self):
+        """A preparation aiming at 85 percent readiness is finished at 85."""
+        goal = self._goal(metric_kind="prep_readiness", prep_id="p1", target_value=85.0)
+        measurement = goal_metrics.GoalMeasurement(current_value=85.0, measured=True)
+
+        assert goal_metrics.derived_progress(goal, measurement) == 100.0
+
+    def test_an_accumulating_kind_with_no_target_keeps_the_stored_value(self):
+        """Minutes have no natural maximum, so there is no fraction to compute and nothing is
+        invented."""
+        goal = self._goal(progress=12.0, metric_kind="focused_minutes", target_value=None)
+        measurement = goal_metrics.GoalMeasurement(current_value=600.0, measured=True)
+
+        assert goal_metrics.derived_progress(goal, measurement) == 12.0
+
+    def test_an_accumulating_kind_with_a_target_is_a_share_of_it(self):
+        goal = self._goal(metric_kind="focused_minutes", target_value=600.0)
+        measurement = goal_metrics.GoalMeasurement(current_value=150.0, measured=True)
+
+        assert goal_metrics.derived_progress(goal, measurement) == 25.0
+
+    def test_it_never_exceeds_one_hundred(self):
+        """`GoalResponse.progress` is `le=100.0`, so an over-delivered goal would be a 500."""
+        goal = self._goal(metric_kind="focused_minutes", target_value=100.0)
+        measurement = goal_metrics.GoalMeasurement(current_value=450.0, measured=True)
+
+        assert goal_metrics.derived_progress(goal, measurement) == 100.0
+
+    def test_a_negative_measurement_floors_at_zero(self):
+        goal = self._goal(metric_kind="focused_minutes", target_value=100.0)
+        measurement = goal_metrics.GoalMeasurement(current_value=-5.0, measured=True)
+
+        assert goal_metrics.derived_progress(goal, measurement) == 0.0
+
+    def test_a_zero_target_does_not_divide_by_zero(self):
+        goal = self._goal(progress=7.0, metric_kind="focused_minutes", target_value=0.0)
+        measurement = goal_metrics.GoalMeasurement(current_value=10.0, measured=True)
+
+        assert goal_metrics.derived_progress(goal, measurement) == 7.0
+
+    def test_no_measurement_at_all_keeps_the_stored_value(self):
+        goal = self._goal(progress=18.0, metric_kind="course_progress", course_id="c1")
+
+        assert goal_metrics.derived_progress(goal, None) == 18.0
+
+    def test_the_result_stays_inside_the_response_bounds(self):
+        """Pins the contract the field declares, rather than the arithmetic that happens to satisfy
+        it today."""
+        goal = self._goal(metric_kind="course_progress", course_id="c1")
+        for value in (-100.0, 0.0, 33.3, 100.0, 1000.0):
+            result = goal_metrics.derived_progress(
+                goal, goal_metrics.GoalMeasurement(current_value=value, measured=True)
+            )
+            assert 0.0 <= result <= 100.0
 
 
 class TestPortfolioHasOneHome:

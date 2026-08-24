@@ -321,47 +321,52 @@ def _build_due_reviews(due_flashcards: list) -> list[dict[str, Any]]:
 
 
 async def _get_schedule_blocks(user_id: str) -> list[dict[str, Any]]:
-    """
-    Get today's schedule blocks from study plans.
+    """Everything on the learner's day, delegated to the agenda.
 
     Req 1.5: Upcoming schedule blocks for the current day.
+
+    **This used to be its own reader over study-plan items**, which made the home surface and the schedule
+    page contradict each other: a learner with four plan items due today and no `ScheduleBlock` rows saw
+    four sessions here and "Nothing scheduled" there, with a link between the two screens. Each was right
+    about its own table.
+
+    It now calls `agenda_service`, so both surfaces read the same four sources through the same rules —
+    including the placement of day-scoped work, which is why a plan item arrives with a sensible hour
+    instead of the timestamp its plan happened to be generated at. Home renders one day of what the
+    schedule page renders a week of; neither owns a second definition of the day.
     """
-    today = datetime.now(UTC).date()
-    plans = await repo.list_active_plans(user_id)
+    from src.domains.progress.services import agenda_service
+    from src.shared.time import resolve_learner_timezone, to_learner_local
 
-    blocks = []
-    for plan in plans:
-        if plan.items:
-            for item in plan.items:
-                if (
-                    item.status == "PENDING"
-                    and hasattr(item, "scheduled_date")
-                    and item.scheduled_date
-                    and item.scheduled_date.date() == today
-                ):
-                    estimated_minutes = getattr(item, "estimated_minutes", 30) or 30
-                    item_type = getattr(item, "item_type", "STUDY") or "STUDY"
-                    blocks.append(
-                        {
-                            "id": item.id,
-                            "title": item.title,
-                            "startAt": item.scheduled_date.isoformat(),
-                            "endAt": (
-                                item.scheduled_date + timedelta(minutes=estimated_minutes)
-                            ).isoformat(),
-                            "type": item_type,
-                            "actionData": {
-                                "planId": plan.id,
-                                "itemId": item.id,
-                                "topicId": getattr(item, "topic_id", None),
-                                "courseId": getattr(item, "course_id", None)
-                                or getattr(plan, "course_id", None),
-                                "type": item_type.lower(),
-                            },
-                        }
-                    )
+    try:
+        timezone_ = await resolve_learner_timezone(user_id)
+        now_local = to_learner_local(datetime.now(UTC), timezone_)
+        day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
 
-    return blocks
+        entries = await agenda_service.get_agenda(
+            user_id=user_id,
+            since=day_start.astimezone(UTC),
+            until=day_end.astimezone(UTC),
+        )
+    except Exception:  # pragma: no cover - the day is one panel, not the whole response
+        logger.warning("home: agenda unavailable", exc_info=True)
+        return []
+
+    return [
+        {
+            "id": entry.id,
+            "title": entry.title,
+            "startAt": entry.start_at.isoformat(),
+            "endAt": entry.end_at.isoformat(),
+            "type": entry.source,
+            "source": entry.source,
+            "timed": entry.timed,
+            "placement": entry.placement,
+            "actionData": {**entry.links, "minutes": entry.minutes},
+        }
+        for entry in entries
+    ]
 
 
 def _build_recommendations(recommendations: list, is_onboarding: bool) -> list[dict[str, Any]]:

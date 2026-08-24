@@ -349,6 +349,33 @@ class LearningSpaceRepository:
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
+    async def list_sessions_for_member(
+        self, user_id: str, *, since: datetime, until: datetime
+    ) -> list[SpaceSession]:
+        """Scheduled sessions in every space this learner belongs to, within a window.
+
+        The existing readers are per space, which is the wrong shape for an agenda: a learner's day is not
+        organised by which space a class belongs to. This joins through `SpaceMember` so one read covers
+        all of them.
+
+        Only `SCHEDULED` and `ACTIVE` sessions. A cancelled class is not a commitment, and putting it on
+        the learner's day would have them turn up to nothing.
+        """
+        async with await self._session() as session:
+            stmt = (
+                select(SpaceSession)
+                .join(SpaceMember, SpaceMember.space_id == SpaceSession.space_id)
+                .where(
+                    SpaceMember.user_id == user_id,
+                    SpaceSession.status.in_(["SCHEDULED", "ACTIVE"]),
+                    SpaceSession.scheduled_at >= since,
+                    SpaceSession.scheduled_at <= until,
+                )
+                .order_by(SpaceSession.scheduled_at.asc())
+            )
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
     async def update_session(self, session_id: str, data: dict[str, Any]) -> None:
         async with await self._session() as session:
             mapped = self._map_space_session(data)

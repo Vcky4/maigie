@@ -1341,6 +1341,18 @@ class StudyPlanItem(Base, TimestampMixin):
     completed_at: Mapped[datetime | None] = mapped_column(
         "completedAt", DateTime(timezone=True), nullable=True
     )
+    # The block written when the learner accepted a suggested time for this item (migration 048).
+    #
+    # A plan item is scheduled for a *day*; the agenda proposes an hour inside it, and accepting the
+    # proposal writes a real `ScheduleBlock`. Without this link the item stays `PENDING` — scheduled is
+    # not done — and the next agenda read offers to schedule it again, so one commitment appears twice.
+    # `ReviewItem.scheduleBlockId` is the same link for the same reason.
+    #
+    # `ON DELETE SET NULL`, and the agenda verifies the block still exists, so deleting the block puts
+    # the item back on the agenda rather than stranding it.
+    schedule_block_id: Mapped[str | None] = mapped_column(
+        "scheduleBlockId", String, nullable=True, index=True
+    )
 
     # Relationships
     plan: Mapped["StudyPlan"] = relationship("StudyPlan", back_populates="items")
