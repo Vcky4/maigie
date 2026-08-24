@@ -653,6 +653,112 @@ class TestAnAcceptedPlanItemIsNotSuggestedTwice:
             ) is None
 
 
+class TestAnAcceptedBlockKeepsItsOrigin:
+    """A suggestion the learner confirms must not become less navigable than it was.
+
+    `ScheduleBlock` has columns for a course, a topic, a goal and a review, and none for a study plan.
+    `accept_placement` copies the item's `topicId` across — but most generated plan items carry no topic, so
+    those blocks held nothing but their own id and a client had no destination for them. Three of one live
+    learner's fifteen agenda entries were in that state, every one of them work they had chosen to
+    schedule: clicking it did nothing. Migration 048's `StudyPlanItem.scheduleBlockId` is the way back.
+    """
+
+    async def test_a_block_recovers_the_plan_it_was_accepted_from(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from src.domains.progress.repository import progress_repo
+
+        block = SimpleNamespace(
+            id="block-1",
+            title="Read chapter 3",
+            description=None,
+            start_at=datetime.now(UTC) + timedelta(hours=2),
+            end_at=datetime.now(UTC) + timedelta(hours=2, minutes=30),
+            completed_at=None,
+            course_id=None,
+            topic_id=None,
+            goal_id=None,
+            review_item_id=None,
+        )
+
+        async def _blocks(_user_id, *, where, skip, take):
+            return [block], 1
+
+        async def _links(block_ids):
+            assert block_ids == ["block-1"]
+            return {
+                "block-1": {
+                    "planId": "plan-1",
+                    "planItemId": "item-1",
+                    "topicId": None,
+                    "prepId": None,
+                }
+            }
+
+        with (
+            patch.object(progress_repo, "list_blocks", _blocks),
+            patch.object(agenda, "_plan_links_by_block", _links),
+        ):
+            entries = await agenda._read_blocks(
+                user_id="u1",
+                since=datetime.now(UTC),
+                until=datetime.now(UTC) + timedelta(days=7),
+            )
+
+        assert entries[0].links["planId"] == "plan-1"
+        assert entries[0].links["planItemId"] == "item-1"
+
+    async def test_the_blocks_own_columns_win_over_the_recovered_ones(self):
+        """The row is what it states about itself; the plan only fills gaps."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from src.domains.progress.repository import progress_repo
+
+        block = SimpleNamespace(
+            id="block-1",
+            title="Session",
+            description=None,
+            start_at=datetime.now(UTC),
+            end_at=datetime.now(UTC) + timedelta(minutes=30),
+            completed_at=None,
+            course_id="course-on-block",
+            topic_id="topic-on-block",
+            goal_id=None,
+            review_item_id=None,
+        )
+
+        async def _blocks(_user_id, *, where, skip, take):
+            return [block], 1
+
+        async def _links(_block_ids):
+            return {"block-1": {"planId": "plan-1", "planItemId": "i1", "topicId": "other", "prepId": None}}
+
+        with (
+            patch.object(progress_repo, "list_blocks", _blocks),
+            patch.object(agenda, "_plan_links_by_block", _links),
+        ):
+            entries = await agenda._read_blocks(
+                user_id="u1", since=datetime.now(UTC), until=datetime.now(UTC) + timedelta(days=1)
+            )
+
+        assert entries[0].links["topicId"] == "topic-on-block"
+        assert entries[0].links["courseId"] == "course-on-block"
+
+    async def test_no_blocks_means_no_lookup(self):
+        assert await agenda._plan_links_by_block([]) == {}
+
+    async def test_a_failed_lookup_costs_a_destination_not_the_row(self):
+        from unittest.mock import patch
+
+        def _boom():
+            raise RuntimeError("no database")
+
+        with patch("src.shared.database.get_session_factory", _boom):
+            assert await agenda._plan_links_by_block(["block-1"]) == {}
+
+
 class TestTheSweepIsNotScheduled:
     def test_process_due_reviews_records_why_it_is_not_on_a_beat_schedule(self):
         """It materialises reviews into blocks, which the agenda makes unnecessary. Wiring it would put a

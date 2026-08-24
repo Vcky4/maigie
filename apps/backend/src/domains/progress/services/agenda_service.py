@@ -402,10 +402,22 @@ async def _read_blocks(*, user_id: str, since: datetime, until: datetime) -> lis
     except Exception:
         return []
 
+    # What the plan items that were accepted into these blocks know, so an accepted suggestion stays as
+    # navigable as it was before the learner confirmed it.
+    #
+    # A `ScheduleBlock` has columns for a course, a topic, a goal and a review, and none for a study plan.
+    # `accept_placement` copies across the item's `topicId` — but most generated plan items carry no topic,
+    # so those blocks ended up holding nothing but their own id, and a client had no destination for them.
+    # Three of one live learner's fifteen agenda entries were in that state, all of them work they had
+    # chosen to schedule. Migration 048's `StudyPlanItem.scheduleBlockId` is the link back, so the plan is
+    # recoverable rather than lost at the moment of acceptance.
+    plan_links = await _plan_links_by_block([row.id for row in rows])
+
     entries = []
     for row in rows:
         start = ensure_utc(row.start_at)
         end = ensure_utc(row.end_at)
+        recovered = plan_links.get(row.id, {})
         entries.append(
             AgendaEntry(
                 id=f"block:{row.id}",
@@ -420,14 +432,69 @@ async def _read_blocks(*, user_id: str, since: datetime, until: datetime) -> lis
                 completed=row.completed_at is not None,
                 links={
                     "blockId": row.id,
+                    # The block's own columns win: they are what this row states about itself.
                     "courseId": row.course_id,
-                    "topicId": row.topic_id,
+                    "topicId": row.topic_id or recovered.get("topicId"),
                     "goalId": row.goal_id,
                     "reviewItemId": row.review_item_id,
+                    "planId": recovered.get("planId"),
+                    "planItemId": recovered.get("planItemId"),
+                    "prepId": recovered.get("prepId"),
                 },
             )
         )
     return entries
+
+
+async def _plan_links_by_block(block_ids: list[str]) -> dict[str, dict[str, str | None]]:
+    """`{blockId: {planId, planItemId, topicId, prepId}}` for blocks accepted from a study plan.
+
+    One query, and an empty answer for every block that did not come from one — which is most of them, so
+    this costs a lookup rather than a join on the common path.
+
+    `prepId` rather than a course: `StudyPlan` links a preparation and reaches courses through the
+    `StudyPlanCourse` join table, so there is no single course to name. A plan built for an exam gives the
+    preparation, which is a real destination; a plan built across courses gives the plan itself.
+    """
+    if not block_ids:
+        return {}
+
+    from sqlalchemy import select
+
+    from src.domains.personal_learning.db_models import StudyPlan, StudyPlanItem
+    from src.shared.database import get_session_factory
+
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        StudyPlanItem.schedule_block_id,
+                        StudyPlanItem.id,
+                        StudyPlanItem.plan_id,
+                        StudyPlanItem.topic_id,
+                        StudyPlan.prep_id,
+                    )
+                    .join(StudyPlan, StudyPlan.id == StudyPlanItem.plan_id)
+                    .where(StudyPlanItem.schedule_block_id.in_(block_ids))
+                )
+            ).all()
+    except Exception:
+        # A block with no recovered plan link is still a block. Losing this costs a destination, not a row.
+        logger.warning("Could not resolve plan links for schedule blocks")
+        return {}
+
+    return {
+        block_id: {
+            "planItemId": item_id,
+            "planId": plan_id,
+            "topicId": topic_id,
+            "prepId": prep_id,
+        }
+        for block_id, item_id, plan_id, topic_id, prep_id in rows
+        if block_id
+    }
 
 
 async def _read_space_sessions(
