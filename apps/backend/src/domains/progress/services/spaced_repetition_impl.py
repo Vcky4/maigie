@@ -361,7 +361,20 @@ async def ensure_review_item_for_completed_topic(user_id: str, topic_id: str) ->
     """
     If no ReviewItem exists for the topic, create one and create a schedule
     block so the review appears on the calendar.
-    Call this after marking a topic complete. Returns created ReviewItem or None.
+    Returns created ReviewItem or None.
+
+    **Still has no callers, and that is deliberate.** "Call this after marking a topic complete" is what
+    this docstring used to say, and nothing ever did — the intended caller was an event listener, and no
+    listener was ever registered. `progress.listeners.schedule_first_review` is that listener now, and it
+    calls `create_review_item_for_topic` instead, because the schedule block this function also writes is
+    superseded: `agenda_service` composes due reviews on read, so a block is a second record of one
+    commitment that has to be found and rewritten every time SM-2 moves the due date. Same reasoning as
+    `process_due_reviews`.
+
+    Kept rather than deleted because a block is still the only way a review reaches a connected Google
+    Calendar, so a caller may want the pair. If you wire this, know that the agenda will show the review
+    through the block and `_read_topic_reviews` will skip the item, which is the intended handover — not
+    a duplicate.
     """
     review = await create_review_item_for_topic(user_id, topic_id)
     if review:

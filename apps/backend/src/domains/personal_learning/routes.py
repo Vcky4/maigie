@@ -14,6 +14,7 @@ from typing import Literal
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 
 from src.shared.auth import CurrentUser, OptionalCurrentUser
+from src.shared.exceptions import NotFoundError
 
 from . import models
 from .services import (
@@ -194,10 +195,38 @@ async def set_llm_provider(body: models.LlmProviderSetRequest, current_user: Cur
 
 @router.post("/courses/{course_id}/topics/{topic_id}/complete", status_code=200)
 async def complete_topic(course_id: str, topic_id: str, current_user: CurrentUser):
-    """Mark a topic as completed. Emits topic.completed event."""
-    from .events import emit_topic_completed
+    """Mark a topic as completed.
 
-    await emit_topic_completed(current_user.id, topic_id, course_id)
+    **This used to mark nothing.** The whole body was an `emit` and a `return`: it announced
+    `personal_learning.topic_completed`, a name nothing listens for, and replied `200 {"message": "Topic
+    completed"}`. The topic kept `completed = false`, `completedAt` stayed null, and
+    `Course.progress` was never recounted — so a learner who finished a topic here was told it worked and
+    nothing about their course moved. Accept-and-discard, reporting success.
+
+    Topic completion is owned by `knowledge.course_service.toggle_topic_completion`, which the PATCH
+    route in the knowledge domain already uses. Delegating means one definition of what completing a
+    topic *does*: set `completed` and `completedAt`, recount the course, and emit `topic.completed` —
+    the event two listeners now act on (a review schedule and a flashcard suggestion). The previous
+    emit is gone rather than kept alongside: `personal_learning.topic_completed` has no listeners, and
+    firing both names would invite one to be handled and the other forgotten.
+
+    `moduleId` is not in the path, so it is read from the topic. `toggle_topic_completion` verifies it
+    against the course anyway, and ownership is checked there against `current_user`.
+    """
+    from src.domains.knowledge.repository import knowledge_repo
+    from src.domains.knowledge.services.course_service import toggle_topic_completion
+
+    topic = await knowledge_repo.find_topic(topic_id)
+    if topic is None:
+        raise NotFoundError("Topic", topic_id)
+
+    await toggle_topic_completion(
+        topic_id=topic_id,
+        module_id=topic.module_id,
+        course_id=course_id,
+        user_id=current_user.id,
+        completed=True,
+    )
     return {"message": "Topic completed"}
 
 

@@ -22317,7 +22317,7 @@
     },
     "/api/v1/learning/courses/{course_id}/topics/{topic_id}/complete": {
       "post": {
-        "description": "Mark a topic as completed. Emits topic.completed event.",
+        "description": "Mark a topic as completed.\n\n**This used to mark nothing.** The whole body was an `emit` and a `return`: it announced\n`personal_learning.topic_completed`, a name nothing listens for, and replied `200 {\"message\": \"Topic\ncompleted\"}`. The topic kept `completed = false`, `completedAt` stayed null, and\n`Course.progress` was never recounted — so a learner who finished a topic here was told it worked and\nnothing about their course moved. Accept-and-discard, reporting success.\n\nTopic completion is owned by `knowledge.course_service.toggle_topic_completion`, which the PATCH\nroute in the knowledge domain already uses. Delegating means one definition of what completing a\ntopic *does*: set `completed` and `completedAt`, recount the course, and emit `topic.completed` —\nthe event two listeners now act on (a review schedule and a flashcard suggestion). The previous\nemit is gone rather than kept alongside: `personal_learning.topic_completed` has no listeners, and\nfiring both names would invite one to be handled and the other forgotten.\n\n`moduleId` is not in the path, so it is read from the topic. `toggle_topic_completion` verifies it\nagainst the course anyway, and ownership is checked there against `current_user`.",
         "operationId": "complete_topic_api_v1_learning_courses__course_id__topics__topic_id__complete_post",
         "parameters": [
           {

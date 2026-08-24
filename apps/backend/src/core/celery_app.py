@@ -166,6 +166,19 @@ except Exception as e:
     print(f"[celery_app] Failed to load progress beat schedule: {e}")
 
 
+# Domain event handlers. Same reason as the task imports above: `@listen` registers on import, so a
+# worker that never imported a handler module dispatches nothing. A worker emitting an event the web
+# process handles — or the reverse — is exactly how this stayed invisible, because each process had its
+# own accidental answer depending on which modules its code path happened to touch.
+try:
+    from src.shared.events.registry import register_handlers as _register_event_handlers
+
+    _register_event_handlers()
+except Exception as e:
+    logger.exception("Failed to register domain event handlers: %s", e)
+    print(f"[celery_app] Failed to register domain event handlers: {e}")
+
+
 def get_celery_app() -> Celery:
     """Get Celery application instance for dependency injection.
 

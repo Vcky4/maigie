@@ -65,6 +65,15 @@ async def lifespan(app: FastAPI):
     await cache.connect()
     logger.info("Cache connected")
 
+    # --- Domain event handlers ---
+    #
+    # `@listen` registers on import, so a handler exists only if something imported its module. Nothing
+    # did: before this line, `_handlers` was empty in every process that had merely imported the app,
+    # and all ten handlers were unreachable. See `shared/events/registry`.
+    from src.shared.events.registry import register_handlers
+
+    logger.info("Domain event handlers registered: %d", register_handlers())
+
     yield  # Application runs
 
     # --- Shutdown ---

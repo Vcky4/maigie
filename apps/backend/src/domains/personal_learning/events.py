@@ -202,9 +202,18 @@ async def handle_classroom_discussion(data: dict) -> None:
     logger.debug(f"Classroom discussion created: {data}")
 
 
-@listen("knowledge.topic_completed")
+@listen("topic.completed")
 async def handle_knowledge_topic_completed(data: dict) -> None:
-    """Create flashcard suggestions when a topic is completed."""
+    """Create flashcard suggestions when a topic is completed.
+
+    **The name was `knowledge.topic_completed`, which nothing has ever emitted.** The knowledge domain
+    emits `topic.completed` — see `KnowledgeEvents.TOPIC_COMPLETED` — so this handler was listening for
+    a name spoken nowhere in the codebase. Registered or not, it could never have fired.
+
+    A second listener on the same name is fine: handlers are a list per event and `emit` gathers them,
+    so this and `progress.listeners.schedule_first_review` both run, and a failure in one does not
+    affect the other.
+    """
     from .services import notification_service
 
     user_id = data.get("user_id")
