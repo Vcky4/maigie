@@ -1465,9 +1465,18 @@ async def complete_quiz(
         user_id=user_id,
         activity_type="quiz_completed",
         title=f"Completed quiz — {round(score_pct, 1)}% ({correct}/{total})",
-        entity_type="quiz",
-        entity_id=quiz_id,
-        context={"source": "personal", "quizId": quiz_id, "score": round(score_pct, 1)},
+        # The preparation, not the session. A finished quiz session has no page on either client, so
+        # recording its id in the field that exists to make the entry clickable sent web and mobile to
+        # `/preparations/{quizSessionId}` and got a 404. `quizId` stays in the context, and `prepId` is
+        # already loaded on `quiz` — no extra read.
+        entity_type="preparation",
+        entity_id=quiz.prep_id,
+        context={
+            "source": "personal",
+            "quizId": quiz_id,
+            "prepId": quiz.prep_id,
+            "score": round(score_pct, 1),
+        },
     )
 
     # Check milestones (quiz_90_plus)

@@ -562,13 +562,27 @@ async def review_flashcard(*, user_id: str, card_id: str, quality: int) -> Any:
     # Record in activity feed
     from . import activity_feed_service
 
+    # The deck, not the card — the same choice `study_plan_service` makes when it records the plan
+    # rather than the completed item, and for the same reason: `entityType`/`entityId` exist to make an
+    # entry clickable, and a card has no page of its own. Recording the card id here made every client
+    # that trusted the pair fetch a deck by a card id; on mobile the row opened "Deck unavailable — Deck
+    # not found (404)". `cardId` stays in the context for anything that wants to highlight the card.
+    #
+    # `deckId` is nullable, so a card outside a deck keeps the truthful-but-unroutable pair rather than
+    # being given a made-up destination. A client renders that as text, which is what it is.
+    deck_id = card.deck_id
     await activity_feed_service.record(
         user_id=user_id,
         activity_type="flashcard_reviewed",
         title=f"Reviewed flashcard (quality: {quality}/5)",
-        entity_type="flashcard",
-        entity_id=card_id,
-        context={"source": "personal", "cardId": card_id, "quality": quality},
+        entity_type="deck" if deck_id else "flashcard",
+        entity_id=deck_id or card_id,
+        context={
+            "source": "personal",
+            "cardId": card_id,
+            "deckId": deck_id,
+            "quality": quality,
+        },
     )
 
     # Check milestones (50_flashcards_reviewed)

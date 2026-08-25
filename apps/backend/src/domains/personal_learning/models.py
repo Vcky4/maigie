@@ -2449,6 +2449,14 @@ class DiscoveryRecommendationResponse(CamelModel):
 #: Rows written before `entityType`/`entityId` existed carry an id under a key each service chose for
 #: itself. Mapped here, in one place, so historical entries are routeable too — and so no consumer has
 #: to learn six key names, which is the whole point of the pair.
+#:
+#: **Two of these pairs are not routeable, and cannot be made so.** `cardId` names a flashcard and
+#: `quizId` a finished quiz session; neither has a page on any client, and the artifact that does — the
+#: card's deck, the session's preparation — is not recorded on those historical rows, so it cannot be
+#: recovered here. They stay mapped because the pair also says what an entry is *about*, and a client
+#: showing a row as text needs that. The routing contract is therefore explicit on both clients:
+#: `flashcard` and `quiz` resolve to no destination. New rows avoid the problem at the writing end —
+#: `flashcard_service` records the `deck` and `quiz_engine` the `preparation`.
 _LEGACY_ACTIVITY_ENTITY_KEYS: list[tuple[str, str]] = [
     ("noteId", "note"),
     ("docId", "document"),

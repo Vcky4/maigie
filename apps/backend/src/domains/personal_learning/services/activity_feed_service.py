@@ -18,9 +18,14 @@ logger = logging.getLogger(__name__)
 ActivityEntity = Literal[
     "note",
     "document",
+    #: A **deck**, which is what a flashcard review points at. `flashcard` remains for the card that
+    #: belongs to no deck, and it is deliberately not routeable: a card has no page.
+    "deck",
     "flashcard",
     "study_plan",
     "preparation",
+    #: A quiz *session*, which no client can open. Kept because it is on historical rows; new
+    #: `quiz_completed` entries record the `preparation` the session belongs to instead.
     "quiz",
     "course",
     "topic",
