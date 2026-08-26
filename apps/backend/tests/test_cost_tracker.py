@@ -9,25 +9,65 @@ import pytest
 # Ensure conftest autouse DB fixture does not require DATABASE_URL for this module.
 os.environ.setdefault("SKIP_DB_FIXTURE", "1")
 
-from src.services.llm.cost_tracker import PROVIDER_PRICING, CostRecord, CostTracker
+from src.domains.intelligence.reasoning.llm.cost_tracker import (
+    PROVIDER_PRICING,
+    CostRecord,
+    CostTracker,
+)
 
 # --- Fixtures ---
 
 
-@pytest.fixture
-def mock_db():
-    """Create a mock Prisma client."""
-    db = MagicMock()
-    db.llmcostrecord = MagicMock()
-    db.llmcostrecord.create = AsyncMock(return_value=None)
-    db.query_raw = AsyncMock(return_value=[])
-    return db
+class FakeSession:
+    """Records what was added, and answers `aggregate`'s single query.
+
+    Replaces the Prisma-client double this file used to build. `record` and `aggregate` were rewritten
+    onto SQLAlchemy during the port (Prisma was removed with the datastore migration), so the tests for
+    those two methods assert against this seam rather than against `db.llmcostrecord.create` and
+    `db.query_raw`. **The `compute_cost` and `PROVIDER_PRICING` tests below are unchanged** — they were
+    always pure, and they are the part of this file that verifies the port rather than the rewrite.
+    """
+
+    def __init__(self, aggregate_row=None):
+        self.added = []
+        self.committed = False
+        self.executed = []
+        self._aggregate_row = aggregate_row
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def commit(self):
+        self.committed = True
+
+    async def execute(self, statement):
+        self.executed.append(statement)
+        result = MagicMock()
+        result.one_or_none.return_value = self._aggregate_row
+        return result
 
 
 @pytest.fixture
-def tracker(mock_db):
-    """Create a CostTracker with the default pricing table and mock DB."""
-    return CostTracker(pricing_table=PROVIDER_PRICING, db=mock_db)
+def session():
+    """A single fake session, shared by the factory below so a test can inspect it."""
+    return FakeSession()
+
+
+@pytest.fixture
+def session_factory(session):
+    return lambda: session
+
+
+@pytest.fixture
+def tracker(session_factory):
+    """A CostTracker over the default pricing table and a fake session factory."""
+    return CostTracker(pricing_table=PROVIDER_PRICING, session_factory=session_factory)
 
 
 # --- compute_cost tests ---
@@ -69,7 +109,7 @@ class TestComputeCost:
 
     def test_unknown_model_logs_warning(self, tracker):
         """Unknown provider-model pair logs a warning."""
-        with patch("src.services.llm.cost_tracker.logger") as mock_logger:
+        with patch("src.domains.intelligence.reasoning.llm.cost_tracker.logger") as mock_logger:
             tracker.compute_cost("unknown", "nonexistent-model", 1000, 1000)
             mock_logger.warning.assert_called_once()
 
@@ -96,9 +136,9 @@ class TestRecord:
     """Tests for CostTracker.record()."""
 
     @pytest.mark.asyncio
-    async def test_record_persists_to_database(self, tracker, mock_db):
-        """record() calls db.llmcostrecord.create with correct data."""
-        result = await tracker.record(
+    async def test_record_persists_to_database(self, tracker, session):
+        """record() writes one LlmCostRecord row and commits it."""
+        await tracker.record(
             provider="gemini",
             model="gemini-3.5-flash",
             input_tokens=100,
@@ -107,14 +147,37 @@ class TestRecord:
             user_tier="FREE",
         )
 
-        mock_db.llmcostrecord.create.assert_called_once()
-        call_data = mock_db.llmcostrecord.create.call_args[1]["data"]
-        assert call_data["userId"] == "user-123"
-        assert call_data["userTier"] == "FREE"
-        assert call_data["provider"] == "gemini"
-        assert call_data["model"] == "gemini-3.5-flash"
-        assert call_data["inputTokens"] == 100
-        assert call_data["outputTokens"] == 50
+        assert len(session.added) == 1
+        row = session.added[0]
+        assert row.user_id == "user-123"
+        assert row.user_tier == "FREE"
+        assert row.provider == "gemini"
+        assert row.model == "gemini-3.5-flash"
+        assert row.input_tokens == 100
+        assert row.output_tokens == 50
+        assert session.committed, "a cost row was added but never committed"
+
+    @pytest.mark.asyncio
+    async def test_the_persisted_cost_is_an_exact_decimal(self, tracker, session):
+        """`Decimal(str(cost))`, not `Decimal(cost)`.
+
+        The column is Numeric(12, 6). Building a Decimal straight from a float carries the float's
+        binary representation error into it, so a cost of 0.000015 can persist as
+        0.0000149999999999999993 and every aggregate over it inherits the drift.
+        """
+        from decimal import Decimal
+
+        await tracker.record(
+            provider="gemini",
+            model="gemini-3.5-flash",
+            input_tokens=10,
+            output_tokens=0,
+            user_id="user-1",
+            user_tier="FREE",
+        )
+        stored = session.added[0].cost_usd
+        assert isinstance(stored, Decimal)
+        assert stored == Decimal(str(round(10 * 0.50e-6, 6)))
 
     @pytest.mark.asyncio
     async def test_record_returns_cost_record(self, tracker):
@@ -188,7 +251,7 @@ class TestRecord:
     @pytest.mark.asyncio
     async def test_record_logs_warning_for_missing_tokens(self, tracker):
         """Missing token counts trigger a warning log."""
-        with patch("src.services.llm.cost_tracker.logger") as mock_logger:
+        with patch("src.domains.intelligence.reasoning.llm.cost_tracker.logger") as mock_logger:
             await tracker.record(
                 provider="gemini",
                 model="gemini-3.5-flash",
@@ -207,16 +270,10 @@ class TestAggregate:
     """Tests for CostTracker.aggregate()."""
 
     @pytest.mark.asyncio
-    async def test_aggregate_no_filters(self, tracker, mock_db):
-        """aggregate() with no filters queries all records."""
-        mock_db.query_raw.return_value = [
-            {
-                "total_cost_usd": 1.5,
-                "total_input_tokens": 10000,
-                "total_output_tokens": 5000,
-                "record_count": 3,
-            }
-        ]
+    async def test_aggregate_no_filters(self, session_factory, session):
+        """With no filters, the totals come straight back from the query."""
+        session._aggregate_row = (1.5, 10000, 5000, 3)
+        tracker = CostTracker(pricing_table=PROVIDER_PRICING, session_factory=session_factory)
 
         result = await tracker.aggregate()
 
@@ -226,47 +283,57 @@ class TestAggregate:
         assert result["record_count"] == 3
 
     @pytest.mark.asyncio
-    async def test_aggregate_with_provider_filter(self, tracker, mock_db):
-        """aggregate() with provider filter includes it in the query."""
-        mock_db.query_raw.return_value = [
-            {
-                "total_cost_usd": 0.5,
-                "total_input_tokens": 3000,
-                "total_output_tokens": 1000,
-                "record_count": 1,
-            }
-        ]
-
-        result = await tracker.aggregate(provider="openai")
-
-        # Verify the query was called with the provider parameter
-        call_args = mock_db.query_raw.call_args
-        assert "openai" in call_args[0]
+    async def test_aggregate_applies_no_where_clause_without_filters(self, tracker, session):
+        """An unfiltered aggregate must not accidentally constrain itself."""
+        session._aggregate_row = (0, 0, 0, 0)
+        await tracker.aggregate()
+        assert "WHERE" not in str(session.executed[0])
 
     @pytest.mark.asyncio
-    async def test_aggregate_with_time_range(self, tracker, mock_db):
-        """aggregate() with start and end filters by time."""
-        mock_db.query_raw.return_value = [
-            {
-                "total_cost_usd": 0.25,
-                "total_input_tokens": 1000,
-                "total_output_tokens": 500,
-                "record_count": 2,
-            }
-        ]
+    async def test_aggregate_with_provider_filter(self, tracker, session):
+        """A provider filter reaches the query as a bound condition on the provider column."""
+        session._aggregate_row = (0.5, 3000, 1000, 1)
+        await tracker.aggregate(provider="openai")
 
-        start = datetime(2025, 1, 1, tzinfo=UTC)
-        end = datetime(2025, 1, 31, tzinfo=UTC)
+        rendered = str(session.executed[0].compile(compile_kwargs={"literal_binds": True}))
+        assert "provider = 'openai'" in rendered
+        # And nothing else was constrained, so an unrelated provider's spend is not excluded twice.
+        assert "model" not in rendered.split("WHERE", 1)[1]
 
-        result = await tracker.aggregate(start=start, end=end)
+    @pytest.mark.asyncio
+    async def test_aggregate_with_time_range(self, tracker, session):
+        """Both ends of a time range are applied, and the totals are returned."""
+        session._aggregate_row = (0.25, 1000, 500, 2)
+
+        result = await tracker.aggregate(
+            start=datetime(2025, 1, 1, tzinfo=UTC), end=datetime(2025, 1, 31, tzinfo=UTC)
+        )
 
         assert result["total_cost_usd"] == 0.25
         assert result["record_count"] == 2
+        rendered = str(session.executed[0])
+        assert rendered.count('"createdAt"') == 2, "a one-sided range would silently over-count"
 
     @pytest.mark.asyncio
-    async def test_aggregate_empty_results(self, tracker, mock_db):
-        """aggregate() returns zeros when no records match."""
-        mock_db.query_raw.return_value = []
+    async def test_aggregate_filters_are_independent(self, tracker, session):
+        """Every filter is applied, not just the last one.
+
+        The pre-port implementation numbered SQL placeholders by hand; a filter added without
+        incrementing the counter would have bound the wrong value to the wrong column. Typed
+        expressions cannot mis-number themselves, and this pins that they are all present.
+        """
+        session._aggregate_row = (0, 0, 0, 0)
+        await tracker.aggregate(provider="openai", model="gpt-4o", user_id="user-9")
+
+        rendered = str(session.executed[0].compile(compile_kwargs={"literal_binds": True}))
+        assert "'openai'" in rendered
+        assert "'gpt-4o'" in rendered
+        assert "'user-9'" in rendered
+
+    @pytest.mark.asyncio
+    async def test_aggregate_empty_results(self, tracker, session):
+        """No matching rows reads as zero, not as an error."""
+        session._aggregate_row = (0, 0, 0, 0)
 
         result = await tracker.aggregate(provider="nonexistent")
 
@@ -274,6 +341,20 @@ class TestAggregate:
         assert result["total_input_tokens"] == 0
         assert result["total_output_tokens"] == 0
         assert result["record_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_aggregate_handles_no_row_at_all(self, tracker, session):
+        """`one_or_none()` can return None. That must be zeros, not a TypeError on unpacking."""
+        session._aggregate_row = None
+
+        result = await tracker.aggregate()
+
+        assert result == {
+            "total_cost_usd": 0.0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "record_count": 0,
+        }
 
 
 # --- PROVIDER_PRICING table tests ---

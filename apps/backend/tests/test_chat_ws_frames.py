@@ -176,6 +176,7 @@ async def drive(
     executed_actions: list | None = None,
     query_results: list | None = None,
     credits_available: tuple[bool, str | None] = (True, None),
+    route_request=None,
 ) -> dict:
     """Run one connection through the handler and report what left it.
 
@@ -260,7 +261,7 @@ async def drive(
             AsyncMock(return_value=FakeUser()),
         ),
     ):
-        get_router.return_value.route_request = fake_route_request
+        get_router.return_value.route_request = route_request or fake_route_request
         socket = FakeWebSocket(script)
         error: BaseException | None = None
         try:
@@ -589,6 +590,56 @@ class TestATurnThatUsedATool:
     def test_the_action_is_logged(self):
         result = run(["Make me a thermodynamics course"], executed_actions=[self.ACTION])
         assert result["error"] is None
+
+
+class TestAFailedGenerationIsNotAnAnswer:
+    """§1: a failed turn is never rendered as an answer, and never persisted as one.
+
+    Both error branches used to assign their message to `response_text` and fall through to the
+    persistence step, so a provider outage was written into the learner's history as something Maigie
+    said — indistinguishable, on reload, from a real reply.
+
+    This mattered more than it looked. The LLM routing layer is unmigrated and `get_llm_router()` raises
+    unconditionally, so **every** turn took the generic branch and every learner was told "I'm sorry, I
+    encountered an error" by a Maigie that had never been asked. Failing visibly is what makes that
+    legible instead of looking like a model with nothing to say.
+    """
+
+    @staticmethod
+    def failing_router(exc: Exception):
+        def raise_it(**kwargs):
+            raise exc
+
+        return raise_it
+
+    def test_a_provider_failure_sends_an_error_frame(self):
+        result = run(["What is entropy?"], route_request=self.failing_router(RuntimeError("boom")))
+        assert "error" in result["manager"].frame_types
+
+    def test_a_provider_failure_persists_no_assistant_row(self):
+        result = run(["What is entropy?"], route_request=self.failing_router(RuntimeError("boom")))
+        roles = [row["role"] for row in result["rows"]]
+        assert roles == ["USER"], f"a failed turn wrote {roles}"
+
+    def test_a_provider_failure_does_not_send_assistant_final(self):
+        result = run(["What is entropy?"], route_request=self.failing_router(RuntimeError("boom")))
+        assert "assistant_final" not in result["manager"].frame_types
+
+    def test_a_provider_failure_does_not_consume_credits(self):
+        """The learner was not answered, so they are not charged."""
+        result = run(["What is entropy?"], route_request=self.failing_router(RuntimeError("boom")))
+        result["consume"].assert_not_awaited()
+
+    def test_the_unmigrated_router_is_reported_as_a_failure_not_an_answer(self):
+        """The specific case that is live today."""
+        from src.shared.infrastructure.unmigrated import UnmigratedSubsystemError
+
+        result = run(
+            ["What is entropy?"],
+            route_request=self.failing_router(UnmigratedSubsystemError("router not migrated")),
+        )
+        assert [row["role"] for row in result["rows"]] == ["USER"]
+        assert "error" in result["manager"].frame_types
 
 
 class TestCreditsAreCheckedBeforeTheModelRuns:

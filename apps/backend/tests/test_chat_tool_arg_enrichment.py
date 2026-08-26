@@ -2,10 +2,10 @@
 
 import pytest
 
-from src.services.chat_tool_arg_enrichment import (
+from src.domains.intelligence.action.tool_arg_enrichment import (
     enrich_tool_args_for_llm as enrich,
 )
-from src.services.chat_tool_arg_enrichment import (
+from src.domains.intelligence.action.tool_arg_enrichment import (
     merge_successful_tool_result_into_created_ids,
 )
 

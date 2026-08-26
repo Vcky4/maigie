@@ -1589,6 +1589,22 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             else None
                         ),
                     )
+                # A failed generation is reported as a failure and **not persisted as an answer**.
+                #
+                # Both branches below used to assign their error text to `response_text` and fall
+                # through to step 12, which wrote it into a `ChatMessage` as the assistant's reply and
+                # sent it as `assistant_final`. So a provider outage became a message from Maigie, stored
+                # in the learner's history, indistinguishable on reload from something the model actually
+                # said. The plan's §1 forbids exactly this: a failed turn is never rendered as an answer.
+                #
+                # It also disguised the real state of this surface. The LLM routing layer is unmigrated —
+                # `get_llm_router()` raises `UnmigratedSubsystemError` unconditionally — so *every* turn
+                # took the second branch and every learner was told "I'm sorry, I encountered an error"
+                # by a Maigie that had never been asked. Failing visibly is what makes that legible.
+                #
+                # `error` rather than a new frame type: both clients already surface it, and the retry is
+                # the learner sending again. No credits are consumed, because consumption happens at step
+                # 11 which this skips.
                 except LLMProviderError as e:
                     logger.error(
                         "LLM provider error: category=%s provider=%s model=%s msg=%s",
@@ -1597,27 +1613,38 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         e.model,
                         e.message,
                     )
-                    user_facing_msg = _ERROR_CATEGORY_MESSAGES.get(
-                        e.category, _ERROR_CATEGORY_MESSAGES["unknown"]
+                    await manager.send_connection_json(
+                        {
+                            "type": "error",
+                            "payload": {
+                                "message": _ERROR_CATEGORY_MESSAGES.get(
+                                    e.category, _ERROR_CATEGORY_MESSAGES["unknown"]
+                                ),
+                                "retryable": True,
+                                "sessionId": session.id,
+                                "requestId": ai_request_id,
+                            },
+                        },
+                        connection_id,
                     )
-                    response_text = user_facing_msg
-                    usage_info = {
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "model_name": default_model_for(LlmTask.CHAT_TOOLS_USAGE_FALLBACK),
-                    }
-                    executed_actions = []
-                    query_results = []
+                    continue
                 except Exception as e:
-                    logger.error(f"LLM service error: {e}", exc_info=True)
-                    response_text = "I'm sorry, I encountered an error. Please try again."
-                    usage_info = {
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "model_name": default_model_for(LlmTask.CHAT_TOOLS_USAGE_FALLBACK),
-                    }
-                    executed_actions = []
-                    query_results = []
+                    logger.error("Generation failed: %s", e, exc_info=True)
+                    await manager.send_connection_json(
+                        {
+                            "type": "error",
+                            "payload": {
+                                "message": (
+                                    "Maigie could not answer that just now. Please try again."
+                                ),
+                                "retryable": True,
+                                "sessionId": session.id,
+                                "requestId": ai_request_id,
+                            },
+                        },
+                        connection_id,
+                    )
+                    continue
 
                 # 7. Process query tool results (if any)
                 # NOTE: Only show query results as components when the user EXPLICITLY asked

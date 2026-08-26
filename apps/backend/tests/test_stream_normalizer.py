@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from src.services.llm.stream_normalizer import StreamNormalizer
-from src.services.llm.types import StreamEvent, ToolCallDelta
+from src.domains.intelligence.reasoning.llm.stream_normalizer import StreamNormalizer
+from src.domains.intelligence.reasoning.llm.types import StreamEvent, ToolCallDelta
 
 # ---------------------------------------------------------------------------
 # Mock objects to simulate provider-specific chunk structures

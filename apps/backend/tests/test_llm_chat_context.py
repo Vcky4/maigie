@@ -1,6 +1,6 @@
 """Tests for LLM context helpers."""
 
-from src.services.llm.context import (
+from src.domains.intelligence.reasoning.llm.context import (
     build_enhanced_chat_user_message,
     map_tool_to_action_type,
 )

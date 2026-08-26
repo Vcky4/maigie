@@ -4,8 +4,11 @@ import json
 
 import pytest
 
-from src.services.llm.tool_normalizer import ToolNormalizer, _relaxed_json_parse
-from src.services.llm.types import ToolCallRequest, ToolDefinition
+from src.domains.intelligence.reasoning.llm.tool_normalizer import (
+    ToolNormalizer,
+    _relaxed_json_parse,
+)
+from src.domains.intelligence.reasoning.llm.types import ToolCallRequest, ToolDefinition
 
 
 @pytest.fixture

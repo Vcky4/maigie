@@ -46,8 +46,11 @@ async def generate_content(prompt: str, *, max_tokens: int = 2048, temperature: 
             decide whether to retry or fall back.
     """
     client = new_gemini_client(gemini_api_key() or None)
+    # Bound once so the error raised below can name the model that produced nothing. An error that
+    # says "gemini returned nothing" without saying which model is not actionable.
+    model = default_model_for(LlmTask.CHAT_DEFAULT)
     response = await client.aio.models.generate_content(
-        model=default_model_for(LlmTask.CHAT_DEFAULT),
+        model=model,
         contents=prompt,
         config=gemini_types.GenerateContentConfig(
             max_output_tokens=max_tokens,
@@ -64,8 +67,13 @@ async def generate_content(prompt: str, *, max_tokens: int = 2048, temperature: 
             len(prompt),
             max_tokens,
         )
+        # `invalid_request` rather than `server_error`: the provider answered successfully and
+        # produced nothing, which a retry of the same prompt will reproduce. Classifying it retriable
+        # would spend the learner's quota three times to arrive at the same silence.
         raise GeminiError(
-            f"empty response (finish_reason={finish_reason})",
+            model=model,
+            category="invalid_request",
+            message=f"empty response (finish_reason={finish_reason})",
         )
     return text
 
@@ -148,8 +156,9 @@ async def generate_grounded_content(
     recommendations a smaller checked list beats an error.
     """
     client = new_gemini_client(gemini_api_key() or None)
+    model = default_model_for(LlmTask.CHAT_DEFAULT)
     response = await client.aio.models.generate_content(
-        model=default_model_for(LlmTask.CHAT_DEFAULT),
+        model=model,
         contents=prompt,
         config=gemini_types.GenerateContentConfig(
             max_output_tokens=max_tokens,
@@ -168,7 +177,11 @@ async def generate_grounded_content(
             len(prompt),
             max_tokens,
         )
-        raise GeminiError(f"empty grounded response (finish_reason={finish_reason})")
+        raise GeminiError(
+            model=model,
+            category="invalid_request",
+            message=f"empty grounded response (finish_reason={finish_reason})",
+        )
 
     sources = _extract_grounding_sources(response)
     if not sources:
