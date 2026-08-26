@@ -838,6 +838,121 @@
         "title": "ChangePasswordRequest",
         "type": "object"
       },
+      "ChatMessageResponse": {
+        "description": "A single message in a conversation.\n\nNamed `ChatMessageResponse`, not `MessageResponse`. Both `identity` and `personal_learning` already\npublish a `MessageResponse` — each a one-field generic acknowledgement — and FastAPI resolves a\nschema-name collision by fully qualifying *every* colliding name, so a third would have exported\nthis as `src__domains__intelligence__models__MessageResponse` and generated a client type to match.\nIt also happens to be the name web already hand-wrote for this shape. The other two collide with\neach other and did so before this router was mounted; untangling them is not this plan's work.\n\n`image_urls` is `list[str] | None` rather than `list[str] = []` because the column is a nullable\narray: a row with no images reads `None`, and declaring a list default would have rejected it\noutright. Rendering it as `[]` would also be the absent-as-zero mistake the plan's §1 forbids —\nthough here the two are the same thing, the validation failure is not.\n\n`protected_namespaces=()` because `model_name` is a real column on this table and pydantic\nreserves the `model_` prefix. Renaming the field would put the ORM and the schema back out of\nstep, which is the defect this file was rewritten to close.",
+        "properties": {
+          "audioUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audiourl"
+          },
+          "componentData": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Componentdata"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "imageUrls": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imageurls"
+          },
+          "modelName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modelname"
+          },
+          "replyToMessageId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replytomessageid"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "suggestionText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggestiontext"
+          },
+          "tokenCount": {
+            "title": "Tokencount",
+            "type": "integer"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "sessionId",
+          "userId",
+          "role",
+          "content",
+          "tokenCount",
+          "createdAt"
+        ],
+        "title": "ChatMessageResponse",
+        "type": "object"
+      },
       "CollectionCreate": {
         "properties": {
           "description": {
@@ -1133,6 +1248,89 @@
         "title": "CollectionUpdate",
         "type": "object"
       },
+      "ConversationCreate": {
+        "description": "Start a new conversation.",
+        "properties": {
+          "courseId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courseid"
+          },
+          "examPrepId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examprepid"
+          },
+          "isSpaceRoom": {
+            "default": false,
+            "title": "Isspaceroom",
+            "type": "boolean"
+          },
+          "noteId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Noteid"
+          },
+          "sessionType": {
+            "default": "general",
+            "title": "Sessiontype",
+            "type": "string"
+          },
+          "spaceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spaceid"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "topicId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topicid"
+          }
+        },
+        "title": "ConversationCreate",
+        "type": "object"
+      },
       "ConversationListResponse": {
         "properties": {
           "sessions": {
@@ -1144,6 +1342,118 @@
           }
         },
         "title": "ConversationListResponse",
+        "type": "object"
+      },
+      "ConversationResponse": {
+        "description": "A conversation session.\n\nEvery field below is read off a `ChatSession` row. Nothing here has a default that could stand in\nfor an unread attribute, except the two booleans and `session_type`, which are NOT NULL columns\nwith server defaults and so are always present on a real row.",
+        "properties": {
+          "courseId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courseid"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "examPrepId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examprepid"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isActive": {
+            "title": "Isactive",
+            "type": "boolean"
+          },
+          "isSpaceRoom": {
+            "title": "Isspaceroom",
+            "type": "boolean"
+          },
+          "noteId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Noteid"
+          },
+          "sessionType": {
+            "title": "Sessiontype",
+            "type": "string"
+          },
+          "spaceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spaceid"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "topicId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topicid"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "isActive",
+          "sessionType",
+          "isSpaceRoom",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "ConversationResponse",
         "type": "object"
       },
       "ConversationStatusResponse": {
@@ -1185,6 +1495,43 @@
           "status"
         ],
         "title": "ConversationSummary",
+        "type": "object"
+      },
+      "ConversationSummaryResponse": {
+        "description": "A summarized conversation for long-term memory.",
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "keyTopics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Keytopics",
+            "type": "array"
+          },
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "sessionId",
+          "summary",
+          "createdAt"
+        ],
+        "title": "ConversationSummaryResponse",
         "type": "object"
       },
       "CourseActivityEntry": {
@@ -2223,6 +2570,43 @@
           "flashcardsDue"
         ],
         "title": "CoursesDashboardResponse",
+        "type": "object"
+      },
+      "CursorPage_ChatMessageResponse_": {
+        "properties": {
+          "hasMore": {
+            "title": "Hasmore",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChatMessageResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "hasMore"
+        ],
+        "title": "CursorPage[ChatMessageResponse]",
         "type": "object"
       },
       "DeckCreate": {
@@ -7050,6 +7434,78 @@
         "title": "LoginRequest",
         "type": "object"
       },
+      "MemoryContextResponse": {
+        "description": "What Intelligence remembers about a learner, for transparency and debugging.\n\nPreviously declared `learningGoals`, `strengths` and `weaknesses` alongside these two, all\ndefaulting to `[]`. Nothing in the repository produces them, so the endpoint would have published\nthree empty lists as though the learner had no goals and no weaknesses rather than as though\nnothing had been measured. That is the absent-as-zero mistake, so the fields are gone rather than\ndefaulted. They return when something computes them.",
+        "properties": {
+          "recentSummaries": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationSummaryResponse"
+            },
+            "title": "Recentsummaries",
+            "type": "array"
+          },
+          "userFacts": {
+            "items": {
+              "$ref": "#/components/schemas/UserFactResponse"
+            },
+            "title": "Userfacts",
+            "type": "array"
+          }
+        },
+        "title": "MemoryContextResponse",
+        "type": "object"
+      },
+      "ModelPreferenceResponse": {
+        "description": "User's AI model preference.",
+        "properties": {
+          "capability": {
+            "title": "Capability",
+            "type": "string"
+          },
+          "modelId": {
+            "title": "Modelid",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capability",
+          "provider",
+          "modelId"
+        ],
+        "title": "ModelPreferenceResponse",
+        "type": "object"
+      },
+      "ModelPreferenceUpdate": {
+        "description": "Update user's preferred AI model for a capability.",
+        "properties": {
+          "capability": {
+            "description": "chat, vision, structured_output, embedding",
+            "title": "Capability",
+            "type": "string"
+          },
+          "modelId": {
+            "description": "e.g. gpt-4o-mini, claude-sonnet-4-20250514",
+            "title": "Modelid",
+            "type": "string"
+          },
+          "provider": {
+            "description": "gemini, openai, anthropic",
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capability",
+          "provider",
+          "modelId"
+        ],
+        "title": "ModelPreferenceUpdate",
+        "type": "object"
+      },
       "ModuleCreate": {
         "properties": {
           "description": {
@@ -8055,6 +8511,42 @@
           "pages"
         ],
         "title": "PaginatedResponse[CollectionResponse]",
+        "type": "object"
+      },
+      "PaginatedResponse_ConversationResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "pages"
+        ],
+        "title": "PaginatedResponse[ConversationResponse]",
         "type": "object"
       },
       "PaginatedResponse_DocumentResponse_": {
@@ -17851,6 +18343,47 @@
         "title": "UpgradeRequiredResponse",
         "type": "object"
       },
+      "UserFactResponse": {
+        "description": "A learned fact about the user.\n\nBuilt by `memory_service.get_user_facts`, which maps the `UserFact` row's `content` onto `fact`\nand its `confidence` onto `importance`. The names differ from the column names deliberately and\nthe mapping is the service's job, not this model's.",
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "fact": {
+            "title": "Fact",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "importance": {
+            "title": "Importance",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "fact",
+          "importance",
+          "createdAt"
+        ],
+        "title": "UserFactResponse",
+        "type": "object"
+      },
       "UserPreferencesResponse": {
         "description": "User preferences.",
         "properties": {
@@ -19093,6 +19626,551 @@
         "tags": [
           "study-voice",
           "study-voice"
+        ]
+      }
+    },
+    "/api/v1/intelligence/conversations": {
+      "get": {
+        "description": "List conversations, newest activity first.",
+        "operationId": "list_conversations_api_v1_intelligence_conversations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sessionType",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sessiontype"
+            }
+          },
+          {
+            "in": "query",
+            "name": "spaceId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Spaceid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_ConversationResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Conversations",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      },
+      "post": {
+        "description": "Start a new conversation with Intelligence.",
+        "operationId": "create_conversation_api_v1_intelligence_conversations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Conversation",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      }
+    },
+    "/api/v1/intelligence/conversations/{session_id}": {
+      "delete": {
+        "description": "Delete a conversation and its messages.",
+        "operationId": "delete_conversation_api_v1_intelligence_conversations__session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Conversation",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      },
+      "get": {
+        "description": "Get a conversation.",
+        "operationId": "get_conversation_api_v1_intelligence_conversations__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Conversation",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      }
+    },
+    "/api/v1/intelligence/conversations/{session_id}/archive": {
+      "post": {
+        "description": "Archive a conversation (soft delete).",
+        "operationId": "archive_conversation_api_v1_intelligence_conversations__session_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Archive Conversation",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      }
+    },
+    "/api/v1/intelligence/conversations/{session_id}/messages": {
+      "get": {
+        "description": "One window of a conversation, oldest-first.\n\nA thread pages backwards by cursor rather than by number, so this returns `CursorPage` rather than\n`PaginatedResponse`: `page` and `pages` would have to be invented to fit the other envelope, and an\ninvented page number is indistinguishable from a real one.",
+        "operationId": "get_messages_api_v1_intelligence_conversations__session_id__messages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "A message id from a previous window. Returns the window before it.",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A message id from a previous window. Returns the window before it.",
+              "title": "Before"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_ChatMessageResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Messages",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      }
+    },
+    "/api/v1/intelligence/memory/context": {
+      "get": {
+        "description": "What Intelligence remembers about the learner, as data (for transparency and debugging).\n\nReads `get_memory_snapshot`, not `get_memory_context`. The latter returns the same memory rendered\nas a prompt block — a plain string — and this route used to return it under a structured response\nmodel, which would have `500`d on the first request.",
+        "operationId": "get_memory_context_api_v1_intelligence_memory_context_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryContextResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Memory Context",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      }
+    },
+    "/api/v1/intelligence/memory/facts": {
+      "get": {
+        "description": "Get learned facts about the user.",
+        "operationId": "get_user_facts_api_v1_intelligence_memory_facts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UserFactResponse"
+                  },
+                  "title": "Response Get User Facts Api V1 Intelligence Memory Facts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get User Facts",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      }
+    },
+    "/api/v1/intelligence/memory/summaries": {
+      "get": {
+        "description": "Get recent conversation summaries.",
+        "operationId": "get_summaries_api_v1_intelligence_memory_summaries_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConversationSummaryResponse"
+                  },
+                  "title": "Response Get Summaries Api V1 Intelligence Memory Summaries Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Summaries",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      }
+    },
+    "/api/v1/intelligence/models/preferences": {
+      "get": {
+        "description": "Get user's AI model preferences.",
+        "operationId": "get_model_preferences_api_v1_intelligence_models_preferences_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ModelPreferenceResponse"
+                  },
+                  "title": "Response Get Model Preferences Api V1 Intelligence Models Preferences Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Model Preferences",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      },
+      "put": {
+        "description": "Update preferred AI model for a capability.",
+        "operationId": "update_model_preference_api_v1_intelligence_models_preferences_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelPreferenceUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelPreferenceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Model Preference",
+        "tags": [
+          "intelligence",
+          "intelligence"
         ]
       }
     },

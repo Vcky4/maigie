@@ -312,8 +312,28 @@ def _register_domains(app: FastAPI) -> None:
     # from src.domains.classrooms.routes import router as classrooms_router
     # app.include_router(classrooms_router, prefix=f"{prefix}/classrooms", tags=["classrooms"])
 
-    # from src.domains.intelligence.routes import router as intelligence_router
-    # app.include_router(intelligence_router, prefix=f"{prefix}/intelligence", tags=["intelligence"])
+    # --- Intelligence (Ask Maigie: conversations, messages, memory, streaming chat) ---
+    #
+    # Mounted after the schemas it publishes were rewritten, not before. Every response model in
+    # `intelligence/models.py` declared camelCase fields on a plain `BaseModel` with
+    # `from_attributes=True`, which reads nothing off a snake_case ORM attribute: the conversation
+    # endpoints raised on their three required fields and served eight more as declared defaults with a
+    # `200`. Mounting first would have exported that shape into `openapi.json` and the generated client
+    # types would have been regenerated against it — a client that typechecks cleanly against a lie.
+    #
+    # Three routes on this prefix were deleted rather than mounted, each because it called a function
+    # that does not exist: `POST /chat`, `GET /recommendations`, and the structured reading of
+    # `/memory/context`. See the comment blocks in `intelligence/routes.py`.
+    from src.domains.intelligence.routes import register_websocket
+    from src.domains.intelligence.routes import router as intelligence_router
+
+    app.include_router(intelligence_router, prefix=f"{prefix}/intelligence", tags=["intelligence"])
+
+    # The streaming chat socket at `{prefix}/intelligence/ws`. Registered directly on the app rather
+    # than through the router above because it sets its own prefix; see `register_websocket`'s docstring.
+    # This is the transport both the web and mobile clients already implement, frame for frame, and it
+    # has never been reachable — the function existed solely to be called from here and never was.
+    register_websocket(app)
 
     # --- Progress (migrated to SQLAlchemy) ---
     from src.domains.progress.routes import router as progress_router

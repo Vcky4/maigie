@@ -58,6 +58,27 @@ async def send_message(*, user_id: str, message: str) -> dict[str, Any]:
     )
 
     # Delegate to intelligence domain conversation service
+    #
+    # **This branch has never executed, and the `except` below is left broad deliberately.**
+    # `conversation_service` defines six functions and `send_message_with_context` is not one of them,
+    # so every Ask Maigie turn ever served has raised `AttributeError` here and taken the fallback:
+    # Gemini directly, with no `llm_resilient`, no provider routing, no circuit breaker, no persistence,
+    # no cost record and no credit check.
+    #
+    # Ask Maigie API Integration Plan, Phase 1 asked whether to narrow this catch now or leave it and
+    # delete the file in Phase 5. **Left as-is, and the reason is the deployed client.** Narrowing the
+    # catch would turn the fallback into a `500` on the very next request, because the function the
+    # `try` calls still does not exist — Phase 1 fixes the contract, it does not write `ask_service`.
+    # `POST /api/v1/learning/chat` is the endpoint the running web client calls for every turn, so
+    # narrowing here takes Ask Maigie offline in exchange for making a defect louder that is already
+    # fully documented and already scheduled for deletion.
+    #
+    # The hazard the narrowing was meant to address is real but conditional: a broad catch would also
+    # swallow an `AttributeError` raised *inside* a working `send_message_with_context` and silently
+    # degrade to the unmetered path. That only matters if someone writes that function. Do not. This
+    # whole file is deleted in Phase 5, and the personalisation context assembled above it — purpose,
+    # subjects, goals, session length, consistency, best day, due count — moves into `ask_service`'s
+    # context assembly. That move is the one thing here worth keeping.
     try:
         from src.domains.intelligence.conversation import conversation_service
 

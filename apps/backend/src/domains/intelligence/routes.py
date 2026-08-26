@@ -16,8 +16,6 @@ from src.shared.auth import CurrentUser, PremiumUser
 from . import models
 from .conversation import conversation_service
 from .memory import memory_service
-from .planning import planning_service
-from .reasoning import reasoning_service
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +30,17 @@ router = APIRouter(tags=["intelligence"])
 @router.post("/conversations", response_model=models.ConversationResponse, status_code=201)
 async def create_conversation(body: models.ConversationCreate, current_user: CurrentUser):
     """Start a new conversation with Intelligence."""
+    # `by_alias=True` because the request model is now a `CamelModel`, so its fields are snake_case,
+    # while `conversation_service.create_conversation` reads camelCase keys on the way to the repo,
+    # which names them after the columns. Dumping without the alias would silently drop every optional
+    # context link — the conversation would be created unattached and the request would still 201.
     session = await conversation_service.create_conversation(
-        user_id=current_user.id, data=body.model_dump(exclude_unset=True)
+        user_id=current_user.id, data=body.model_dump(exclude_unset=True, by_alias=True)
     )
     return session
 
 
-@router.get("/conversations", response_model=models.ConversationListResponse)
+@router.get("/conversations", response_model=models.PaginatedResponse[models.ConversationResponse])
 async def list_conversations(
     current_user: CurrentUser,
     page: int = Query(1, ge=1),
@@ -46,7 +48,7 @@ async def list_conversations(
     sessionType: str | None = Query(None),
     spaceId: str | None = Query(None),
 ):
-    """List conversations."""
+    """List conversations, newest activity first."""
     sessions, total = await conversation_service.list_conversations(
         user_id=current_user.id,
         page=page,
@@ -54,8 +56,13 @@ async def list_conversations(
         session_type=sessionType,
         space_id=spaceId,
     )
-    return models.ConversationListResponse(
-        conversations=sessions, total=total, page=page, pageSize=pageSize
+    pages = (total + pageSize - 1) // pageSize if total else 0
+    return models.PaginatedResponse[models.ConversationResponse](
+        items=sessions,
+        total=total,
+        page=page,
+        page_size=pageSize,
+        pages=pages,
     )
 
 
@@ -67,18 +74,30 @@ async def get_conversation(session_id: str, current_user: CurrentUser):
     )
 
 
-@router.get("/conversations/{session_id}/messages", response_model=models.MessageListResponse)
+@router.get(
+    "/conversations/{session_id}/messages",
+    response_model=models.CursorPage[models.ChatMessageResponse],
+)
 async def get_messages(
     session_id: str,
     current_user: CurrentUser,
     limit: int = Query(50, ge=1, le=200),
-    before: str | None = Query(None),
+    before: str | None = Query(
+        None, description="A message id from a previous window. Returns the window before it."
+    ),
 ):
-    """Get messages in a conversation."""
-    messages, total = await conversation_service.get_messages(
+    """One window of a conversation, oldest-first.
+
+    A thread pages backwards by cursor rather than by number, so this returns `CursorPage` rather than
+    `PaginatedResponse`: `page` and `pages` would have to be invented to fit the other envelope, and an
+    invented page number is indistinguishable from a real one.
+    """
+    messages, total, has_more, next_cursor = await conversation_service.get_messages(
         session_id=session_id, user_id=current_user.id, limit=limit, before=before
     )
-    return models.MessageListResponse(messages=messages, total=total)
+    return models.CursorPage[models.ChatMessageResponse](
+        items=messages, total=total, has_more=has_more, next_cursor=next_cursor
+    )
 
 
 @router.delete("/conversations/{session_id}", status_code=204)
@@ -96,35 +115,15 @@ async def archive_conversation(session_id: str, current_user: CurrentUser):
 # ===========================================================================
 # Chat (non-streaming, HTTP)
 # ===========================================================================
-
-
-@router.post("/chat", response_model=models.ChatResponse)
-async def chat(body: models.ChatRequest, current_user: CurrentUser):
-    """Send a message and receive AI response (non-streaming).
-
-    For real-time streaming, use the WebSocket endpoint.
-    """
-    # Get or create session
-    session_id = body.sessionId
-    if not session_id:
-        session = await conversation_service.create_conversation(
-            user_id=current_user.id,
-            data={"courseId": body.courseId, "topicId": body.topicId},
-        )
-        session_id = session.id
-
-    result = await reasoning_service.generate_response(
-        user_id=current_user.id,
-        session_id=session_id,
-        message=body.message,
-        image_urls=body.imageUrls or None,
-    )
-
-    return models.ChatResponse(
-        sessionId=session_id,
-        message=result.get("message", {}),
-        actions=result.get("actions", []),
-    )
+#
+# `POST /chat` is gone. It called `reasoning_service.generate_response`, which imported
+# `reasoning.chat_impl.process_chat_message` — a function that was never written. The only two
+# references to that name in the repository were the import and the call, so the route was dead on
+# arrival and mounting the router with it in place would have published a `500`.
+#
+# `POST /ask` replaces it, backed by the pipeline extracted out of the WebSocket handler. Until then
+# streaming over `WS /ws` is the only way to send a turn, which is what both clients already do.
+# Nothing is published broken in the meantime.
 
 
 # ===========================================================================
@@ -146,21 +145,30 @@ async def get_summaries(current_user: CurrentUser, limit: int = Query(10, ge=1, 
 
 @router.get("/memory/context", response_model=models.MemoryContextResponse)
 async def get_memory_context(current_user: CurrentUser):
-    """Get the full memory context (for debugging/transparency)."""
-    context = await memory_service.get_memory_context(current_user.id)
-    return context
+    """What Intelligence remembers about the learner, as data (for transparency and debugging).
+
+    Reads `get_memory_snapshot`, not `get_memory_context`. The latter returns the same memory rendered
+    as a prompt block — a plain string — and this route used to return it under a structured response
+    model, which would have `500`d on the first request.
+    """
+    return await memory_service.get_memory_snapshot(current_user.id)
 
 
 # ===========================================================================
 # Recommendations
 # ===========================================================================
-
-
-@router.get("/recommendations", response_model=list[models.RecommendationResponse])
-async def get_recommendations(current_user: CurrentUser, limit: int = Query(5, ge=1, le=20)):
-    """Get proactive learning recommendations."""
-    recs = await planning_service.get_recommendations(user_id=current_user.id, limit=limit)
-    return recs
+#
+# `GET /recommendations` is gone, for the same reason as `POST /chat`:
+# `planning_service.get_recommendations` imported `get_learning_insights` from
+# `planning/reflection_impl.py`, and that module defines only `evaluate_action_outcome` and
+# `build_reflection_context`. The name exists elsewhere as `action/skills/handlers`'
+# `handle_get_learning_insights`, which is a tool handler with a different signature and return shape,
+# so the import could not have been satisfied by it. The route was a `500`.
+#
+# Not resurrected here: proactive recommendations are outside Ask Maigie's scope (§4.1), and there is
+# no recommendation engine to point a route at — the deleted service body was a comment reading
+# "Future: build recommendation engine" over a call to a function that did not exist. It returns when
+# something computes recommendations.
 
 
 # ===========================================================================

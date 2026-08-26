@@ -33,15 +33,14 @@ async def generate_schedule(*, user_id: str, preferences: dict[str, Any] | None 
     return await regenerate_schedule(user_id=user_id, preferences=preferences or {})
 
 
-async def get_recommendations(*, user_id: str, limit: int = 5) -> list[dict[str, Any]]:
-    """Get proactive learning recommendations.
-
-    May suggest: revision topics, collaboration opportunities,
-    resources, schedule adjustments, or study sessions.
-    """
-    # Future: build recommendation engine from observation + memory
-    # For now, delegate to reflection service which provides basic insights
-    from src.domains.intelligence.planning.reflection_impl import get_learning_insights
-
-    insights = await get_learning_insights(user_id)
-    return insights[:limit] if insights else []
+# `get_recommendations` is deleted along with `GET /api/v1/intelligence/recommendations`.
+#
+# It imported `get_learning_insights` from `planning/reflection_impl.py`, which defines only
+# `evaluate_action_outcome` and `build_reflection_context`, so the call could never have run. The body
+# was a comment reading "Future: build recommendation engine from observation + memory" above a
+# delegation to a function that did not exist — an intention, not an implementation.
+#
+# Restore it when there is a recommendation engine to delegate to. `action/skills/handlers`'
+# `handle_get_learning_insights` reads real `LearningInsight` rows and is the obvious starting point,
+# but it is a tool handler with a tool handler's signature and return shape, and adapting it is work
+# rather than a rename.

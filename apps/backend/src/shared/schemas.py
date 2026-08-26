@@ -68,3 +68,24 @@ class PaginatedResponse(CamelModel, Generic[ResponseT]):
     page: int
     page_size: int
     pages: int
+
+
+class CursorPage(CamelModel, Generic[ResponseT]):
+    """The canonical envelope for list endpoints that page by cursor rather than by number.
+
+    A chat thread pages backwards from the newest message by id, so ``page`` and ``pages`` have no
+    meaning for it — filling them in with ``1`` to reuse ``PaginatedResponse`` would publish a
+    fabricated measurement, and the caller cannot tell a fabricated page number from a real one.
+
+    ``has_more`` rather than leaving the caller to compare ``len(items)`` against ``total``: with a
+    cursor, ``total`` counts the whole thread while ``items`` counts one window into the middle of it,
+    so that comparison does not answer the question. ``next_cursor`` is the value to pass back as
+    ``before``, and is ``None`` exactly when ``has_more`` is false.
+
+    Here rather than in one domain for the same reason as ``PaginatedResponse``.
+    """
+
+    items: list[ResponseT]
+    total: int
+    has_more: bool
+    next_cursor: str | None = None

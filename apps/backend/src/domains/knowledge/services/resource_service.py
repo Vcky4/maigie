@@ -135,9 +135,7 @@ async def record_interaction(*, user_id: str, resource_id: str, interaction_type
             resource_id, column="clickCount", touch_last_accessed=True
         )
     elif interaction_type == "RESOURCE_BOOKMARK":
-        await knowledge_repo.increment_resource_counter(
-            resource_id, column="bookmarkCount"
-        )
+        await knowledge_repo.increment_resource_counter(resource_id, column="bookmarkCount")
 
 
 async def delete_resource(*, user_id: str, resource_id: str) -> None:
@@ -246,9 +244,15 @@ async def recommend_resources(
 
     from .url_validator import check_urls
 
+    # `get_memory_context` returns a formatted prompt block, not a mapping. This used to call
+    # `.update()` on it, which raised `AttributeError` on every request that supplied `context` — the
+    # annotation on the memory service claimed `dict[str, Any]` and this call site believed it. The
+    # annotation is now correct and the extra context is appended as what it is: more prose for the
+    # same block.
     user_context = await get_memory_context(user_id)
     if context:
-        user_context.update(context)
+        extra = "\n".join(f"- {k}: {v}" for k, v in context.items())
+        user_context = f"{user_context}\n{extra}" if user_context else extra
 
     # ---- Step 1: search. Described in prose, with no output format demanded. ----
     #
@@ -396,5 +400,3 @@ async def recommend_resources(
         "grounded": found.grounded,
         "discarded": discarded,
     }
-
-
