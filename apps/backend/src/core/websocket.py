@@ -18,6 +18,15 @@ from fastapi import WebSocket
 logger = logging.getLogger(__name__)
 
 
+def _room_channel(room: str) -> str:
+    """Namespace a room id inside the channel registry.
+
+    Rooms and channels share one dict, so a room called ``"progress"`` must not collide with the
+    course-generation progress channel of the same name. The prefix is internal and never published.
+    """
+    return f"room:{room}"
+
+
 class ConnectionManager:
     """
     Manages WebSocket connections, user channels, and event broadcasting.
@@ -200,6 +209,92 @@ class ConnectionManager:
         connection registry, and messages sent through it would reach nobody.
         """
         await self.send_to_user(user_id, data)
+
+    # -----------------------------------------------------------------------
+    # Connection- and room-scoped sends
+    #
+    # These four were called by the chat websocket handler at roughly twenty-five sites and **did not
+    # exist**. Not "were stubs" — were absent, so every call raised ``AttributeError``. The handler
+    # died on its `message_saved` frame, one frame into every turn, before the model was ever reached,
+    # and the twelve `send_connection_json` sites include the `pong` reply to the heartbeat both
+    # clients send every twenty-five seconds. Three of those sites sit inside a
+    # ``except (json.JSONDecodeError, AttributeError)`` meant to catch non-JSON input, which swallowed
+    # the error and let a keepalive fall through to be answered as if it were a question.
+    #
+    # They live here rather than in the handler because a send needs the registry, and the registry is
+    # this object. `send_json` already exists for exactly this reason, with a docstring saying so.
+    #
+    # Rooms are built on the channel subscriptions this class already keeps rather than on a second
+    # registry. A "room" and a "channel" are the same idea — a named set of connections — and the
+    # channel version already has subscribe, unsubscribe, broadcast and disconnect cleanup that work.
+    # A parallel `self.rooms` dict would have been a second thing to keep in step with `disconnect`.
+    # -----------------------------------------------------------------------
+
+    async def send_connection_json(self, data: dict[str, Any], connection_id: str):
+        """Send to one connection, payload first.
+
+        ``send_personal_message`` with the arguments in the order the chat handler calls them. The
+        distinction from ``send_json`` matters and is not cosmetic: ``send_json`` fans out to every
+        connection a user has, so replying to a heartbeat with it would pong all of a learner's open
+        tabs for a ping that came from one of them, and an error about a malformed frame would reach
+        sockets that did not send it.
+        """
+        await self.send_personal_message(connection_id, data)
+
+    async def send_text_to_user(self, text: str, user_id: str):
+        """Send a bare text frame to every connection a user has.
+
+        A raw, non-JSON frame is a supported wire form and not a workaround: both clients branch on
+        it. Mobile's `chatWsClient` does ``if (!raw.startsWith('{')) emit('message', raw)`` and web's
+        `ChatWebSocketClient` has the matching ``else`` on ``event.data.startsWith('{')``.
+
+        This exists because four call sites in the chat handler wanted it and reached for
+        ``send_personal_message(text, user_id)`` instead — arguments reversed against
+        ``(connection_id, message: dict)``. That does not raise: the text was read as a connection id,
+        missed the registry, logged "Connection not found" and returned. The greeting's final text, the
+        greeting fallback and the onboarding reply's non-streamed path were all silently dropped.
+        """
+        if user_id not in self.user_connections:
+            return
+
+        for connection_id in list(self.user_connections[user_id]):
+            websocket = self.active_connections.get(connection_id)
+            if websocket is None:
+                continue
+            try:
+                await websocket.send_text(text)
+            except Exception as e:
+                logger.error(f"Error sending text to {connection_id}: {e}")
+                await self.disconnect(connection_id, reason="send_error")
+
+    def join_room(self, connection_id: str, room: str):
+        """Add a connection to a room. Rooms are channels under another name."""
+        self.subscribe_to_channel(connection_id, _room_channel(room))
+
+    def leave_room(self, connection_id: str, room: str):
+        """Remove a connection from a room."""
+        self.unsubscribe_from_channel(connection_id, _room_channel(room))
+
+    async def send_room_json(
+        self,
+        data: dict[str, Any],
+        room: str,
+        exclude_connection_id: str | None = None,
+    ):
+        """Send to every connection in a room, optionally excluding the sender's own.
+
+        ``exclude_connection_id`` is what ``broadcast_to_channel`` lacks and the handler needs: when a
+        learner posts to a shared room, the other members are told, and the sender is not — it already
+        rendered its own message optimistically and would otherwise show it twice.
+        """
+        channel = _room_channel(room)
+        if channel not in self.channel_subscriptions:
+            return
+
+        for connection_id in list(self.channel_subscriptions[channel]):
+            if exclude_connection_id is not None and connection_id == exclude_connection_id:
+                continue
+            await self.send_personal_message(connection_id, data)
 
     async def broadcast(self, message: dict[str, Any], exclude: set[str] | None = None):
         """

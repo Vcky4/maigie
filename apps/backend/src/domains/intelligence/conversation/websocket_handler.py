@@ -30,7 +30,7 @@ from src.domains.billing.services.credit_consumption_service import (
 )
 from src.domains.identity.db_models import ModelPreference
 from src.domains.identity.repository import IdentityRepository
-from src.domains.intelligence.conversation import note_service
+from src.domains.intelligence.conversation import ask_service, note_service
 from src.domains.intelligence.conversation.chat_greeting import (
     _build_greeting_components,
     _build_greeting_context,
@@ -275,7 +275,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             subscribed_group = await _get_circle_group_for_session(
                                 None, subscribe_session_id
                             )
-                            if not subscribed_group or not _is_circle_member(
+                            if not subscribed_group or not await _is_circle_member(
                                 subscribed_group, user.id
                             ):
                                 await manager.send_connection_json(
@@ -328,7 +328,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 None, pinned.id
                             )
                             if pinned_circle_group:
-                                if _is_circle_member(pinned_circle_group, user.id):
+                                if await _is_circle_member(pinned_circle_group, user.id):
                                     session = pinned
                                 else:
                                     await manager.send_connection_json(
@@ -361,7 +361,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 circle_group = await _get_circle_group_for_session(None, session.id)
                 is_circle_session = bool(circle_group)
                 if is_circle_session:
-                    if not _is_circle_member(circle_group, user.id):
+                    if not await _is_circle_member(circle_group, user.id):
                         await manager.send_connection_json(
                             {
                                 "type": "error",
@@ -421,7 +421,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     elif is_onboarded:
                         try:
                             greeting_ctx = await _build_greeting_context(None, user)
-                            greeting_prompt = _build_greeting_prompt(greeting_ctx)
+                            greeting_prompt = await _build_greeting_prompt(greeting_ctx)
 
                             # Stream callback
                             streamed_greeting_chunks: list[str] = []
@@ -476,7 +476,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 # Build greeting components before creating message (for persistence)
                                 greeting_components = []
                                 try:
-                                    greeting_components = _build_greeting_components(greeting_ctx)
+                                    greeting_components = await _build_greeting_components(
+                                        greeting_ctx
+                                    )
                                 except Exception as comp_err:
                                     logger.warning("Greeting components error: %s", comp_err)
 
@@ -502,7 +504,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 await intelligence_repo.create_message(data=greeting_data)
 
                                 # Send final plain-text message (deduped by frontend)
-                                await manager.send_personal_message(clean_greeting, user.id)
+                                await manager.send_text_to_user(clean_greeting, user.id)
 
                                 # Send optional components (e.g. pick-up course, schedule, goals)
                                 for comp in greeting_components:
@@ -518,7 +520,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             fallback = (
                                 f"Hey {first_name}! 👋 What would you like to " "work on today?"
                             )
-                            await manager.send_personal_message(fallback, user.id)
+                            await manager.send_text_to_user(fallback, user.id)
                             await intelligence_repo.create_message(
                                 data={
                                     "sessionId": session.id,
@@ -824,9 +826,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
 
                         # Send credit limit error first if present (triggers upgrade modal)
                         if onboarding_result.credit_limit_error:
-                            await manager.send_personal_message(
-                                json.dumps(onboarding_result.credit_limit_error), user.id
-                            )
+                            await manager.send_json(onboarding_result.credit_limit_error, user.id)
 
                         # Deep-link payload must reach the client before stream ends so the web app
                         # can store firstTopic before user refetch / redirect (avoids race with is_final).
@@ -860,7 +860,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 user.id,
                             )
                         if not words:
-                            await manager.send_personal_message(reply_text, user.id)
+                            await manager.send_text_to_user(reply_text, user.id)
 
                         # Send created courses as component for immediate UI rendering
                         for comp in onboarding_components:
@@ -874,47 +874,35 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 if is_circle_session and not should_reply_as_ai:
                     continue
 
-                # 5. Build History for Context (latest messages to reduce token usage)
-                # IMPORTANT: Use the *most recent* messages; ordering asc with take would grab the oldest.
-                history_take = 12
-                history_where_session_id = session.id
-                history_review_item_id = None
-                # Keep review conversations isolated from general chat (and from other reviews)
-                if context and context.get("reviewItemId"):
-                    history_review_item_id = context["reviewItemId"]
-                history_user_id_filter = None if is_circle_session else user.id
-
+                # 5. Build history for the prompt — the most recent turns, oldest-first.
+                #
+                # Ordering descending and then reversing is deliberate: ordering ascending with a limit
+                # would take the *oldest* twelve messages of the conversation, so a long thread would
+                # send the model the beginning of a conversation the learner left hours ago.
+                #
+                # Review threads are isolated from general chat and from each other, so a spaced-
+                # repetition review does not inherit the learner's unrelated questions. In a space room
+                # the whole room's messages are history; in a personal chat only the learner's are.
+                review_item_id = context.get("reviewItemId") if context else None
                 factory = get_session_factory()
                 async with factory() as sa_session:
-                    conditions = [ChatMessage.session_id == history_where_session_id]
-                    if history_review_item_id:
-                        conditions.append(ChatMessage.review_item_id == history_review_item_id)
+                    conditions = [ChatMessage.session_id == session.id]
+                    if review_item_id:
+                        conditions.append(ChatMessage.review_item_id == review_item_id)
                     else:
                         conditions.append(ChatMessage.review_item_id.is_(None))
-                    if history_user_id_filter:
-                        conditions.append(ChatMessage.user_id == history_user_id_filter)
+                    if not is_circle_session:
+                        conditions.append(ChatMessage.user_id == user.id)
                     stmt = (
                         select(ChatMessage)
                         .where(*conditions)
                         .order_by(ChatMessage.created_at.desc())
-                        .limit(history_take)
+                        .limit(ask_service.HISTORY_LIMIT)
                     )
                     result = await sa_session.execute(stmt)
                     history_records = list(reversed(result.scalars().all()))
 
-                # Format history for Gemini (including images)
-                formatted_history = []
-                for msg in history_records:
-                    # Map DB roles to Gemini roles ('user' or 'model')
-                    role = "user" if msg.role == "USER" else "model"
-                    parts = [msg.content]
-                    # Include images if present (image_urls preferred, fallback to image_url)
-                    msg_images = getattr(msg, "image_urls", None) or []
-                    if not msg_images and getattr(msg, "image_url", None):
-                        msg_images = [msg.image_url]
-                    for img_url in msg_images:
-                        parts.append(img_url)
-                    formatted_history.append({"role": role, "parts": parts})
+                formatted_history = ask_service.format_history(history_records)
 
                 # 5.5. Enrich context with topic/course/note details if IDs are provided
                 enriched_context = None
@@ -1325,95 +1313,36 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             "Failed to load KB context for group %s: %s", circle_group.id, kb_err
                         )
 
-                # 5.6. Perform Semantic Search (RAG) to find relevant items
-                # This helps the LLM know about items the user might be referring to
-                # Skip RAG for short/simple messages to improve response time
-                simple_messages = {
-                    "hi",
-                    "hello",
-                    "hey",
-                    "thanks",
-                    "thank you",
-                    "ok",
-                    "okay",
-                    "yes",
-                    "no",
-                    "bye",
-                    "goodbye",
-                    "help",
-                    "?",
-                    "cool",
-                    "great",
-                    "nice",
-                    "good",
-                    "bad",
-                    "sure",
-                    "yep",
-                    "nope",
-                    "what",
-                    "why",
-                    "how",
-                    "when",
-                    "where",
-                    "who",
-                    "hm",
-                    "hmm",
-                    "ah",
-                    "oh",
-                }
-                user_text_lower = user_text.lower().strip()
-                should_run_rag = (
-                    len(user_text) > 15
-                    and user_text_lower not in simple_messages
-                    and not user_text_lower.startswith(("hi ", "hello ", "hey "))
-                )
-
+                # 5.6. Retrieve the learner's own material that this question may be about.
+                #
+                # The gate and the score filter are `ask_service.should_retrieve` and
+                # `relevant_retrieved_items`. Both are pure, both were previously reachable only by
+                # driving a live socket, and both are the kind of heuristic that gets edited without
+                # anyone noticing — so they now have tests. Retrieval is skipped for space rooms because
+                # Ask Maigie's retrieval is over the learner's *private* material, which must not reach
+                # a shared room.
                 if is_circle_session:
-                    print("⏭️ Skipping personal RAG for circle chat.")
-                elif should_run_rag:
+                    logger.debug("Skipping personal retrieval for a space room.")
+                elif ask_service.should_retrieve(user_text):
                     try:
-                        # We use a broader limit to catch potential matches
                         rag_results = await rag_service.retrieve_relevant_context(
                             query=user_text, user_id=user.id, limit=3
                         )
-
-                        if rag_results:
-                            retrieved_items = []
-                            for item in rag_results:
-                                # Filter by score (heuristic) - keep only reasonably relevant items
-                                # Note: exact matches usually have high scores
-                                # embedding_service uses 'similarity', rag_service might use 'score' in some contexts
-                                score = item.get("similarity") or item.get("score") or 0
-                                if score < 0.65:
-                                    continue
-
-                                obj_data = item.get("data", {})
-                                obj_type = item.get("objectType", "unknown")
-                                obj_id = item.get("objectId")
-                                obj_title = obj_data.get("title", "Untitled")
-
-                                # Format for LLM context
-                                retrieved_items.append(
-                                    f"- {obj_type.upper()}: {obj_title} (ID: {obj_id})"
-                                )
-
-                            if retrieved_items:
-                                if not enriched_context:
-                                    enriched_context = {}
-                                enriched_context["retrieved_items"] = retrieved_items
-                                print(
-                                    f"🔍 RAG found {len(retrieved_items)} relevant items for context"
-                                )
-
+                        retrieved_items = ask_service.relevant_retrieved_items(rag_results)
+                        if retrieved_items:
+                            if not enriched_context:
+                                enriched_context = {}
+                            enriched_context["retrieved_items"] = retrieved_items
+                            logger.debug(
+                                "Retrieval contributed %d items to the prompt.",
+                                len(retrieved_items),
+                            )
                     except Exception as e:
-                        print(f"⚠️ RAG context retrieval failed: {e}")
-                        # Continue without RAG results
+                        # Retrieval is an enrichment, not a precondition. A turn without it is a worse
+                        # answer; a turn that fails because of it is no answer.
+                        logger.warning("Retrieval failed, continuing without it: %s", e)
                 else:
-                    (
-                        print(f"⏭️ Skipping RAG for simple message: '{user_text[:30]}...'")
-                        if len(user_text) > 30
-                        else print(f"⏭️ Skipping RAG for simple message: '{user_text}'")
-                    )
+                    logger.debug("Skipping retrieval for a trivial message.")
 
                 # 5b. Inject long-term memory context (conversation summaries + learning insights)
                 if is_circle_session:
@@ -1433,6 +1362,117 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 # 6. Get AI response with tool calling support
                 ai_request_id = user_message.id if should_reply_as_ai else None
                 ai_reply_target_id = user_message.id if should_reply_as_ai else None
+
+                # 6a. Check credits BEFORE generating. This block used to sit at step 10,
+                # roughly 280 lines below `route_request` — so a learner over their cap was charged a
+                # live model call, had the whole answer streamed to them frame by frame, and was only
+                # then told they had no credits. Nothing was persisted and `consume_credits` was never
+                # reached, so the turn cost real money and recorded neither the spend nor the answer.
+                # Consumption still happens after generation, at step 11, because only then are the
+                # real token counts known. Check first, charge after.
+                #
+                estimated_total_tokens = ask_service.estimate_turn_tokens(
+                    message=llm_user_text,
+                    context=enriched_context,
+                    history=formatted_history,
+                )
+
+                # Get user object for credit check
+                identity_repo = IdentityRepository()
+                user_obj = await identity_repo.find_by_id(user.id)
+                if not user_obj:
+                    await websocket.close()
+                    return
+
+                circle_credit_id = (
+                    circle_group.space_id if is_circle_session and circle_group else None
+                )
+
+                try:
+                    # Check if credits are available (will raise if hard cap reached)
+                    is_available, warning_message = await check_credit_availability(
+                        user_obj,
+                        estimated_total_tokens,
+                        db_client=None,
+                        space_id=circle_credit_id,
+                    )
+                    if not is_available:
+                        tier = str(user_obj.tier) if user_obj.tier else "FREE"
+                        is_daily = False
+                        if circle_credit_id:
+                            error_message = (
+                                "This circle has reached its shared credit limit. "
+                                "Top up the circle credits or try again later."
+                            )
+                        else:
+                            credit_usage = await get_credit_usage(user_obj)
+                            daily_limit = credit_usage.get("daily_limit", 0)
+                            used_today = credit_usage.get("credits_used_today", 0)
+                            is_daily = (
+                                tier == "FREE"
+                                and daily_limit > 0
+                                and (used_today + estimated_total_tokens > daily_limit)
+                            )
+
+                            if is_daily:
+                                error_message = (
+                                    f"Daily credit limit exceeded. You've used {used_today:,} "
+                                    f"of {daily_limit:,} daily credits. "
+                                    f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}. "
+                                    f"Start a free trial for more credits, or refer friends to earn bonus credits!"
+                                )
+                            else:
+                                error_message = (
+                                    f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
+                                    f"of {credit_usage['hard_cap']:,} credits. "
+                                    f"Period resets: {credit_usage['period_end']}. "
+                                    f"Start a free trial for unlimited usage, or refer friends to earn bonus credits!"
+                                )
+
+                        # Send error message with tier information as JSON for frontend handling
+                        error_data = {
+                            "type": "credit_limit_error",
+                            "message": error_message,
+                            "tier": tier,
+                            "is_daily_limit": is_daily,
+                            "show_referral_option": True,
+                            "blocked": True,
+                            "purchaseDeepLink": PURCHASE_DEEP_LINK,
+                            "sessionId": session.id,
+                            "requestId": ai_request_id,
+                            "replyToMessageId": ai_reply_target_id,
+                        }
+                        await manager.send_connection_json(error_data, connection_id)
+                        continue
+                except SubscriptionLimitError as e:
+                    # Get user tier for error message
+                    identity_repo = IdentityRepository()
+                    user_obj = await identity_repo.find_by_id(user.id)
+                    tier = str(user_obj.tier) if user_obj and user_obj.tier else "FREE"
+
+                    # Enhance error message with referral option
+                    if circle_credit_id:
+                        enhanced_message = "This circle has reached its shared credit limit."
+                    else:
+                        enhanced_message = (
+                            f"{e.message} "
+                            f"Start a free trial for more credits, or refer friends to earn bonus credits!"
+                        )
+
+                    error_data = {
+                        "type": "credit_limit_error",
+                        "message": enhanced_message,
+                        "tier": tier,
+                        "is_daily_limit": False,
+                        "show_referral_option": True,
+                        "blocked": True,
+                        "purchaseDeepLink": PURCHASE_DEEP_LINK,
+                        "sessionId": session.id,
+                        "requestId": ai_request_id,
+                        "replyToMessageId": ai_reply_target_id,
+                    }
+                    await manager.send_connection_json(error_data, connection_id)
+                    continue
 
                 # Define progress callback for tool execution updates
                 async def send_progress(
@@ -1461,7 +1501,30 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 streamed_chunks = []
 
                 async def stream_text(chunk: str, is_final: bool):
-                    """Stream text chunks to frontend via WebSocket"""
+                    """Stream text chunks to frontend via WebSocket.
+
+                    **`is_final` stays snake_case on the wire. This is a decision, not an oversight.**
+
+                    Every other key in this payload is camelCase — `sessionId`, `requestId`,
+                    `replyToMessageId` — so the inconsistency is real. It is left alone because all four
+                    consumers across the two clients read it with the same defensive expression:
+
+                        payload.is_final ?? payload.isFinal ?? false
+
+                    (web `chatApi.ts:338`; mobile `useChatWebSocket.ts:77`, `circles/chat.tsx:390`,
+                    `circles/topic-detail.tsx:226`.)
+
+                    So `is_final` is the spelling that works everywhere today. Renaming to `isFinal`
+                    would also work — every consumer falls back — but it would buy nothing until the
+                    fallbacks are removed, and removing them means a coordinated change across three
+                    repositories. The failure mode if one were missed is the reason not to do it
+                    casually: `?? false` makes a missing flag read as *not final*, so the client's
+                    streaming buffer would never commit and the answer would hang half-rendered rather
+                    than error. A silent hang is a worse outcome than an inconsistent key.
+
+                    Normalise it when all three repositories can drop the fallbacks in one release —
+                    the plan's Phase 8 handoff is the moment for it, and it is recorded there.
+                    """
                     streamed_chunks.append(chunk)
                     payload = {
                         "type": "stream",
@@ -1562,48 +1625,12 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 # just checking context for other operations like creating a study plan.
                 query_component_responses = []
 
-                # Check if any "create" or "update" actions were executed
-                has_create_or_update_actions = any(
-                    action_info["type"].startswith(("create_", "update_"))
-                    for action_info in executed_actions
-                )
-
-                # Check if user explicitly asked to VIEW their data (not just context lookup)
-                user_text_lower = llm_user_text.lower()
-                explicit_view_keywords = [
-                    "show my",
-                    "list my",
-                    "view my",
-                    "see my",
-                    "what are my",
-                    "show me my",
-                    "display my",
-                    "get my",
-                    "fetch my",
-                    "my courses",
-                    "my goals",
-                    "my schedule",
-                    "my notes",
-                    "my resources",
-                    "what courses",
-                    "what goals",
-                    "what schedule",
-                    "what notes",
-                    "show courses",
-                    "show goals",
-                    "show schedule",
-                    "show notes",
-                    "list courses",
-                    "list goals",
-                    "list schedule",
-                    "list notes",
-                ]
-                user_wants_to_view = any(kw in user_text_lower for kw in explicit_view_keywords)
-
-                # Only show query results as components if:
-                # 1. No create/update actions were executed, AND
-                # 2. User explicitly asked to view their data
-                if not has_create_or_update_actions and user_wants_to_view:
+                # Both halves of this gate are `ask_service.should_render_query_components`: the learner
+                # must have asked to *see* the data, and the turn must not also have created or updated
+                # something. See its docstring for why the second half is not redundant.
+                if ask_service.should_render_query_components(
+                    message=llm_user_text, executed_actions=executed_actions
+                ):
                     for query_result in query_results:
                         query_type = query_result.get("query_type", "")
                         component_type = query_result.get("component_type", "")
@@ -1741,7 +1768,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         )
 
                     # Format component response for all actions
-                    component_response = await format_action_component_response(
+                    component_response = format_action_component_response(
                         action_type=action_type,
                         action_result=action_result,
                         action_data=action_data,
@@ -1754,128 +1781,23 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 # 9. Clean response text
                 clean_response = response_text.strip()
 
-                # 10. Calculate costs and consume credits
-                # (Keep existing credit consumption logic)
-                # Estimate tokens needed: user message + context + history (approximate 4 chars per token)
-                estimated_input_tokens = (
-                    len(llm_user_text)
-                    + len(str(enriched_context or ""))
-                    + len(str(formatted_history))
-                ) // 4
-                # Reserve credits for response (reduced estimate for cost savings)
-                estimated_output_tokens = 500  # Reduced from 1000 for cost optimization
-                estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
-
-                # Get user object for credit check
-                identity_repo = IdentityRepository()
-                user_obj = await identity_repo.find_by_id(user.id)
-                if not user_obj:
-                    await websocket.close()
-                    return
-
-                circle_credit_id = (
-                    circle_group.space_id if is_circle_session and circle_group else None
-                )
-
-                try:
-                    # Check if credits are available (will raise if hard cap reached)
-                    is_available, warning_message = await check_credit_availability(
-                        user_obj,
-                        estimated_total_tokens,
-                        db_client=None,
-                        space_id=circle_credit_id,
-                    )
-                    if not is_available:
-                        tier = str(user_obj.tier) if user_obj.tier else "FREE"
-                        is_daily = False
-                        if circle_credit_id:
-                            error_message = (
-                                "This circle has reached its shared credit limit. "
-                                "Top up the circle credits or try again later."
-                            )
-                        else:
-                            credit_usage = await get_credit_usage(user_obj)
-                            daily_limit = credit_usage.get("daily_limit", 0)
-                            used_today = credit_usage.get("credits_used_today", 0)
-                            is_daily = (
-                                tier == "FREE"
-                                and daily_limit > 0
-                                and (used_today + estimated_total_tokens > daily_limit)
-                            )
-
-                            if is_daily:
-                                error_message = (
-                                    f"Daily credit limit exceeded. You've used {used_today:,} "
-                                    f"of {daily_limit:,} daily credits. "
-                                    f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}. "
-                                    f"Start a free trial for more credits, or refer friends to earn bonus credits!"
-                                )
-                            else:
-                                error_message = (
-                                    f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
-                                    f"of {credit_usage['hard_cap']:,} credits. "
-                                    f"Period resets: {credit_usage['period_end']}. "
-                                    f"Start a free trial for unlimited usage, or refer friends to earn bonus credits!"
-                                )
-
-                        # Send error message with tier information as JSON for frontend handling
-                        error_data = {
-                            "type": "credit_limit_error",
-                            "message": error_message,
-                            "tier": tier,
-                            "is_daily_limit": is_daily,
-                            "show_referral_option": True,
-                            "blocked": True,
-                            "purchaseDeepLink": PURCHASE_DEEP_LINK,
-                            "sessionId": session.id,
-                            "requestId": ai_request_id,
-                            "replyToMessageId": ai_reply_target_id,
-                        }
-                        await manager.send_connection_json(error_data, connection_id)
-                        continue
-                except SubscriptionLimitError as e:
-                    # Get user tier for error message
-                    identity_repo = IdentityRepository()
-                    user_obj = await identity_repo.find_by_id(user.id)
-                    tier = str(user_obj.tier) if user_obj and user_obj.tier else "FREE"
-
-                    # Enhance error message with referral option
-                    if circle_credit_id:
-                        enhanced_message = "This circle has reached its shared credit limit."
-                    else:
-                        enhanced_message = (
-                            f"{e.message} "
-                            f"Start a free trial for more credits, or refer friends to earn bonus credits!"
-                        )
-
-                    error_data = {
-                        "type": "credit_limit_error",
-                        "message": enhanced_message,
-                        "tier": tier,
-                        "is_daily_limit": False,
-                        "show_referral_option": True,
-                        "blocked": True,
-                        "purchaseDeepLink": PURCHASE_DEEP_LINK,
-                        "sessionId": session.id,
-                        "requestId": ai_request_id,
-                        "replyToMessageId": ai_reply_target_id,
-                    }
-                    await manager.send_connection_json(error_data, connection_id)
-                    continue
-
                 # 11. Calculate actual token usage and consume credits
                 # Use actual token counts from API
                 actual_input_tokens = usage_info.get("input_tokens", 0)
                 actual_output_tokens = usage_info.get("output_tokens", 0)
 
-                # Fallback to estimation if API didn't provide token counts
+                # Fall back to the estimate when the provider reported no counts. Same arithmetic as the
+                # pre-flight check, via `ask_service`, so the number a learner is charged cannot drift
+                # from the number they were checked against — they were two copies of it before.
                 if actual_input_tokens == 0 and actual_output_tokens == 0:
-                    actual_input_tokens = (
-                        len(llm_user_text)
-                        + len(str(enriched_context or ""))
-                        + len(str(formatted_history))
-                    ) // 4
-                    actual_output_tokens = len(clean_response) // 4
+                    actual_input_tokens = ask_service.estimate_prompt_tokens(
+                        message=llm_user_text,
+                        context=enriched_context,
+                        history=formatted_history,
+                    )
+                    actual_output_tokens = ask_service.estimate_prompt_tokens(
+                        message=clean_response
+                    )
 
                 actual_total_tokens = actual_input_tokens + actual_output_tokens
 
@@ -1922,20 +1844,15 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 if all_components and clean_response:
                     main_content, suggestion_text = _extract_suggestion(clean_response)
 
-                # Build skill badges from executed actions and query results
-                skills_used: list[dict[str, str]] = []
-                _seen_skills: set[str] = set()
-                for action_info in executed_actions:
-                    badge = _tool_to_skill_badge(action_info["type"])
-                    if badge and badge["id"] not in _seen_skills:
-                        skills_used.append(badge)
-                        _seen_skills.add(badge["id"])
-                for qr in query_results:
-                    qt = qr.get("query_type", "")
-                    badge = _query_type_to_skill_badge(qt)
-                    if badge and badge["id"] not in _seen_skills:
-                        skills_used.append(badge)
-                        _seen_skills.add(badge["id"])
+                # Build skill badges from executed actions and query results. The badge *maps* still live
+                # in this module and are injected, so `ask_service` stays importable without a cycle
+                # until the generation stage moves too.
+                skills_used = ask_service.build_skill_badges(
+                    executed_actions=executed_actions,
+                    query_results=query_results,
+                    tool_badge=_tool_to_skill_badge,
+                    query_badge=_query_type_to_skill_badge,
+                )
 
                 create_data: dict = {
                     "sessionId": session.id,

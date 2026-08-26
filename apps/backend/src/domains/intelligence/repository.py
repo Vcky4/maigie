@@ -454,6 +454,13 @@ class IntelligenceRepository:
         "modelName": "model_name",
         "costUsd": "cost_usd",
         "revenueUsd": "revenue_usd",
+        # Provenance, added with migration 049_chat_msg_grounding. Listed here because `map_fields`
+        # raises on a key it does not know — a column added to the model but not to this map is a
+        # write that fails loudly rather than one that silently disappears. See
+        # `tests/test_field_mapping_completeness.py` for why that guarantee exists.
+        "citations": "citations",
+        "truncated": "truncated",
+        "askMode": "ask_mode",
     }
 
     _ACTION_LOG_MAP = {

@@ -24,7 +24,7 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSON
+from sqlalchemy.dialects.postgresql import ARRAY, JSON, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.shared.database.base import Base, TimestampMixin
@@ -127,6 +127,20 @@ class ChatMessage(Base):
 
     # Component data
     component_data: Mapped[dict | None] = mapped_column("componentData", JSON, nullable=True)
+
+    # Provenance — how this answer was produced. See migration 049_chat_msg_grounding.
+    #
+    # `citations` is nullable with no default on purpose: `None` means grounding was not attempted for
+    # this turn, `[]` means search ran and cited nothing. Collapsing the two would make an ungrounded
+    # answer indistinguishable from a grounded one that found no sources.
+    citations: Mapped[list | None] = mapped_column("citations", JSONB, nullable=True)
+    # Whether the model stopped at the token limit. Defaulted rather than nullable because every row
+    # written before this column existed genuinely was delivered whole.
+    truncated: Mapped[bool] = mapped_column(
+        "truncated", Boolean, default=False, server_default="false"
+    )
+    # Which surface and transport produced the turn, so an unmetered path cannot hide per-surface.
+    ask_mode: Mapped[str | None] = mapped_column("askMode", String, nullable=True)
 
     # Token/cost tracking
     token_count: Mapped[int] = mapped_column("tokenCount", Integer, default=0, server_default="0")
