@@ -260,13 +260,67 @@ sitting written and unused.
 
 **Suggested sequence**, each step independently verifiable and each unskipping its own tests:
 
-1. `types.py`, `protocol.py`, `capabilities.py`, `errors.py` — no dependencies.
-2. `circuit_breaker.py` + `cost_tracker.py` — pure logic; unskips 2 test files.
-3. `tool_normalizer.py` + `stream_normalizer.py` — pure transforms; unskips 2 more.
-4. One provider adapter end to end (Gemini, since `gemini_sdk.py` already exists).
-5. `router.py` — needs 1–4; unskips `test_end_to_end_routing`.
+1. ~~`types.py`, `protocol.py`, `capabilities.py`, `errors.py` — no dependencies.~~ **Done, 2026-08-26.**
+2. ~~`circuit_breaker.py` + `cost_tracker.py` — pure logic; unskips 2 test files.~~ **Done.**
+3. ~~`tool_normalizer.py` + `stream_normalizer.py` — pure transforms; unskips 2 more.~~ **Done.**
+4. One provider adapter end to end (Gemini, since `gemini_sdk.py` already exists). **Module ported; not yet exercised, because nothing constructs it until step 5.**
+5. `router.py` — needs 1–4; unskips `test_end_to_end_routing`. **NEXT. This is the one that matters: `get_llm_router()` still raises, so chat still cannot produce a response.**
 6. The remaining two adapters; unskips their test files.
 7. `feature_flags.py` with real storage, replacing the fail-closed stub.
+
+### Migration progress, 2026-08-26 — steps 1–4
+
+Ported from `4953972^` into `src/domains/intelligence/reasoning/llm/`. Suite went from 3,057 to 3,202
+passing; `ruff` clean. Commits `830889e`, `d5db890`, `83d3476`.
+
+**Ported unchanged apart from import paths** — `types`, `protocol`, `capabilities`, `base_adapter`,
+`circuit_breaker`, `tool_normalizer`, `stream_normalizer`, `prompts`, `streaming`, `context`,
+`gemini_chat_tools`. The last of these exposes `GeminiChatToolsAdapter.get_chat_response_with_tools`,
+which satisfies `protocol.ChatWithToolsProvider` — the 4-tuple `websocket_handler` destructures.
+
+**Ported with a rewrite**, both because the original spoke to something that no longer exists:
+
+- `cost_tracker` — imported `from prisma import Prisma` and used `db.llmcostrecord.create` plus
+  `db.query_raw` with hand-numbered `$1` placeholders. Rewritten onto the existing `LlmCostRecord`
+  model. The constructor takes `session_factory=None` instead of a client and resolves it *at call
+  time*, so a tracker can be built before the database is connected — which the router does.
+  `aggregate` now builds a typed `select()`; the original counted placeholders by hand, and a filter
+  added later without incrementing the counter would have bound the wrong value to the wrong column.
+- `errors` — two incompatible versions existed. The pre-migration one carried `provider`, `model`,
+  `status_code`, `category`, `message`, `retriable`; the migration-era one had reduced it to
+  `(provider, message, status_code)`. **`websocket_handler` reads `e.category`, `e.model` and
+  `e.message` in its `except LLMProviderError` block**, none of which existed on the reduced class — so
+  the handler that turns a provider failure into a readable message would itself have raised
+  `AttributeError`, inside an `except`. Merged: the rich signature is canonical, the migration-era
+  `LLMError` base and `LLMUnavailableError` are kept, `retriable` now defaults from `category` rather
+  than to `False`, and `unsupported_capability` was added to `ERROR_CATEGORIES` because
+  `_ERROR_CATEGORY_MESSAGES` maps it and the old frozenset did not.
+
+**A tenth unmigrated module, not in the table above:** `src/services/chat_tool_arg_enrichment.py`
+existed nowhere in the current tree and had its own skipped test file. Ported to
+`src/domains/intelligence/action/tool_arg_enrichment.py`; only `_enrich_note_tool_args` touched the
+database, so it gained two small SQLAlchemy helpers.
+
+**Test files un-skipped — 6 of 10.** `pytest_ignore_collect` drops any test file whose source contains
+`src.services.`, so retargeting the imports is what un-skips them.
+
+| File | Tests | Changed beyond import paths? |
+|---|---|---|
+| `test_circuit_breaker.py` | 28 | No |
+| `test_tool_normalizer.py` + `test_stream_normalizer.py` | 66 | No |
+| `test_llm_chat_context.py` | 3 | No |
+| `test_chat_tool_arg_enrichment.py` | 5 | No |
+| `test_cost_tracker.py` | 25 | **Yes** — `record`/`aggregate` asserted the Prisma call shape and were rewritten against a fake session; `compute_cost` and `PROVIDER_PRICING` are untouched |
+
+Still skipped: `test_end_to_end_routing.py` (605 lines, needs step 5), `test_feature_flags.py` (775,
+step 7), `test_openai_chat_tools.py` (228, step 6), `test_llm_agentic_roundtrip.py` (47 — wants the
+legacy `GeminiService` class from `src/services/llm_service.py`, which is *not* on this path; the
+adapter is its replacement. Decide whether to port `GeminiService` or delete that test).
+
+**Note for whoever does step 5.** `router.py`'s imports were not surveyed before this pause. Everything
+it needs from steps 1–4 is in place; `metrics.py` (2.7k) is still missing and the router may want it.
+The finish line is `adapter_registry.get_llm_router()` returning a real router instead of calling
+`raise_unmigrated`, and `test_end_to_end_routing.py` passing.
 
 **Note on scope**: `llm_resilient.py` (already working, multi-provider) lives under
 `domains/personal_learning/services`, the wrong home for a shared client. It is deliberately
