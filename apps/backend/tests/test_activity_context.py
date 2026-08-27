@@ -109,10 +109,11 @@ class TestRecording:
                 arguments = match.group(1)
                 assert "entity_type=" in arguments, f"{path.name} records without an entity type"
                 assert "entity_id=" in arguments, f"{path.name} records without an entity id"
-        # Seven call sites across six services — `exam_prep_service` records both the start and the
-        # completion of a preparation. The count is asserted so that a writer *removed* is noticed
-        # too: a feed quietly losing a kind of entry is the failure this area keeps producing.
-        assert calls == 7
+        # Eight call sites across seven services — `exam_prep_service` records both the start and the
+        # completion of a preparation, and `prep_outcome_service` records the post-exam review. The count
+        # is asserted so that a writer *removed* is noticed too: a feed quietly losing a kind of entry is
+        # the failure this area keeps producing.
+        assert calls == 8
 
 
 def _entry(context: dict | None) -> models.ActivityFeedEntryResponse:

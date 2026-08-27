@@ -9883,6 +9883,234 @@
         "title": "PrepMaterialUpdateRequest",
         "type": "object"
       },
+      "PrepOutcomeRequest": {
+        "description": "How the sitting went, as the learner reports it.\n\n**Two ratings, and they are different questions.** `experienceRating` is how the\nexam went; `preparationRating` is how well the preparation served them. Someone can\nbe well prepared and have a bad day, or scrape through badly prepared — and it is\nthe second that says anything about us. Collapsing them would make both useless.\n\nBoth are optional, because a learner who only wants to say \"I missed it\" has told us\nsomething worth recording and should not be blocked on rating anything.",
+        "properties": {
+          "attended": {
+            "enum": [
+              "sat",
+              "missed",
+              "postponed",
+              "cancelled"
+            ],
+            "title": "Attended",
+            "type": "string"
+          },
+          "experienceRating": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Experiencerating"
+          },
+          "postponedTo": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Postponedto"
+          },
+          "preparationRating": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preparationrating"
+          },
+          "reflection": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflection"
+          }
+        },
+        "required": [
+          "attended"
+        ],
+        "title": "PrepOutcomeRequest",
+        "type": "object"
+      },
+      "PrepOutcomeResponse": {
+        "description": "One recorded sitting.\n\n`examDate` is the date this answer is *about*, which is not necessarily the\npreparation's current `examDate`: a postponed sitting moves that column and this row\nkeeps the one it refers to.\n\nThe readiness figures are what was believed on the day the learner answered. They are\nnever rewritten — if the readiness formula is later recalibrated, that is a new\ninterpretation rather than a correction of this record.",
+        "properties": {
+          "answeredAt": {
+            "format": "date-time",
+            "title": "Answeredat",
+            "type": "string"
+          },
+          "attended": {
+            "title": "Attended",
+            "type": "string"
+          },
+          "averageMasteryPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Averagemasterypercent"
+          },
+          "examDate": {
+            "format": "date-time",
+            "title": "Examdate",
+            "type": "string"
+          },
+          "experienceRating": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Experiencerating"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "prepId": {
+            "title": "Prepid",
+            "type": "string"
+          },
+          "preparationRating": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preparationrating"
+          },
+          "readinessPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readinesspercent"
+          },
+          "reflection": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflection"
+          },
+          "resultRecordedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resultrecordedat"
+          },
+          "resultScale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resultscale"
+          },
+          "resultValue": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resultvalue"
+          },
+          "targetReadiness": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetreadiness"
+          },
+          "topicsStrong": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topicsstrong"
+          },
+          "topicsTotal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topicstotal"
+          }
+        },
+        "required": [
+          "id",
+          "prepId",
+          "examDate",
+          "attended",
+          "answeredAt"
+        ],
+        "title": "PrepOutcomeResponse",
+        "type": "object"
+      },
       "PrepProgressSummary": {
         "description": "Derived progress for one preparation.\n\nEvery field comes from `prep_readiness`, the same helper the dashboard and the\nLearn surface use, so a workspace header cannot disagree with the card that\nlinked to it.",
         "properties": {
@@ -10304,6 +10532,85 @@
           "points"
         ],
         "title": "PrepReadinessTrendResponse",
+        "type": "object"
+      },
+      "PrepResultRequest": {
+        "description": "The result, recorded whenever it arrives.\n\nSeparate from `PrepOutcomeRequest` because results arrive weeks later. Requiring it\nup front would either block the review or invite a made-up number.",
+        "properties": {
+          "resultScale": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resultscale"
+          },
+          "resultValue": {
+            "title": "Resultvalue",
+            "type": "number"
+          }
+        },
+        "required": [
+          "resultValue"
+        ],
+        "title": "PrepResultRequest",
+        "type": "object"
+      },
+      "PrepReviewState": {
+        "description": "Whether this preparation is waiting on an answer, and what has been asked.\n\nPublished so a client can render the ask without inferring it from `status` plus a\ndate comparison — two clients inferring the same thing separately is how they come to\ndisagree about it.",
+        "properties": {
+          "askedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Askedat"
+          },
+          "awaiting": {
+            "title": "Awaiting",
+            "type": "boolean"
+          },
+          "declinedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declinedat"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrepOutcomeResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "remindersSent": {
+            "default": 0,
+            "title": "Reminderssent",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "awaiting"
+        ],
+        "title": "PrepReviewState",
         "type": "object"
       },
       "PrepSummaryResponse": {
@@ -27401,7 +27708,7 @@
     },
     "/api/v1/learning/preparations/{prep_id}/complete": {
       "post": {
-        "description": "Mark a preparation as completed.",
+        "description": "Mark a preparation as completed.\n\nKept for a learner finishing a preparation *before* its exam date — abandoning it, or deciding they\nare done. Once the date has passed the honest completion path is the review below, which records how\nit actually went rather than only that it is over.",
         "operationId": "mark_prep_completed_api_v1_learning_preparations__prep_id__complete_post",
         "parameters": [
           {
@@ -28225,6 +28532,273 @@
           }
         ],
         "summary": "Get Readiness Trend",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/preparations/{prep_id}/review": {
+      "get": {
+        "description": "Whether this preparation is waiting on an answer, and what has been asked so far.\n\nOne field (`awaiting`) rather than leaving each client to infer it from `status` and a date\ncomparison, which is how two clients come to disagree about the same preparation.",
+        "operationId": "get_prep_review_api_v1_learning_preparations__prep_id__review_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrepReviewState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Prep Review",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "post": {
+        "description": "Record how the sitting went. **This is what completes a preparation.**\n\n`attended` decides what happens next: `sat`, `missed` and `cancelled` conclude the preparation, while\n`postponed` moves it to the new date the learner supplies and starts the ask again. Idempotent per\nsitting, so a retried submit or a corrected answer updates rather than recording the exam twice.",
+        "operationId": "record_prep_outcome_api_v1_learning_preparations__prep_id__review_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepOutcomeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrepOutcomeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Record Prep Outcome",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/preparations/{prep_id}/review/decline": {
+      "post": {
+        "description": "The learner saying they would rather not answer.\n\n**A dismissal is an answer**, and recording it is what stops the asking. Without it the only way out\nof the reminder budget is to exhaust it, so the learner who least wants to discuss the exam is the one\nasked most. The preparation is *not* marked completed: nothing has been said about how it went.",
+        "operationId": "decline_prep_review_api_v1_learning_preparations__prep_id__review_decline_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrepSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Decline Prep Review",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/preparations/{prep_id}/review/history": {
+      "get": {
+        "description": "Every recorded sitting, oldest first. More than one means the exam was postponed.",
+        "operationId": "list_prep_outcomes_api_v1_learning_preparations__prep_id__review_history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PrepOutcomeResponse"
+                  },
+                  "title": "Response List Prep Outcomes Api V1 Learning Preparations  Prep Id  Review History Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Prep Outcomes",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/preparations/{prep_id}/review/result": {
+      "post": {
+        "description": "Attach the result to the most recently reviewed sitting.\n\nSeparate from the review because results arrive weeks later. Requiring one up front would either\nblock the review or invite a made-up number.",
+        "operationId": "record_prep_result_api_v1_learning_preparations__prep_id__review_result_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepResultRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrepOutcomeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Record Prep Result",
         "tags": [
           "personal-learning",
           "personal-learning"

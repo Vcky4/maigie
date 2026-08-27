@@ -26,8 +26,14 @@ from . import prep_focus, prep_readiness
 
 logger = logging.getLogger(__name__)
 
-# Only these are treated as active; completed preparations are history.
-ACTIVE_STATUSES = ("SETUP", "IN_PROGRESS")
+# Statuses that put a preparation on the dashboard, because it still wants something from the learner.
+# Only `COMPLETED` is left off: a reviewed preparation is history.
+#
+# `AWAITING_REVIEW` is here because it wants the most. Its exam has happened and the learner has not said
+# how it went — and their answer is what completes the preparation, so hiding it is how the question never
+# gets answered. Omitting it would have taken the preparation off this list the morning after the exam and
+# left the review reachable only from a notification, which quiet hours and the daily cap can both suppress.
+ACTIVE_STATUSES = ("SETUP", "IN_PROGRESS", "AWAITING_REVIEW")
 
 # Cap on the topics loaded to compute per-preparation recommendations. Weakest
 # first, so the topic a recommendation would choose is always inside the window
@@ -58,14 +64,27 @@ def _log_source_failure(user_id: str, source: str, error: BaseException) -> None
 
 
 async def _load_active_preparations(user_id: str, limit: int) -> tuple[list[Any], int]:
-    """Active preparations ordered by target date, plus the total active count."""
-    items, total = await repo.search_exam_preps(user_id, status="IN_PROGRESS", skip=0, take=limit)
-    setup_items, setup_total = await repo.search_exam_preps(
-        user_id, status="SETUP", skip=0, take=limit
-    )
-    combined = items + setup_items
+    """Preparations still wanting something from the learner, by exam date, plus the total count.
+
+    Driven by `ACTIVE_STATUSES` rather than by two hard-coded strings, which is what it was: the constant
+    existed and the queries did not use it, so adding a third status changed the constant and the list
+    disagreed with it. A test asserts the queries issued match the constant, and that is what caught it.
+
+    One query per status because `search_exam_preps` takes a single one. Read sequentially rather than
+    gathered, matching `agenda_service`: fanning out across sessions is what exhausted the session-mode
+    pooler and made `daily-counts` return intermittent 500s.
+    """
+    combined: list[Any] = []
+    total = 0
+    # `prep_status`, not `status`: this module imports `status` from fastapi, and shadowing it in a loop
+    # works until someone adds a status-code reference inside the body.
+    for prep_status in ACTIVE_STATUSES:
+        items, count = await repo.search_exam_preps(user_id, status=prep_status, skip=0, take=limit)
+        combined.extend(items)
+        total += count
+
     combined.sort(key=lambda prep: _as_utc(prep.exam_date))
-    return combined[:limit], total + setup_total
+    return combined[:limit], total
 
 
 def _recommendation(

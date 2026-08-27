@@ -118,6 +118,7 @@ class FakeSources:
     def __init__(self):
         self.in_progress: list[SimpleNamespace] = []
         self.setup: list[SimpleNamespace] = []
+        self.awaiting_review: list[SimpleNamespace] = []
         self.topics: list[SimpleNamespace] = []
         self.counts: dict[str, dict[str, int]] = {}
         self.sessions: list[SimpleNamespace] = []
@@ -133,7 +134,13 @@ class FakeSources:
 
     async def search_exam_preps(self, user_id, *, status=None, skip=0, take=10, **kwargs):
         self._boom("preparations")
-        rows = self.in_progress if status == "IN_PROGRESS" else self.setup
+        # Keyed by status rather than an if/else, so a status the service starts querying and this fake
+        # does not know about returns nothing instead of silently returning the `SETUP` list.
+        rows = {
+            "IN_PROGRESS": self.in_progress,
+            "SETUP": self.setup,
+            "AWAITING_REVIEW": self.awaiting_review,
+        }.get(status, [])
         return rows[:take], len(rows)
 
     async def list_recent_quiz_sessions(self, user_id, *, take=6):
@@ -225,25 +232,57 @@ class TestComposition:
         assert dashboard.milestones[0].preparation_subject == "Statistics"
 
     @pytest.mark.asyncio
-    async def test_setup_and_in_progress_are_both_active_and_ordered_by_date(self, sources):
-        """Two queries, one list. A preparation still in `SETUP` is active — the
-        learner created it and it is what they are working towards."""
+    async def test_every_unfinished_status_is_active_and_ordered_by_date(self, sources):
+        """One list from every status that still wants something, in exam-date order.
+
+        A preparation in `SETUP` is active — the learner created it and it is what they are working
+        towards. So is one in `AWAITING_REVIEW`: its exam has happened and it is waiting on them to say
+        how it went, which is the answer that completes it.
+        """
         sources.in_progress = [_prep("p-late", subject="Later", days=30)]
         sources.setup = [_prep("p-soon", subject="Sooner", days=2, status="SETUP")]
-        sources.progress = {"p-late": _progress(), "p-soon": _progress()}
+        sources.awaiting_review = [
+            _prep("p-past", subject="Sat last week", days=-7, status="AWAITING_REVIEW")
+        ]
+        sources.progress = {
+            "p-late": _progress(),
+            "p-soon": _progress(),
+            "p-past": _progress(),
+        }
 
         dashboard = await _dashboard()
 
-        assert [p.id for p in dashboard.preparations] == ["p-soon", "p-late"]
-        # The total counts both, not just the page that fitted.
-        assert dashboard.preparations_total == 2
+        assert [p.id for p in dashboard.preparations] == ["p-past", "p-soon", "p-late"]
+        # The total counts all three, not just the page that fitted.
+        assert dashboard.preparations_total == 3
 
     @pytest.mark.asyncio
-    async def test_only_setup_and_in_progress_are_queried(self, sources):
+    async def test_a_preparation_awaiting_review_is_not_hidden(self, sources):
+        """The case that would make the review unanswerable.
+
+        `AWAITING_REVIEW` was added to `ExamPrep.status` so that a passed exam stops being recorded as
+        `COMPLETED` by a nightly clock. If the dashboard kept querying only `SETUP` and `IN_PROGRESS`, the
+        preparation would vanish the morning after the exam and the review would be reachable only from a
+        notification — which quiet hours and the daily cap can both suppress. Asserted on its own rather
+        than only inside the ordering test, so a regression names the reason.
+        """
+        sources.awaiting_review = [
+            _prep("p-past", subject="Sat already", days=-3, status="AWAITING_REVIEW")
+        ]
+        sources.progress = {"p-past": _progress()}
+
+        dashboard = await _dashboard()
+
+        assert [p.id for p in dashboard.preparations] == ["p-past"]
+
+    @pytest.mark.asyncio
+    async def test_only_unfinished_statuses_are_queried(self, sources):
         """`COMPLETED` is history and must not be asked for.
 
-        Asserted on the queries actually issued rather than on the constant, so
-        the test fails if the constant stops being what the queries use.
+        Asserted on the queries actually issued rather than on the constant, so the test fails if the
+        constant stops being what the queries use. **It did exactly that**: `ACTIVE_STATUSES` existed and
+        `_load_active_preparations` hard-coded its two values instead of reading it, so adding a third
+        status changed the constant while the queries stayed as they were.
         """
         queried: list[str | None] = []
         original = sources.search_exam_preps
@@ -256,8 +295,9 @@ class TestComposition:
 
         await _dashboard()
 
-        assert sorted(queried) == ["IN_PROGRESS", "SETUP"]
+        assert sorted(queried) == ["AWAITING_REVIEW", "IN_PROGRESS", "SETUP"]
         assert set(queried) == set(prepare_dashboard_service.ACTIVE_STATUSES)
+        assert "COMPLETED" not in queried
 
     @pytest.mark.asyncio
     async def test_a_preparation_without_progress_is_omitted_not_zeroed(self, sources):

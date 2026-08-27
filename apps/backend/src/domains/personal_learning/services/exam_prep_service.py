@@ -726,36 +726,80 @@ async def mark_completed(*, user_id: str, prep_id: str) -> Any:
     return result
 
 
-async def mark_overdue_preparations_completed() -> int:
-    """
-    Background task: mark preparations past target date as completed.
-    Called by Celery beat daily. Returns count of updated preparations.
-    """
-    from sqlalchemy import select as sa_select
+async def mark_preparations_awaiting_review() -> int:
+    """Move preparations whose exam has passed into `AWAITING_REVIEW`, and ask how it went.
 
-    from src.domains.personal_learning.db_models import ExamPrep
-    from src.shared.database import get_session_factory
+    **This used to set `COMPLETED`.** A date-based sweep declared every preparation finished the morning
+    after its exam, regardless of readiness — so a learner who was 30 percent ready for an exam they
+    missed got a preparation recorded as finished, and it then dropped out of
+    `PREP_STATUSES_WORTH_A_GOAL` so it was not even a candidate for a goal any more. The date passing says
+    the exam happened. It does not say they sat it, that they were ready, or that it went well; the only
+    party who knows is the learner. See `prep_outcome_service`.
+
+    So this now does two things and asserts nothing:
+
+    1. moves the preparation to `AWAITING_REVIEW` — waiting on an answer, which is neither finished nor
+       overdue;
+    2. asks the learner once, then up to `MAX_REVIEW_REMINDERS` more times, and stops.
+
+    A learner who has declined is excluded by the query. A learner who has answered is already
+    `COMPLETED` and never appears.
+
+    Returns the number of preparations moved into the awaiting state, not the number of messages sent —
+    the two differ on every run after the first, and the status change is the part that matters.
+    """
+    from . import notification_service, prep_outcome_service
 
     now = datetime.now(UTC)
-    factory = get_session_factory()
+    preps = await repo.list_preps_awaiting_review(before=now)
 
-    async with factory() as session:
-        stmt = sa_select(ExamPrep).where(
-            ExamPrep.exam_date < now,
-            ExamPrep.status != "COMPLETED",
-        )
-        result = await session.execute(stmt)
-        overdue_preps = list(result.scalars().all())
-
-    count = 0
-    for prep in overdue_preps:
+    moved = 0
+    for prep in preps:
         try:
-            await repo.update_exam_prep(prep.id, {"status": "COMPLETED"})
-            count += 1
-        except Exception as e:
-            logger.error(f"Failed to mark prep {prep.id} as completed: {e}")
+            if prep.status != "AWAITING_REVIEW":
+                await repo.update_exam_prep(prep.id, {"status": "AWAITING_REVIEW"})
+                moved += 1
 
-    return count
+            reminders = prep.review_reminders_sent or 0
+            if prep.review_asked_at is not None and reminders >= prep_outcome_service.MAX_REVIEW_REMINDERS:
+                # Budget spent. The preparation stays in `AWAITING_REVIEW` — an honest record that the
+                # exam happened and we do not know how it went — and nothing more is sent.
+                continue
+
+            await notification_service.create_notification(
+                user_id=prep.user_id,
+                type="preparation_review",
+                title=f"How did {prep.subject} go?",
+                body=(
+                    "Tell us how it went and how well the preparation served you. "
+                    "It takes a moment, and it is what marks this preparation finished."
+                ),
+                # Above the engagement nudge (2) and the plan check-in (4): this is a question only the
+                # learner can answer, and it expires in usefulness as memory of the exam fades.
+                priority=3,
+                action_data={
+                    "type": "navigate",
+                    "prepId": prep.id,
+                    "route": "preparation_review",
+                },
+            )
+            # Recorded whether or not the notification survived quiet hours and the daily cap —
+            # `create_notification` returns `None` when it suppresses one. Counting only delivered
+            # messages would let a suppressed ask retry every night, which is how a throttle becomes a
+            # backlog that arrives all at once. `run_weekly_check_ins` learned the same lesson.
+            await repo.update_exam_prep(
+                prep.id,
+                {
+                    "reviewAskedAt": prep.review_asked_at or now,
+                    "reviewRemindersSent": reminders + (1 if prep.review_asked_at else 0),
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Could not move a preparation into review", extra={"prep_id": prep.id}
+            )
+
+    return moved
 
 
 async def search_question_bank(

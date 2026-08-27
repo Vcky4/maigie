@@ -28,6 +28,7 @@ from .services import (
     note_service,
     notification_service,
     onboarding_service,
+    prep_outcome_service,
     prep_snapshot_service,
     prepare_dashboard_service,
     quiz_engine,
@@ -729,8 +730,89 @@ async def generate_prep_study_plan(prep_id: str, current_user: CurrentUser):
 
 @router.post("/preparations/{prep_id}/complete", response_model=models.PrepSummaryResponse)
 async def mark_prep_completed(prep_id: str, current_user: CurrentUser):
-    """Mark a preparation as completed."""
+    """Mark a preparation as completed.
+
+    Kept for a learner finishing a preparation *before* its exam date — abandoning it, or deciding they
+    are done. Once the date has passed the honest completion path is the review below, which records how
+    it actually went rather than only that it is over.
+    """
     return await exam_prep_service.mark_completed(user_id=current_user.id, prep_id=prep_id)
+
+
+# ===========================================================================
+# Post-exam review
+# ===========================================================================
+#
+# A preparation is completed by the learner saying how it went, not by its date passing. Before this, a
+# nightly sweep set `COMPLETED` on every preparation whose `examDate` had gone by — so a learner 30% ready
+# for an exam they missed had it recorded as finished. See `prep_outcome_service`.
+
+
+@router.get("/preparations/{prep_id}/review", response_model=models.PrepReviewState)
+async def get_prep_review(prep_id: str, current_user: CurrentUser):
+    """Whether this preparation is waiting on an answer, and what has been asked so far.
+
+    One field (`awaiting`) rather than leaving each client to infer it from `status` and a date
+    comparison, which is how two clients come to disagree about the same preparation.
+    """
+    return await prep_outcome_service.get_review_state(user_id=current_user.id, prep_id=prep_id)
+
+
+@router.post(
+    "/preparations/{prep_id}/review",
+    response_model=models.PrepOutcomeResponse,
+    status_code=201,
+)
+async def record_prep_outcome(
+    prep_id: str, body: models.PrepOutcomeRequest, current_user: CurrentUser
+):
+    """Record how the sitting went. **This is what completes a preparation.**
+
+    `attended` decides what happens next: `sat`, `missed` and `cancelled` conclude the preparation, while
+    `postponed` moves it to the new date the learner supplies and starts the ask again. Idempotent per
+    sitting, so a retried submit or a corrected answer updates rather than recording the exam twice.
+    """
+    return await prep_outcome_service.record_outcome(
+        user_id=current_user.id,
+        prep_id=prep_id,
+        data=body.model_dump(by_alias=True, exclude_unset=True),
+    )
+
+
+@router.post("/preparations/{prep_id}/review/result", response_model=models.PrepOutcomeResponse)
+async def record_prep_result(
+    prep_id: str, body: models.PrepResultRequest, current_user: CurrentUser
+):
+    """Attach the result to the most recently reviewed sitting.
+
+    Separate from the review because results arrive weeks later. Requiring one up front would either
+    block the review or invite a made-up number.
+    """
+    return await prep_outcome_service.record_result(
+        user_id=current_user.id,
+        prep_id=prep_id,
+        data=body.model_dump(by_alias=True, exclude_unset=True),
+    )
+
+
+@router.post("/preparations/{prep_id}/review/decline", response_model=models.PrepSummaryResponse)
+async def decline_prep_review(prep_id: str, current_user: CurrentUser):
+    """The learner saying they would rather not answer.
+
+    **A dismissal is an answer**, and recording it is what stops the asking. Without it the only way out
+    of the reminder budget is to exhaust it, so the learner who least wants to discuss the exam is the one
+    asked most. The preparation is *not* marked completed: nothing has been said about how it went.
+    """
+    return await prep_outcome_service.decline_review(user_id=current_user.id, prep_id=prep_id)
+
+
+@router.get(
+    "/preparations/{prep_id}/review/history",
+    response_model=list[models.PrepOutcomeResponse],
+)
+async def list_prep_outcomes(prep_id: str, current_user: CurrentUser):
+    """Every recorded sitting, oldest first. More than one means the exam was postponed."""
+    return await prep_outcome_service.list_outcomes(user_id=current_user.id, prep_id=prep_id)
 
 
 # ===========================================================================
