@@ -95,10 +95,11 @@ this, and it is why the fix is not merely "stop lying".
 learner who goes silent got no redistribution at all**, which inverts the need: the learners whose plan has
 drifted furthest are the ones not completing anything. There is now a nightly pass as well.
 
-**Nothing ever learns whether an intervention worked.**
-`retention_service.record_intervention_outcome` (`:213`) sets `outcome` and `outcome_at` and has **zero
-callers** anywhere in `src` or `tests`. The `RetentionIntervention` table, the 7-day cooldown and the 0.7
-churn threshold all exist; the feedback loop does not. And the whole stack is unreachable regardless:
+**Nothing ever learns whether an intervention worked.** *(Closed for goals in phase 6 — §10.5 — but not
+here.)* `retention_service.record_intervention_outcome` (`:213`) sets `outcome` and `outcome_at` and still has
+**zero callers** anywhere in `src` or `tests`. The `RetentionIntervention` table, the 7-day cooldown and the
+0.7 churn threshold all exist; its feedback loop does not, because the whole subsystem is unreachable. The
+goal ladder's loop is closed on `GoalLifecycleAction` instead. And the whole stack is unreachable regardless:
 `tasks/retention_check.py` is not imported by `tasks/__init__.py`, has no beat entry, and imports
 `src.workers.celery_app` rather than `src.core.celery_app`.
 
@@ -309,8 +310,9 @@ New, because none of it exists. Modelled on `CourseOutlineSatisfaction`
 
 Assumes the §8 decisions are made first. Engineer-days of focused work, not calendar.
 
-**Phases 0 through 5 are implemented on the backend.** See §10 for what shipped, what changed against this
-plan, and what is still open.
+**Phases 0 through 6 are implemented on the backend.** See §10 for what shipped, what changed against this
+plan, and what is still open. **No client renders any of it** — every phase from 1 onwards has an outstanding
+UI half, and that is now the binding constraint rather than backend effort.
 
 | | Work | Days | Risk |
 | --- | --- | --- | --- |
@@ -320,7 +322,7 @@ plan, and what is still open.
 | **3** | ~~**Time-triggered redistribution.** Make `_redistribute_plan` reachable without learner action.~~ **Shipped.** See §10.2. | 1–2 | Low |
 | **4** | ~~**The nightly pass**, ladder implemented, one action per goal, cooldown enforced.~~ **Shipped.** See §10.3. | 4–5 | Medium |
 | **5** | ~~**Notification path fixes** — learner-local quiet hours, priority bypass of the daily cap, push on the learning path.~~ **Shipped**, with push still blocked on device registration. See §10.4. | 3–4 | Medium — touches every notification |
-| **6** | **The learner's answer to a nudge, stored.** Deprioritise / completed / keep-going, wired to `record_intervention_outcome`. Needs client work. | 3 | Medium |
+| **6** | ~~**The learner's answer to a nudge, stored.**~~ **Backend shipped**; both clients' affordances outstanding. Recorded on `GoalLifecycleAction`, not `record_intervention_outcome` — see §10.5. | 3 | Medium |
 | **7** | **Readiness calibration** (§6.2): score `progress_percent` and `averageMasteryPercent` against recorded outcomes, in aggregate first. | 3–4 | Low technically; **blocked on outcome volume** |
 | **8** | **Behaviour correlation** — which weekday, which item kind, which pattern precedes a stall. | 3–5 | Medium; needs data from 1–6 first |
 
@@ -359,8 +361,7 @@ Still open:
    not stay `ACTIVE` forever, or the learner is nagged by their own history.
 4. **What scale for the two ratings?** Recommend the same shape for both so they can be compared, and an
    odd number of points so "about as expected" is expressible.
-5. **Is "deprioritise" `ARCHIVED`, or a new paused state?** `StudyPlan.PAUSED` is the precedent, and its
-   docstring argues a pause "is not a statement about the deadline".
+5. ~~**Is "deprioritise" `ARCHIVED`, or a new paused state?**~~ Answered: `ARCHIVED`. See §10.5.
 6. **How many deadline nudges per goal per week is acceptable**, given the cap of five notifications per day
    across everything? And does the post-exam ask count against that cap or bypass it?
 7. **Should extending a goal's date also move `Course.targetDate`?** They are two records of one intention
@@ -763,6 +764,74 @@ by selecting both statuses.
 - **No route sets quiet hours or the allowance.** `update_quiet_hours` exists in `onboarding_service` and
   has no HTTP caller, so in practice every learner still runs with no quiet hours and a cap of five. The
   local-time fix is correct and currently unexercised in production.
+
+### 10.5 Implementation record — phase 6, backend
+
+Shipped in `maigie/apps/backend`. Verified: **3,579 tests passing** (baseline 3,564, +15 new), `ruff check src
+tests` clean, `export_openapi.py --check` in sync, single alembic head, model and migration cross-checked.
+**13 mutations applied one at a time; 13 caught.**
+
+| Piece | Where |
+| --- | --- |
+| `learnerResponse`, `respondedAt` | `GoalLifecycleAction`, migration `055_goal_action_answer` |
+| What each answer means | `goal_lifecycle_service._STATUS_FOR_RESPONSE`, `record_answer` |
+| The endpoint | `POST /progress/goals/{goal_id}/nudge-answer` |
+| Reaching the question | `repository.latest_unanswered_actions`, `GoalResponse.pendingNudge` |
+| Attaching the reply | `repository.find_latest_lifecycle_action`, `record_lifecycle_response` |
+
+**Three answers, each one something the system cannot work out for itself**
+
+- `keep_going` — they still want it. The goal is left exactly as it is.
+- `set_aside` — stop chasing them. The goal is `ARCHIVED`.
+- `already_done` — the work happened and the measurement missed it. The goal is `COMPLETED`. **This is the
+  answer worth the most**, because it says the measurement is wrong rather than the learner, and it is the
+  only signal in the system that can say so.
+
+**Decisions made while building**
+
+1. **`set_aside` archives; there is no new paused state** (§8 decision 5). `ARCHIVED` is the only existing
+   value meaning "concluded without being achieved", which is exactly what the learner just said; it is what
+   `prep_outcome_service` already does for an unmet preparation goal, so this is consistent rather than novel;
+   it is reversible; and it removes the goal from the at-risk counts, which is what "stop chasing me" means in
+   practice. A paused state would have been a contract change both clients must handle to express a
+   distinction neither can currently render. What it would have carried — *why* the goal stopped — is on the
+   action row instead, so "archived because they chose to set it aside" is distinguishable from any other
+   archiving.
+2. **The answer is recorded on `GoalLifecycleAction`, not through `record_intervention_outcome`** — a
+   deliberate deviation from this plan's wording. That function writes to `RetentionIntervention`, whose whole
+   subsystem is unreachable: `tasks/retention_check.py` is not imported by `tasks/__init__.py`, has no beat
+   entry, and imports `src.workers.celery_app` rather than `src.core.celery_app`. Routing goal answers into a
+   table nothing reads, to satisfy the letter of the plan, would have put the feedback loop somewhere it
+   cannot be used. Reviving retention is separate work and the plan's §3 entry is updated to say so.
+3. **Null is the most informative value.** It is how "we asked and heard nothing" is told apart from "we never
+   asked", and the two justify completely different next moves — silence after three asks is an answer, while
+   never having asked is a bug. Hence nullable rather than defaulted, and a CHECK pairing the response with
+   its timestamp so a reply time without a reply cannot exist.
+4. **`pendingNudge` is on the goal response.** Otherwise the only route to answering is the notification, and
+   a notification can be held until morning, deferred to the next day by the allowance, or expire. The same
+   argument put `AWAITING_REVIEW` on the prepare dashboard. Only the *most recent* action counts, so a
+   superseded nudge is never presented as a live question.
+5. **The answer is written before the goal is touched.** If archiving fails the reply is still on record —
+   losing it would mean losing the only evidence about whether the ask worked, which is the entire point.
+6. **Answering an unasked question is a `404`.** This route answers a nudge; changing a goal nobody asked
+   about is what `PATCH /goals/{goal_id}` is for. Accepting it here would let a client record a reply to a
+   nudge that never happened, which would poison the only data this table exists to collect.
+7. **Re-answering replaces the answer.** A learner who says "keep going" on Monday and "set it aside" on
+   Thursday has changed their mind, and the last word counts.
+
+**Still open**
+
+- **No client can answer.** The endpoint and the `pendingNudge` flag exist; nothing renders either. Until a
+  client ships the affordance, `asked_to_confirm` remains a question into the void and the only thing a
+  learner can do about it is open the goal and edit it by hand.
+- **Nothing consumes the answers yet.** They accumulate for phase 7's calibration and phase 8's correlation,
+  both of which are gated on volume rather than effort. Which intervention works for which learner is not yet
+  computed anywhere.
+- **`keep_going` does not shorten or lengthen the cooldown.** The next nudge comes seven days later either
+  way. A learner who says "keep going" is arguably asking to be chased *more*, and a learner ignoring three
+  asks arguably less; both would be reasonable and neither is measurable until answers exist.
+- **`record_intervention_outcome` still has zero callers**, and the retention subsystem it belongs to is
+  still unreachable.
 
 ## 11. What is not known
 
