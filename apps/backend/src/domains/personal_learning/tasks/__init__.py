@@ -18,6 +18,7 @@ from . import (  # noqa: F401
     daily_snapshots,
     engagement,
     notifications,
+    plan_redistribution,
     preparation,
     readiness_snapshots,
     recommendations,
@@ -90,6 +91,17 @@ def get_beat_schedule() -> dict:
         "learning.study_plan_check_ins": {
             "task": "learning.study_plan_check_ins",
             "schedule": crontab(hour=7, minute=0),
+            "options": {"queue": "default"},
+        },
+        # 05:00, deliberately an hour before `prepare_daily_plan`. The daily plan reads what is
+        # scheduled for today, so repacking first means the learner's morning is built from the
+        # corrected dates instead of ones that were about to move. Daily rather than weekly for the
+        # same reason as the check-ins: the cooldown lives on the plan
+        # (`lastRedistributedAt`), so each plan is reconsidered a week after its own last repack
+        # rather than the whole fleet being swept on one morning.
+        "learning.redistribute_drifted_plans": {
+            "task": "learning.redistribute_drifted_plans",
+            "schedule": crontab(hour=5, minute=0),
             "options": {"queue": "default"},
         },
     }

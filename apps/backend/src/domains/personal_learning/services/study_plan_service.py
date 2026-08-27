@@ -945,10 +945,12 @@ async def set_item_status(*, user_id: str, plan_id: str, item_id: str, status: s
             user_id, {"plan_completion_percentage": completion_pct}
         )
 
-        # Check if behind schedule and redistribute if needed (Req 7.5)
+        # Check if behind schedule and redistribute if needed (Req 7.5). Not throttled by
+        # `lastRedistributedAt`, unlike the background sweep: this is a response to something the
+        # learner just did, and making them wait out a cooldown would look like the app ignoring them.
         items = await repo.list_plan_items(plan_id)
         pending_past_due = [i for i in items if i.status == "PENDING" and i.scheduled_date < now]
-        if len(pending_past_due) > 2:
+        if len(pending_past_due) > MAX_TOLERATED_PAST_DUE:
             await _redistribute_plan(plan_id, user_id)
 
     return await _detail_by_id(plan_id, user_id)
@@ -1083,16 +1085,121 @@ async def run_weekly_check_ins(*, before: datetime | None = None, limit: int = 5
     return sent
 
 
-async def _redistribute_plan(plan_id: str, user_id: str) -> None:
+#: How many pending items may sit past their date before a plan counts as drifted.
+#:
+#: "More than two", which is the threshold the completion path has always used as a bare `> 2` with no
+#: explanation. Named here so the background sweep and the interactive path cannot disagree about what
+#: being behind means — a plan that is drifted when the learner completes something and not drifted
+#: overnight would be two definitions of the same word.
+MAX_TOLERATED_PAST_DUE = 2
+
+#: How long a plan is left alone after a background repack, in days.
+#:
+#: Seven, matching `RetentionIntervention`'s `INTERVENTION_COOLDOWN_DAYS` and the weekly check-in's
+#: window. The floor is set by what redistribution does rather than by taste: it rewrites the date of
+#: every pending item, so running it more often than the learner's own rhythm turns their schedule into
+#: something that is never the same twice. A learner who is genuinely stuck is stuck next week too, and
+#: one repack a week is enough to keep the plan inside its deadline.
+REDISTRIBUTION_COOLDOWN_DAYS = 7
+
+
+async def redistribute_drifted_plans(
+    *, now: datetime | None = None, limit: int = 500
+) -> int:
+    """Repack the plans of learners who have gone quiet. Returns the number of plans moved.
+
+    **This is the gap.** `_redistribute_plan` could only ever be reached by a learner editing their
+    schedule or completing an item, so the learners whose plans had drifted furthest — the ones
+    completing nothing — were the only ones who never got redistributed. A fortnight of overdue items
+    would sit there, and the plan's own progress figures would keep measuring against dates that had
+    stopped meaning anything.
+
+    Nothing here decides *whether* a plan has drifted or *where* items should go. The drift test is the
+    same `MAX_TOLERATED_PAST_DUE` the completion path uses and the placement is the same
+    `_redistribute_plan`, so a plan repacked overnight lands exactly where it would have landed had the
+    learner opened the app and ticked something off. This function only makes that reachable.
+
+    Idempotent through `StudyPlan.lastRedistributedAt`, and the stamp is written **even when nothing
+    moved**. Counting only successful repacks would leave a plan permanently due — swept every night,
+    moving nothing, notifying nobody — which is the trap `run_weekly_check_ins` documents for suppressed
+    notifications and `mark_preparations_awaiting_review` for suppressed asks.
+
+    One plan's failure does not end the run. `run_weekly_check_ins` has no such guard and one bad row
+    aborts it; `check_declining_engagement` gets this right, and this follows that.
+    """
+    from . import notification_service
+
+    moment = _as_utc(now) or datetime.now(UTC)
+    plans = await repo.list_plans_with_drift(
+        now=moment,
+        min_past_due=MAX_TOLERATED_PAST_DUE,
+        not_swept_since=moment - timedelta(days=REDISTRIBUTION_COOLDOWN_DAYS),
+        limit=limit,
+    )
+
+    redistributed = 0
+    for plan in plans:
+        try:
+            moved = await _redistribute_plan(plan.id, plan.user_id)
+            # Stamped before the notification, and regardless of what it returned. A plan whose items
+            # are all pinned to accepted calendar blocks moves nothing, and it must still go on
+            # cooldown rather than being reconsidered every night forever.
+            await repo.update_study_plan(
+                plan.id, plan.user_id, {"lastRedistributedAt": datetime.now(UTC)}
+            )
+            if not moved:
+                continue
+            redistributed += 1
+
+            # **Told, not done silently.** The learner did not ask for this, and a plan whose every
+            # remaining date changed overnight with no word is the system rewriting their commitments
+            # behind their back — the phase boundaries they accepted in the wizard move with it, since a
+            # phase's week range is just the span of its items' dates. Delivery may still be dropped by
+            # quiet hours or the daily cap; that is the notification path's own defect and the stamp
+            # above does not depend on it.
+            days_left = max(0, (_as_utc(plan.deadline) - moment).days)
+            await notification_service.create_notification(
+                user_id=plan.user_id,
+                type="study_plan_redistributed",
+                title=f"Rescheduled: {plan.title}",
+                body=(
+                    f"{moved} task{'s' if moved != 1 else ''} moved to fit the "
+                    f"{days_left} days left before your deadline."
+                ),
+                priority=4,
+                action_data={"planId": plan.id, "route": "study_plan"},
+            )
+        except Exception:
+            logger.exception(
+                "Failed to redistribute drifted study plan",
+                extra={"plan_id": plan.id, "user_id": plan.user_id},
+            )
+
+    return redistributed
+
+
+async def _redistribute_plan(plan_id: str, user_id: str) -> int:
     """
     Redistribute remaining plan items when learner is behind schedule.
 
     Req 7.5: Redistribute within deadline respecting sustainable session lengths.
     Ensures no single day exceeds max_daily_minutes (avg_session * 1.5 or 120 min).
+
+    Returns the number of items moved, so a caller that did not ask on the learner's behalf can say what
+    it did. It previously returned nothing, which is fine for a path the learner triggered and useless
+    for a sweep that has to decide whether anything is worth reporting.
+
+    **Items with an accepted calendar block are left where they are.** `StudyPlanItem.scheduleBlockId` is
+    set when the learner accepted a suggested hour for that item, so a real `ScheduleBlock` sits on that
+    day. Moving `scheduledDate` while leaving the block behind gives the learner a calendar entry on
+    Tuesday and a plan item on Friday, and the day they turn up is the one in their calendar. This is a
+    change to the existing behaviour of both learner-triggered paths, and it is the right way round: the
+    same argument that stops redistribution rewriting the rhythm the learner chose stops it moving a time
+    they explicitly accepted.
     """
     plan = await repo.get_study_plan(plan_id, user_id)
     if not plan:
-        return
+        return 0
 
     now = datetime.now(UTC)
     deadline = plan.deadline
@@ -1104,12 +1211,18 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
     # the plan to a rhythm the learner never chose.
     max_daily_minutes = await _daily_minute_budget(user_id, plan.session_minutes)
 
-    # Get pending items
+    # Get pending items. Ones the learner has already given a time to are excluded rather than packed
+    # around: they are not part of the flexible pool, and their minutes are committed on a day that is
+    # not this walk's to allocate.
     items = await repo.list_plan_items(plan_id)
-    pending_items = [i for i in items if i.status == "PENDING"]
+    pending_items = [
+        i
+        for i in items
+        if i.status == "PENDING" and getattr(i, "schedule_block_id", None) is None
+    ]
 
     if not pending_items:
-        return
+        return 0
 
     # Redistribute respecting max_daily_minutes per day, onto the days the learner
     # studies. Starts tomorrow rather than today: redistribution runs in response to
@@ -1118,6 +1231,7 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
     day_index = 0
     daily_minutes_used = 0.0
     candidates = _available_dates(now + timedelta(days=1), days_remaining, plan.preferred_days)
+    moved = 0
 
     for item in pending_items:
         item_minutes = getattr(item, "estimated_minutes", 30) or 30
@@ -1131,6 +1245,7 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
         # rather than scheduling past the deadline.
         new_date = candidates[min(day_index, len(candidates) - 1)]
         await repo.update_plan_item(item.id, {"scheduledDate": new_date}, plan_id=plan_id)
+        moved += 1
 
         daily_minutes_used += item_minutes
 
@@ -1138,6 +1253,8 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
         if daily_minutes_used >= max_daily_minutes:
             day_index += 1
             daily_minutes_used = 0.0
+
+    return moved
 
 
 #: ISO weekday numbers, 1 = Monday ... 7 = Sunday. Every day, which is what a plan whose

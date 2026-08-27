@@ -4201,6 +4201,66 @@ class PersonalLearningRepository:
             )
             return list(rows.scalars().all())
 
+    async def list_plans_with_drift(
+        self,
+        *,
+        now: datetime,
+        min_past_due: int,
+        not_swept_since: datetime,
+        limit: int = 500,
+        session: AsyncSession | None = None,
+    ) -> list[StudyPlan]:
+        """Active plans carrying more than ``min_past_due`` pending items already past their date.
+
+        The drift is counted in the database rather than by loading every plan's items and filtering in
+        Python. A sweep runs across all learners, so the alternative is every item of every active plan
+        pulled over the wire to find the few plans that have slipped.
+
+        Four filters, each closing a way this could do harm:
+
+        - ``status == "ACTIVE"``. A `PAUSED` plan keeps its items and its dates on purpose — pausing is
+          not a statement about the deadline — and `SUPERSEDED` belongs to a plan that was replaced.
+          Rescheduling either would override something the learner or the regenerator decided.
+        - ``deadline > now``. **An expired plan collapses.** `_redistribute_plan` computes
+          ``days_remaining = max(1, (deadline - now).days)``, so a deadline in the past yields a
+          one-day window and every pending item piles onto tomorrow. That is a wall, not a schedule,
+          and what to do with an expired plan is a question for the learner.
+        - ``lastRedistributedAt`` null or older than ``not_swept_since``. Redistribution re-anchors
+          pending work to tomorrow, so without a cooldown a silent learner's dates would step forward
+          every night forever.
+        - Only ``PENDING`` items count as drift. `SKIPPED` is the learner saying "not doing this", and
+          counting it would treat their decision as a backlog.
+
+        Ordered oldest-swept first so a fleet larger than ``limit`` makes progress across runs instead of
+        re-serving the same page.
+        """
+        async with self._read_session(session) as s:
+            drifted = (
+                select(StudyPlanItem.plan_id)
+                .where(
+                    StudyPlanItem.status == "PENDING",
+                    StudyPlanItem.scheduled_date < now,
+                )
+                .group_by(StudyPlanItem.plan_id)
+                .having(func.count(StudyPlanItem.id) > min_past_due)
+                .scalar_subquery()
+            )
+            rows = await s.execute(
+                select(StudyPlan)
+                .where(
+                    StudyPlan.status == "ACTIVE",
+                    StudyPlan.deadline > now,
+                    or_(
+                        StudyPlan.last_redistributed_at.is_(None),
+                        StudyPlan.last_redistributed_at < not_swept_since,
+                    ),
+                    StudyPlan.id.in_(drifted),
+                )
+                .order_by(StudyPlan.last_redistributed_at.asc().nullsfirst())
+                .limit(limit)
+            )
+            return list(rows.scalars().all())
+
     async def get_plan_metrics(
         self, plan_id: str, *, session: AsyncSession | None = None
     ) -> dict[str, Any]:
@@ -4516,6 +4576,7 @@ class PersonalLearningRepository:
             "weeklyCheckIn": "weekly_check_in",
             "reviewDeckId": "review_deck_id",
             "lastCheckInAt": "last_check_in_at",
+            "lastRedistributedAt": "last_redistributed_at",
             "totalItems": "total_items",
             "completedItems": "completed_items",
         }
