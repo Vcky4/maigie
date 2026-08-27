@@ -5438,6 +5438,11 @@
             "title": "Currentvaluemeasured",
             "type": "boolean"
           },
+          "dateAuthority": {
+            "default": "learner",
+            "title": "Dateauthority",
+            "type": "string"
+          },
           "description": {
             "anyOf": [
               {
@@ -5448,6 +5453,11 @@
               }
             ],
             "title": "Description"
+          },
+          "extendedCount": {
+            "default": 0,
+            "title": "Extendedcount",
+            "type": "integer"
           },
           "id": {
             "title": "Id",
@@ -5467,6 +5477,17 @@
             "default": 0,
             "title": "Milestonestotal",
             "type": "integer"
+          },
+          "originalTargetDate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Originaltargetdate"
           },
           "pacePercent": {
             "anyOf": [

@@ -135,6 +135,34 @@ class GoalResponse(BaseModel):
     pacePercent: float | None = None
     #: Straight-line projection of where this lands by the deadline, capped at 100.
     projectedOutcome: float | None = None
+    #: Who owns the deadline: `external` when the goal is attached to a preparation, whose date is set
+    #: by whoever runs the exam, `learner` otherwise. Derived from the link, never stored.
+    #:
+    #: It tells a client what falling behind can be *answered* with. An external deadline cannot be
+    #: moved — the exam is on the 15th — so the only honest options are compressing the plan or asking
+    #: the learner how it went. The learner's own date can simply be rescheduled.
+    #:
+    #: A `str` rather than an enum, matching `statusLabel` and `metricKind`, so a third authority can be
+    #: added later without it being a breaking change for either client.
+    dateAuthority: str = "learner"
+    #: How many times this goal's deadline has been pushed **later**, from `GoalScheduleChange`.
+    #:
+    #: Published because a rewritten deadline is otherwise invisible and flattering: `pacePercent` and
+    #: `projectedOutcome` both measure against `createdAt → targetDate`, so every extension enlarges the
+    #: window and improves the numbers. A goal extended three times reads as comfortable. This is the
+    #: field that lets a surface say otherwise.
+    #:
+    #: Counts extensions only. Pulling a deadline earlier, or setting a first one on a goal that had
+    #: none, is a schedule change but not extra room, and is excluded. Reads `0` for every goal whose
+    #: deadline has not moved since this began being recorded — history before then does not exist.
+    extendedCount: int = 0
+    #: The deadline this goal started with, when its deadline has moved. `null` when it has not.
+    #:
+    #: Alongside `extendedCount` rather than instead of it: "moved twice" and "was originally due in
+    #: August" are different sentences and a surface may want either. Not applied to `pacePercent`,
+    #: which still measures against the current deadline — re-basing that window is a behaviour change
+    #: with its own decision to make.
+    originalTargetDate: str | None = None
     milestonesTotal: int = 0
     milestonesAchieved: int = 0
 

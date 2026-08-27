@@ -426,6 +426,17 @@ Output only valid JSON."""
 
     await progress_repo.update_goal(goal_id, update_data)
 
+    # **This path rewrites a deadline the learner did not name.** `target_date` above is computed from
+    # the requested duration in weeks, so regenerating a plan moves the goal's date — including a date
+    # that came from an exam, since nothing here reads date authority. That is pre-existing behaviour and
+    # is left alone; recording it is what makes it visible, and an unrecorded extension is one
+    # `elapsed_percent` silently treats as a larger window the goal always had.
+    from src.domains.progress.services import goal_schedule_log
+
+    await goal_schedule_log.record_date_change(
+        goal=goal, new_date=target_date, reason="plan_regenerated"
+    )
+
     schedule_config = plan.get("schedule", {}) or {}
     sessions_per_week = schedule_config.get("sessions_per_week", 3)
     hours_per_session = schedule_config.get("hours_per_session", 1)

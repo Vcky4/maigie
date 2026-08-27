@@ -803,14 +803,18 @@ def _to_goal_response(
     *,
     measurement: goal_metrics.GoalMeasurement | None = None,
     milestones: tuple[int, int] = (0, 0),
+    schedule_history: goal_metrics.GoalScheduleHistory | None = None,
     now: datetime | None = None,
 ) -> models.GoalResponse:
     """Map a goal row onto the wire, deriving everything the row does not store.
 
-    `measurement` and `milestones` are passed in rather than fetched here, because a list of twenty
-    goals must not turn into twenty round trips per derived field. Callers batch them; a caller with
-    nothing to pass gets `currentValue` from the row, which is correct for a `manual` goal and null
-    for the rest — honest in both cases, and never a fabricated zero.
+    `measurement`, `milestones` and `schedule_history` are passed in rather than fetched here, because a
+    list of twenty goals must not turn into twenty round trips per derived field. Callers batch them; a
+    caller with nothing to pass gets `currentValue` from the row, which is correct for a `manual` goal
+    and null for the rest — honest in both cases, and never a fabricated zero.
+
+    A goal with no `schedule_history` publishes `extendedCount: 0`, which is the truthful reading: no
+    recorded change means no recorded extension.
     """
     moment = now or datetime.now(UTC)
     # Derived from the measurement rather than read from the stored column, which nothing writes. A
@@ -854,6 +858,13 @@ def _to_goal_response(
             target_date=goal.target_date,
             now=moment,
         ),
+        dateAuthority=goal_metrics.date_authority(goal),
+        extendedCount=(schedule_history.extended_count if schedule_history else 0),
+        # `_isoformat_or_none` rather than a bare `.isoformat()`: this column comes back naive like every
+        # other stored instant, and a string with no offset is read as *local* time by `new Date(...)`.
+        originalTargetDate=_isoformat_or_none(
+            schedule_history.original_target_date if schedule_history else None
+        ),
         milestonesTotal=total,
         milestonesAchieved=achieved,
         createdAt=goal.created_at.isoformat(),
@@ -876,21 +887,25 @@ def _to_milestone_response(milestone) -> models.GoalMilestoneResponse:
 
 
 async def _goal_responses(goals: list, *, now: datetime | None = None) -> list[models.GoalResponse]:
-    """Map several goals, batching the two derived reads across the whole set.
+    """Map several goals, batching the derived reads across the whole set.
 
-    Two queries' worth of work for any number of goals — `derive_current_values` issues one per
-    metric kind present and `count_achieved_milestones` one in total — rather than per goal.
+    A fixed number of queries for any number of goals — `derive_current_values` issues one per metric
+    kind present, `count_achieved_milestones` one in total, `derive_schedule_history` one in total —
+    rather than per goal. `dateAuthority` costs nothing extra: it reads a column already on the row.
     """
     if not goals:
         return []
     moment = now or datetime.now(UTC)
+    goal_ids = [goal.id for goal in goals]
     measurements = await goal_metrics.derive_current_values(goals, now=moment)
-    milestone_counts = await goal_metrics.count_achieved_milestones([goal.id for goal in goals])
+    milestone_counts = await goal_metrics.count_achieved_milestones(goal_ids)
+    schedule_history = await goal_metrics.derive_schedule_history(goal_ids)
     return [
         _to_goal_response(
             goal,
             measurement=measurements.get(goal.id),
             milestones=milestone_counts.get(goal.id, (0, 0)),
+            schedule_history=schedule_history.get(goal.id),
             now=moment,
         )
         for goal in goals

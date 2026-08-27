@@ -74,6 +74,17 @@ _STATE_KINDS = frozenset({"course_progress", "prep_readiness"})
 
 GoalStatusLabel = Literal["COMPLETED", "ON_TRACK", "NEEDS_ATTENTION"]
 
+#: Who owns a goal's deadline.
+#:
+#: `external` — the date was set by the world and cannot be moved. An exam is on the 15th whatever
+#: the learner's plan says. `learner` — the date was always an intention, and moving it is a
+#: legitimate answer to falling behind.
+#:
+#: The distinction decides what falling behind *means*: an external deadline can only be answered by
+#: compressing the plan or asking the learner how it went, while the learner's own date can be
+#: rescheduled and the effort kept steady.
+DateAuthority = Literal["external", "learner"]
+
 
 @dataclass(frozen=True)
 class GoalPortfolio:
@@ -171,6 +182,27 @@ def is_at_risk(
     if elapsed is None:
         return False
     return (elapsed - progress) > AT_RISK_LAG_POINTS
+
+
+def date_authority(goal: Any) -> DateAuthority:
+    """Who owns this goal's deadline: the world, or the learner.
+
+    **Derived from the link, never stored.** A goal attached to a preparation takes its date from
+    `ExamPrep.examDate`, which is `NOT NULL` and set by whoever runs the exam; every other goal's date
+    came from the learner, either from the nullable `Course.targetDate` or from nothing at all. Storing
+    the answer would create a second field that can disagree with the link it was computed from, which
+    is the mistake `Goal.progress` already is — a column nothing writes, shadowing a figure that is
+    always measured on read.
+
+    A goal with no `targetDate` is still `learner` authority. There is nothing to own yet, and the
+    alternative — a third token for "no deadline" — would make every caller handle a case that behaves
+    exactly like the learner's own date does: freely settable.
+
+    `prep_id` rather than `metric_kind`. The four links are independent nullable columns and nothing
+    enforces that a `prep_readiness` goal carries a `prepId`, so reading the kind would call a goal
+    external on the strength of a label while the row holds no exam date to be external *to*.
+    """
+    return "external" if getattr(goal, "prep_id", None) else "learner"
 
 
 def is_due_soon(
@@ -513,6 +545,80 @@ async def count_achieved_milestones(goal_ids: list[str]) -> dict[str, tuple[int,
         ).all()
 
     return {goal_id: (int(achieved or 0), int(total or 0)) for goal_id, total, achieved in rows}
+
+
+@dataclass(frozen=True)
+class GoalScheduleHistory:
+    """What `GoalScheduleChange` says about one goal's deadline having moved."""
+
+    #: How many times the deadline was pushed **later**. Moving a deadline earlier is not an extension
+    #: and is excluded, as is setting a first deadline on a goal that had none — neither buys the
+    #: learner time, and counting them would inflate the one number that is supposed to mean "this
+    #: goal has been given more room than it started with".
+    extended_count: int
+    #: The deadline this goal started with, from the earliest recorded change. `None` when nothing has
+    #: moved, or when the first recorded change was a date being set for the first time.
+    #:
+    #: This is the denominator `elapsed_percent` should arguably be using. It is published rather than
+    #: applied, because re-basing the window would change every pace figure on every surface and that
+    #: is a behaviour change with its own decision to make.
+    original_target_date: datetime | None
+
+
+async def derive_schedule_history(goal_ids: list[str]) -> dict[str, GoalScheduleHistory]:
+    """`{goalId: GoalScheduleHistory}` for a set of goals, in one query.
+
+    Rows are fetched for the whole set and attributed in memory, the same shape
+    `derive_current_values` uses for event rows and for the same reason: a page of twenty goals must
+    not become twenty round trips to fill one column.
+
+    In memory rather than in SQL because the interesting figure is *the previous date on the earliest
+    row*, not the minimum previous date. A deadline pulled earlier and then pushed out again has a
+    minimum that never was the goal's original window, and an aggregate cannot tell the difference. The
+    row count is small — a goal accumulates a change only when its deadline actually moves.
+
+    Goals with no recorded change are absent from the result rather than present with zeros, matching
+    `count_achieved_milestones`. The caller defaults them, which keeps "never moved" and "moved zero
+    times" from needing to be different things.
+    """
+    if not goal_ids:
+        return {}
+
+    from src.domains.progress.db_models import GoalScheduleChange
+
+    factory = get_session_factory()
+    async with factory() as session:
+        rows = (
+            await session.execute(
+                select(
+                    GoalScheduleChange.goal_id,
+                    GoalScheduleChange.previous_date,
+                    GoalScheduleChange.new_date,
+                )
+                .where(GoalScheduleChange.goal_id.in_(goal_ids))
+                .order_by(GoalScheduleChange.created_at.asc())
+            )
+        ).all()
+
+    counts: dict[str, int] = {}
+    originals: dict[str, datetime | None] = {}
+    for goal_id, previous_date, new_date in rows:
+        if goal_id not in counts:
+            counts[goal_id] = 0
+            # The earliest row's previous date, whether or not that row was an extension. A deadline
+            # pulled forward and later pushed back still started somewhere.
+            originals[goal_id] = previous_date
+        if previous_date is None or new_date is None:
+            continue
+        if _utc(new_date) > _utc(previous_date):
+            counts[goal_id] += 1
+
+    return {
+        goal_id: GoalScheduleHistory(
+            extended_count=count, original_target_date=originals.get(goal_id)
+        )
+        for goal_id, count in counts.items()
+    }
 
 
 async def get_goal_portfolio(*, user_id: str, now: datetime | None = None) -> GoalPortfolio:

@@ -10,6 +10,7 @@ from src.shared.exceptions import NotFoundError, ValidationError
 from src.shared.field_mapping import reject_unclearable
 
 from ..repository import progress_repo
+from . import goal_schedule_log
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +90,19 @@ async def update_goal(*, goal_id: str, user_id: str, data: dict[str, Any]) -> An
     except ValueError as exc:
         raise ValidationError(str(exc)) from exc
     update_data = data
-    if update_data:
-        return await progress_repo.update_goal(goal_id, update_data)
-    return await progress_repo.find_goal(goal_id, user_id)
+    if not update_data:
+        return await progress_repo.find_goal(goal_id, user_id)
+
+    updated = await progress_repo.update_goal(goal_id, update_data)
+    # Recorded after the write, from the row as it was before it, and only when the learner actually
+    # sent a deadline. `exclude_unset=True` on the route means the key is present only when they did, so
+    # this cannot mistake "saved the title" for "moved the deadline". `goal_schedule_log` drops the
+    # no-op case where the deadline sent matches the one already stored.
+    if "targetDate" in update_data:
+        await goal_schedule_log.record_date_change(
+            goal=existing, new_date=update_data["targetDate"], reason="learner_edited"
+        )
+    return updated
 
 
 async def record_progress(*, goal_id: str, user_id: str, progress: float) -> Any:
