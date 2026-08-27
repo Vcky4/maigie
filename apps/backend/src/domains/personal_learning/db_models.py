@@ -753,6 +753,28 @@ class Notification(Base, TimestampMixin):
     dismissed_at: Mapped[datetime | None] = mapped_column(
         "dismissedAt", DateTime(timezone=True), nullable=True
     )
+    # When a push actually reached at least one device, and null when it did not.
+    #
+    # **Distinct from `deliveredAt`, which it would be tempting to conflate.** `deliveredAt` means the row
+    # was released into the learner's in-app list, which is a real channel and always succeeds. A push is a
+    # second, best-effort channel that can be skipped for a dozen honest reasons: Firebase unconfigured, the
+    # learner opted out, or — universally today — no `DeviceToken` row exists because nothing registers one.
+    # `send_push_notification` reports `no_tokens` for that case, and recording it as a delivery would put a
+    # claim in the data that nothing sent anything to.
+    #
+    # It is also the idempotency marker. `status` moving off `PENDING` is what stops a row being selected
+    # again, so without this a crash between the send and the status write would push twice.
+    pushed_at: Mapped[datetime | None] = mapped_column(
+        "pushedAt", DateTime(timezone=True), nullable=True
+    )
+    #: `PENDING` | `QUEUED` | `DELIVERED` | `READ` | `DISMISSED` | `EXPIRED`.
+    #:
+    #: `QUEUED` means written but held back — quiet hours, or the learner's daily allowance already spent.
+    #: It used to be a black hole: `list_pending_for_delivery` selected `PENDING` only, so every
+    #: quiet-hours notification ever written was stored and then never delivered by anything.
+    #:
+    #: `EXPIRED` is for a held-back notification whose moment has passed. A deferred message that finally
+    #: arrives four days late is worse than one that never arrives, because the learner acts on it.
     status: Mapped[str] = mapped_column(String, default="PENDING")
 
     __table_args__ = (
