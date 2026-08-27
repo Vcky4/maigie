@@ -383,6 +383,7 @@ class TestTheExtractionInventoryIsHonest:
             "usage reconciliation and pricing": "resolve_usage",
             "assistant row assembly": "build_assistant_row",
             "context cache keying": "context_cache_key_parts",
+            "page context instruction blocks": "REVIEW_MODE_PAGE_CONTEXT",
         }
         assert set(ask_service.MOVED_SO_FAR) == set(expected)
         for stage, attribute in expected.items():
@@ -740,3 +741,67 @@ class TestMergeCachedContext:
     def test_the_result_is_a_new_object(self):
         context = {"topicId": "t"}
         assert ask_service.merge_cached_context(context, None) is not context
+
+
+# ---------------------------------------------------------------------------
+# Page context instruction blocks
+# ---------------------------------------------------------------------------
+
+
+class TestReviewModePageContext:
+    """Prompt text that drives the scheduler. Pinned because it was 970 lines inside a 2,000-line
+    function, where nobody would notice a boundary changing."""
+
+    def test_it_names_the_complete_review_tool(self):
+        """The turn ends by calling a tool. If the instruction stops naming it, the review never
+        completes and the topic is never rescheduled — a silent failure, because the conversation still
+        reads normally."""
+        assert "complete_review" in ask_service.REVIEW_MODE_PAGE_CONTEXT
+
+    @pytest.mark.parametrize("rating", ["0", "1", "2", "3", "4", "5"])
+    def test_every_point_on_the_quality_scale_is_defined(self, rating):
+        """The scale is a contract with the interval calculation. A missing point is a rating the model
+        has to guess at, and the guess changes a learner's next review date."""
+        assert f"{rating} =" in ask_service.REVIEW_MODE_PAGE_CONTEXT
+
+    def test_it_asks_for_one_question_at_a_time(self):
+        """Without this a model lists all questions in one message, which makes per-answer feedback
+        impossible and turns the review into a worksheet."""
+        assert "ONE AT A TIME" in ask_service.REVIEW_MODE_PAGE_CONTEXT
+
+    def test_it_asks_for_a_score_summary(self):
+        assert "score_summary" in ask_service.REVIEW_MODE_PAGE_CONTEXT
+
+    def test_it_tells_the_model_not_to_ask_for_a_button_press(self):
+        """There is no button. Completion is the tool call, so inviting a click strands the learner."""
+        assert "button" in ask_service.REVIEW_MODE_PAGE_CONTEXT
+
+    def test_it_is_a_constant_and_not_a_format_string(self):
+        """No interpolation, so it cannot be accidentally fed learner text — which would be a prompt
+        injection seam in the instruction half of the prompt."""
+        assert "{" not in ask_service.REVIEW_MODE_PAGE_CONTEXT
+
+
+class TestSpaceRoomPageContext:
+    def test_it_forbids_using_private_study_history(self):
+        """A privacy boundary, not a style note: a space room is shared, so the personal context that
+        makes Ask Maigie useful one-to-one would be a disclosure here."""
+        assert "not the user's private study history" in ask_service.space_room_page_context()
+
+    def test_the_reply_instruction_is_absent_by_default(self):
+        assert "replyContext" not in ask_service.space_room_page_context()
+
+    def test_the_reply_instruction_is_appended_when_replying(self):
+        assert "replyContext" in ask_service.space_room_page_context(has_reply_target=True)
+
+    def test_the_base_text_is_unchanged_by_the_suffix(self):
+        base = ask_service.space_room_page_context()
+        assert ask_service.space_room_page_context(has_reply_target=True).startswith(base)
+
+    def test_calling_it_twice_does_not_accumulate_the_suffix(self):
+        """The handler used `+=` on a dict value, so a second pass over the same context would have
+        appended twice. Returning a fresh string makes that impossible."""
+        first = ask_service.space_room_page_context(has_reply_target=True)
+        second = ask_service.space_room_page_context(has_reply_target=True)
+        assert first == second
+        assert first.count("replyContext") == 1

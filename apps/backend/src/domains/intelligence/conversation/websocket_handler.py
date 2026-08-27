@@ -970,21 +970,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
 
                             if review and topic:
                                 enriched_context["pageContext"] = (
-                                    "Review mode (spaced repetition): You are conducting a review for the topic below. "
-                                    "1) Start with a brief, engaging summary of what the topic is about (2–3 sentences). "
-                                    "2) Then ask 3–5 short quiz questions ONE AT A TIME. Do not list all questions at once. "
-                                    "3) After each answer, give a brief explanation or feedback before asking the next question. "
-                                    "4) Internally keep track of how many questions the user gets right vs wrong and their confidence level. "
-                                    "5) When the user has answered all questions and you have given your final explanation, "
-                                    "call the complete_review tool with a quality rating (0-5) based on their performance: "
-                                    "0 = total blackout (0% correct), 1 = mostly wrong but recognised answers (≤20%), "
-                                    "2 = mostly wrong but answers seemed easy once shown (≤40%), "
-                                    "3 = correct but with serious difficulty (≈60%), "
-                                    "4 = correct with minor hesitation (≈80%), 5 = perfect instant recall (100%). "
-                                    "Also provide a brief score_summary like '4/5 correct, struggled with X'. "
-                                    "After calling complete_review, tell the user their score and briefly explain what the "
-                                    "quality rating means for their next review schedule (e.g. 'Next review in X days'). "
-                                    "Do not ask the user to click any button; completion is automatic when you call complete_review."
+                                    ask_service.REVIEW_MODE_PAGE_CONTEXT
                                 )
                                 enriched_context["topicId"] = review.topic_id
                                 enriched_context["topicTitle"] = topic.title
@@ -1271,15 +1257,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         if getattr(circle_group, "space", None) and circle_group.space.members
                         else 0
                     )
-                    enriched_context["pageContext"] = (
-                        "You are participating in a shared learning space chat room. "
-                        "Respond with the space's discussion in mind, not the user's private study history. "
-                        "Keep responses collaborative and suitable for the whole room."
+                    enriched_context["pageContext"] = ask_service.space_room_page_context(
+                        has_reply_target=bool(reply_target_message)
                     )
-                    if reply_target_message:
-                        enriched_context[
-                            "pageContext"
-                        ] += " When replyContext is present, respond to that specific room message."
 
                     # Inject knowledge base context for this chat group
                     try:
