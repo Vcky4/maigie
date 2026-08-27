@@ -102,9 +102,10 @@ churn threshold all exist; the feedback loop does not. And the whole stack is un
 `tasks/retention_check.py` is not imported by `tasks/__init__.py`, has no beat entry, and imports
 `src.workers.celery_app` rather than `src.core.celery_app`.
 
-**The one nudge that does run is not goal-aware.** `learning.check_declining_engagement` (every 6h) reads
-`dropout_risk > 0.5` and sends one static message pointing at flashcards. It never mentions a deadline, a
-goal or a plan.
+**The one nudge that does run is not goal-aware.** *(A goal-aware one now runs alongside it — phase 4,
+§10.3.)* `learning.check_declining_engagement` (every 6h) reads `dropout_risk > 0.5` and sends one static
+message pointing at flashcards. It never mentions a deadline, a goal or a plan, and it has not been changed;
+`progress.review_goal_lifecycle` is a second, separate pass that does.
 
 **Notification delivery has three traps** worth knowing before hanging anything on it:
 
@@ -306,8 +307,8 @@ New, because none of it exists. Modelled on `CourseOutlineSatisfaction`
 
 Assumes the §8 decisions are made first. Engineer-days of focused work, not calendar.
 
-**Phases 0, 1, 2 and 3 are implemented on the backend.** See §10 for what shipped, what changed against
-this plan, and what is still open.
+**Phases 0 through 4 are implemented on the backend.** See §10 for what shipped, what changed against this
+plan, and what is still open.
 
 | | Work | Days | Risk |
 | --- | --- | --- | --- |
@@ -315,7 +316,7 @@ this plan, and what is still open.
 | **1** | **The post-exam review** (§6). **Backend shipped**; both clients' forms outstanding. | 5–7 | Medium — new schema and new copy on a sensitive moment |
 | **2** | ~~**Derive date authority** + a `GoalScheduleChange` log + surface "extended N times".~~ **Shipped**, no behaviour change. See §10.1. | 2 | Low |
 | **3** | ~~**Time-triggered redistribution.** Make `_redistribute_plan` reachable without learner action.~~ **Shipped.** See §10.2. | 1–2 | Low |
-| **4** | **The nightly pass**, ladder implemented, one action per goal, cooldown enforced. Reuses existing metrics and `_redistribute_plan`. | 4–5 | Medium |
+| **4** | ~~**The nightly pass**, ladder implemented, one action per goal, cooldown enforced.~~ **Shipped.** See §10.3. | 4–5 | Medium |
 | **5** | **Notification path fixes** — learner-local quiet hours, priority bypass of the daily cap, push on the learning path. | 3–4 | Medium — touches every notification |
 | **6** | **The learner's answer to a nudge, stored.** Deprioritise / completed / keep-going, wired to `record_intervention_outcome`. Needs client work. | 3 | Medium |
 | **7** | **Readiness calibration** (§6.2): score `progress_percent` and `averageMasteryPercent` against recorded outcomes, in aggregate first. | 3–4 | Low technically; **blocked on outcome volume** |
@@ -339,9 +340,14 @@ Phase 1 is the next-most valuable and the one that makes everything after it pos
 completes on that answer. The date is never pushed forward automatically; a postponed exam gets a new date
 because the learner said it was postponed.
 
+**Answered by phase 4 (§10.3):** decision 1, the extension cap — **three**, counting only the system's own
+extensions. Decision 6 in part: the cooldown is seven days per goal, so a goal produces at most one message
+a week; whether the post-exam ask bypasses the daily cap is still phase 5's to settle.
+
 Still open:
 
-1. **How many times may a `learner`-authority goal extend before the system asks instead?**
+1. ~~**How many times may a `learner`-authority goal extend before the system asks instead?**~~ Answered:
+   three. See §10.3.
 2. **What state is "awaiting your answer"?** `Goal.status` is `ACTIVE | COMPLETED | ARCHIVED | CANCELLED`
    (`progress/models.py:37`) and `ExamPrep.status` is `SETUP | IN_PROGRESS | COMPLETED`
    (`personal_learning/models.py:957`). Neither has a value
@@ -583,6 +589,93 @@ items it moved, so a caller that did not act on the learner's behalf can say wha
   timezone, so an item can land on a day boundary that is not theirs.
 - **Nothing tells the learner *why*.** The notification says the plan was rescheduled, not that they have
   missed four Tuesdays. That is §5.3, and it needs phase 8's correlation work to say anything true.
+
+### 10.3 Implementation record — phase 4, backend
+
+Shipped in `maigie/apps/backend`. Verified: **3,523 tests passing** (baseline 3,486, +37 new), `ruff check
+src tests` clean, `export_openapi.py --check` in sync (no wire change), single alembic head, task and beat
+entry confirmed loaded. **19 mutations applied one at a time; 18 caught, 1 equivalent mutant** (`len(rows) <
+2` versus `< 1` in the extension sizer — a single row still fails the span check, so both forms behave
+identically).
+
+| Piece | Where |
+| --- | --- |
+| The ladder | `progress/services/goal_lifecycle_service.py`, `review_goals` |
+| Its memory, and the cooldown | `GoalLifecycleAction`, migration `053_goal_lifecycle` |
+| `system_extended` reason token | widened `GoalScheduleChange_reason_check` in the same migration |
+| A separate count for the budget | `GoalScheduleHistory.system_extended_count` |
+| Bounded candidate query | `repository.list_goals_for_lifecycle_review` |
+| Beat task, 02:30 daily | `workers/progress_tasks.py`, `progress.review_goal_lifecycle` |
+| Named limits | `GOAL_ACTION_COOLDOWN_DAYS = 7`, `MAX_SYSTEM_EXTENSIONS = 3`, `RATE_WINDOW_DAYS = 14` |
+
+**The rungs, as built**
+
+| Condition | `external` | `learner` |
+| --- | --- | --- |
+| On track, or finished | nothing | nothing |
+| At risk, deadline far | nothing here — `redistribute_drifted_plans` owns it | same |
+| At risk, due soon | `warned`, with the real numbers | `extended`, or `asked_to_confirm` |
+| Deadline passed | nothing here — the post-exam review owns it | `extended`, or `asked_to_confirm` |
+
+**Decisions made while building**
+
+1. **The extension cap is three, counting only the system's own extensions** (§8 decision 1). An extension
+   here is sized from the learner's measured rate, so it is a date they were on pace to meet when it was
+   set. Missing three consecutive achievable dates is evidence about the goal, not the arithmetic. Counting
+   a learner's own edits against the budget would mean refusing to help someone for having re-planned —
+   which is why `GoalScheduleHistory` now carries two counts. The wire keeps publishing the wide one,
+   because a learner's question is "has this deadline moved" and it does not matter who moved it.
+2. **"Deprioritise" is deliberately still undecided** (§8 decision 5). It is a *state the learner's answer
+   puts a goal into*, and nothing asks for that answer until phase 6. Inventing the state now would add a
+   status with no writer, which is the rule this work has followed throughout.
+3. **Extensions are sized from `GoalProgressSnapshot`, and refused when they cannot be.** Fewer than two
+   recorded days, a window that collapses to one day, no progress gained, or nothing left to do all return
+   `None`, and the ladder asks the learner instead. A goal at 0% for a fortnight has no rate, and 0 is not
+   a number you can divide by to get a deadline. A fixed "add two weeks" would have been the system
+   inventing a commitment.
+4. **Each extension may at most double the goal's *original* window**, read from
+   `GoalScheduleHistory.original_target_date` rather than from `targetDate`. Using the current column would
+   let three extensions compound, each doubling a window the last had already doubled.
+5. **An overdue prep goal gets no action at all.** `mark_preparations_awaiting_review` has already asked how
+   the exam went. A second ask, in different words, from a different surface, about the same exam, reads as
+   the system not knowing what it had already said.
+6. **Rung 4 was deliberately not implemented here.** "At risk, deadline far → compress the plan" shipped as
+   phase 3, triggered by actual item-level drift rather than by derived progress lagging. Calling
+   `_redistribute_plan` from the ladder as well would bypass that sweep's cooldown and bring back the
+   nightly churn it exists to prevent. The more direct signal already has an owner.
+7. **The cooldown is a `NOT EXISTS` against the action log, not a stamp on the goal.** A stamp would say
+   when the ladder last acted but not what it did, and "extended or merely warned" is what the next decision
+   turns on.
+8. **The action row is written before anything is sent, and failing to write it fails the action.** The
+   opposite of `goal_schedule_log`, which swallows its own failures so a missing audit row cannot reject a
+   learner's edit. Here the row *is* the cooldown, so an action taken without one repeats every night after.
+   Better to lose one night's escalation than to start a loop. And it cannot be read from the notification
+   table instead: `create_notification` returns `None` under quiet hours or the daily cap, so a suppressed
+   warning would be indistinguishable from one never sent. That is the third time this programme has closed
+   that same trap.
+9. **The candidate query is bounded to the due-soon horizon.** Whether a goal is at risk needs derived
+   progress and cannot be asked in SQL, but both acting rungs need the deadline near or past, so loading
+   anything further out would be work spent to decide to do nothing.
+
+**Still open on phase 4**
+
+- **Nobody can answer.** The ladder asks "do you want to keep going, or set it aside?" and there is no
+  endpoint, no affordance and no column to receive the reply. That is phase 6, and until it lands
+  `asked_to_confirm` is a question into the void — the notification is the only thing the learner sees, and
+  the only thing they can do about it is open the goal and edit it by hand.
+- **`record_intervention_outcome` still has zero callers.** Phase 4 records what the system *did*, never
+  whether it worked. Every future version of this ladder is guessing at the same rate as the first until
+  phase 6 closes the loop.
+- **Delivery is still unreliable.** All three messages go through the path with learner-local quiet hours
+  unimplemented and a daily cap that silently drops. Phase 5.
+- **Extending a goal does not move `Course.targetDate`** (§8 decision 7, still open). The two records of one
+  intention will disagree after the first extension.
+- **The wording is server-composed.** Consistent with `run_weekly_check_ins`, and the numbers in it are the
+  server's, per §5.3's rule that the model may phrase but never supply a number. It has had no review for
+  tone on what may be a discouraging moment.
+- **Unmeasured.** How many goals this fires on, on the first night, is unknown — §11's first item. The pass
+  is bounded by `limit=500` and a seven-day cooldown, so the blast radius is capped, but the first run could
+  still put a message in front of a lot of people at once.
 
 ## 11. What is not known
 
