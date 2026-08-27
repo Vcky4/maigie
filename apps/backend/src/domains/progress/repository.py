@@ -20,6 +20,7 @@ from .db_models import (
     Achievement,
     Goal,
     GoalMilestone,
+    GoalScheduleChange,
     ReviewItem,
     ScheduleBehaviourLog,
     ScheduleBlock,
@@ -115,6 +116,23 @@ class ProgressRepository:
             stmt = delete(Goal).where(Goal.id == goal_id)
             await session.execute(stmt)
             await session.commit()
+
+    # -----------------------------------------------------------------------
+    # Goal schedule changes
+    # -----------------------------------------------------------------------
+
+    async def create_schedule_change(self, data: dict[str, Any]) -> GoalScheduleChange:
+        """Record that a goal's deadline moved.
+
+        Insert only; there is no update or delete. An entry describes a moment that has passed, and a
+        log that can be rewritten answers a different question from the one it is being asked.
+        """
+        async with await self._session() as session:
+            change = GoalScheduleChange(**self._map_schedule_change_data(data))
+            session.add(change)
+            await session.commit()
+            await session.refresh(change)
+            return change
 
     # -----------------------------------------------------------------------
     # Goal milestones
@@ -493,6 +511,18 @@ class ProgressRepository:
         "currentValue": "current_value",
     }
 
+    #: A log row is assembled by the service, not by a client — no route accepts one. The map is here
+    #: anyway so the write goes through the same allowlist as every other, which is what makes adding a
+    #: column to the table without wiring it a loud failure rather than a silent drop.
+    _SCHEDULE_CHANGE_FIELD_MAP = {
+        "goalId": "goal_id",
+        "userId": "user_id",
+        "previousDate": "previous_date",
+        "newDate": "new_date",
+        "reason": "reason",
+        "dateAuthority": "date_authority",
+    }
+
     _MILESTONE_FIELD_MAP = {
         "goalId": "goal_id",
         "title": "title",
@@ -571,6 +601,9 @@ class ProgressRepository:
 
     def _map_goal_data(self, data: dict[str, Any]) -> dict[str, Any]:
         return map_fields(data, self._GOAL_FIELD_MAP, entity="_map_goal_data")
+
+    def _map_schedule_change_data(self, data: dict[str, Any]) -> dict[str, Any]:
+        return map_fields(data, self._SCHEDULE_CHANGE_FIELD_MAP, entity="_map_schedule_change_data")
 
     def _map_milestone_data(self, data: dict[str, Any]) -> dict[str, Any]:
         return map_fields(data, self._MILESTONE_FIELD_MAP, entity="_map_milestone_data")

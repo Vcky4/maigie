@@ -195,6 +195,105 @@ class GoalMilestone(Base, TimestampMixin):
 
 
 # ---------------------------------------------------------------------------
+# GoalScheduleChange
+# ---------------------------------------------------------------------------
+
+
+class GoalScheduleChange(Base):
+    """Every time a goal's deadline moved, and why.
+
+    **Without this, a goal that has been rewritten three times looks healthy.** `elapsed_percent`
+    measures the window as `createdAt → targetDate`, so pushing `targetDate` forward enlarges the
+    denominator, shrinks elapsed percent, shrinks the lag `is_at_risk` tests, and the goal marks itself
+    on track by moving its own goalposts. The predicates cannot see the difference between a goal that
+    was always due in December and one that was due in August and quietly moved twice. This table is
+    that difference, and `previousDate` on the oldest row is the window the goal actually started with.
+
+    A log, not a mutation of the goal: rows accumulate and nothing is ever updated in place. That is why
+    it carries an explicit `createdAt` and no `updatedAt` (`Base` without `TimestampMixin`) — the same
+    shape `ScheduleBehaviourLog` uses one table over, and for the same reason. An entry describes a
+    moment that has already passed.
+
+    `dateAuthority` is **snapshotted** rather than derived on read, even though `date_authority()`
+    derives it from `Goal.prepId` everywhere else. `prepId` is `ON DELETE SET NULL`, so deleting a
+    preparation silently reclassifies every past change on its goal from `external` to `learner` — and
+    the whole point of an entry is what was true when the date moved. This is the same argument
+    `PrepOutcome` makes for snapshotting readiness instead of joining it back later.
+
+    `ON DELETE CASCADE` on the goal, matching `GoalMilestone`. The history exists to be shown beside a
+    goal, so it has no reader once the goal is gone; `SET NULL` would leave rows nothing can attribute.
+    """
+
+    __tablename__ = "GoalScheduleChange"
+
+    #: Why the date moved. A closed set enforced in the database as well as here, following
+    #: `Goal_metricKind_check` — an unconstrained String is how `Reflection.type` ended up with the
+    #: Celery task writing `"WEEKLY"` while the service branched on `"weekly"`.
+    #:
+    #: Both tokens have a writer today. There is deliberately **no** `system_extended` token yet: the
+    #: nightly ladder that would extend a deadline on the learner's behalf is not built, and a value the
+    #: schema offers and nothing can produce is the accept-and-ignore defect this codebase keeps
+    #: closing. It arrives with its writer.
+    REASONS = ("learner_edited", "plan_regenerated")
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    goal_id: Mapped[str] = mapped_column(
+        "goalId", String, ForeignKey("Goal.id", ondelete="CASCADE"), nullable=False
+    )
+    #: Denormalised from the goal so the log can be read per learner without a join. The goal is
+    #: already scoped to its owner by every caller; this is what lets a future portfolio-wide question
+    #: ("how many of this learner's deadlines have moved") stay one query.
+    #: No `index=True`: it would generate `ix_GoalScheduleChange_userId` while the migration creates
+    #: `GoalScheduleChange_userId_idx`, and an ORM that names an index differently from the database is
+    #: how autogenerate ends up proposing to "add" something that already exists. Declared in
+    #: `__table_args__` below with the name the migration actually uses.
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False
+    )
+
+    #: The deadline before this change. **Null when the goal had none** — setting a first deadline is
+    #: recorded because it is a schedule change, but it is not an extension, and the extension count
+    #: excludes it rather than treating "no date" as an infinitely early one.
+    previous_date: Mapped[datetime | None] = mapped_column(
+        "previousDate", DateTime(timezone=True), nullable=True
+    )
+    #: The deadline after this change. Null records a deadline being cleared, which is a real edit.
+    new_date: Mapped[datetime | None] = mapped_column(
+        "newDate", DateTime(timezone=True), nullable=True
+    )
+    reason: Mapped[str] = mapped_column(String, nullable=False)
+    #: What `date_authority()` returned at the moment of the change. See the class docstring.
+    date_authority: Mapped[str] = mapped_column("dateAuthority", String, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        "createdAt",
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+    )
+
+    __table_args__ = (
+        # Leads with `goalId` because the only read today is "this goal's history", and the count the
+        # response publishes is grouped by it.
+        Index("GoalScheduleChange_goalId_createdAt_idx", "goalId", "createdAt"),
+        Index("GoalScheduleChange_userId_idx", "userId"),
+        CheckConstraint(
+            "reason IN ('learner_edited', 'plan_regenerated')",
+            name="GoalScheduleChange_reason_check",
+        ),
+        CheckConstraint(
+            "\"dateAuthority\" IN ('external', 'learner')",
+            name="GoalScheduleChange_dateAuthority_check",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<GoalScheduleChange goal={self.goal_id} reason={self.reason}>"
+
+
+# ---------------------------------------------------------------------------
 # ScheduleBlock
 # ---------------------------------------------------------------------------
 
