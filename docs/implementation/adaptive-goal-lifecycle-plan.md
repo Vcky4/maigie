@@ -303,12 +303,15 @@ New, because none of it exists. Modelled on `CourseOutlineSatisfaction`
 
 ## 7. Phases
 
-Assumes the §7 decisions are made first. Engineer-days of focused work, not calendar.
+Assumes the §8 decisions are made first. Engineer-days of focused work, not calendar.
+
+**Phases 0 and 1 are implemented on the backend.** See §10 for what shipped, what changed against this
+plan, and what is still open.
 
 | | Work | Days | Risk |
 | --- | --- | --- | --- |
-| **0** | **Stop declaring missed exams complete.** Replace `mark_overdue_preparations_completed`'s date-based flip with an awaiting-answer state that asserts nothing, and stop it removing the prep from goal candidacy. | 1 | **Low, high value** |
-| **1** | **The post-exam review** (§6): the outcome row + migration, the ask, the reminder budget, and completion-on-answer. Includes the API and both clients' forms. | 5–7 | Medium — new schema and new copy on a sensitive moment |
+| **0** | ~~**Stop declaring missed exams complete.**~~ **Shipped.** | 1 | **Low, high value** |
+| **1** | **The post-exam review** (§6). **Backend shipped**; both clients' forms outstanding. | 5–7 | Medium — new schema and new copy on a sensitive moment |
 | **2** | **Derive date authority** + a `GoalScheduleChange` log + surface "extended N times". No behaviour change yet. | 2 | Low |
 | **3** | **Time-triggered redistribution.** Make `_redistribute_plan` reachable without learner action, which is the actual gap. | 1–2 | Low |
 | **4** | **The nightly pass**, ladder implemented, one action per goal, cooldown enforced. Reuses existing metrics and `_redistribute_plan`. | 4–5 | Medium |
@@ -374,7 +377,79 @@ Also worth closing: **no path creates a goal from a StudyPlan.** `study_plan_ser
 rules accept — but note that a plan generated *from* a preparation would double up with the prep goal, so
 the link check needs to cover that.
 
-## 10. What is not known
+## 10. Implementation record — phases 0 and 1, backend
+
+Shipped in `maigie/apps/backend`. Verified: **3,364 tests passing** (baseline 3,325), `ruff check src tests`
+clean, `export_openapi.py --check` in sync. **24 mutations applied one at a time; 24 caught, none survived.**
+
+**The lie is gone.** `mark_overdue_preparations_completed` is now
+`exam_prep_service.mark_preparations_awaiting_review`. It moves a passed preparation to `AWAITING_REVIEW`
+and asks the learner; **only their answer sets `COMPLETED`**. The Celery task *name* is unchanged
+(`learning.mark_completed_preparations`) on purpose — the beat schedule references it, and renaming a
+registered task means a deploy where beat points at a name no worker answers to.
+
+**What was built**
+
+| Piece | Where |
+| --- | --- |
+| `AWAITING_REVIEW` status | `PreparationStatus`, now four values |
+| `PrepOutcome` table | `db_models.py`, migration `050_prep_outcome` |
+| Ask budget on the prep | `ExamPrep.reviewAskedAt` / `reviewRemindersSent` / `reviewDeclinedAt` |
+| The decisions | `services/prep_outcome_service.py` |
+| Endpoints | `GET`/`POST` `/preparations/{id}/review`, `/review/result`, `/review/decline`, `/review/history` |
+| Repo reads/writes | `upsert_prep_outcome`, `find_prep_outcome`, `list_prep_outcomes`, `list_preps_awaiting_review`, and `progress_repo.list_goals_for_prep` (which did not exist) |
+
+**Five decisions made while building, that this plan had left open**
+
+1. **Rating scale: 1–5, the same scale for both ratings** (§8 decision 4), so they can be compared and
+   "about as expected" is expressible.
+2. **`experienceRating` is refused when the exam was not sat; `preparationRating` is not.** Someone who
+   missed the exam can still say whether the preparation was any good — and that is the rating that says
+   anything about us, so refusing it would discard the signal the feature exists for.
+3. **`COMPLETED` means "this preparation is finished", not "you passed."** It is a lifecycle value; the
+   outcome row carries what happened. That is what lets `missed` and `cancelled` conclude a preparation
+   without asserting success.
+4. **A declined review does *not* complete the preparation** (§8 decision 3, partly). Nothing has been said
+   about how it went, so completing it would restore the exact lie being removed. It leaves the ask list and
+   stays out of the way.
+5. **The linked goal resolves as measured, not guessed** — `COMPLETED` when `derived_progress >= 100`,
+   `ARCHIVED` otherwise. Marking every goal complete would claim the learner was ready; archiving every one
+   would discard the achievement of those who were. Contained in a `try/except`: the answer is stored and a
+   goal that could not be resolved is a stale label, not a reason to reject it.
+
+**Four things found while implementing that the plan had not anticipated**
+
+- **A preparation in `AWAITING_REVIEW` would have vanished from the dashboard.**
+  `prepare_dashboard_service` queried only `SETUP` and `IN_PROGRESS`, so the preparation would have
+  disappeared the morning after the exam and the review would have been reachable *only* from a
+  notification — which quiet hours and the daily cap can both suppress. `AWAITING_REVIEW` is now in
+  `ACTIVE_STATUSES`.
+- **`ACTIVE_STATUSES` existed and the queries did not use it.** `_load_active_preparations` hard-coded the
+  same two strings, so changing the constant changed nothing. Its own test caught this, because that test
+  asserts the queries *issued* against the constant rather than restating the constant. It now reads it.
+- **Migration numbered 050, not 049.** `049_chat_msg_grounding` already claimed 048 as its parent while
+  this work was in progress, and two revisions with one parent is a branch alembic refuses to upgrade past.
+- **`ExamPrep.examDate` is stored without an offset** while the ORM declares otherwise, so it arrives naive
+  and comparing it against an aware `now` raises. Handled by a local `_as_utc`, the same shape as
+  `goal_metrics._utc` — which exists because that exact mismatch made `GET /progress/goals` a 500.
+
+**One test was passing for the wrong reason, and mutation is what found it.** The
+"nothing to measure is null rather than zero" case monkeypatched `prep_outcome_service.prep_readiness`, but
+`_readiness_at_answer` does a function-local `from . import prep_readiness`, which rebinds and ignores the
+patch. The real call ran, failed inside its own `try/except`, and returned `{}` — indistinguishable from the
+behaviour being asserted. Mutating the `topics_total <= 0` guard away left the test green. It now patches the
+`prep_readiness` module itself and asserts the stand-in was actually reached.
+
+**Still open on phase 1**
+
+- **Both clients.** No UI exists: the review is reachable only by calling the API. Web and mobile each need
+  the form, and mobile has an existing `preparation_review` notification `action_data.route` to honour.
+- **The `preparation_review` notification inherits the known traps** — quiet hours compared against the
+  naive UTC clock, and the daily cap of five silently dropping a message. Phase 5 fixes those; until then a
+  learner at their cap may not see the ask, which is why the ask is also on the dashboard.
+- **Nothing consumes the outcomes yet.** Calibration is phase 7 and is gated on volume, not effort.
+
+## 11. What is not known
 
 - **No runtime measurement.** Everything here comes from reading the source. In particular the *number* of
   learners currently sitting on overdue goals is unmeasured, and it determines whether phase 2 is urgent or
