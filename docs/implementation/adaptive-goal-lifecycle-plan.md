@@ -89,10 +89,11 @@ that they sat it, and not that it went well. The only party who knows is the lea
 asked them — `ExamPrep` has **no outcome, score, rating or reflection column at all**. §6 is the answer to
 this, and it is why the fix is not merely "stop lying".
 
-**Rescheduling only fires when the learner is active.** `_redistribute_plan` has exactly two triggers:
-`update_study_plan` when the schedule inputs change (`:650`), and — after a learner marks an item complete
-— `if len(pending_past_due) > 2` (`:952`). **A learner who goes silent gets no redistribution at all**,
-which inverts the need: the learners whose plan has drifted furthest are the ones not completing anything.
+**Rescheduling only fires when the learner is active.** *(Fixed in phase 3 — §10.2.)*
+`_redistribute_plan` had exactly two triggers: `update_study_plan` when the schedule inputs change
+(`:650`), and — after a learner marks an item complete — `if len(pending_past_due) > 2` (`:952`). **A
+learner who goes silent got no redistribution at all**, which inverts the need: the learners whose plan has
+drifted furthest are the ones not completing anything. There is now a nightly pass as well.
 
 **Nothing ever learns whether an intervention worked.**
 `retention_service.record_intervention_outcome` (`:213`) sets `outcome` and `outcome_at` and has **zero
@@ -305,15 +306,15 @@ New, because none of it exists. Modelled on `CourseOutlineSatisfaction`
 
 Assumes the §8 decisions are made first. Engineer-days of focused work, not calendar.
 
-**Phases 0, 1 and 2 are implemented on the backend.** See §10 for what shipped, what changed against this
-plan, and what is still open.
+**Phases 0, 1, 2 and 3 are implemented on the backend.** See §10 for what shipped, what changed against
+this plan, and what is still open.
 
 | | Work | Days | Risk |
 | --- | --- | --- | --- |
 | **0** | ~~**Stop declaring missed exams complete.**~~ **Shipped.** | 1 | **Low, high value** |
 | **1** | **The post-exam review** (§6). **Backend shipped**; both clients' forms outstanding. | 5–7 | Medium — new schema and new copy on a sensitive moment |
 | **2** | ~~**Derive date authority** + a `GoalScheduleChange` log + surface "extended N times".~~ **Shipped**, no behaviour change. See §10.1. | 2 | Low |
-| **3** | **Time-triggered redistribution.** Make `_redistribute_plan` reachable without learner action, which is the actual gap. | 1–2 | Low |
+| **3** | ~~**Time-triggered redistribution.** Make `_redistribute_plan` reachable without learner action.~~ **Shipped.** See §10.2. | 1–2 | Low |
 | **4** | **The nightly pass**, ladder implemented, one action per goal, cooldown enforced. Reuses existing metrics and `_redistribute_plan`. | 4–5 | Medium |
 | **5** | **Notification path fixes** — learner-local quiet hours, priority bypass of the daily cap, push on the learning path. | 3–4 | Medium — touches every notification |
 | **6** | **The learner's answer to a nudge, stored.** Deprioritise / completed / keep-going, wired to `record_intervention_outcome`. Needs client work. | 3 | Medium |
@@ -513,6 +514,75 @@ changed meaning. What changed is that a deadline moving is now recorded and publ
 - **The log starts empty and cannot be backfilled.** Past date moves left no trace anywhere, so `extendedCount`
   reads `0` for every goal that was extended before this shipped. That is truthful but it means the number is
   only useful going forward.
+
+### 10.2 Implementation record — phase 3, backend
+
+Shipped in `maigie/apps/backend`. Verified: **3,486 tests passing** (baseline 3,467, +19 new), `ruff check
+src tests` clean, `export_openapi.py --check` in sync (no wire change), single alembic head, beat entry and
+task registration confirmed loaded. **12 mutations applied one at a time; 12 caught.**
+
+| Piece | Where |
+| --- | --- |
+| `StudyPlan.lastRedistributedAt` | `personal_learning/db_models.py`, migration `052_plan_redistributed` |
+| The cross-user drift query | `repository.list_plans_with_drift` |
+| The sweep | `study_plan_service.redistribute_drifted_plans` |
+| Beat task, 05:00 daily | `tasks/plan_redistribution.py`, `learning.redistribute_drifted_plans` |
+| Named thresholds | `MAX_TOLERATED_PAST_DUE = 2`, `REDISTRIBUTION_COOLDOWN_DAYS = 7` |
+
+**The sweep decides nothing new.** The drift test and the placement arithmetic are the ones the completion
+path already used, so a plan repacked overnight lands exactly where it would have landed had the learner
+opened the app and ticked something off. What was missing was only the trigger.
+
+**Decisions made while building**
+
+1. **The `> 2` magic number is now a named constant shared by both paths.** It had no comment and no
+   explanation anywhere. Two definitions of "behind" would mean a plan that is drifted when the learner
+   completes something and not drifted overnight.
+2. **A cooldown was mandatory, not a nicety.** Redistribution re-anchors *every* pending item to tomorrow,
+   so an ungated nightly pass walks a silent learner's whole schedule forward one day every night — dates
+   that never settle and a diff on every client poll. Seven days, matching
+   `INTERVENTION_COOLDOWN_DAYS` and the weekly check-in.
+3. **The stamp is written even when nothing moved.** A plan whose every pending item is pinned to an
+   accepted calendar block moves nothing, and stamping only on success would leave it reconsidered every
+   night forever. Same trap `run_weekly_check_ins` documents for suppressed notifications.
+4. **The learner-triggered path is deliberately *not* throttled.** Completing an item still redistributes at
+   once. A cooldown there would look like the app ignoring them.
+5. **Expired plans are excluded.** `days_remaining = max(1, (deadline - now).days)` means a past deadline
+   yields a one-day window and every pending item piles onto tomorrow. That is a wall, not a schedule, and
+   what to do with an expired plan is a question for the learner — which is the same argument §6 makes about
+   preparations.
+6. **`PAUSED` and `SUPERSEDED` are excluded**, per `StudyPlan.status`'s own docstring: pausing is not a
+   statement about the deadline.
+7. **The learner is told.** They did not ask for this, and a schedule rewritten overnight in silence is the
+   system changing their commitments behind their back — the phase boundaries they accepted in the wizard
+   move with it, since a phase's week range is just the span of its items' dates. Delivery can still be
+   dropped by quiet hours or the daily cap; that is phase 5's defect, and the stamp does not depend on it.
+8. **Per-plan error containment**, following `check_declining_engagement`. `run_weekly_check_ins` has no such
+   guard and one bad row aborts the run.
+
+**One behaviour change to the existing paths, made deliberately**
+
+`_redistribute_plan` now **leaves items that have an accepted calendar block where they are.**
+`StudyPlanItem.scheduleBlockId` is set when the learner accepted a suggested hour, so a real `ScheduleBlock`
+sits on that day; moving `scheduledDate` and leaving the block behind gives them a calendar entry on Tuesday
+and a plan item on Friday, and the day they turn up is the one in their calendar. This affects the two
+learner-triggered paths as well as the sweep, on purpose — two different redistribution semantics would be
+worse than one changed one, and the same argument that stops redistribution rewriting the rhythm the learner
+chose stops it moving a time they explicitly accepted. `_redistribute_plan` also now returns the number of
+items it moved, so a caller that did not act on the learner's behalf can say what it did.
+
+**Still open on phase 3**
+
+- **The pile-up case is unchanged.** A plan whose deadline is two days away still packs all its remaining
+  items onto those two days. That is arguably honest and it is what the interactive path has always done, so
+  it was left alone rather than redesigned here.
+- **Per-item commits.** `_redistribute_plan` issues one `update_plan_item` per item, each in its own session,
+  so a forty-item plan is forty commits and a crash mid-plan leaves it half repacked. Survivable because the
+  next sweep converges, but a plan-scoped transaction would be better.
+- **Placement is by UTC day.** Unlike `list_items_due_today`, redistribution does not resolve the learner's
+  timezone, so an item can land on a day boundary that is not theirs.
+- **Nothing tells the learner *why*.** The notification says the plan was rescheduled, not that they have
+  missed four Tuesdays. That is §5.3, and it needs phase 8's correlation work to say anything true.
 
 ## 11. What is not known
 
