@@ -107,14 +107,16 @@ churn threshold all exist; the feedback loop does not. And the whole stack is un
 message pointing at flashcards. It never mentions a deadline, a goal or a plan, and it has not been changed;
 `progress.review_goal_lifecycle` is a second, separate pass that does.
 
-**Notification delivery has three traps** worth knowing before hanging anything on it:
+**Notification delivery has three traps** worth knowing before hanging anything on it. *(All three
+addressed in phase 5 — §10.4 — and a fourth found there that was worse than any of them.)*
 
 - The daily cap **silently drops**: `create_notification` returns `None` once
-  `count_today_delivered >= max_daily_notifications` (default 5).
+  `count_today_delivered >= max_daily_notifications` (default 5). It now defers instead.
 - Quiet hours are compared against the **naive UTC clock**, not the learner's local time.
 - `_compute_optimal_time` is a stub that returns `now`, and `deliver_pending` marks rows delivered with a
   comment reading `# Deliver the notification (push/email would go here)`. **There is no push on the
-  learning path** — push infrastructure exists but is only used by credit purchases.
+  learning path** — push infrastructure exists but is only used by credit purchases. A push is now
+  attempted, but it still reaches nobody: nothing registers a device token.
 
 ## 4. A constraint that shapes the design
 
@@ -307,7 +309,7 @@ New, because none of it exists. Modelled on `CourseOutlineSatisfaction`
 
 Assumes the §8 decisions are made first. Engineer-days of focused work, not calendar.
 
-**Phases 0 through 4 are implemented on the backend.** See §10 for what shipped, what changed against this
+**Phases 0 through 5 are implemented on the backend.** See §10 for what shipped, what changed against this
 plan, and what is still open.
 
 | | Work | Days | Risk |
@@ -317,7 +319,7 @@ plan, and what is still open.
 | **2** | ~~**Derive date authority** + a `GoalScheduleChange` log + surface "extended N times".~~ **Shipped**, no behaviour change. See §10.1. | 2 | Low |
 | **3** | ~~**Time-triggered redistribution.** Make `_redistribute_plan` reachable without learner action.~~ **Shipped.** See §10.2. | 1–2 | Low |
 | **4** | ~~**The nightly pass**, ladder implemented, one action per goal, cooldown enforced.~~ **Shipped.** See §10.3. | 4–5 | Medium |
-| **5** | **Notification path fixes** — learner-local quiet hours, priority bypass of the daily cap, push on the learning path. | 3–4 | Medium — touches every notification |
+| **5** | ~~**Notification path fixes** — learner-local quiet hours, priority bypass of the daily cap, push on the learning path.~~ **Shipped**, with push still blocked on device registration. See §10.4. | 3–4 | Medium — touches every notification |
 | **6** | **The learner's answer to a nudge, stored.** Deprioritise / completed / keep-going, wired to `record_intervention_outcome`. Needs client work. | 3 | Medium |
 | **7** | **Readiness calibration** (§6.2): score `progress_percent` and `averageMasteryPercent` against recorded outcomes, in aggregate first. | 3–4 | Low technically; **blocked on outcome volume** |
 | **8** | **Behaviour correlation** — which weekday, which item kind, which pattern precedes a stall. | 3–5 | Medium; needs data from 1–6 first |
@@ -676,6 +678,91 @@ identically).
 - **Unmeasured.** How many goals this fires on, on the first night, is unknown — §11's first item. The pass
   is bounded by `limit=500` and a seven-day cooldown, so the blast radius is capped, but the first run could
   still put a message in front of a lot of people at once.
+
+### 10.4 Implementation record — phase 5, backend
+
+Shipped in `maigie/apps/backend`. Verified: **3,564 tests passing** (baseline 3,523, +41 net), `ruff check
+src tests` clean, `export_openapi.py --check` in sync (no wire change), single alembic head. **26 mutations
+applied one at a time; 25 caught, 1 equivalent mutant** (raising instead of logging inside `_push` — the
+per-row handler catches it after the delivery is already recorded, which is the ordering property that
+mutation 12 pins directly).
+
+| Piece | Where |
+| --- | --- |
+| One definition of quiet hours | `src/shared/time/quiet_hours.py`, read by both the notification path and the agenda |
+| The learner's own day | `learner_timezone.local_day_bounds` |
+| `Notification.pushedAt` | migration `054_notification_push` |
+| Deferral instead of destruction | `notification_service.create_notification` |
+| Delivering held-back rows | `repository.list_due_for_delivery`, `notification_service.deliver_pending` |
+| Push, honestly | `notification_service._push`, `_push_allowed` |
+| Named limits | `PRIORITY_TIME_CRITICAL = 1`, `DEFAULT_MAX_DAILY = 5`, `MAX_DEFERRAL_DAYS = 3`, `DELIVERY_BATCH = 200` |
+
+**A fourth defect, found while implementing, and worse than the three in §3**
+
+**Every notification quiet hours ever deferred was never delivered by anything.**
+`create_notification` wrote the row with `status="QUEUED"` and a later `scheduledAt`;
+`list_pending_for_delivery` selected `status == "PENDING"` only. So the row existed, had a delivery time,
+and no code path ever looked at it again. It still appeared in the learner's in-app list, because that read
+filters on `READ`/`DISMISSED` rather than on delivery — which is exactly why this survived unnoticed. Fixed
+by selecting both statuses.
+
+**Decisions made while building**
+
+1. **The cap defers; it no longer destroys.** Over the allowance, the notification is written `QUEUED` and
+   released at the start of the learner's next day. This is the substantive change: the plan asked for a
+   priority bypass, and a bypass alone would still have thrown away everything below the threshold. Nothing
+   is discarded now, so the allowance protects attention without costing information.
+2. **`create_notification` always returns the row.** There is no suppression path left that destroys a
+   notification, so callers no longer have to read `None` as "may or may not have happened". The four
+   places that documented that behaviour, and three tests that asserted it, were corrected — the belief was
+   also *half wrong* before, since quiet hours never returned `None`, only the cap did.
+3. **A priority threshold over the existing numbers would have been wrong.** Live priorities are 2–4, and
+   the deadline messages the plan wants protected sat at 3 alongside the daily plan — while engagement
+   nudges and celebrations sat at 2. Exempting "priority ≤ 3" would have exempted the recommendation
+   traffic the cap exists for. Instead `PRIORITY_TIME_CRITICAL = 1` is a new band, and exactly one message
+   was moved into it: `goal_at_risk`, the only one whose value expires with the deadline it describes.
+4. **Quiet hours hold even a time-critical message.** A deadline hours away does not justify waking
+   someone, and nothing on this path is urgent on the scale that would. The cap is about attention;
+   quiet hours are about sleep.
+5. **Held-back notifications expire after three days** rather than arriving stale. "Your exam is in two
+   days" landing after the exam is worse than silence, because the learner acts on it. This also bounds the
+   first run after deployment, when the orphaned `QUEUED` backlog is finally selected.
+6. **The delivery sweep marks a row delivered *before* pushing.** The status write is what stops the row
+   being selected again, so a crash between the two loses a push rather than repeating one — the right way
+   round for something that buzzes a phone in a pocket.
+7. **`deliveredAt` and `pushedAt` are separate events.** `deliveredAt` means released into the in-app list,
+   which always works. `pushedAt` is written only when a device actually received something, so
+   `no_tokens` and an unconfigured Firebase are never recorded as deliveries.
+8. **The dormant push preferences are now honoured.** `UserPreferences.notifications`,
+   `pushScheduleReminder` and `pushStudyTips` have existed unread for the whole life of the schema;
+   sending push without consulting them would have turned a dormant column into a broken promise. A type no
+   toggle plainly describes is allowed rather than mapped onto the nearest-sounding one, which would be
+   reading consent into an answer the learner never gave.
+9. **`parse_hhmm` fails open, `_push_allowed` fails closed.** Opposite directions, deliberately. A corrupt
+   quiet-hours string means a message at a bad hour — visible and complainable; the alternative silences
+   every notification for that learner with nothing reporting it. An unreadable preferences row means no
+   push — which costs the learner nothing, because the notification is already in their list.
+10. **`enforce_daily_limit` was deleted.** A second, uncalled copy of the cap with its own `or 5`, and a
+    limit that lives in two places is a limit that can disagree with itself.
+
+**Still open**
+
+- **Push reaches nobody.** Nothing writes `DeviceToken` rows — there is no registration endpoint, and
+  building one is client work. Every send returns `no_tokens`, `pushedAt` stays null, and the data says so
+  rather than claiming a delivery. The in-app list is the only channel that works today, which means the
+  original §5.4 worry stands: a notification that lands in a list the learner does not open has not been
+  delivered.
+- **`_compute_optimal_time` is gone rather than fixed.** It returned `now` from both branches, so it was a
+  stub pretending to be a decision. `behaviour_service._compute_optimal_times` already derives local
+  study-time slots and is the honest source if delivery timing is ever made real.
+- **The allowance now bites for the first time.** It counts *delivered* rows, and quiet-hours rows were
+  never delivered, so on any learner with quiet hours set the cap has effectively never fired. It will now.
+- **Nothing records *why* a notification was held back.** The row's status says `QUEUED`, not whether that
+  was quiet hours or a spent allowance. Enough for behaviour, not enough to answer "how often does the cap
+  defer something" without inference.
+- **No route sets quiet hours or the allowance.** `update_quiet_hours` exists in `onboarding_service` and
+  has no HTTP caller, so in practice every learner still runs with no quiet hours and a cap of five. The
+  local-time fix is correct and currently unexercised in production.
 
 ## 11. What is not known
 
