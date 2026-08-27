@@ -990,16 +990,30 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         elif context.get("noteId"):
                             note_id = context["noteId"]
                             from src.domains.knowledge.db_models import Course, Module, Topic
-                            from src.domains.personal_learning.db_models import Note as NoteModel
+                            from src.domains.personal_learning.repository import (
+                                personal_learning_repo,
+                            )
+
+                            # Owner-filtered, via the repository's own read.
+                            #
+                            # This was `select(Note).where(Note.id == note_id)` with **no owner
+                            # filter**, while `noteId` comes straight off the client's message context.
+                            # So any learner could put another learner's note id on a turn and have its
+                            # `noteTitle`, `noteSummary` and full `noteContent` injected into the prompt
+                            # and answered about — a read of someone else's private note body. The
+                            # review branch immediately above always filtered on `user_id`, which is
+                            # what made the omission look deliberate rather than missing.
+                            #
+                            # `find_note(note_id, user_id)` is the repository's canonical by-id read and
+                            # already applies `Note.user_id == user_id`. Using it rather than adding a
+                            # second filter here means there is one owner-filtered path to keep correct
+                            # instead of two, and `Note` has no share or visibility column, so ownership
+                            # is the whole of the rule.
+                            note = await personal_learning_repo.find_note(note_id, user.id)
 
                             factory = get_session_factory()
-                            note = None
                             async with factory() as sa_session:
-                                stmt = select(NoteModel).where(NoteModel.id == note_id)
-                                result = await sa_session.execute(stmt)
-                                note = result.scalar_one_or_none()
-
-                                # If note found, load related topic/module/course
+                                # Related topic/module/course are catalogue rows, not personal ones
                                 note_topic = None
                                 note_module = None
                                 note_course = None
@@ -1069,10 +1083,13 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         print(
                                             f"✅ Found topic with ID {note_id}, using latest note ID: {ln.id}"
                                         )
+                                        # Owner-filtered like the branch above. `ln` already came from
+                                        # an owner-scoped lookup, so this re-fetch was not exploitable
+                                        # — but it was the same unfiltered `where(Note.id == ...)`
+                                        # shape as the hole that was, which is what made that one look
+                                        # normal. One read, one rule.
+                                        note = await personal_learning_repo.find_note(ln.id, user.id)
                                         async with factory() as sa_session:
-                                            n_stmt = select(NoteModel).where(NoteModel.id == ln.id)
-                                            n_result = await sa_session.execute(n_stmt)
-                                            note = n_result.scalar_one_or_none()
                                             # Re-load relationships for the found note
                                             note_topic = None
                                             note_module = None
