@@ -833,12 +833,75 @@ tests` clean, `export_openapi.py --check` in sync, single alembic head, model an
 - **`record_intervention_outcome` still has zero callers**, and the retention subsystem it belongs to is
   still unreachable.
 
+### 10.6 Migrations applied — and the reason they had not been
+
+**Six migrations shipped across five phases and none of them was applied.** `050` through `055` were
+written, reviewed, committed and left on disk while every phase's code went in depending on them. The
+symptom arrived as a `500` on `GET /api/v1/learning/home`:
+
+```
+column ExamPrep.reviewAskedAt does not exist
+```
+
+The ORM declares the column, so **every read of `ExamPrep` failed** — the home surface, the guidance
+engine, the prepare dashboard. Applied on 2026-08-27 with
+`python scripts/db_direct.py alembic upgrade head`, `049_chat_msg_grounding` → `055_goal_action_answer`.
+
+**Why 3,579 passing tests said nothing about it.** Every test either stubs the repository or builds its
+schema from the models, so the models and the tests agree with each other by construction and neither
+one ever consults the database. A schema drift of exactly this kind is invisible to the entire suite,
+and will be again. The only thing that catches it is running the application against the database.
+
+**Verified**, with `scripts/check_adaptive_050_055.py` (new, read-only, run before and after on the
+`check_prep_018.py` pattern):
+
+- `alembic_version` `049_chat_msg_grounding` → `055_goal_action_answer`.
+- All three tables and all seven columns present, with the declared nullability.
+- **Row counts identical on both sides** — `ExamPrep` 46, `StudyPlan` 105, `Notification` 160, `Goal`
+  46, `StudyPlanItem` 467. These migrations move no data, so this is the assertion that matters.
+- The three new tables are empty, as a no-backfill migration requires.
+- **No preparation was re-flagged**: 18 `COMPLETED`, 2 `IN_PROGRESS`, 26 `SETUP`, unchanged. `050`
+  refuses to backfill precisely so that learners are not asked about exams they sat months ago.
+- `reviewRemindersSent` is `NOT NULL DEFAULT 0` with **zero null rows** — correct, since nobody has
+  been asked. Metadata-only on Postgres 11+, no table rewrite.
+- `GoalScheduleChange_reason_check` now admits `system_extended`.
+- The exact ORM call from the traceback, `list_exam_preps`, re-run against the real database with the
+  real user id: succeeds. Every new repository method exercised against the live schema.
+
+**The first-run blast radius, now measurable** — §11's first unknown, answered for this database:
+
+| Sweep | Would act on |
+| --- | --- |
+| `mark_preparations_awaiting_review` (01:00) | **3** preparations |
+| `redistribute_drifted_plans` (05:00) | **69** study plans, of 105 |
+| `review_goal_lifecycle` (02:30) | **6** goals with a deadline already passed |
+
+Three asks is nothing. **69 plans is two thirds of every plan in the database**, each one repacking its
+pending items and sending a `study_plan_redistributed` notification. On this data that lands on very few
+learners, so most of those notifications will hit the daily allowance, queue, and then **expire** under
+`MAX_DEFERRAL_DAYS` rather than arriving — which is the expiry rule doing exactly the job it was added
+for, and the first evidence that phase 5's deferral was worth building before phase 3's sweep ever ran
+in anger. Worth knowing before this reaches a database where those 69 belong to 69 different people.
+
+**Also observed, not fixed.** `GET /learning/prepare/dashboard` returned **200** while logging the same
+`UndefinedColumnError`, because `prepare_dashboard_service._load_active_preparations` catches per-source
+failures and degrades to an empty list. `home_service` has no such guard and returned `500`. The `200`
+is the worse of the two: a learner was shown a dashboard with no preparations and nothing said anything
+was wrong. Recorded as its own defect rather than folded into this.
+
+**Standing correction to the way this work was sequenced.** A migration is not shipped when it is
+committed. Every phase record above that says "shipped" meant "the code is merged and the suite is
+green", which was true and insufficient. Applying is its own step, needs its own verification, and the
+repo already knew this — the Prepare plan carries `Migration 016 is not yet applied` as a standing note
+for exactly this reason, and I did not follow it.
+
 ## 11. What is not known
 
-- **No runtime measurement.** Everything here comes from reading the source. In particular the *number* of
-  learners currently sitting on overdue goals is unmeasured, and it determines whether the nightly pass
-  (phase 4) is urgent or merely correct. `is_overdue` is pure and already written — it can be run over the goal table as a script
-  before committing to any of this.
+- ~~**No runtime measurement.**~~ **Partly answered — §10.6.** Measured against the development database once
+  the migrations were applied: **6** goals with a deadline already passed, **3** preparations awaiting a
+  review, and **69 of 105** study plans drifted. So the nightly pass is correct rather than urgent for goals,
+  and the *plan* sweep is the one with real reach. Still unmeasured on any database with a realistic number of
+  learners, where those 69 plans would belong to 69 different people rather than a handful.
 - **Whether the observed-throughput extension is stable enough to schedule against.** `consistencyScore`
   and `avgSessionMinutes` only became non-NULL recently, so there may not yet be enough history to size an
   extension from. Phase 2's change log is what would reveal it, now that it exists — but it starts empty, so
