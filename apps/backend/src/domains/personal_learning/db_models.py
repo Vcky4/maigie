@@ -1429,6 +1429,23 @@ class StudyPlan(Base, TimestampMixin):
     last_check_in_at: Mapped[datetime | None] = mapped_column(
         "lastCheckInAt", DateTime(timezone=True), nullable=True
     )
+    # When a background sweep last repacked this plan's pending items, and the reason it can run at
+    # all without churning.
+    #
+    # Redistribution always re-anchors pending work to tomorrow, so an unconditional nightly pass
+    # would walk a silent learner's every remaining date forward one day, every day — a plan that
+    # never settles and a diff on every client poll. Gated on this the way the weekly check-in is
+    # gated on `lastCheckInAt`: a plan repacked inside the cooldown is skipped.
+    #
+    # Null means never swept, which is every plan that predates this and is the correct starting
+    # state — a plan that has never been repacked is due if it has drifted.
+    #
+    # Only the background pass reads and writes it. A learner completing an item still triggers
+    # redistribution immediately, because that is a response to something they just did and
+    # throttling it would make the app feel broken rather than restrained.
+    last_redistributed_at: Mapped[datetime | None] = mapped_column(
+        "lastRedistributedAt", DateTime(timezone=True), nullable=True
+    )
 
     # Relationships
     items: Mapped[list["StudyPlanItem"]] = relationship(
