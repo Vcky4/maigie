@@ -130,9 +130,13 @@ removed from the registry.
 ### The LLM stubs
 
 `get_llm_router()` returned `None` and callers immediately call `.route_request()` on it; it
-now names the missing subsystem instead. `FeatureFlagService.is_enabled` returned `True` for
-every flag, turning an absent flag service into a blanket "yes" that could switch on
-unfinished paths; it now **fails closed**. `LlmService.generate` returned `""` and
+was changed to name the missing subsystem instead, and **step 5 replaced it with a real router**
+(§6). `FeatureFlagService.is_enabled` returned `True` for every flag, turning an absent flag service
+into a blanket "yes" that could switch on unfinished paths; it was changed to **fail closed**, and
+**step 5 replaced that stub with the full service** — which also retired `is_enabled`, since the
+class's actual callers want `is_model_allowed` and `effective_tier_for_request`. See §6 for why
+fail-closed was the wrong shape for an entitlement check and what it was hiding.
+`LlmService.generate` returned `""` and
 `generate_course_outline` returned `{}`, the latter surfacing as
 `ValueError("Outline contained no modules")` — blaming the model for a method never written.
 Both are now implemented on `llm_resilient`, which already does per-user provider selection
@@ -254,19 +258,24 @@ Recoverable from `git show "4953972^:apps/backend/src/services/llm/<file>"`:
 | `cost_tracker.py` | 6.8k | Per-request cost accounting |
 | `prompts.py`, `context.py`, `capabilities.py`, `metrics.py`, others | ~25k | Supporting layers |
 
-This is what `get_llm_router()` needs, and it is why chat cannot produce a response. It also
+This is what `get_llm_router()` needs, and it is why chat could not produce a response. It also
 explains nine of the still-skipped test files, which are tests for these exact modules and are
 sitting written and unused.
+
+**Superseded by steps 1–5, 2026-08-26.** `get_llm_router()` now returns a real router and six of
+those nine test files are collected. Two adapters plus `gemini_embedding` remain (step 6) and the
+dynamic-override half of `feature_flags` remains (step 7). The table above is kept as the inventory
+of what the pre-migration package held; the per-step records below are the current state.
 
 **Suggested sequence**, each step independently verifiable and each unskipping its own tests:
 
 1. ~~`types.py`, `protocol.py`, `capabilities.py`, `errors.py` — no dependencies.~~ **Done, 2026-08-26.**
 2. ~~`circuit_breaker.py` + `cost_tracker.py` — pure logic; unskips 2 test files.~~ **Done.**
 3. ~~`tool_normalizer.py` + `stream_normalizer.py` — pure transforms; unskips 2 more.~~ **Done.**
-4. One provider adapter end to end (Gemini, since `gemini_sdk.py` already exists). **Module ported; not yet exercised, because nothing constructs it until step 5.**
-5. `router.py` — needs 1–4; unskips `test_end_to_end_routing`. **NEXT. This is the one that matters: `get_llm_router()` still raises, so chat still cannot produce a response.**
-6. The remaining two adapters; unskips their test files.
-7. `feature_flags.py` with real storage, replacing the fail-closed stub.
+4. ~~One provider adapter end to end (Gemini, since `gemini_sdk.py` already exists).~~ **Done.** Constructed and exercised by step 5.
+5. ~~`router.py` — needs 1–4; unskips `test_end_to_end_routing`.~~ **Done, 2026-08-26.** `get_llm_router()` returns a real router; see the step 5 record below.
+6. The remaining two adapters (`openai_chat_tools`, `anthropic_chat_tools`) plus `gemini_embedding`; unskips `test_openai_chat_tools`. **NEXT.**
+7. ~~`feature_flags.py` with real storage, replacing the fail-closed stub.~~ **Mostly done in step 5, and the premise here was wrong** — see "the sequence was wrong about step 7" below. What remains is only the `FeatureFlagStore`-backed dynamic overrides and the admin config path, not the service itself.
 
 ### Migration progress, 2026-08-26 — steps 1–4
 
@@ -317,16 +326,119 @@ step 7), `test_openai_chat_tools.py` (228, step 6), `test_llm_agentic_roundtrip.
 legacy `GeminiService` class from `src/services/llm_service.py`, which is *not* on this path; the
 adapter is its replacement. Decide whether to port `GeminiService` or delete that test).
 
-**Note for whoever does step 5.** `router.py`'s imports were not surveyed before this pause. Everything
-it needs from steps 1–4 is in place; `metrics.py` (2.7k) is still missing and the router may want it.
-The finish line is `adapter_registry.get_llm_router()` returning a real router instead of calling
-`raise_unmigrated`, and `test_end_to_end_routing.py` passing.
-
 **Note on scope**: `llm_resilient.py` (already working, multi-provider) lives under
 `domains/personal_learning/services`, the wrong home for a shared client. It is deliberately
 left there: existing tests patch
 `src.domains.personal_learning.services.llm_resilient.generate_content_json`, and moving it
-would silently disable those patches. Relocating it belongs in step 5.
+would silently disable those patches. Relocating it is **still outstanding** — step 5 did not do it,
+because nothing in the routing layer touches it and the move is a rename with a test-patch hazard,
+not part of restoring the router.
+
+### Migration progress, 2026-08-26 — step 5, the router
+
+`adapter_registry.get_llm_router()` returns a real `LLMRouter`. Suite went from 3,202 to **3,286
+passing / 185 skipped**, `ruff check src/ tests/` clean. Four modules added under
+`src/domains/intelligence/reasoning/llm/`: `metrics.py`, `feature_flags.py`, `router.py`, and a
+rewritten `adapter_registry.py`.
+
+**The import survey the last pause deferred.** `router.py` needs `base_adapter`, `capabilities`,
+`circuit_breaker`, `errors` and `registry` — all present from steps 1–4 — plus `metrics` (ported
+here) and `feature_flags` (see below). `CircuitState` and `LLM_CIRCUIT_BREAKER_TRIPS` appear on its
+import lines and nowhere in its body, so they were dropped. Two lazy imports inside the success path
+needed retargeting: `cost_tracker.PROVIDER_PRICING`, and `usage_tracking_service.emit_ai_usage`,
+which is now `domains/billing/services/usage_tracking`.
+
+**Ported unchanged apart from import paths** — `metrics`, and `router`'s selection and fallback
+logic. `test_end_to_end_routing.py` (11 tests) and `test_feature_flags.py` (65) both pass with no
+change beyond their import lines, which is the same fidelity evidence steps 1–3 relied on.
+
+**The sequence was wrong about step 7, and it changed this step's shape.** Step 7 read
+"`feature_flags.py` with real storage", implying a storage layer had to be built first. It does not:
+the pre-migration module has **no imports beyond `logging` and `typing`**. Its persistence is an
+*injected* `FeatureFlagStore` Protocol with a documented `store=None` env-only mode, so it was pure
+logic, portable exactly like `circuit_breaker`. It also could not wait, because
+`router._select_candidates` calls `is_model_allowed` on it. So it was ported in full here and step 7
+shrinks to the dynamic-override path.
+
+**The fail-closed stub was hiding the real failure, not causing a clean one.** The stub exposed only
+`is_enabled` and `get_variant`, and neither is what this class is for. `websocket_handler` calls
+`feature_flags.effective_tier_for_request(...)` at line 1553 — **before** it reaches
+`get_llm_router()` at 1567 — so every substantive turn died on `AttributeError: 'FeatureFlagService'
+object has no attribute 'effective_tier_for_request'`, not on the deliberate `raise_unmigrated` that
+`get_llm_router` was written to produce. The documented failure mode was not the observed one.
+
+Fail-closed was also the wrong shape for this particular check, and the reasoning is worth keeping:
+an unknown *feature flag* reading as off keeps behaviour at the previous default, which is safe. An
+*entitlement allowlist* reading as "no model is permitted for anyone" is not a safe default, it is an
+inert subsystem, and it is indistinguishable from a misconfigured allowlist. The real service already
+denies by default at step 3 of its precedence chain — a pair absent from the tier allowlist is
+denied — so configuration decides access rather than a stub.
+
+**Three traps a verbatim port would have hit.** Each was found by checking what the *callers* pass
+and what the *collaborators* expose, rather than only the import list — which is the generalised
+lesson from Phase 2's four missing `manager` methods:
+
+- `websocket_handler` already calls `route_request(..., space_id=...)` (lines 471, 1586) because the
+  Circle→Space rename landed on the caller first. The legacy parameter is `circle_id`. A verbatim
+  port raises `TypeError: unexpected keyword argument 'space_id'` on the first real turn — *after*
+  the learner's message has been saved, which is the same shape as the Phase 2 failure.
+- The legacy router calls `emit_ai_usage(circle_id=...)`. The migrated `emit_ai_usage` takes
+  `space_id` and absorbs the rest into `**_kwargs`, and the call site is wrapped in
+  `except Exception`. So `circle_id` would have been accepted, dropped, and never logged: every
+  space-scoped request would have recorded as unattributed usage with nothing surfacing. Verified
+  fixed by asserting the awaited kwargs — `space_id='sp_42'` arrives as a named parameter and
+  `circle_id` is absent.
+- `feature_flags`' two DB reads spoke to Prisma. `_fetch_personal_tier` used
+  `prisma.user.find_unique`; it is now a SQLAlchemy `select` on `User.tier`. `_fetch_seat_tier`
+  imported `src.services.seat_service.get_seat_tier` while a second module-level helper
+  (`read_seat_tier_for_user`) read `CircleMember.seatTier` through Prisma directly — two paths to one
+  fact. Both now delegate to the migrated
+  `learning_spaces.services.seat_impl.get_seat_tier`, which reads `SpaceMember.seat_tier` and already
+  honours the "FREE_SEAT on absence or failure" contract the legacy docstring promised.
+
+**`system_config_service` is gone, and LLM config is no longer runtime-tunable.** The legacy registry
+read every value through that module's private `_cache` and `_CACHE_TTL` to get DB-stored config
+synchronously, with `Settings` as the fallback. The module was not migrated, so the registry now
+reads `Settings` directly — which was already the fallback path. **The consequence: LLM
+configuration cannot be changed from the admin dashboard, and `invalidate_llm_router()` only picks up
+in-memory changes.** Nothing regresses today because the admin router is also commented out, but this
+is a capability that existed before the migration and does not now.
+
+**Three adapter blocks were removed rather than carried.** The legacy registry registered OpenAI,
+Anthropic and Gemini-embedding adapters through function-local imports inside
+`try/except Exception`. Those modules are step 6 and do not exist, and `tests/test_local_imports.py`
+failed on all three — correctly, since that guard exists precisely because a function-local import of
+an absent module is invisible until the line runs. It has no allow-list, deliberately, so the blocks
+were deleted with a comment naming what step 6 restores. Behaviour is identical either way: nothing
+was ever registered under those keys, and the router skips a `provider:model` with no adapter. So
+`openai` appearing in `LLM_ENABLED_PROVIDERS` and in both fallback chains is inert, not broken.
+
+**What was verified, and what was not.** `get_llm_router()` builds a router with the two Gemini
+adapters; `_select_candidates` returns both pairs for `chat_default`, `chat_tools_session` and
+`structured_completion` on free and plus tiers, and `[]` for `embedding` (step 6). A full
+`route_request` through the registry-built router completes with a fake adapter: candidate selection,
+circuit-breaker success, metrics, cost record, usage emission. The handler's exact kwargs bind to
+`route_request` in both personal and space-scoped form. **Not verified: any real provider call, and
+anything requiring SQL.** There is no local database — `DATABASE_URL` points at remote managed
+Postgres and Docker is not running — so 185 tests still skip and migration `049` remains written and
+unapplied. The `emit_ai_usage` and `CostTracker.record` writes have been exercised only against
+mocks.
+
+**Still skipped, and why:** `test_openai_chat_tools.py` (228 lines, step 6);
+`test_llm_agentic_roundtrip.py` (47 — still wants the legacy `GeminiService`; the open decision to
+port it or delete the test is unchanged); `test_chat.py`, `test_circle_billing.py`,
+`test_circle_repository.py`, `test_moderation_service.py` (pre-domain architecture).
+
+Two more are now *nearly* recoverable and were left alone because both need more than a retarget —
+worth knowing since both cover code this step touched:
+
+- `test_usage_tracking_scope.py` (261 lines) imports `get_circle_usage_summary` and
+  `get_personal_usage_summary`, neither of which exists in the migrated `usage_tracking`. Porting
+  those two readers would un-skip it, and it is the test that would have caught the `circle_id`
+  attribution trap above.
+- `test_seat_service.py` (381 lines) imports `SeatServiceError`, `get_seat_tier`,
+  `reconcile_seat_pool_on_addon_change` and four error constants from `seat_service`, which currently
+  re-exports only four mutation wrappers; the rest live in `seat_impl` or not at all.
 
 ---
 
@@ -334,8 +446,9 @@ would silently disable those patches. Relocating it belongs in step 5.
 
 22 stub functions across 11 modules, down from 40 across 22. None are the dangerous kind any
 more — everything that corrupted data, bypassed a check or discarded a user action is fixed.
-What remains is almost entirely the chat subsystem, where restoring any one piece achieves
-nothing while the router is missing:
+What remains is almost entirely the chat subsystem. These were blocked behind the missing router,
+which step 5 restored (§6), so they are now individually worth doing — and a turn that reaches the
+model will start exercising them, so their stub behaviour is now visible rather than unreachable:
 
 - `conversation/chat_greeting.py` (4), `chat_helpers.py` (7), `component_response.py` (3),
   `session_service.py` (2) — chat message assembly
@@ -437,19 +550,26 @@ non-vacuity guard), `test_email_infrastructure.py` (33), `test_push_notification
 `test_restored_stubs.py` (46), `test_background_tasks.py` (23), plus the recovered
 `test_space_gates.py` (26) and two `topicId` mapping guards.
 
-**Skipped at collection: 24 → 20.** `conftest.pytest_ignore_collect` skips any file containing
-`src.services.`, `src.routes.`, `src.core.database` or `src.schemas.subscription`. Recovered so
-far: `test_cost_calculator`, `test_credit_service`, `test_gemini_tool_handlers` (11 tests) and
-`test_space_gates` (26).
+**Skipped at collection: 24 → 20 → 12** (as of step 5, 2026-08-26).
+`conftest.pytest_ignore_collect` skips any file containing `src.services.`, `src.routes.`,
+`src.core.database` or `src.schemas.subscription`. Recovered so far: `test_cost_calculator`,
+`test_credit_service`, `test_gemini_tool_handlers` (11) and `test_space_gates` (26) in the earlier
+pass; then `test_circuit_breaker` (28), `test_tool_normalizer` + `test_stream_normalizer` (66),
+`test_llm_chat_context` (3), `test_chat_tool_arg_enrichment` (5) and `test_cost_tracker` (25) in
+steps 1–4; then `test_end_to_end_routing` (11) and `test_feature_flags` (65) in step 5.
 
-The remaining 20 are **not dead and should not be deleted**:
+The remaining 12 are **not dead and should not be deleted**:
 
-- **9 are tests for the unmigrated LLM subsystem** (§6). They unskip as those modules land.
+- **2 are tests for the still-unmigrated LLM modules** (§6): `test_openai_chat_tools` (step 6) and
+  `test_llm_agentic_roundtrip` (wants the legacy `GeminiService`; open decision to port or delete).
 - **4 are Prisma-era**, asserting Prisma call shapes rather than behaviour, and need rewriting
   rather than repointing: `test_auth` and `test_password_reset` import a `db` global that no
   longer exists; `test_usage_tracking_scope` asserts
   `db.aiusagerecord.find_many(where={"circleId": ...})` — both a Prisma API and a pre-rename
-  column.
+  column. `test_usage_tracking_scope` also imports `get_circle_usage_summary` and
+  `get_personal_usage_summary`, which the migrated `usage_tracking` does not have. It is worth
+  raising in priority: it is the test that would have caught step 5's `circle_id` usage-attribution
+  trap (§6).
 - **`test_seat_service`** needs 13 symbols from a module that has 4. The missing nine include
   `SeatServiceError`, five error-code constants, `get_seat_tier`,
   `reconcile_seat_pool_on_addon_change` and `release_seat_on_member_remove`. The seat-pool
@@ -536,10 +656,13 @@ target state for now, not debt to delete, so they are counted here as scope rath
 1. **Approve or reject migration `014`** (§8) — destroys 15 unreachable rows.
 2. **Decide on Paystack and referral rewards** (§5) — 31 call sites, deliberately not attempted
    without a payment sandbox.
-3. **The LLM subsystem** (§6) — the single largest item; unskips 9 test files.
+3. **The LLM subsystem** (§6) — steps 1–5 done; **step 6 (two adapters + `gemini_embedding`) is
+   next**, then step 7. Six of the 9 test files now run. A turn can reach the model on Gemini, but
+   no turn has been run against a real provider or a real database.
 4. **Device-token registration** (§2) — until an endpoint writes `DeviceToken` rows, push
    cannot deliver. Tied to mobile scope.
-5. **The chat subsystem stubs** (§7) — 22 functions, mostly blocked behind item 3.
+5. **The chat subsystem stubs** (§7) — 22 functions. No longer blocked behind item 3; the router
+   exists, so these are now the next thing a real turn hits.
 6. **`AuditLog.adminUserId`** (§2) — `NOT NULL` with an `ON DELETE SET NULL` FK; needs a
    migration to reconcile.
 7. **The web Prepare surface is still 100% mocks.** Phases 5–6 of the integration plan are not

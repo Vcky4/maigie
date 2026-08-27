@@ -14,13 +14,20 @@ from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
 
 import pytest  # noqa: E402
 
-from src.services.llm.base_adapter import BaseProviderAdapter  # noqa: E402
-from src.services.llm.capabilities import ChatCapability, EmbeddingCapability  # noqa: E402
-from src.services.llm.circuit_breaker import CircuitBreaker  # noqa: E402
-from src.services.llm.errors import GeminiError, LLMProviderError, OpenAIError  # noqa: E402
-from src.services.llm.feature_flags import FeatureFlagService  # noqa: E402
-from src.services.llm.router import LLMRouter  # noqa: E402
-from src.services.llm_registry import LlmTask  # noqa: E402
+from src.domains.intelligence.reasoning.llm.base_adapter import BaseProviderAdapter  # noqa: E402
+from src.domains.intelligence.reasoning.llm.capabilities import (  # noqa: E402
+    ChatCapability,
+    EmbeddingCapability,
+)
+from src.domains.intelligence.reasoning.llm.circuit_breaker import CircuitBreaker  # noqa: E402
+from src.domains.intelligence.reasoning.llm.errors import (  # noqa: E402
+    GeminiError,
+    LLMProviderError,
+    OpenAIError,
+)
+from src.domains.intelligence.reasoning.llm.feature_flags import FeatureFlagService  # noqa: E402
+from src.domains.intelligence.reasoning.llm.registry import LlmTask  # noqa: E402
+from src.domains.intelligence.reasoning.llm.router import LLMRouter  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Mock adapters
@@ -432,7 +439,7 @@ class TestFallbackBehavior:
         )
 
         # Gemini should have 1 failure recorded
-        from src.services.llm.circuit_breaker import CircuitState
+        from src.domains.intelligence.reasoning.llm.circuit_breaker import CircuitState
 
         # Not enough failures to trip (threshold=3), but failure is recorded
         assert (
