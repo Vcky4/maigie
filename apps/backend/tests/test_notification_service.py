@@ -44,6 +44,20 @@ def _profile(**overrides) -> SimpleNamespace:
     return SimpleNamespace(**{**defaults, **overrides})
 
 
+def _ago(**delta) -> datetime:
+    """An instant relative to the **real** clock.
+
+    Delivery rows have to be anchored to real time rather than to `NOW`, because `deliver_pending` takes
+    no injectable clock — it reads `datetime.now(UTC)` and compares `scheduledAt` against it to decide
+    whether a held-back message has gone stale. Frozen instants would drift out of `MAX_DEFERRAL_DAYS`
+    and start expiring rows the test expected delivered, three days after the constant was written.
+
+    `create_notification` is the opposite case and keeps `NOW`: it accepts `scheduled_at`, so its clock
+    can be this file's.
+    """
+    return datetime.now(UTC) - timedelta(**delta)
+
+
 def _row(**overrides) -> SimpleNamespace:
     defaults = {
         "id": "n1",
@@ -52,7 +66,7 @@ def _row(**overrides) -> SimpleNamespace:
         "title": "T",
         "body": "B",
         "action_data": {"goalId": "g1"},
-        "scheduled_at": NOW - timedelta(minutes=1),
+        "scheduled_at": _ago(minutes=1),
         "status": "PENDING",
     }
     return SimpleNamespace(**{**defaults, **overrides})
@@ -161,8 +175,16 @@ class TestTheDailyAllowance:
         repo = FakeRepo(delivered_today=5)
         wire(repo)
 
+        # `scheduled_at` is passed so the service's clock is this test's, not the machine's. Without it
+        # these assertions depended on the wall clock and **passed by coincidence**: they broke the moment
+        # real time crossed 23:00 UTC, because that is midnight in Lagos and the learner's day rolled over.
         await svc.create_notification(
-            user_id="user-1", type="suggestion", title="T", body="B", priority=4
+            user_id="user-1",
+            type="suggestion",
+            title="T",
+            body="B",
+            priority=4,
+            scheduled_at=NOW,
         )
 
         written = repo.created[0]
@@ -205,8 +227,15 @@ class TestTheDailyAllowance:
         repo = FakeRepo(delivered_today=0)
         wire(repo)
 
+        # Clock injected for the same reason as above: the window asserted below is the learner's own day
+        # around a fixed instant, not around whenever the suite happens to run.
         await svc.create_notification(
-            user_id="user-1", type="suggestion", title="T", body="B", priority=4
+            user_id="user-1",
+            type="suggestion",
+            title="T",
+            body="B",
+            priority=4,
+            scheduled_at=NOW,
         )
 
         since, until = repo.count_windows[0]
@@ -321,7 +350,7 @@ class TestDelivery:
     async def test_a_message_too_stale_to_help_is_expired_not_delivered(self, wire):
         """"Your exam is in two days" arriving after the exam is worse than silence, because the learner
         acts on it."""
-        stale = _row(scheduled_at=NOW - timedelta(days=svc.MAX_DEFERRAL_DAYS + 1))
+        stale = _row(scheduled_at=_ago(days=svc.MAX_DEFERRAL_DAYS + 1))
         repo = FakeRepo(due=[stale])
         wire(repo)
 
@@ -331,7 +360,7 @@ class TestDelivery:
 
     @pytest.mark.asyncio
     async def test_a_recent_deferral_is_still_worth_delivering(self, wire):
-        repo = FakeRepo(due=[_row(scheduled_at=NOW - timedelta(hours=8))])
+        repo = FakeRepo(due=[_row(scheduled_at=_ago(hours=8))])
         wire(repo)
 
         assert await svc.deliver_pending() == 1

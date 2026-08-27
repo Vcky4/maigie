@@ -322,7 +322,7 @@ UI half, and that is now the binding constraint rather than backend effort.
 | **3** | ~~**Time-triggered redistribution.** Make `_redistribute_plan` reachable without learner action.~~ **Shipped.** See §10.2. | 1–2 | Low |
 | **4** | ~~**The nightly pass**, ladder implemented, one action per goal, cooldown enforced.~~ **Shipped.** See §10.3. | 4–5 | Medium |
 | **5** | ~~**Notification path fixes** — learner-local quiet hours, priority bypass of the daily cap, push on the learning path.~~ **Shipped**, with push still blocked on device registration. See §10.4. | 3–4 | Medium — touches every notification |
-| **6** | ~~**The learner's answer to a nudge, stored.**~~ **Backend shipped**; both clients' affordances outstanding. Recorded on `GoalLifecycleAction`, not `record_intervention_outcome` — see §10.5. | 3 | Medium |
+| **6** | ~~**The learner's answer to a nudge, stored.**~~ **Backend and web shipped**; mobile outstanding. Recorded on `GoalLifecycleAction`, not `record_intervention_outcome` — see §10.5 and §10.7. | 3 | Medium |
 | **7** | **Readiness calibration** (§6.2): score `progress_percent` and `averageMasteryPercent` against recorded outcomes, in aggregate first. | 3–4 | Low technically; **blocked on outcome volume** |
 | **8** | **Behaviour correlation** — which weekday, which item kind, which pattern precedes a stall. | 3–5 | Medium; needs data from 1–6 first |
 
@@ -514,9 +514,9 @@ changed meaning. What changed is that a deadline moving is now recorded and publ
 
 **Still open on phase 2**
 
-- **Neither client shows any of it.** `extendedCount` and `originalTargetDate` are on the wire and nothing
-  renders them, so a goal extended three times still *looks* comfortable to a learner. §5.2 asks for the
-  surfaces to show it; that is client work.
+- ~~**Neither client shows any of it.**~~ **Web does now — §10.7.** `extendedCount` and
+  `originalTargetDate` render on the goal card and inside the nudge dialog, so §5.2's "extended four times"
+  is finally visible. Mobile still shows none of it.
 - **`ReflectGoal` does not carry the new fields.** It is the second goal read model
   (`personal_learning/models.py`) with its own naming convention, so Reflect goal cards cannot show extension
   history yet.
@@ -821,9 +821,8 @@ tests` clean, `export_openapi.py --check` in sync, single alembic head, model an
 
 **Still open**
 
-- **No client can answer.** The endpoint and the `pendingNudge` flag exist; nothing renders either. Until a
-  client ships the affordance, `asked_to_confirm` remains a question into the void and the only thing a
-  learner can do about it is open the goal and edit it by hand.
+- ~~**No client can answer.**~~ **Web can — §10.7.** Mobile still cannot, so half the learners have no way
+  to reply and `asked_to_confirm` remains a question into the void for them.
 - **Nothing consumes the answers yet.** They accumulate for phase 7's calibration and phase 8's correlation,
   both of which are gated on volume rather than effort. Which intervention works for which learner is not yet
   computed anywhere.
@@ -894,6 +893,83 @@ committed. Every phase record above that says "shipped" meant "the code is merge
 green", which was true and insufficient. Applying is its own step, needs its own verification, and the
 repo already knew this — the Prepare plan carries `Migration 016 is not yet applied` as a standing note
 for exactly this reason, and I did not follow it.
+
+### 10.7 Implementation record — the web client
+
+Shipped in `maigie-client` (`apps/web`). Verified: typecheck holds at **13 pre-existing errors** with none in
+the new files — all pre-existing ones are in `classrooms`/`spaces`, confirmed by measuring with the work
+stashed — `eslint` clean, build green, **376 existing tests passing**, generated API types back in sync. **No
+web tests added**, per standing instruction.
+
+This is the first time any of phases 1–6 has been visible to a learner. Everything before it was endpoints.
+
+| Surface | Where |
+| --- | --- |
+| The post-exam review form | `features/prepare/components/PreparationReview.tsx` |
+| Its dialog, required on the preparation page | `PreparationReviewDialog.tsx` |
+| Its global prompt, dismissible | `PreparationReviewPrompt.tsx`, mounted in `LearningLayout` |
+| The goal nudge answer | `features/goals/components/GoalNudgeDialog.tsx` |
+| Its global prompt | `GoalNudgePrompt.tsx`, mounted in `LearningLayout` |
+| Extension history and the pending marker | `GoalsPage` card, `mapGoal.deadlineHistory` |
+| Notification deep links | `features/notifications/utils/notificationRoutes.ts` |
+
+**The asks travel with the learner, and that is the central decision.**
+
+Both prompts live in `LearningLayout`, which wraps every authenticated route, so they reach Home, Learn,
+Reflect and everywhere else. The reason is the same in both cases and it is not convenience: **the event that
+triggers the ask is the learner's absence.** An exam passing is the moment the reason to open that
+preparation disappears; a goal falling behind is by definition something that happened while they were
+elsewhere. An affordance that only exists on the page they have stopped visiting is one nobody uses — and
+§5.4's notification, the other route in, can be held by quiet hours, deferred by the daily allowance, or
+expire unread.
+
+**Optional everywhere except on the thing itself.** The global prompts are dismissible: they interrupt
+something the learner came to do, and interrupting is only acceptable when getting past it is free. Closing
+writes nothing. The post-exam review on the preparation's *own* page is **not** dismissible — no X, no
+backdrop, no Escape — because opening that preparation *is* asking about it. That is defensible only because
+the escape hatch is a real response: **"Not now" is one click**, records an honest decline, stops the
+reminders, and still does not complete the preparation. A learner is never trapped and never has an answer
+fabricated for them. An impatient decline is recorded as a decline, which is data; recording it as an outcome
+would be a lie.
+
+**Three traps the contract laid, found by building against it**
+
+1. **`AWAITING_REVIEW` stays set after a learner declines.** Filtering the global prompt on status alone
+   would re-prompt the one person who explicitly asked it to stop. The prompt checks each candidate's review
+   state instead, and takes the first that is awaiting, unanswered *and* undeclined — so one declined
+   preparation does not mask a second nobody has been asked about.
+2. **`PrepSummaryResponse` carries no review fields**, so "is anything waiting" costs a request per
+   candidate (bounded at three). `GoalResponse` publishes `pendingNudge` directly, so the goal prompt needs
+   one list read. Worth noting as an asymmetry in the contract rather than in the clients: if the preparation
+   list summary carried `reviewDeclinedAt`, the prep prompt would be as cheap as the goal one.
+3. **`/goals/:goalId` does not exist.** Writing the notification route resolver against the route table
+   rather than from memory caught it — `/goals` is a list with no detail route, and the only per-goal page is
+   the Reflect one. A resolver returning a plausible dead path is worse than one returning `null`, because a
+   card that navigates somewhere unrelated teaches the learner these are not worth clicking.
+
+**Two defects in the existing app, fixed on the way**
+
+- **`PrepareLibraryPage` had no `AWAITING_REVIEW` case**, so the badge fell through to the orange "setup"
+  style and printed the raw enum as `awaiting_review`. Now its own "To review" filter and a violet badge.
+- **`PreparationSettings` still offered "Mark complete"** to a preparation awaiting review, which would have
+  let a learner conclude it *without answering* — losing the one datum this whole programme exists to
+  collect, through a button that says nothing about the exam. Replaced by a card pointing at the review.
+- **Notification `actionData.route` was entirely dead.** Every notification the backend sends carries one and
+  nothing had ever read it, so "your exam has passed, tell us how it went" arrived with the preparation's id
+  attached and gave the learner nowhere to go.
+
+**Still open on the clients**
+
+- **Mobile has none of it.** No review form, no nudge answer, no extension history. Half the learners cannot
+  reply to anything this programme asks.
+- **Nothing registers a `DeviceToken`**, so the push half of phase 5 still reaches nobody on either client.
+  That remains the single largest gap between "the system asks" and "the learner hears".
+- **The goal detail page shows neither.** `ReflectGoalDetailPage` renders no `pendingNudge` and no extension
+  history; only the goals list card and the dialog do. Left alone deliberately under the standing instruction
+  not to touch the Reflect surfaces.
+- **None of it has been seen rendering.** Dialog sizing, scroll behaviour on a long form in a short viewport,
+  and whether a required dialog reads as reasonable rather than hostile are judgements a screenshot settles
+  and a green build does not.
 
 ## 11. What is not known
 
