@@ -532,11 +532,280 @@ class TestTheActionTokens:
                 assert f"'{token}'" in sql, (name, token)
             assert sql.count("'") // 2 == len(tokens), name
 
-    def test_there_are_no_response_columns_without_a_question(self):
-        """Whether the learner wants to deprioritise, keep going, or says it is already done is the most
-        valuable thing this table could hold, and nothing asks for it yet. The columns arrive with the
-        question."""
+    def test_the_response_columns_arrived_with_something_that_writes_them(self):
+        """They were withheld while nothing could answer — a column the schema offers that nothing can fill
+        is the accept-and-ignore defect this codebase keeps closing. Now that the endpoint exists, this pins
+        the rule rather than the old snapshot: the columns are present *and* reachable."""
         from src.domains.progress.db_models import GoalLifecycleAction
+        from src.domains.progress.repository import progress_repo
 
         columns = {c.name for c in GoalLifecycleAction.__table__.columns}
-        assert not columns & {"learnerResponse", "respondedAt", "outcome", "outcomeAt"}
+        assert {"learnerResponse", "respondedAt"} <= columns
+        assert "learnerResponse" in progress_repo._LIFECYCLE_ACTION_FIELD_MAP
+        assert hasattr(progress_repo, "record_lifecycle_response")
+
+    def test_the_response_tokens_match_the_database_constraint(self):
+        from src.domains.progress.db_models import GoalLifecycleAction
+
+        check = next(
+            c
+            for c in GoalLifecycleAction.__table__.constraints
+            if getattr(c, "name", None) == "GoalLifecycleAction_learnerResponse_check"
+        )
+        sql = str(check.sqltext)
+        for token in GoalLifecycleAction.RESPONSES:
+            assert f"'{token}'" in sql, token
+        assert sql.count("'") // 2 == len(GoalLifecycleAction.RESPONSES)
+
+    def test_every_response_token_is_something_the_service_can_act_on(self):
+        """A token the database accepts and the service does not understand would be a 422 on a valid
+        answer, or worse, an answer stored and ignored."""
+        from src.domains.progress.db_models import GoalLifecycleAction
+
+        assert set(GoalLifecycleAction.RESPONSES) == set(svc._STATUS_FOR_RESPONSE)
+
+
+# ===========================================================================
+# The learner's answer
+# ===========================================================================
+
+
+class TestTheAnswer:
+    """**The write that makes the ladder capable of improving.** Everything else records what the system
+    decided; this records whether the decision was any good. Without it every future version of this
+    escalation guesses at the same rate as the first — which is the state
+    `retention_service.record_intervention_outcome` has been in since it was written, with zero callers.
+    """
+
+    def _wire(self, monkeypatch, *, goal, action):
+        recorded: list[dict] = []
+        updates: list[tuple[str, dict]] = []
+        state = {"goal": goal}
+
+        async def _find_goal(goal_id, user_id):
+            g = state["goal"]
+            if g is None or g.id != goal_id or g.user_id != user_id:
+                return None
+            return g
+
+        async def _find_action(_goal_id):
+            return action
+
+        async def _record(action_id, *, response, responded_at):
+            recorded.append(
+                {"action_id": action_id, "response": response, "responded_at": responded_at}
+            )
+
+        async def _update(goal_id, data):
+            updates.append((goal_id, data))
+            if "status" in data:
+                state["goal"] = SimpleNamespace(
+                    **{**vars(state["goal"]), "status": data["status"]}
+                )
+            return state["goal"]
+
+        monkeypatch.setattr(svc.progress_repo, "find_goal", _find_goal)
+        monkeypatch.setattr(svc.progress_repo, "find_latest_lifecycle_action", _find_action)
+        monkeypatch.setattr(svc.progress_repo, "record_lifecycle_response", _record)
+        monkeypatch.setattr(svc.progress_repo, "update_goal", _update)
+        return recorded, updates
+
+    @pytest.mark.asyncio
+    async def test_keep_going_stores_the_answer_and_changes_nothing_else(self, monkeypatch):
+        """The learner asked for the goal exactly as it is. Touching its status would be the system doing
+        something in response to being told to do nothing."""
+        goal = _goal(status="ACTIVE")
+        action = SimpleNamespace(id="a1", action="asked_to_confirm")
+        recorded, updates = self._wire(monkeypatch, goal=goal, action=action)
+
+        await svc.record_answer(user_id="user-1", goal_id="goal-1", response="keep_going")
+
+        assert recorded[0]["response"] == "keep_going"
+        assert recorded[0]["action_id"] == "a1"
+        assert recorded[0]["responded_at"] is not None
+        assert updates == []
+
+    @pytest.mark.asyncio
+    async def test_setting_it_aside_archives_the_goal(self, monkeypatch):
+        """`ARCHIVED` rather than a new paused state: it is the only existing value meaning "concluded
+        without being achieved", it is what `prep_outcome_service` already does for an unmet preparation
+        goal, and it takes the goal out of the at-risk counts — which is what "stop chasing me" means."""
+        goal = _goal(status="ACTIVE")
+        action = SimpleNamespace(id="a1", action="asked_to_confirm")
+        recorded, updates = self._wire(monkeypatch, goal=goal, action=action)
+
+        await svc.record_answer(user_id="user-1", goal_id="goal-1", response="set_aside")
+
+        assert recorded[0]["response"] == "set_aside"
+        assert updates == [("goal-1", {"status": "ARCHIVED"})]
+
+    @pytest.mark.asyncio
+    async def test_already_done_completes_it(self, monkeypatch):
+        """The answer worth the most: it says the measurement is wrong rather than the learner."""
+        goal = _goal(status="ACTIVE")
+        action = SimpleNamespace(id="a1", action="warned")
+        _, updates = self._wire(monkeypatch, goal=goal, action=action)
+
+        await svc.record_answer(user_id="user-1", goal_id="goal-1", response="already_done")
+
+        assert updates == [("goal-1", {"status": "COMPLETED"})]
+
+    @pytest.mark.asyncio
+    async def test_an_answer_that_changes_nothing_writes_no_status(self, monkeypatch):
+        """Already archived, and they say set it aside again. The answer is still recorded — it is data about
+        the ask — but the goal is not rewritten to the value it already holds."""
+        goal = _goal(status="ARCHIVED")
+        action = SimpleNamespace(id="a1", action="asked_to_confirm")
+        recorded, updates = self._wire(monkeypatch, goal=goal, action=action)
+
+        await svc.record_answer(user_id="user-1", goal_id="goal-1", response="set_aside")
+
+        assert len(recorded) == 1
+        assert updates == []
+
+    @pytest.mark.asyncio
+    async def test_changing_their_mind_replaces_the_answer(self, monkeypatch):
+        """A learner who says "keep going" on Monday and "set it aside" on Thursday has changed their mind,
+        and the last word is the one that counts."""
+        goal = _goal(status="ACTIVE")
+        action = SimpleNamespace(id="a1", action="asked_to_confirm")
+        recorded, updates = self._wire(monkeypatch, goal=goal, action=action)
+
+        await svc.record_answer(user_id="user-1", goal_id="goal-1", response="keep_going")
+        await svc.record_answer(user_id="user-1", goal_id="goal-1", response="set_aside")
+
+        assert [r["response"] for r in recorded] == ["keep_going", "set_aside"]
+        assert updates == [("goal-1", {"status": "ARCHIVED"})]
+
+    @pytest.mark.asyncio
+    async def test_answering_a_question_nobody_asked_is_a_404(self, monkeypatch):
+        """This route answers a nudge. Changing a goal nobody asked about is what `PATCH` is for, and
+        accepting it here would let a client record a reply to a nudge that never happened."""
+        from src.shared.exceptions import NotFoundError
+
+        goal = _goal()
+        self._wire(monkeypatch, goal=goal, action=None)
+
+        with pytest.raises(NotFoundError):
+            await svc.record_answer(user_id="user-1", goal_id="goal-1", response="keep_going")
+
+    @pytest.mark.asyncio
+    async def test_another_learners_goal_is_not_found(self, monkeypatch):
+        from src.shared.exceptions import NotFoundError
+
+        goal = _goal(user_id="someone-else")
+        self._wire(monkeypatch, goal=goal, action=SimpleNamespace(id="a1", action="warned"))
+
+        with pytest.raises(NotFoundError):
+            await svc.record_answer(user_id="user-1", goal_id="goal-1", response="keep_going")
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_answer_is_refused(self, monkeypatch):
+        from src.shared.exceptions import ValidationError
+
+        goal = _goal()
+        recorded, _ = self._wire(
+            monkeypatch, goal=goal, action=SimpleNamespace(id="a1", action="warned")
+        )
+
+        with pytest.raises(ValidationError):
+            await svc.record_answer(user_id="user-1", goal_id="goal-1", response="maybe")
+
+        assert recorded == []
+
+    @pytest.mark.asyncio
+    async def test_the_answer_is_stored_before_the_goal_is_touched(self, monkeypatch):
+        """The answer is the thing worth keeping. If archiving fails, the reply must still be on record —
+        losing it means losing the only evidence about whether the ask worked."""
+        goal = _goal(status="ACTIVE")
+        action = SimpleNamespace(id="a1", action="asked_to_confirm")
+        recorded, _ = self._wire(monkeypatch, goal=goal, action=action)
+
+        async def _boom(*_a, **_k):
+            raise RuntimeError("status write failed")
+
+        monkeypatch.setattr(svc.progress_repo, "update_goal", _boom)
+
+        with pytest.raises(RuntimeError):
+            await svc.record_answer(user_id="user-1", goal_id="goal-1", response="set_aside")
+
+        assert recorded[0]["response"] == "set_aside"
+
+
+class TestTheQuestionIsReachable:
+    """A notification can be held until morning, deferred to the next day by the learner's daily allowance,
+    or expire before it is read. So a goal waiting on an answer has to say so somewhere the learner can find
+    on their own — the same argument that put `AWAITING_REVIEW` on the prepare dashboard.
+    """
+
+    @pytest.mark.asyncio
+    async def test_only_the_most_recent_action_counts_and_only_while_unanswered(self):
+        from src.domains.progress.repository import progress_repo
+
+        captured: list = []
+
+        class _Session:
+            async def execute(self, stmt):
+                captured.append(stmt)
+                return SimpleNamespace(all=lambda: [])
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        async def _session():
+            return _Session()
+
+        with patch.object(progress_repo, "_session", _session):
+            await progress_repo.latest_unanswered_actions(["goal-1"])
+
+        sql = str(captured[0].compile(compile_kwargs={"literal_binds": True}))
+        assert '"learnerResponse" IS NULL' in sql
+        # The newest row per goal, so a superseded nudge is not presented as a live question.
+        assert "max(" in sql
+
+    @pytest.mark.asyncio
+    async def test_no_goals_asks_the_database_nothing(self):
+        from src.domains.progress.repository import progress_repo
+
+        called = {"n": 0}
+
+        async def _session():
+            called["n"] += 1
+            raise AssertionError("no query should be issued for an empty goal list")
+
+        with patch.object(progress_repo, "_session", _session):
+            assert await progress_repo.latest_unanswered_actions([]) == {}
+        assert called["n"] == 0
+
+    @pytest.mark.asyncio
+    async def test_the_answer_attaches_to_the_newest_action_not_the_oldest(self):
+        """A learner with three nudges on one goal is answering the last one. Reading the oldest would file
+        their reply against a question the system had already moved past — and then the *current* nudge would
+        still read as unanswered, so they would be asked again."""
+        from src.domains.progress.repository import progress_repo
+
+        captured: list = []
+
+        class _Session:
+            async def execute(self, stmt):
+                captured.append(stmt)
+                return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        async def _session():
+            return _Session()
+
+        with patch.object(progress_repo, "_session", _session):
+            await progress_repo.find_latest_lifecycle_action("goal-1")
+
+        sql = str(captured[0].compile(compile_kwargs={"literal_binds": True}))
+        assert '"createdAt" DESC' in sql
+        assert "LIMIT 1" in sql

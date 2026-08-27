@@ -122,6 +122,73 @@ async def review_goals(*, now: datetime | None = None, limit: int = 500) -> dict
     return counts
 
 
+#: What each answer does to the goal it is about.
+#:
+#: **`set_aside` archives rather than pausing**, and the alternative was considered. `Goal.status` has no
+#: paused value, and adding one would be a contract change both clients must handle to express a distinction
+#: neither can currently render. `ARCHIVED` is also the only existing value that means "concluded without
+#: being achieved", which is exactly what the learner just said — and `prep_outcome_service` already resolves
+#: an unmet preparation goal the same way, so this is consistent rather than novel. It is reversible, and it
+#: takes the goal out of the at-risk counts, which is what "stop chasing me about this" means in practice.
+#:
+#: What a paused state would have carried — *why* the goal stopped — is on the action row instead. "Archived
+#: because the learner chose to set it aside" is distinguishable from any other archiving, which is the part
+#: that actually mattered.
+#:
+#: `keep_going` maps to `None`: the learner wants the goal exactly as it is, so touching its status would be
+#: the system doing something in response to being told to do nothing.
+_STATUS_FOR_RESPONSE: dict[str, str | None] = {
+    "keep_going": None,
+    "set_aside": "ARCHIVED",
+    "already_done": "COMPLETED",
+}
+
+
+async def record_answer(*, user_id: str, goal_id: str, response: str) -> Any:
+    """Store what the learner said about the last thing the ladder did, and act on it.
+
+    **This is the write that makes the ladder capable of improving.** Everything else records what the system
+    decided; this records whether the decision was any good. Without it every future version of this
+    escalation guesses at the same rate as the first.
+
+    The answer attaches to the goal's most recent action, and re-answering replaces it — a learner who says
+    "keep going" on Monday and "set it aside" on Thursday has changed their mind, and the last word is the
+    one that counts.
+
+    Raises `NotFoundError` when the goal is not theirs, or when nothing has been asked about it. The second
+    is deliberate: this endpoint answers a question, and there is no question. Editing a goal nobody asked
+    about is what `PATCH /goals/{id}` is for.
+    """
+    from src.shared.exceptions import NotFoundError, ValidationError
+
+    if response not in _STATUS_FOR_RESPONSE:
+        raise ValidationError(
+            f"Unknown answer: {response}. Expected one of {sorted(_STATUS_FOR_RESPONSE)}."
+        )
+
+    goal = await progress_repo.find_goal(goal_id, user_id)
+    if goal is None:
+        raise NotFoundError("Goal", goal_id)
+
+    action = await progress_repo.find_latest_lifecycle_action(goal_id)
+    if action is None:
+        raise NotFoundError("GoalLifecycleAction", goal_id)
+
+    await progress_repo.record_lifecycle_response(
+        action.id, response=response, responded_at=datetime.now(UTC)
+    )
+
+    status = _STATUS_FOR_RESPONSE[response]
+    if status is not None and goal.status != status:
+        await progress_repo.update_goal(goal_id, {"status": status})
+
+    logger.info(
+        "Learner answered a goal nudge",
+        extra={"goal_id": goal_id, "action": action.action, "response": response},
+    )
+    return await progress_repo.find_goal(goal_id, user_id)
+
+
 async def _act_on(
     goal: Any,
     *,

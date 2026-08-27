@@ -136,6 +136,74 @@ class ProgressRepository:
             await session.refresh(action)
             return action
 
+    async def find_latest_lifecycle_action(self, goal_id: str) -> GoalLifecycleAction | None:
+        """The most recent thing the ladder did to this goal, answered or not.
+
+        The learner's reply attaches to this row. Latest rather than latest-unanswered, so a learner who
+        changes their mind updates the answer they already gave instead of silently reaching past it to an
+        older nudge that had already been dealt with.
+        """
+        async with await self._session() as session:
+            stmt = (
+                select(GoalLifecycleAction)
+                .where(GoalLifecycleAction.goal_id == goal_id)
+                .order_by(GoalLifecycleAction.created_at.desc())
+                .limit(1)
+            )
+            return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def record_lifecycle_response(
+        self, action_id: str, *, response: str, responded_at: datetime
+    ) -> None:
+        """Attach the learner's reply to one action. Both halves together, or the CHECK refuses the row."""
+        async with await self._session() as session:
+            await session.execute(
+                update(GoalLifecycleAction)
+                .where(GoalLifecycleAction.id == action_id)
+                .values(learner_response=response, responded_at=responded_at)
+            )
+            await session.commit()
+
+    async def latest_unanswered_actions(self, goal_ids: list[str]) -> dict[str, str]:
+        """`{goalId: action}` for goals whose most recent nudge is still unanswered, in one query.
+
+        What lets a client render the question. Without it the only route to answering is the notification,
+        and a notification can be held until morning, deferred to tomorrow by the learner's daily allowance,
+        or expire — so the affordance has to exist somewhere the learner can find it on their own. The same
+        argument put `AWAITING_REVIEW` on the prepare dashboard.
+
+        Only the *most recent* action counts. An older unanswered nudge that has since been superseded is
+        not a live question, and surfacing it would ask the learner about a decision the system has already
+        moved past.
+        """
+        if not goal_ids:
+            return {}
+
+        latest = (
+            select(
+                GoalLifecycleAction.goal_id,
+                func.max(GoalLifecycleAction.created_at).label("newest"),
+            )
+            .where(GoalLifecycleAction.goal_id.in_(goal_ids))
+            .group_by(GoalLifecycleAction.goal_id)
+            .subquery()
+        )
+        async with await self._session() as session:
+            rows = (
+                await session.execute(
+                    select(GoalLifecycleAction.goal_id, GoalLifecycleAction.action)
+                    .join(
+                        latest,
+                        and_(
+                            GoalLifecycleAction.goal_id == latest.c.goal_id,
+                            GoalLifecycleAction.created_at == latest.c.newest,
+                        ),
+                    )
+                    .where(GoalLifecycleAction.learner_response.is_(None))
+                )
+            ).all()
+        return {goal_id: action for goal_id, action in rows}
+
     async def list_goals_for_lifecycle_review(
         self, *, now: datetime, horizon: datetime, not_acted_since: datetime, limit: int = 500
     ) -> list[Goal]:
@@ -589,6 +657,11 @@ class ProgressRepository:
         "userId": "user_id",
         "action": "action",
         "trigger": "trigger",
+        # Never set at creation: the learner cannot have answered a question that has not been asked.
+        # Written by `record_lifecycle_response`, and mapped here so adding a column without wiring it
+        # fails loudly rather than being dropped.
+        "learnerResponse": "learner_response",
+        "respondedAt": "responded_at",
     }
 
     _MILESTONE_FIELD_MAP = {

@@ -68,6 +68,20 @@ class GoalProgressUpdate(BaseModel):
     progress: float = Field(..., ge=0.0, le=100.0)
 
 
+class GoalNudgeAnswer(BaseModel):
+    """The learner's reply to the nightly pass having acted on a goal falling behind.
+
+    Three answers, because they are the three things the system cannot work out for itself:
+
+    - `keep_going` — they still want it, and the goal is left exactly as it is.
+    - `set_aside` — stop chasing them; the goal is archived.
+    - `already_done` — the work happened and the measurement missed it. This is the answer worth the most,
+      because it says the measurement is wrong rather than the learner.
+    """
+
+    response: Literal["keep_going", "set_aside", "already_done"]
+
+
 class GoalMilestoneCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     detail: str | None = Field(None, max_length=2000)
@@ -163,6 +177,14 @@ class GoalResponse(BaseModel):
     #: which still measures against the current deadline — re-basing that window is a behaviour change
     #: with its own decision to make.
     originalTargetDate: str | None = None
+    #: What the system last did about this goal falling behind, when it is still waiting for a reply:
+    #: `extended` | `asked_to_confirm` | `warned`. `null` when there is nothing outstanding.
+    #:
+    #: Published so the question is reachable. The nightly pass tells the learner by notification, and a
+    #: notification can be held until their morning, deferred to the next day by their daily allowance, or
+    #: expire before it is read — so a goal waiting on an answer has to say so somewhere the learner can find
+    #: on their own. The same argument put `AWAITING_REVIEW` on the prepare dashboard.
+    pendingNudge: str | None = None
     milestonesTotal: int = 0
     milestonesAchieved: int = 0
 

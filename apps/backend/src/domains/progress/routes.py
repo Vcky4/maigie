@@ -22,6 +22,7 @@ from .services import (
     analytics_service,
     goal_derivation_service,
     goal_insight_service,
+    goal_lifecycle_service,
     goal_metrics,
     goal_service,
     goal_snapshot_service,
@@ -232,6 +233,25 @@ async def update_goal(goal_id: str, body: models.GoalUpdate, current_user: Curre
     """Update a goal."""
     goal = await goal_service.update_goal(
         goal_id=goal_id, user_id=current_user.id, data=body.model_dump(exclude_unset=True)
+    )
+    return (await _goal_responses([goal]))[0]
+
+
+@router.post("/goals/{goal_id}/nudge-answer", response_model=models.GoalResponse)
+async def answer_goal_nudge(
+    goal_id: str, body: models.GoalNudgeAnswer, current_user: CurrentUser
+):
+    """Answer the nightly pass: keep going, set this aside, or it is already done.
+
+    The reply is stored against the action it answers, which is what finally closes the loop — until now the
+    system recorded every escalation it made and never once whether it helped.
+
+    `404` when nothing has been asked about this goal. This route answers a question; changing a goal nobody
+    asked about is what `PATCH /goals/{goal_id}` is for, and accepting it here would let a client record a
+    reply to a nudge that never happened.
+    """
+    goal = await goal_lifecycle_service.record_answer(
+        user_id=current_user.id, goal_id=goal_id, response=body.response
     )
     return (await _goal_responses([goal]))[0]
 
@@ -804,6 +824,7 @@ def _to_goal_response(
     measurement: goal_metrics.GoalMeasurement | None = None,
     milestones: tuple[int, int] = (0, 0),
     schedule_history: goal_metrics.GoalScheduleHistory | None = None,
+    pending_nudge: str | None = None,
     now: datetime | None = None,
 ) -> models.GoalResponse:
     """Map a goal row onto the wire, deriving everything the row does not store.
@@ -859,6 +880,7 @@ def _to_goal_response(
             now=moment,
         ),
         dateAuthority=goal_metrics.date_authority(goal),
+        pendingNudge=pending_nudge,
         extendedCount=(schedule_history.extended_count if schedule_history else 0),
         # `_isoformat_or_none` rather than a bare `.isoformat()`: this column comes back naive like every
         # other stored instant, and a string with no offset is read as *local* time by `new Date(...)`.
@@ -900,12 +922,14 @@ async def _goal_responses(goals: list, *, now: datetime | None = None) -> list[m
     measurements = await goal_metrics.derive_current_values(goals, now=moment)
     milestone_counts = await goal_metrics.count_achieved_milestones(goal_ids)
     schedule_history = await goal_metrics.derive_schedule_history(goal_ids)
+    pending_nudges = await progress_repo.latest_unanswered_actions(goal_ids)
     return [
         _to_goal_response(
             goal,
             measurement=measurements.get(goal.id),
             milestones=milestone_counts.get(goal.id, (0, 0)),
             schedule_history=schedule_history.get(goal.id),
+            pending_nudge=pending_nudges.get(goal.id),
             now=moment,
         )
         for goal in goals

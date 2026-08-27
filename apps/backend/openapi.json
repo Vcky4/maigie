@@ -5220,6 +5220,25 @@
         "title": "GoalNextActionTarget",
         "type": "object"
       },
+      "GoalNudgeAnswer": {
+        "description": "The learner's reply to the nightly pass having acted on a goal falling behind.\n\nThree answers, because they are the three things the system cannot work out for itself:\n\n- `keep_going` — they still want it, and the goal is left exactly as it is.\n- `set_aside` — stop chasing them; the goal is archived.\n- `already_done` — the work happened and the measurement missed it. This is the answer worth the most,\n  because it says the measurement is wrong rather than the learner.",
+        "properties": {
+          "response": {
+            "enum": [
+              "keep_going",
+              "set_aside",
+              "already_done"
+            ],
+            "title": "Response",
+            "type": "string"
+          }
+        },
+        "required": [
+          "response"
+        ],
+        "title": "GoalNudgeAnswer",
+        "type": "object"
+      },
       "GoalProgressHistoryResponse": {
         "description": "A goal's trajectory, and an honest account of how much of one exists yet.\n\n**`points` may legitimately be empty, and that means two different things** — hence\n`firstCapturedOn`. A goal created this morning has no history because nothing has been recorded\nyet; a goal whose window predates the feature has none because the table did not exist. Both are\n\"building\", and neither is a flat line at today's value, which is what interpolating would have\ndrawn (Decision Y).\n\nThere is no `reconstructed` flag as `GrowthTrendPoint` carries, because there is nothing to\nreconstruct from: `Goal.progress` is overwritten in place with no dated event trail. Every point\nhere was observed on the day it is dated.",
         "properties": {
@@ -5499,6 +5518,17 @@
               }
             ],
             "title": "Pacepercent"
+          },
+          "pendingNudge": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pendingnudge"
           },
           "prepId": {
             "anyOf": [
@@ -32547,6 +32577,65 @@
           }
         ],
         "summary": "Get Goal Momentum",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
+    "/api/v1/progress/goals/{goal_id}/nudge-answer": {
+      "post": {
+        "description": "Answer the nightly pass: keep going, set this aside, or it is already done.\n\nThe reply is stored against the action it answers, which is what finally closes the loop — until now the\nsystem recorded every escalation it made and never once whether it helped.\n\n`404` when nothing has been asked about this goal. This route answers a question; changing a goal nobody\nasked about is what `PATCH /goals/{goal_id}` is for, and accepting it here would let a client record a\nreply to a nudge that never happened.",
+        "operationId": "answer_goal_nudge_api_v1_progress_goals__goal_id__nudge_answer_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoalNudgeAnswer"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Answer Goal Nudge",
         "tags": [
           "progress",
           "progress"

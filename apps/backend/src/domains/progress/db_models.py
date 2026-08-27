@@ -351,6 +351,21 @@ class GoalLifecycleAction(Base):
     #: slipping from one that had already run out of time.
     TRIGGERS = ("at_risk_due_soon", "deadline_passed")
 
+    #: What the learner said back.
+    #:
+    #: **This is the column that turns a rules engine into something that can improve.** Every row above it
+    #: records what the system decided; without this one, nothing ever records whether the decision helped,
+    #: and every future version of the ladder guesses at the same rate as the first.
+    #:
+    #: - `keep_going` — they still want it. The goal stays as it is.
+    #: - `set_aside` — stop chasing them about it. The goal is `ARCHIVED`.
+    #: - `already_done` — the work happened, the measurement did not see it. The goal is `COMPLETED`.
+    #:
+    #: Null means unanswered, which is itself the most common and most informative value: it is how "we
+    #: asked and heard nothing" is told apart from "we never asked", and the two justify very different next
+    #: moves. Deliberately withheld when this table shipped, because nothing could answer yet.
+    RESPONSES = ("keep_going", "set_aside", "already_done")
+
     id: Mapped[str] = mapped_column(
         String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
     )
@@ -362,6 +377,17 @@ class GoalLifecycleAction(Base):
     )
     action: Mapped[str] = mapped_column(String, nullable=False)
     trigger: Mapped[str] = mapped_column(String, nullable=False)
+
+    #: The learner's reply, or null while they have not given one. See `RESPONSES`.
+    learner_response: Mapped[str | None] = mapped_column(
+        "learnerResponse", String, nullable=True
+    )
+    #: When they replied. Separate from the response rather than inferred from it, because "answered
+    #: immediately" and "answered six days later" are different facts about how well the ask worked, and a
+    #: null response with a timestamp would be a contradiction the schema should not allow.
+    responded_at: Mapped[datetime | None] = mapped_column(
+        "respondedAt", DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
@@ -382,6 +408,16 @@ class GoalLifecycleAction(Base):
         CheckConstraint(
             "trigger IN ('at_risk_due_soon', 'deadline_passed')",
             name="GoalLifecycleAction_trigger_check",
+        ),
+        CheckConstraint(
+            "\"learnerResponse\" IS NULL OR \"learnerResponse\" IN "
+            "('keep_going', 'set_aside', 'already_done')",
+            name="GoalLifecycleAction_learnerResponse_check",
+        ),
+        # A reply time without a reply, or a reply without a time, is a row that contradicts itself.
+        CheckConstraint(
+            '("learnerResponse" IS NULL) = ("respondedAt" IS NULL)',
+            name="GoalLifecycleAction_response_pair_check",
         ),
     )
 
