@@ -783,10 +783,11 @@ async def mark_preparations_awaiting_review() -> int:
                     "route": "preparation_review",
                 },
             )
-            # Recorded whether or not the notification survived quiet hours and the daily cap —
-            # `create_notification` returns `None` when it suppresses one. Counting only delivered
-            # messages would let a suppressed ask retry every night, which is how a throttle becomes a
-            # backlog that arrives all at once. `run_weekly_check_ins` learned the same lesson.
+            # Recorded whether or not the notification reaches them: quiet hours hold it until morning,
+            # the learner's daily allowance can defer it to tomorrow, and one held too long expires
+            # rather than arriving stale. Counting only messages that landed would let a held-back ask
+            # retry every night, which is how a throttle becomes a backlog that arrives all at once.
+            # `run_weekly_check_ins` learned the same lesson.
             await repo.update_exam_prep(
                 prep.id,
                 {

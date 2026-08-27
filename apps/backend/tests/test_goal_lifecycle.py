@@ -358,9 +358,10 @@ class TestRecording:
 
     @pytest.mark.asyncio
     async def test_a_suppressed_notification_still_leaves_the_action_recorded(self, rec):
-        """`create_notification` returns `None` under quiet hours or the daily cap. Counting delivered
-        messages would re-escalate the same goal every night — the trap the preparation ask and the weekly
-        check-in each had to close."""
+        """A notification that reaches nobody must not reopen the cooldown. Quiet hours hold a message until
+        morning, the learner's daily allowance can defer it, and one held too long expires — and before
+        phase 5 the allowance destroyed it outright, returning `None`, which is what this fake reproduces as
+        the strictest case. Counting messages that landed would re-escalate the same goal every night."""
         recorder = rec(suppress_notification=True)
 
         assert await _act(_goal(), progress=30.0) == "extended"

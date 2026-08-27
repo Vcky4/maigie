@@ -311,11 +311,13 @@ class GoalLifecycleAction(Base):
     read from here.
 
     It cannot be read from the notification table instead, and that is worth stating because it looks
-    like it could. `notification_service.create_notification` returns `None` when quiet hours or the
-    daily cap suppress a message, leaving no row — so a suppressed warning would look like a warning
-    never sent, and the goal would be escalated again the next night. The same trap the preparation ask
-    and the weekly check-in both had to close. What is recorded here is the *decision*, which happened,
-    not the message, which may not have arrived.
+    like it could. A notification row is not evidence that the learner was reached: delivery can be
+    deferred to the next day by their daily allowance, held until their quiet hours end, or marked
+    `EXPIRED` if it waited too long to still be worth reading. And before phase 5 of this programme it was
+    worse — the allowance destroyed the message outright and `create_notification` returned `None`, so a
+    suppressed warning left nothing at all and looked exactly like a warning never sent. The same trap the
+    preparation ask and the weekly check-in both had to close. What is recorded here is the *decision*,
+    which happened, not the message, which may still not arrive.
 
     Separate from `GoalScheduleChange` despite the overlap on extensions, because the two answer
     different questions and one cannot serve both. `GoalScheduleChange` is the deadline's audit trail —

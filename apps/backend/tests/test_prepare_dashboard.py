@@ -263,7 +263,8 @@ class TestComposition:
         `AWAITING_REVIEW` was added to `ExamPrep.status` so that a passed exam stops being recorded as
         `COMPLETED` by a nightly clock. If the dashboard kept querying only `SETUP` and `IN_PROGRESS`, the
         preparation would vanish the morning after the exam and the review would be reachable only from a
-        notification — which quiet hours and the daily cap can both suppress. Asserted on its own rather
+        notification — which quiet hours can hold and the learner's daily allowance can defer. Asserted on
+        its own rather
         than only inside the ordering test, so a regression names the reason.
         """
         sources.awaiting_review = [

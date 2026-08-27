@@ -32,7 +32,8 @@ logger = logging.getLogger(__name__)
 # `AWAITING_REVIEW` is here because it wants the most. Its exam has happened and the learner has not said
 # how it went — and their answer is what completes the preparation, so hiding it is how the question never
 # gets answered. Omitting it would have taken the preparation off this list the morning after the exam and
-# left the review reachable only from a notification, which quiet hours and the daily cap can both suppress.
+# left the review reachable only from a notification, which quiet hours can hold and the learner's daily
+# allowance can defer to tomorrow.
 ACTIVE_STATUSES = ("SETUP", "IN_PROGRESS", "AWAITING_REVIEW")
 
 # Cap on the topics loaded to compute per-preparation recommendations. Weakest

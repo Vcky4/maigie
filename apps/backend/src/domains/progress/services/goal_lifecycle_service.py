@@ -79,9 +79,10 @@ async def review_goals(*, now: datetime | None = None, limit: int = 500) -> dict
     about.
 
     Every action is recorded in `GoalLifecycleAction` **before** anything is sent, and regardless of
-    whether what was sent survived. `create_notification` returns `None` under quiet hours or the daily
-    cap, so counting delivered messages would re-escalate the same goal every night — the trap the
-    preparation ask and the weekly check-in each had to close.
+    whether what was sent survived. A notification can be deferred by the learner's daily allowance, held
+    until their quiet hours end, or expire before it is delivered, so counting messages that reached
+    someone would re-escalate the same goal every night — the trap the preparation ask and the weekly
+    check-in each had to close.
 
     One goal's failure does not end the run.
     """
@@ -238,6 +239,10 @@ async def _warn(goal: Any, *, progress: float, now: datetime) -> str:
     await _record(goal, action="warned", trigger="at_risk_due_soon")
     await _notify(
         goal,
+        # The one message on this path whose value expires with the deadline it describes. Everything else
+        # here loses nothing by waiting for tomorrow, so it takes its turn behind the learner's daily
+        # allowance; a warning that an immovable date is days away does not get that luxury.
+        time_critical=True,
         type="goal_at_risk",
         title=f"{days_left} day{'s' if days_left != 1 else ''} left: {goal.title}",
         body=(
@@ -262,7 +267,9 @@ async def _record(goal: Any, *, action: str, trigger: str) -> None:
     )
 
 
-async def _notify(goal: Any, *, type: str, title: str, body: str) -> None:
+async def _notify(
+    goal: Any, *, type: str, title: str, body: str, time_critical: bool = False
+) -> None:
     """Send the message, and do not let its failure undo the action.
 
     Imported inside the function: `personal_learning` already imports this package's `goal_metrics`, so a
@@ -270,8 +277,13 @@ async def _notify(goal: Any, *, type: str, title: str, body: str) -> None:
 
     Priority 3 rather than the default 5. These are messages about a commitment the learner made and a
     date that is days away or already passed, which is more urgent than a recommendation and less urgent
-    than a security notice. Delivery is still subject to quiet hours and the daily cap of five, which can
-    drop it — that is the notification path's own defect, and the action is recorded either way.
+    than a security notice.
+
+    Delivery is still not guaranteed: quiet hours hold a message until the learner's morning, and one held
+    too long expires rather than arriving stale. It is no longer *destroyed* by the daily allowance, which
+    it was when this was written. `goal_at_risk` sets `PRIORITY_TIME_CRITICAL` instead of 3 for that reason
+    — a warning about a date that cannot move is the one message here whose value expires with the deadline
+    it describes, so it outranks the allowance. The action is recorded either way.
     """
     from src.domains.personal_learning.services import notification_service
 
@@ -281,7 +293,9 @@ async def _notify(goal: Any, *, type: str, title: str, body: str) -> None:
             type=type,
             title=title,
             body=body,
-            priority=3,
+            priority=(
+                notification_service.PRIORITY_TIME_CRITICAL if time_critical else 3
+            ),
             action_data={"goalId": goal.id, "route": "goal"},
         )
     except Exception:

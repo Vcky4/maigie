@@ -1155,7 +1155,7 @@ async def redistribute_drifted_plans(
             # remaining date changed overnight with no word is the system rewriting their commitments
             # behind their back — the phase boundaries they accepted in the wizard move with it, since a
             # phase's week range is just the span of its items' dates. Delivery may still be dropped by
-            # quiet hours or the daily cap; that is the notification path's own defect and the stamp
+            # quiet hours, or deferred to tomorrow by the learner's daily allowance; the stamp
             # above does not depend on it.
             days_left = max(0, (_as_utc(plan.deadline) - moment).days)
             await notification_service.create_notification(

@@ -8,7 +8,8 @@ any more. A clock is not an outcome.
 
 It now moves them to `AWAITING_REVIEW` and asks — once, then a bounded number of reminders. The status is
 the part that matters and the count it returns; the asking is throttled and may be suppressed entirely by
-quiet hours or the daily cap, which is exactly why the ask is recorded whether or not the message survived.
+quiet hours or held back by the learner's daily allowance, which is exactly why the ask is recorded whether
+or not the message reaches them.
 """
 
 import os
@@ -75,7 +76,8 @@ class FakeNotifications:
 
     async def create_notification(self, **kwargs):
         self.sent.append(kwargs)
-        # `None` is what the real service returns when quiet hours or the daily cap suppress a message.
+        # `None` is the strictest thing the real service can hand back. Since phase 5 it always returns a
+        # row and defers delivery instead, so a caller that copes with `None` copes with everything.
         return None if self.suppress else SimpleNamespace(id="n1")
 
 
@@ -124,9 +126,13 @@ class TestTheSweep:
 
     @pytest.mark.asyncio
     async def test_a_suppressed_ask_still_counts_against_the_budget(self, wire):
-        """`create_notification` returns `None` when quiet hours or the daily cap suppress a message.
-        Counting only delivered messages would let a suppressed ask retry every night — turning a throttle
-        into a backlog that arrives all at once. `run_weekly_check_ins` learned this the same way."""
+        """A notification reaching nobody must not reopen the budget. Quiet hours hold a message until the
+        learner's morning, their daily allowance can defer it to tomorrow, and one held too long expires
+        rather than arriving stale — and before phase 5 the allowance destroyed it outright, returning
+        `None`. Counting only messages that landed would let a held-back ask retry every night, turning a
+        throttle into a backlog that arrives all at once. `run_weekly_check_ins` learned this the same way.
+
+        The fake still returns `None`, which is now the strictest case rather than the ordinary one."""
         prep = _prep()
         repo, _ = wire([prep], suppress=True)
 

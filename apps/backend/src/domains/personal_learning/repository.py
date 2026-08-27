@@ -2286,37 +2286,57 @@ class PersonalLearningRepository:
             )
             await s.execute(stmt)
 
-    async def count_today_delivered(
-        self, user_id: str, *, session: AsyncSession | None = None
+    async def count_delivered_between(
+        self,
+        user_id: str,
+        *,
+        since: datetime,
+        until: datetime,
+        session: AsyncSession | None = None,
     ) -> int:
+        """How many notifications reached this learner in a window. Half-open: ``since`` to ``until``.
+
+        The window is a parameter rather than being computed here, because "today" is a claim about the
+        learner's own calendar and this method has no idea whose. It previously bounded the day in UTC, so
+        the daily allowance refilled at 01:00 for a learner in Lagos and at 16:00 for one in Los Angeles —
+        the second could be messaged their full quota twice inside one working day.
+        """
         async with self._read_session(session) as s:
-            now = datetime.now(UTC)
-            start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=999999)
             stmt = (
                 select(func.count())
                 .select_from(Notification)
                 .where(
                     Notification.user_id == user_id,
-                    Notification.delivered_at >= start_of_day,
-                    Notification.delivered_at <= end_of_day,
+                    Notification.delivered_at >= since,
+                    Notification.delivered_at < until,
                 )
             )
-            result = (await s.execute(stmt)).scalar() or 0
-            return result
+            return (await s.execute(stmt)).scalar() or 0
 
-    async def list_pending_for_delivery(
-        self, *, session: AsyncSession | None = None
+    async def list_due_for_delivery(
+        self, *, limit: int = 500, session: AsyncSession | None = None
     ) -> list[Notification]:
+        """Notifications whose moment has come, oldest first.
+
+        **`QUEUED` is included, and its absence was a silent drop.** `create_notification` writes that status
+        for anything held back by quiet hours, and the previous query selected `PENDING` only — so every
+        quiet-hours notification ever written was stored, pushed to a later `scheduledAt`, and then never
+        looked at by anything. The row surfaced in the learner's in-app list, because that read filters on
+        `READ`/`DISMISSED` rather than on delivery, which is why nobody noticed.
+
+        Bounded by `limit`. The sweep runs every five minutes and now does network I/O per row inside a 45
+        second soft limit, so an unbounded backlog would time out and make no progress at all rather than
+        draining gradually. Ordered oldest-first so the backlog drains in the order it formed.
+        """
         async with self._read_session(session) as s:
-            now = datetime.now(UTC)
             stmt = (
                 select(Notification)
                 .where(
-                    Notification.status == "PENDING",
-                    Notification.scheduled_at <= now,
+                    Notification.status.in_(["PENDING", "QUEUED"]),
+                    Notification.scheduled_at <= datetime.now(UTC),
                 )
                 .order_by(Notification.scheduled_at.asc())
+                .limit(limit)
             )
             result = await s.execute(stmt)
             return list(result.scalars().all())
@@ -2326,6 +2346,7 @@ class PersonalLearningRepository:
         notification_id: str,
         status: str,
         delivered_at: datetime | None = None,
+        pushed_at: datetime | None = None,
         *,
         session: AsyncSession | None = None,
     ) -> None:
@@ -2333,6 +2354,8 @@ class PersonalLearningRepository:
             values: dict[str, Any] = {"status": status}
             if delivered_at is not None:
                 values["delivered_at"] = delivered_at
+            if pushed_at is not None:
+                values["pushed_at"] = pushed_at
             stmt = update(Notification).where(Notification.id == notification_id).values(**values)
             await s.execute(stmt)
 
@@ -2351,6 +2374,9 @@ class PersonalLearningRepository:
             "actionData": "action_data",
             "scheduledAt": "scheduled_at",
             "status": "status",
+            # Never set at creation — a notification cannot have reached a device before it exists. Mapped
+            # so that adding the column without wiring it here would fail loudly rather than be dropped.
+            "pushedAt": "pushed_at",
         }
         return map_fields(data, field_map, entity="_map_notification")
 

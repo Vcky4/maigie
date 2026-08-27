@@ -341,9 +341,11 @@ class TestItSaysSo:
 
     @pytest.mark.asyncio
     async def test_a_suppressed_notification_does_not_undo_the_cooldown(self, wire):
-        """`create_notification` returns `None` under quiet hours or the daily cap. The repack still
-        happened, so the stamp must stand — otherwise the plan is repacked again tomorrow to retry a
-        message, and the learner's dates move a second time for the sake of an announcement."""
+        """A notification that reaches nobody must not reopen the cooldown. Quiet hours hold a message until
+        morning and the learner's daily allowance can defer it to tomorrow; before phase 5 the allowance
+        destroyed it outright and returned `None`, which is what this fake reproduces. The repack still
+        happened either way, so the stamp must stand — otherwise the plan is repacked again tomorrow to
+        retry a message, and the learner's dates move a second time for the sake of an announcement."""
         plan = _plan()
         items = [_item(f"i{n}") for n in range(4)]
         wire([plan], {plan.id: items}, suppress=True)
