@@ -969,23 +969,14 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         course = course_result.scalar_one_or_none()
 
                             if review and topic:
-                                enriched_context["pageContext"] = (
-                                    ask_service.REVIEW_MODE_PAGE_CONTEXT
+                                enriched_context.update(
+                                    ask_service.review_context_updates(
+                                        review=review,
+                                        topic=topic,
+                                        module=module,
+                                        course=course,
+                                    )
                                 )
-                                enriched_context["topicId"] = review.topic_id
-                                enriched_context["topicTitle"] = topic.title
-                                enriched_context["topicContent"] = topic.content or ""
-                                enriched_context["reviewItemId"] = review.id
-                                enriched_context["nextReviewAt"] = (
-                                    review.next_review_at.isoformat()
-                                    if hasattr(review.next_review_at, "isoformat")
-                                    else str(review.next_review_at)
-                                )
-                                if module and course:
-                                    enriched_context["courseId"] = course.id
-                                    enriched_context["courseTitle"] = course.title
-                                    enriched_context["courseDescription"] = course.description or ""
-                                    enriched_context["moduleTitle"] = module.title
                         # Fetch note details if noteId is provided
                         elif context.get("noteId"):
                             note_id = context["noteId"]
@@ -1068,17 +1059,13 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                     ln = await note_service.latest_note_for_topic(
                                         None, topic.id, user.id
                                     )
-                                    enriched_context["topicId"] = topic.id
-                                    enriched_context["topicTitle"] = topic.title
-                                    enriched_context["topicContent"] = topic.content or ""
-                                    if topic_module:
-                                        enriched_context["moduleTitle"] = topic_module.title
-                                        if topic_course:
-                                            enriched_context["courseId"] = topic_course.id
-                                            enriched_context["courseTitle"] = topic_course.title
-                                            enriched_context["courseDescription"] = (
-                                                topic_course.description or ""
-                                            )
+                                    enriched_context.update(
+                                        ask_service.topic_context_updates(
+                                            topic=topic,
+                                            module=topic_module,
+                                            course=topic_course,
+                                        )
+                                    )
                                     if ln:
                                         print(
                                             f"✅ Found topic with ID {note_id}, using latest note ID: {ln.id}"
@@ -1116,29 +1103,15 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         enriched_context["noteId"] = ln.id
 
                             if note:
-                                enriched_context["noteTitle"] = note.title
-                                enriched_context["noteContent"] = note.content or ""
-                                enriched_context["noteSummary"] = note.summary or ""
-                                # If note is linked to a topic, include topic details
-                                if note_topic:
-                                    enriched_context["topicId"] = note_topic.id
-                                    enriched_context["topicTitle"] = note_topic.title
-                                    enriched_context["topicContent"] = note_topic.content or ""
-                                    if note_module:
-                                        enriched_context["moduleTitle"] = note_module.title
-                                        if note_course:
-                                            enriched_context["courseId"] = note_course.id
-                                            enriched_context["courseTitle"] = note_course.title
-                                            enriched_context["courseDescription"] = (
-                                                note_course.description or ""
-                                            )
-                                # If note is linked to a course (but not via topic)
-                                elif note_direct_course:
-                                    enriched_context["courseId"] = note_direct_course.id
-                                    enriched_context["courseTitle"] = note_direct_course.title
-                                    enriched_context["courseDescription"] = (
-                                        note_direct_course.description or ""
+                                enriched_context.update(
+                                    ask_service.note_context_updates(
+                                        note=note,
+                                        topic=note_topic,
+                                        module=note_module,
+                                        course=note_course,
+                                        direct_course=note_direct_course,
                                     )
+                                )
 
                         # Fetch topic details if topicId is provided (and not already fetched from note)
                         elif context.get("topicId") and not enriched_context.get("topicTitle"):
@@ -1166,16 +1139,16 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                     c_result = await sa_session.execute(c_stmt)
                                     topic_course = c_result.scalar_one_or_none()
                             if topic:
-                                enriched_context["topicTitle"] = topic.title
-                                enriched_context["topicContent"] = topic.content or ""
-                                if topic_module:
-                                    enriched_context["moduleTitle"] = topic_module.title
-                                    if topic_course:
-                                        enriched_context["courseId"] = topic_course.id
-                                        enriched_context["courseTitle"] = topic_course.title
-                                        enriched_context["courseDescription"] = (
-                                            topic_course.description or ""
-                                        )
+                                # `include_topic_id=False`: the id came from the client's context and is
+                                # how this topic was found, so writing it back is at best a no-op.
+                                enriched_context.update(
+                                    ask_service.topic_context_updates(
+                                        topic=topic,
+                                        module=topic_module,
+                                        course=topic_course,
+                                        include_topic_id=False,
+                                    )
+                                )
                                 # Fetch user notes for this topic
                                 async with factory() as sa_session:
                                     notes_stmt = (
@@ -1189,16 +1162,11 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                     notes_result = await sa_session.execute(notes_stmt)
                                     topic_notes = notes_result.scalars().all()
                                 if topic_notes:
-                                    blocks = []
-                                    for n in topic_notes:
-                                        head = (n.title or "Note").strip()
-                                        body = (n.content or "").strip()
-                                        blocks.append(
-                                            f"## {head}\n{body}" if body else f"## {head}"
-                                        )
-                                    enriched_context["topicUserNotes"] = "\n\n---\n\n".join(
-                                        b for b in blocks if b.strip()
+                                    rendered_notes = ask_service.format_topic_user_notes(
+                                        list(topic_notes)
                                     )
+                                    if rendered_notes:
+                                        enriched_context["topicUserNotes"] = rendered_notes
                             else:
                                 # Topic not found - log for debugging but keep topicId in context
                                 print(
@@ -1218,8 +1186,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 c_result = await sa_session.execute(c_stmt)
                                 course = c_result.scalar_one_or_none()
                             if course:
-                                enriched_context["courseTitle"] = course.title
-                                enriched_context["courseDescription"] = course.description or ""
+                                enriched_context.update(
+                                    ask_service.course_context_updates(course=course)
+                                )
 
                         # Always attach topic resources if topic context is available.
                         if enriched_context.get("topicId"):

@@ -384,6 +384,7 @@ class TestTheExtractionInventoryIsHonest:
             "assistant row assembly": "build_assistant_row",
             "context cache keying": "context_cache_key_parts",
             "page context instruction blocks": "REVIEW_MODE_PAGE_CONTEXT",
+            "context shaping (records to context keys)": "note_context_updates",
         }
         assert set(ask_service.MOVED_SO_FAR) == set(expected)
         for stage, attribute in expected.items():
@@ -805,3 +806,208 @@ class TestSpaceRoomPageContext:
         second = ask_service.space_room_page_context(has_reply_target=True)
         assert first == second
         assert first.count("replyContext") == 1
+
+
+# ---------------------------------------------------------------------------
+# Context shaping
+# ---------------------------------------------------------------------------
+
+
+def a_topic(**kwargs):
+    return SimpleNamespace(**{"id": "top_1", "title": "Entropy", "content": "body", **kwargs})
+
+
+def a_module(**kwargs):
+    return SimpleNamespace(**{"id": "mod_1", "title": "Thermodynamics", **kwargs})
+
+
+def a_course(**kwargs):
+    return SimpleNamespace(
+        **{"id": "crs_1", "title": "Physics", "description": "A course", **kwargs}
+    )
+
+
+def a_note(**kwargs):
+    return SimpleNamespace(
+        **{"id": "note_1", "title": "My note", "content": "note body", "summary": "a summary", **kwargs}
+    )
+
+
+def a_review(**kwargs):
+    return SimpleNamespace(
+        **{"id": "rev_1", "topic_id": "top_1", "next_review_at": "2026-09-01T00:00:00", **kwargs}
+    )
+
+
+class TestReviewContextUpdates:
+    def test_it_carries_the_review_instructions(self):
+        updates = ask_service.review_context_updates(review=a_review(), topic=a_topic())
+        assert updates["pageContext"] == ask_service.REVIEW_MODE_PAGE_CONTEXT
+
+    def test_the_topic_id_comes_from_the_review_not_the_topic(self):
+        """The review owns the link. A topic fetched by another route could disagree, and the review's
+        view is the one the scheduler will write back against."""
+        updates = ask_service.review_context_updates(
+            review=a_review(topic_id="from_review"), topic=a_topic(id="from_topic")
+        )
+        assert updates["topicId"] == "from_review"
+
+    def test_next_review_at_is_isoformatted_when_it_is_a_datetime(self):
+        from datetime import datetime
+
+        updates = ask_service.review_context_updates(
+            review=a_review(next_review_at=datetime(2026, 9, 1, 12, 30)), topic=a_topic()
+        )
+        assert updates["nextReviewAt"] == "2026-09-01T12:30:00"
+
+    def test_next_review_at_survives_already_being_a_string(self):
+        updates = ask_service.review_context_updates(
+            review=a_review(next_review_at="2026-09-01"), topic=a_topic()
+        )
+        assert updates["nextReviewAt"] == "2026-09-01"
+
+    def test_course_fields_need_both_module_and_course(self):
+        updates = ask_service.review_context_updates(
+            review=a_review(), topic=a_topic(), module=a_module(), course=a_course()
+        )
+        assert updates["courseId"] == "crs_1"
+        assert updates["moduleTitle"] == "Thermodynamics"
+
+    def test_a_module_without_a_course_contributes_nothing(self):
+        """This branch differs from the topic chain, deliberately preserved. Pinned so that if someone
+        unifies them the change is visible as a failing test rather than a silent prompt change."""
+        updates = ask_service.review_context_updates(
+            review=a_review(), topic=a_topic(), module=a_module(), course=None
+        )
+        assert "moduleTitle" not in updates
+        assert "courseId" not in updates
+
+    def test_a_missing_content_becomes_an_empty_string(self):
+        updates = ask_service.review_context_updates(
+            review=a_review(), topic=a_topic(content=None)
+        )
+        assert updates["topicContent"] == ""
+
+
+class TestNoteContextUpdates:
+    def test_the_note_fields_are_always_present(self):
+        updates = ask_service.note_context_updates(note=a_note())
+        assert updates["noteTitle"] == "My note"
+        assert updates["noteContent"] == "note body"
+        assert updates["noteSummary"] == "a summary"
+
+    def test_missing_body_and_summary_become_empty_strings(self):
+        updates = ask_service.note_context_updates(note=a_note(content=None, summary=None))
+        assert updates["noteContent"] == ""
+        assert updates["noteSummary"] == ""
+
+    def test_a_topic_linked_note_carries_the_topic_chain(self):
+        updates = ask_service.note_context_updates(
+            note=a_note(), topic=a_topic(), module=a_module(), course=a_course()
+        )
+        assert updates["topicId"] == "top_1"
+        assert updates["moduleTitle"] == "Thermodynamics"
+        assert updates["courseId"] == "crs_1"
+
+    def test_a_module_without_a_course_still_gives_a_module_title(self):
+        """The topic chain differs from the review branch here. Both are pinned."""
+        updates = ask_service.note_context_updates(
+            note=a_note(), topic=a_topic(), module=a_module(), course=None
+        )
+        assert updates["moduleTitle"] == "Thermodynamics"
+        assert "courseId" not in updates
+
+    def test_a_direct_course_is_used_when_there_is_no_topic(self):
+        updates = ask_service.note_context_updates(
+            note=a_note(), topic=None, direct_course=a_course(id="direct")
+        )
+        assert updates["courseId"] == "direct"
+
+    def test_a_direct_course_is_ignored_when_there_is_a_topic(self):
+        """The two routes to a course are mutually exclusive: through the topic's module, or directly.
+        A note with both must not have its topic's course overwritten by the direct one."""
+        updates = ask_service.note_context_updates(
+            note=a_note(),
+            topic=a_topic(),
+            module=a_module(),
+            course=a_course(id="via_topic"),
+            direct_course=a_course(id="direct"),
+        )
+        assert updates["courseId"] == "via_topic"
+
+    def test_a_bare_note_contributes_no_topic_or_course_keys(self):
+        updates = ask_service.note_context_updates(note=a_note())
+        assert set(updates) == {"noteTitle", "noteContent", "noteSummary"}
+
+
+class TestTopicContextUpdates:
+    def test_the_topic_id_is_included_by_default(self):
+        assert ask_service.topic_context_updates(topic=a_topic())["topicId"] == "top_1"
+
+    def test_the_topic_id_can_be_withheld(self):
+        """The topic branch already has the id from the client's context — it is how the topic was
+        found — so writing it back is at best a no-op."""
+        updates = ask_service.topic_context_updates(topic=a_topic(), include_topic_id=False)
+        assert "topicId" not in updates
+        assert updates["topicTitle"] == "Entropy"
+
+    def test_the_course_needs_a_module(self):
+        """A course is reached through a module here, so a course without one is not attached."""
+        updates = ask_service.topic_context_updates(topic=a_topic(), module=None, course=a_course())
+        assert "courseId" not in updates
+
+
+class TestCourseContextUpdates:
+    def test_it_returns_the_title_and_description(self):
+        updates = ask_service.course_context_updates(course=a_course())
+        assert updates == {"courseTitle": "Physics", "courseDescription": "A course"}
+
+    def test_a_missing_description_becomes_an_empty_string(self):
+        assert ask_service.course_context_updates(course=a_course(description=None))[
+            "courseDescription"
+        ] == ""
+
+    def test_it_does_not_write_the_course_id(self):
+        """The caller already has it; that is how the course was found."""
+        assert "courseId" not in ask_service.course_context_updates(course=a_course())
+
+
+class TestFormatTopicUserNotes:
+    def test_each_note_becomes_a_heading_and_body(self):
+        rendered = ask_service.format_topic_user_notes(
+            [a_note(title="First", content="one"), a_note(title="Second", content="two")]
+        )
+        assert "## First\none" in rendered
+        assert "## Second\ntwo" in rendered
+
+    def test_notes_are_separated_by_a_rule(self):
+        """Without a separator two notes read as one document, so a contradiction between them looks
+        like a single confused note."""
+        rendered = ask_service.format_topic_user_notes(
+            [a_note(title="A", content="x"), a_note(title="B", content="y")]
+        )
+        assert "\n\n---\n\n" in rendered
+
+    def test_a_single_note_has_no_separator(self):
+        assert "---" not in ask_service.format_topic_user_notes([a_note(title="Only", content="x")])
+
+    def test_an_untitled_note_gets_a_placeholder_heading(self):
+        assert ask_service.format_topic_user_notes([a_note(title=None, content="x")]).startswith(
+            "## Note"
+        )
+
+    def test_a_note_with_no_body_is_kept_as_a_bare_heading(self):
+        """A title alone still tells the model what the learner thought worth recording."""
+        assert ask_service.format_topic_user_notes([a_note(title="Just a title", content=None)]) == (
+            "## Just a title"
+        )
+
+    def test_no_notes_renders_as_empty(self):
+        assert ask_service.format_topic_user_notes([]) == ""
+
+    def test_none_is_tolerated(self):
+        assert ask_service.format_topic_user_notes(None) == ""
+
+    def test_whitespace_is_stripped_from_titles_and_bodies(self):
+        rendered = ask_service.format_topic_user_notes([a_note(title="  T  ", content="  b  ")])
+        assert rendered == "## T\nb"

@@ -41,10 +41,11 @@ MOVED_SO_FAR = (
     "assistant row assembly",
     "context cache keying",
     "page context instruction blocks",
+    "context shaping (records to context keys)",
 )
 STILL_IN_THE_HANDLER = (
     "session resolution",
-    "context enrichment",
+    "the context fetches themselves",
     "retrieval call",
     "memory context",
     "generation",
@@ -623,3 +624,183 @@ def space_room_page_context(*, has_reply_target: bool = False) -> str:
     if has_reply_target:
         return _SPACE_ROOM_PAGE_CONTEXT + _SPACE_ROOM_REPLY_SUFFIX
     return _SPACE_ROOM_PAGE_CONTEXT
+
+
+# ===========================================================================
+# Context shaping — records to context keys
+# ===========================================================================
+#
+# Enrichment is two jobs: fetch rows for the ids the client sent, then decide which of their fields
+# become prompt context. The fetching stays in the handler for now; the deciding is here, because it is
+# the half that is pure and the half that gets edited.
+#
+# Each returns the keys to merge rather than mutating a context in place. The handler had four blocks
+# writing directly into one shared dict across 300 lines, so which branch produced which key was only
+# discoverable by reading all of them. A returned dict is also what makes these testable with plain
+# namespaces instead of ORM instances.
+#
+# **These deliberately do not share a single implementation.** The four branches disagree in small ways
+# that look like bugs and may be, but they are load-bearing until something proves otherwise — see
+# `review_context_updates` for the one worth knowing about. Unifying them would be a behaviour change
+# dressed as a refactor, and none of it can be verified without a live database.
+
+
+def _topic_chain_updates(
+    *,
+    topic: Any,
+    module: Any = None,
+    course: Any = None,
+    include_topic_id: bool = True,
+) -> dict[str, Any]:
+    """The topic → module → course chain, shared by the three branches that agree on it.
+
+    `include_topic_id` is `False` when the caller already has the id from the client's context and is
+    only filling in the titles: writing it back would be a no-op at best, and at worst would overwrite
+    a client value with a fetched one that came from following the id in the first place.
+
+    Course fields require *both* a module and a course, because a course is reached through a module
+    here. `moduleTitle` is set as soon as there is a module, whether or not the course resolved.
+    """
+    updates: dict[str, Any] = {}
+    if include_topic_id:
+        updates["topicId"] = topic.id
+    updates["topicTitle"] = topic.title
+    updates["topicContent"] = topic.content or ""
+
+    if module:
+        updates["moduleTitle"] = module.title
+        if course:
+            updates["courseId"] = course.id
+            updates["courseTitle"] = course.title
+            updates["courseDescription"] = course.description or ""
+
+    return updates
+
+
+def review_context_updates(
+    *, review: Any, topic: Any, module: Any = None, course: Any = None
+) -> dict[str, Any]:
+    """Context for a spaced-repetition review turn.
+
+    **This branch gates `moduleTitle` differently from every other one, and the difference is real.**
+    Here the whole module-and-course block is behind `if module and course`, so a topic whose module
+    resolved but whose course did not contributes *no* `moduleTitle` — whereas `_topic_chain_updates`
+    would set it. Preserved rather than unified: it is only reachable when a module exists without its
+    course, which suggests broken catalogue data, and nothing here can tell whether some downstream
+    prompt depends on the difference. Worth resolving deliberately, with a live database, rather than
+    silently while moving code.
+
+    `nextReviewAt` is stringified defensively because the column is a `DateTime` but the value has
+    arrived as a string before; `hasattr(..., "isoformat")` is the original check and is kept.
+    """
+    updates: dict[str, Any] = {
+        "pageContext": REVIEW_MODE_PAGE_CONTEXT,
+        "topicId": review.topic_id,
+        "topicTitle": topic.title,
+        "topicContent": topic.content or "",
+        "reviewItemId": review.id,
+        "nextReviewAt": (
+            review.next_review_at.isoformat()
+            if hasattr(review.next_review_at, "isoformat")
+            else str(review.next_review_at)
+        ),
+    }
+
+    if module and course:
+        updates["courseId"] = course.id
+        updates["courseTitle"] = course.title
+        updates["courseDescription"] = course.description or ""
+        updates["moduleTitle"] = module.title
+
+    return updates
+
+
+def note_context_updates(
+    *,
+    note: Any,
+    topic: Any = None,
+    module: Any = None,
+    course: Any = None,
+    direct_course: Any = None,
+) -> dict[str, Any]:
+    """Context for a note turn.
+
+    **Every caller must have fetched `note` as its owner** — the note's title, summary and full body go
+    into the prompt, so an unowned note here is a disclosure. That is enforced at the read, through
+    `personal_learning_repo.find_note(note_id, user_id)`, and guarded by
+    `tests/test_chat_context_authorization.py`. This function cannot check it and does not try; it is
+    noted so the requirement travels with the code.
+
+    A note reaches a course two ways and they are mutually exclusive: through its topic's module, or
+    directly via `note.course_id` when it has no topic. `direct_course` is the second, and it is only
+    consulted when there is no topic.
+    """
+    updates: dict[str, Any] = {
+        "noteTitle": note.title,
+        "noteContent": note.content or "",
+        "noteSummary": note.summary or "",
+    }
+
+    if topic:
+        updates.update(_topic_chain_updates(topic=topic, module=module, course=course))
+    elif direct_course:
+        updates["courseId"] = direct_course.id
+        updates["courseTitle"] = direct_course.title
+        updates["courseDescription"] = direct_course.description or ""
+
+    return updates
+
+
+def topic_context_updates(
+    *,
+    topic: Any,
+    module: Any = None,
+    course: Any = None,
+    include_topic_id: bool = True,
+) -> dict[str, Any]:
+    """Context for a topic turn, and for the fallback where a `noteId` turns out to be a topic id.
+
+    That fallback exists because clients have sent topic ids in `noteId`. It is a real path, not a
+    defensive one, which is why it resolves the topic and then looks for the learner's latest note on it.
+    """
+    return _topic_chain_updates(
+        topic=topic, module=module, course=course, include_topic_id=include_topic_id
+    )
+
+
+def course_context_updates(*, course: Any) -> dict[str, Any]:
+    """Context for a course turn.
+
+    No `courseId`: the caller already has it from the client's context, which is how the course was
+    found.
+    """
+    return {
+        "courseTitle": course.title,
+        "courseDescription": course.description or "",
+    }
+
+
+def format_topic_user_notes(notes: list[Any]) -> str:
+    """Render a learner's notes on a topic as one markdown block for the prompt.
+
+    Each note becomes an `## <title>` heading with its body, separated by horizontal rules so the model
+    can tell one note from the next — without a separator, two notes read as one document and a
+    contradiction between them looks like a single confused note.
+
+    An untitled note gets "Note" rather than an empty heading, and a note with no body is kept as a
+    bare heading: a title alone still tells the model what the learner thought worth recording. Entries
+    that are blank after stripping are dropped, so an empty note does not contribute a stray rule.
+
+    **Every note passed here must belong to the asking learner.** The caller's query filters on
+    `user_id`; see `note_context_updates` and `tests/test_chat_context_authorization.py`.
+
+    Returns `""` for no notes, which the caller treats as "nothing to add" — an empty string is not
+    written to the context.
+    """
+    blocks: list[str] = []
+    for note in notes or []:
+        head = (getattr(note, "title", None) or "Note").strip()
+        body = (getattr(note, "content", None) or "").strip()
+        blocks.append(f"## {head}\n{body}" if body else f"## {head}")
+
+    return "\n\n---\n\n".join(block for block in blocks if block.strip())
