@@ -14,8 +14,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.llm.errors import OpenAIError
-from src.services.llm.openai_chat_tools import (
+from src.domains.intelligence.reasoning.llm.errors import OpenAIError
+from src.domains.intelligence.reasoning.llm.openai_chat_tools import (
     OpenAIChatToolsAdapter,
     _history_to_openai_messages,
     _map_openai_error,
@@ -200,7 +200,7 @@ class TestAdapterInit:
         assert adapter.model_id == "gpt-4o"
 
     def test_capabilities_chat_model(self):
-        from src.services.llm.capabilities import (
+        from src.domains.intelligence.reasoning.llm.capabilities import (
             ChatCapability,
             EmbeddingCapability,
             StructuredOutputCapability,
@@ -215,14 +215,14 @@ class TestAdapterInit:
         assert EmbeddingCapability not in caps
 
     def test_capabilities_embedding_model(self):
-        from src.services.llm.capabilities import EmbeddingCapability
+        from src.domains.intelligence.reasoning.llm.capabilities import EmbeddingCapability
 
         adapter = OpenAIChatToolsAdapter(model="text-embedding-3-small", api_key="test-key")
         caps = adapter.supported_capabilities()
         assert EmbeddingCapability in caps
 
     def test_extends_base_adapter(self):
-        from src.services.llm.base_adapter import BaseProviderAdapter
+        from src.domains.intelligence.reasoning.llm.base_adapter import BaseProviderAdapter
 
         adapter = OpenAIChatToolsAdapter(model="gpt-4o", api_key="test-key")
         assert isinstance(adapter, BaseProviderAdapter)

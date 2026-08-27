@@ -274,7 +274,7 @@ of what the pre-migration package held; the per-step records below are the curre
 3. ~~`tool_normalizer.py` + `stream_normalizer.py` — pure transforms; unskips 2 more.~~ **Done.**
 4. ~~One provider adapter end to end (Gemini, since `gemini_sdk.py` already exists).~~ **Done.** Constructed and exercised by step 5.
 5. ~~`router.py` — needs 1–4; unskips `test_end_to_end_routing`.~~ **Done, 2026-08-26.** `get_llm_router()` returns a real router; see the step 5 record below.
-6. The remaining two adapters (`openai_chat_tools`, `anthropic_chat_tools`) plus `gemini_embedding`; unskips `test_openai_chat_tools`. **NEXT.**
+6. ~~The remaining two adapters (`openai_chat_tools`, `anthropic_chat_tools`) plus `gemini_embedding`; unskips `test_openai_chat_tools`.~~ **Done, 2026-08-27.** See the step 6 record below.
 7. ~~`feature_flags.py` with real storage, replacing the fail-closed stub.~~ **Mostly done in step 5, and the premise here was wrong** — see "the sequence was wrong about step 7" below. What remains is only the `FeatureFlagStore`-backed dynamic overrides and the admin config path, not the service itself.
 
 ### Migration progress, 2026-08-26 — steps 1–4
@@ -420,11 +420,16 @@ adapters; `_select_candidates` returns both pairs for `chat_default`, `chat_tool
 circuit-breaker success, metrics, cost record, usage emission. The handler's exact kwargs bind to
 `route_request` in both personal and space-scoped form. **Not verified: any real provider call, and
 anything requiring SQL.** There is no local database — `DATABASE_URL` points at remote managed
-Postgres and Docker is not running — so 185 tests still skip and migration `049` remains written and
-unapplied. The `emit_ai_usage` and `CostTracker.record` writes have been exercised only against
-mocks.
+Postgres and Docker is not running — so 185 tests still skip. The `emit_ai_usage` and
+`CostTracker.record` writes have been exercised only against mocks.
 
-**Still skipped, and why:** `test_openai_chat_tools.py` (228 lines, step 6);
+**Migration `049` was applied 2026-08-27** against the remote database, after this record was first
+written; see §8. The three columns exist with the intended nullability, and all 972 existing
+`ChatMessage` rows read `citations IS NULL`, `askMode IS NULL`, `truncated = false` — no backfill, as
+the migration specifies. That does not change the paragraph above: the tests that need SQL still skip,
+because they need a database they can *write* to, and this one holds real data.
+
+**Still skipped, and why:**
 `test_llm_agentic_roundtrip.py` (47 — still wants the legacy `GeminiService`; the open decision to
 port it or delete the test is unchanged); `test_chat.py`, `test_circle_billing.py`,
 `test_circle_repository.py`, `test_moderation_service.py` (pre-domain architecture).
@@ -439,6 +444,78 @@ worth knowing since both cover code this step touched:
 - `test_seat_service.py` (381 lines) imports `SeatServiceError`, `get_seat_tier`,
   `reconcile_seat_pool_on_addon_change` and four error constants from `seat_service`, which currently
   re-exports only four mutation wrappers; the rest live in `seat_impl` or not at all.
+
+### Migration progress, 2026-08-27 — step 6, the remaining adapters
+
+`openai_chat_tools.py` (629), `anthropic_chat_tools.py` (746) and `gemini_embedding.py` (135) ported,
+and the three registry blocks step 5 removed are restored. Suite **3,286 → 3,325 passing / 185
+skipped**, `ruff` clean.
+
+**All three are byte-identical to `4953972^` apart from import lines.** Verified by diffing each
+against the recovered original and filtering import rewrites: the only other change is `ruff`'s isort
+reflowing one two-symbol import in `openai_chat_tools` onto separate lines. `test_openai_chat_tools.py`
+(23 tests) passes with nothing but its imports retargeted. This step needed no rewrite at all, which
+is the difference between it and steps 2 and 5 — nothing these modules touch had moved underneath
+them.
+
+The retarget map was already established by the Gemini adapter ported in step 4, and reused verbatim:
+
+| From | To |
+|---|---|
+| `src.services.llm.<x>` | `src.domains.intelligence.reasoning.llm.<x>` |
+| `src.services.llm_registry` | `src.domains.intelligence.reasoning.llm.registry` |
+| `src.services.chat_tool_arg_enrichment` | `src.domains.intelligence.action.tool_arg_enrichment` |
+| `src.services.skills[.handlers]` | `src.domains.intelligence.action.skills[.handlers]` |
+| `src.services.storage_service` | `src.shared.infrastructure.storage_service` |
+
+**No traps this time, and one non-trap worth writing down** so nobody else stops to check it. Neither
+chat adapter defines a `provider_name` *property*, which looks like an unimplemented abstract member
+on `BaseProviderAdapter`. They set `provider_name = "openai"` / `"anthropic"` as class attributes,
+which satisfies `ABCMeta` — it checks for the name, not for a property. Gemini uses a property and the
+other two use attributes; all three instantiate. Confirmed via `__abstractmethods__` being empty on
+each.
+
+**+39 tests, accounted for exactly:** 23 from `test_openai_chat_tools`, 13 new parametrized cases in
+`test_local_imports` (349 → 362) from the adapters' function-local imports, and 3 in
+`test_module_imports` (307 → 310), one per new module.
+
+**Cross-provider fallback now actually engages, and that is new.** Before this step the registry held
+only two Gemini pairs, so every "fallback" was Gemini→Gemini. Driving the registry-built router with
+both Gemini pairs failing retriably now yields the attempt order
+`gemini:gemini-3.5-flash → gemini:gemini-3.1-flash-lite → openai:gpt-4o-mini`, answered by OpenAI, at
+`MAX_ATTEMPTS`. Five adapters are registered: two Gemini chat, Gemini embedding, and two OpenAI.
+
+**Two configuration gaps that porting adapters does not fix.** Both are faithful to the pre-migration
+config defaults, so neither is a port defect — and neither is visible from the adapter code, which is
+why they are recorded here rather than left to be rediscovered:
+
+- **`LlmTask.EMBEDDING` still routes to nothing.** `gemini:gemini-embedding-001` is registered and
+  reports `EmbeddingCapability`, and it is the sole entry in the EMBEDDING fallback chain — but
+  `_select_candidates` returns `[]` on both tiers, because filter 2 (`is_model_allowed`) requires the
+  pair to appear in a tier allowlist and neither `LLM_TIER_ALLOWLIST_FREE` nor `..._PLUS` lists it.
+  So embedding routing has never worked through the router, before or after the migration. Deciding
+  it is worth a thought rather than a config line: an embedding is a system-internal call, and gating
+  it behind a subscription allowlist is arguably the wrong shape, whereas adding it to both tiers
+  makes a per-tier gate that is always open. Left as-is pending that call.
+- **`openai:gpt-4o` is registered but unreachable.** It is in `FALLBACK_CHAT_TOOLS` and in the
+  registry, but no tier allowlist contains it — `LLM_TIER_ALLOWLIST_PLUS` has `openai:gpt-4o-mini`,
+  not `openai:gpt-4o`. So `chat_tools_session` on plus stays Gemini-only. Whether that is intentional
+  cost control or an oversight in the defaults is a product question, not a migration one.
+
+**Anthropic is ported but inert**, and correctly so: it is absent from `LLM_ENABLED_PROVIDERS` and has
+no API key configured, so nothing registers under `anthropic:*` despite it appearing in both fallback
+chains. It has no test file — there never was one — so unlike OpenAI its port is verified only against
+the protocol, the ABC and the registry, not against behaviour.
+
+**The `try/except` around each adapter block now means something different.** In step 5 those blocks
+were guarding a missing *module*, which is what `tests/test_local_imports.py` forbids and why they
+were deleted. All four modules now exist, so the guard is against a constructor raising — a malformed
+key, or a provider SDK changing its signature — and its purpose is that one provider failing to
+register does not take the other two down.
+
+**Still not verified: any real provider call.** Every adapter is exercised against mocks or fakes. The
+OpenAI adapter has 23 real unit tests behind it; Anthropic and the embedding adapter have none. No
+request has gone to OpenAI or Anthropic.
 
 ---
 
@@ -495,13 +572,22 @@ pin it — per-topic mastery and readiness both depend on it.
 plus `QuizSession_topicId_idx`. `SET NULL` rather than `CASCADE` so deleting a topic detaches
 the attribution without destroying the practice history the learner earned.
 
-### Migration 014 written, NOT applied — needs your approval
+### ~~Migration 014 written, NOT applied — needs your approval~~ Already applied; this section was wrong
 
-`014_drop_embedding_table` is **destructive**: it deletes 15 rows. The table is unreachable by
-design — `vector` is `jsonb`, which Postgres cannot index or search by nearest neighbour,
-nothing writes it, Pinecone is gone, and `rag_service` reports `available = False`. `downgrade`
-restores the structure but **not the data**. If approved, delete the `Embedding` model in
-`knowledge/db_models.py` in the same change.
+**Corrected 2026-08-27.** This said `014` was awaiting approval. It is not: the database reports
+`alembic current` well past it, and `select to_regclass('public."Embedding"')` returns `NULL` — the
+table is gone and the 15 rows went with it. Nothing is pending approval and there is nothing left to
+decide here. It was found while checking, before applying `049`, that no destructive migration was
+sitting in the pending set; the answer is that `014` had already run and this section had gone stale.
+
+**What that means in practice.** The 15 rows are unrecoverable unless a dump predates the upgrade.
+They were unreachable by design, which is why the migration existed — `vector` is `jsonb`, which
+Postgres cannot index or search by nearest neighbour, nothing wrote it, Pinecone is gone, and
+`rag_service` reports `available = False`. So the loss is almost certainly immaterial, but it is a
+loss that happened without the sign-off this document was holding out for, and saying so is the point.
+
+**Still worth doing:** delete the `Embedding` model from `knowledge/db_models.py`. The table is gone
+and the model still maps it, so any query through it fails at runtime rather than at import.
 
 When retrieval returns it should use `pgvector` in this same database, so an embedding and the
 row it describes commit in one transaction. That is a new table with a real vector column, not
@@ -550,18 +636,20 @@ non-vacuity guard), `test_email_infrastructure.py` (33), `test_push_notification
 `test_restored_stubs.py` (46), `test_background_tasks.py` (23), plus the recovered
 `test_space_gates.py` (26) and two `topicId` mapping guards.
 
-**Skipped at collection: 24 → 20 → 12** (as of step 5, 2026-08-26).
+**Skipped at collection: 24 → 20 → 12 → 11** (as of step 6, 2026-08-27).
 `conftest.pytest_ignore_collect` skips any file containing `src.services.`, `src.routes.`,
 `src.core.database` or `src.schemas.subscription`. Recovered so far: `test_cost_calculator`,
 `test_credit_service`, `test_gemini_tool_handlers` (11) and `test_space_gates` (26) in the earlier
 pass; then `test_circuit_breaker` (28), `test_tool_normalizer` + `test_stream_normalizer` (66),
 `test_llm_chat_context` (3), `test_chat_tool_arg_enrichment` (5) and `test_cost_tracker` (25) in
-steps 1–4; then `test_end_to_end_routing` (11) and `test_feature_flags` (65) in step 5.
+steps 1–4; then `test_end_to_end_routing` (11) and `test_feature_flags` (65) in step 5; then
+`test_openai_chat_tools` (23) in step 6.
 
-The remaining 12 are **not dead and should not be deleted**:
+The remaining 11 are **not dead and should not be deleted**:
 
-- **2 are tests for the still-unmigrated LLM modules** (§6): `test_openai_chat_tools` (step 6) and
-  `test_llm_agentic_roundtrip` (wants the legacy `GeminiService`; open decision to port or delete).
+- **1 is a test for an LLM module that was deliberately not restored** (§6):
+  `test_llm_agentic_roundtrip` wants the legacy `GeminiService`, which is not on the router path — the
+  adapter replaced it. Open decision to port or delete, unchanged since step 4.
 - **4 are Prisma-era**, asserting Prisma call shapes rather than behaviour, and need rewriting
   rather than repointing: `test_auth` and `test_password_reset` import a `db` global that no
   longer exists; `test_usage_tracking_scope` asserts
@@ -653,12 +741,17 @@ target state for now, not debt to delete, so they are counted here as scope rath
 
 ## 13. Still open, in priority order
 
-1. **Approve or reject migration `014`** (§8) — destroys 15 unreachable rows.
+1. ~~**Approve or reject migration `014`** (§8) — destroys 15 unreachable rows.~~ **Moot: it was
+   already applied.** Verified 2026-08-27, the `Embedding` table does not exist (§8). What remains is
+   a two-line cleanup: delete the now-unmapped `Embedding` model at `knowledge/db_models.py:521` and
+   its mention in that module's docstring.
 2. **Decide on Paystack and referral rewards** (§5) — 31 call sites, deliberately not attempted
    without a payment sandbox.
-3. **The LLM subsystem** (§6) — steps 1–5 done; **step 6 (two adapters + `gemini_embedding`) is
-   next**, then step 7. Six of the 9 test files now run. A turn can reach the model on Gemini, but
-   no turn has been run against a real provider or a real database.
+3. **The LLM subsystem** (§6) — steps 1–6 done; **only step 7 remains**, and it is now just the
+   `FeatureFlagStore`-backed dynamic overrides plus the admin config path, not the service. Eight of
+   the 9 test files run. Five adapters register and cross-provider fallback engages, but **no request
+   has been made to a real provider**, and two configuration gaps mean `EMBEDDING` and `openai:gpt-4o`
+   route to nothing (§6).
 4. **Device-token registration** (§2) — until an endpoint writes `DeviceToken` rows, push
    cannot deliver. Tied to mobile scope.
 5. **The chat subsystem stubs** (§7) — 22 functions. No longer blocked behind item 3; the router

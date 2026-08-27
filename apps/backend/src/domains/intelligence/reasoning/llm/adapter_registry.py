@@ -23,11 +23,15 @@ Three departures from the original, each because it referred to something that n
   admin surface for this is not mounted either, so nothing regresses today.
 - **``CostTracker`` takes a session factory, not a Prisma client.** It also resolves the factory at
   call time, so building the router at import time no longer requires a connected database.
-- **Only the Gemini adapter exists.** ``openai_chat_tools``, ``anthropic_chat_tools`` and
-  ``gemini_embedding`` are step 6 of the migration. Each block stays wrapped in ``try/except`` so a
-  missing adapter logs and is skipped instead of taking the whole registry down — and the router
-  already treats an unregistered ``provider:model`` as a candidate to skip. So OpenAI being listed
-  in ``LLM_ENABLED_PROVIDERS`` and in the fallback chains is currently inert rather than broken.
+- **Adapter construction stays inside ``try/except``.** All four adapter modules exist as of step 6,
+  so the blocks below are no longer guarding against a missing import — they guard against a
+  constructor that raises, typically on a malformed key or a provider SDK that changes its
+  signature. One provider failing to register must not take the other two down with it, and the
+  router already treats an unregistered ``provider:model`` as a candidate to skip.
+
+  Anthropic is a real example of that path today: it is absent from ``LLM_ENABLED_PROVIDERS`` *and*
+  has no API key set, so nothing registers under ``anthropic:*`` even though it appears in both
+  fallback chains. That is inert, not broken.
 """
 
 from __future__ import annotations
@@ -136,22 +140,53 @@ def _build_adapter_registry() -> dict[str, BaseProviderAdapter]:
         except Exception as e:
             logger.warning("Failed to register Gemini adapters: %s", e)
 
-    # --- Gemini embedding, OpenAI and Anthropic adapters ---
-    #
-    # Not registered: `gemini_embedding`, `openai_chat_tools` and `anthropic_chat_tools` are step 6
-    # of the migration and do not exist yet. Recover them with
-    # `git show "4953972^:apps/backend/src/services/llm/<name>.py"`.
-    #
-    # The original wrote each block as a function-local import inside `try/except Exception`, which
-    # degrades correctly but is the pattern `tests/test_local_imports.py` exists to forbid — a
-    # function-local import of a module that is not there is invisible until the line runs, and this
-    # migration has already turned up two of those (`process_chat_message` and
-    # `send_message_with_context`, both absent, both behind a broad `except`). Blocks that cannot
-    # work are therefore left out rather than left in, and step 6 restores them alongside the modules.
-    #
-    # Behaviour is unchanged by their absence: nothing was ever registered under these keys, and
-    # `LLMRouter._select_candidates` skips a `provider:model` with no adapter. So `openai` appearing
-    # in `LLM_ENABLED_PROVIDERS` and in both fallback chains is inert today, not broken.
+        # Gemini embedding adapter — the only thing that makes LlmTask.EMBEDDING resolvable.
+        try:
+            from src.domains.intelligence.reasoning.llm.gemini_embedding import (
+                GeminiEmbeddingAdapter,
+            )
+
+            embedding_adapter = GeminiEmbeddingAdapter(model_id="gemini-embedding-001")
+            registry["gemini:gemini-embedding-001"] = embedding_adapter
+            logger.info("Registered Gemini embedding adapter")
+        except Exception as e:
+            logger.warning("Failed to register Gemini embedding adapter: %s", e)
+
+    # --- OpenAI adapters ---
+    if "openai" in enabled and settings.OPENAI_API_KEY:
+        try:
+            from src.domains.intelligence.reasoning.llm.openai_chat_tools import (
+                OpenAIChatToolsAdapter,
+            )
+
+            openai_models = ["gpt-4o-mini", "gpt-4o"]
+            for model_id in openai_models:
+                adapter = OpenAIChatToolsAdapter(
+                    model=model_id,
+                    api_key=settings.OPENAI_API_KEY,
+                )
+                registry[f"openai:{model_id}"] = adapter
+            logger.info("Registered %d OpenAI adapter(s)", len(openai_models))
+        except Exception as e:
+            logger.warning("Failed to register OpenAI adapters: %s", e)
+
+    # --- Anthropic adapters ---
+    if "anthropic" in enabled and settings.ANTHROPIC_API_KEY:
+        try:
+            from src.domains.intelligence.reasoning.llm.anthropic_chat_tools import (
+                AnthropicChatToolsAdapter,
+            )
+
+            anthropic_models = ["claude-sonnet-4-20250514", "claude-haiku-3-5"]
+            for model_id in anthropic_models:
+                adapter = AnthropicChatToolsAdapter(
+                    model=model_id,
+                    api_key=settings.ANTHROPIC_API_KEY,
+                )
+                registry[f"anthropic:{model_id}"] = adapter
+            logger.info("Registered %d Anthropic adapter(s)", len(anthropic_models))
+        except Exception as e:
+            logger.warning("Failed to register Anthropic adapters: %s", e)
 
     if not registry:
         logger.warning("No LLM adapters registered! Enabled providers: %s", enabled)
