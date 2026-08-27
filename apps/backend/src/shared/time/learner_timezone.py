@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -147,6 +147,32 @@ def to_learner_local(instant: datetime, timezone: LearnerTimezone) -> datetime:
     """
     aware = instant.replace(tzinfo=UTC) if instant.tzinfo is None else instant
     return aware.astimezone(timezone.zone)
+
+
+def local_day_bounds(instant: datetime, timezone: LearnerTimezone) -> tuple[datetime, datetime]:
+    """The UTC instants that bracket the learner's own day containing ``instant``.
+
+    Returned as a half-open pair: midnight local, and the following midnight local, both converted back to
+    UTC. Half-open so consecutive days neither overlap nor leave a gap at the boundary, which a
+    ``23:59:59.999999`` end does both depending on the precision of the column being compared.
+
+    Exists because "today" is a claim about the learner's calendar, and anything counting per-day against a
+    UTC window is counting somebody else's day. A daily notification cap bounded in UTC resets at 01:00 for
+    a learner in Lagos and at 16:00 for one in Los Angeles — so the learner in Los Angeles gets their
+    allowance refilled in the middle of the afternoon and can be messaged twice as much on a working day.
+
+    Built by converting first and then truncating, which is the ordering that matters: truncating a UTC
+    instant to midnight and *then* converting gives Greenwich's midnight expressed in the learner's zone,
+    which is not their midnight.
+    """
+    local = to_learner_local(instant, timezone)
+    start_local = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Stepped as a local wall-clock day, then re-truncated, so a day containing a daylight-saving
+    # transition is still exactly one local day rather than 23 or 25 hours from midnight.
+    end_local = (start_local + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return start_local.astimezone(UTC), end_local.astimezone(UTC)
 
 
 def local_hour(instant: datetime, timezone: LearnerTimezone) -> int:

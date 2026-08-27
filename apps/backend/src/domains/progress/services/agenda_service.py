@@ -32,7 +32,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Literal
 
-from src.shared.time import LearnerTimezone, ensure_utc, resolve_learner_timezone, to_learner_local
+from src.shared.time import (
+    LearnerTimezone,
+    ensure_utc,
+    is_within_quiet_hours,
+    resolve_learner_timezone,
+    to_learner_local,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -310,19 +316,14 @@ def place_pending(
     return placed
 
 
-def _within_quiet_hours(
-    instant: datetime,
-    timezone_: LearnerTimezone,
-    quiet_from: time | None,
-    quiet_to: time | None,
-) -> bool:
-    """Whether an instant falls in the learner's quiet hours, handling a window that crosses midnight."""
-    if quiet_from is None or quiet_to is None:
-        return False
-    local = to_learner_local(instant, timezone_).time()
-    if quiet_from <= quiet_to:
-        return quiet_from <= local < quiet_to
-    return local >= quiet_from or local < quiet_to
+#: Whether an instant falls in the learner's quiet hours, handling a window that crosses midnight.
+#:
+#: **Not a copy — the same function object** the notification path reads, so the two cannot drift.
+#: `notification_service` had its own version that compared the learner's stated `"22:00"` against the
+#: naive UTC clock, so this service would refuse to plan a session at 23:00 Lagos time while that one sent
+#: the same learner a message during it. Moved to `src/shared/time/quiet_hours.py`; the aliasing keeps this
+#: module's call sites and its tests unchanged.
+_within_quiet_hours = is_within_quiet_hours
 
 
 async def get_agenda(
