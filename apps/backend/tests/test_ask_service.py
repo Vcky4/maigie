@@ -380,6 +380,8 @@ class TestTheExtractionInventoryIsHonest:
             "explicit-view gate": "should_render_query_components",
             "skill badges": "build_skill_badges",
             "history formatting": "format_history",
+            "usage reconciliation and pricing": "resolve_usage",
+            "assistant row assembly": "build_assistant_row",
         }
         assert set(ask_service.MOVED_SO_FAR) == set(expected)
         for stage, attribute in expected.items():
@@ -395,3 +397,205 @@ class TestTheExtractionInventoryIsHonest:
             "ask_service.answer now exists. Remove this test, and make sure "
             "STILL_IN_THE_HANDLER reflects what genuinely moved."
         )
+
+
+# ---------------------------------------------------------------------------
+# Usage reconciliation and pricing
+# ---------------------------------------------------------------------------
+
+
+def fake_cost(*, input_tokens, output_tokens, model_name):
+    """Priced per token so a test can tell input from output, unlike a flat rate."""
+    return round(input_tokens * 0.001 + output_tokens * 0.01, 6)
+
+
+def fake_revenue(*, input_tokens, output_tokens, user_tier):
+    multiplier = 2 if user_tier == "FREE" else 1
+    return round((input_tokens + output_tokens) * 0.002 * multiplier, 6)
+
+
+def resolve(usage_info, **overrides):
+    kwargs = {
+        "usage_info": usage_info,
+        "message": "What is entropy?",
+        "response": "Entropy is a measure of disorder.",
+        "context": None,
+        "history": None,
+        "model_name": "gemini-3.5-flash",
+        "user_tier": "FREE",
+        "cost_calculator": fake_cost,
+        "revenue_calculator": fake_revenue,
+    }
+    kwargs.update(overrides)
+    return ask_service.resolve_usage(**kwargs)
+
+
+class TestUsageReconciliation:
+    """What the learner is charged must be what the provider reported, or the same estimate they were
+    checked against — never a third number."""
+
+    def test_reported_counts_are_used_as_given(self):
+        usage = resolve({"input_tokens": 120, "output_tokens": 45})
+        assert (usage.input_tokens, usage.output_tokens) == (120, 45)
+        assert usage.total_tokens == 165
+
+    def test_both_zero_falls_back_to_the_estimate(self):
+        usage = resolve({"input_tokens": 0, "output_tokens": 0})
+        assert usage.input_tokens > 0
+        assert usage.output_tokens > 0
+
+    def test_the_fallback_is_the_same_arithmetic_as_the_preflight_check(self):
+        """The defect this guards: two copies of the estimate, so a learner is checked against one
+        number and billed on another."""
+        message = "What is entropy?"
+        usage = resolve({"input_tokens": 0, "output_tokens": 0}, message=message)
+        assert usage.input_tokens == ask_service.estimate_prompt_tokens(
+            message=message, context=None, history=None
+        )
+
+    def test_a_missing_usage_dict_falls_back_rather_than_raising(self):
+        usage = resolve(None)
+        assert usage.input_tokens > 0
+
+    def test_a_real_zero_output_is_not_overwritten(self):
+        """A provider reporting input and no output is reporting a real empty reply. Estimating over it
+        would invent output that did not happen."""
+        usage = resolve({"input_tokens": 99, "output_tokens": 0})
+        assert (usage.input_tokens, usage.output_tokens) == (99, 0)
+
+    def test_cost_and_revenue_come_from_the_injected_calculators(self):
+        usage = resolve({"input_tokens": 100, "output_tokens": 10})
+        assert usage.cost_usd == fake_cost(
+            input_tokens=100, output_tokens=10, model_name="gemini-3.5-flash"
+        )
+        assert usage.revenue_usd == fake_revenue(
+            input_tokens=100, output_tokens=10, user_tier="FREE"
+        )
+
+    def test_the_tier_reaches_the_revenue_calculator(self):
+        free = resolve({"input_tokens": 100, "output_tokens": 10}, user_tier="FREE")
+        paid = resolve({"input_tokens": 100, "output_tokens": 10}, user_tier="PREMIUM_MONTHLY")
+        assert free.revenue_usd != paid.revenue_usd
+
+    def test_the_model_name_is_carried_through(self):
+        usage = resolve({"input_tokens": 1, "output_tokens": 1}, model_name="openai:gpt-4o-mini")
+        assert usage.model_name == "openai:gpt-4o-mini"
+
+
+# ---------------------------------------------------------------------------
+# Assistant row assembly
+# ---------------------------------------------------------------------------
+
+
+def a_usage(**overrides):
+    kwargs = {
+        "model_name": "gemini-3.5-flash",
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "cost_usd": 0.5,
+        "revenue_usd": 1.0,
+    }
+    kwargs.update(overrides)
+    return ask_service.AskUsage(**kwargs)
+
+
+def a_row(**overrides):
+    kwargs = {
+        "session_id": "sess_1",
+        "user_id": "user_1",
+        "content": "Entropy is a measure of disorder.",
+        "usage": a_usage(),
+        "ask_mode": ask_service.ASK_MODE_WEBSOCKET,
+    }
+    kwargs.update(overrides)
+    return ask_service.build_assistant_row(**kwargs)
+
+
+class TestAssistantRowAssembly:
+    def test_the_required_columns_are_always_present(self):
+        row = a_row()
+        for key in (
+            "sessionId",
+            "userId",
+            "role",
+            "content",
+            "tokenCount",
+            "inputTokens",
+            "outputTokens",
+            "modelName",
+            "costUsd",
+            "revenueUsd",
+            "askMode",
+        ):
+            assert key in row, f"{key} missing"
+        assert row["role"] == "ASSISTANT"
+
+    def test_token_count_is_the_sum_and_not_recomputed_from_content(self):
+        row = a_row(usage=a_usage(input_tokens=7, output_tokens=11))
+        assert row["tokenCount"] == 18
+
+    def test_ask_mode_is_written(self):
+        """The column landed with migration 049 and had no writer, so per-surface metering was
+        impossible — which is the whole reason it exists."""
+        assert a_row()["askMode"] == "ws"
+        assert a_row(ask_mode=ask_service.ASK_MODE_HTTP)["askMode"] == "http"
+
+    def test_the_two_ask_modes_are_distinct(self):
+        assert ask_service.ASK_MODE_WEBSOCKET != ask_service.ASK_MODE_HTTP
+
+    def test_optional_keys_are_omitted_rather_than_set_to_none(self):
+        """The repository maps what it is given: a key present with `None` overwrites, an absent key
+        leaves the column alone."""
+        row = a_row()
+        for key in ("replyToMessageId", "componentData", "suggestionText", "citations", "truncated"):
+            assert key not in row, f"{key} should be omitted when not supplied"
+
+    def test_components_are_included_when_present(self):
+        row = a_row(components=[{"type": "course_card"}])
+        assert row["componentData"] == [{"type": "course_card"}]
+
+    def test_empty_components_are_omitted(self):
+        assert "componentData" not in a_row(components=[])
+
+    def test_suggestion_text_is_included_when_present(self):
+        assert a_row(suggestion_text="Try a quiz next.")["suggestionText"] == "Try a quiz next."
+
+    def test_reply_target_is_included_when_present(self):
+        assert a_row(reply_to_message_id="msg_9")["replyToMessageId"] == "msg_9"
+
+    def test_review_item_id_is_always_carried_even_when_none(self):
+        """Review threads stay isolated, so this column is set explicitly rather than omitted."""
+        assert a_row()["reviewItemId"] is None
+        assert a_row(review_item_id="rev_3")["reviewItemId"] == "rev_3"
+
+    def test_absent_citations_and_empty_citations_are_different_rows(self):
+        """`None` means grounding was not attempted; `[]` means it ran and found nothing. Collapsing
+        them would make every historical row look like a failed search."""
+        assert "citations" not in a_row(citations=None)
+        assert a_row(citations=[])["citations"] == []
+
+    def test_citations_are_included_when_present(self):
+        cites = [{"url": "https://example.org", "title": "Entropy"}]
+        assert a_row(citations=cites)["citations"] == cites
+
+    def test_truncated_is_only_written_when_true(self):
+        """The column defaults to false in the database, so writing false is noise; writing true is
+        the only thing that carries information."""
+        assert "truncated" not in a_row(truncated=False)
+        assert a_row(truncated=True)["truncated"] is True
+
+    def test_every_key_is_one_the_repository_allows(self):
+        """`map_fields` raises on an unknown key, so a typo here is a write that fails at runtime.
+        Checked against the real map rather than a copy of it."""
+        from src.domains.intelligence.repository import IntelligenceRepository
+
+        allowed = set(IntelligenceRepository._MESSAGE_MAP)
+        row = a_row(
+            components=[{"type": "x"}],
+            suggestion_text="s",
+            reply_to_message_id="m",
+            citations=[],
+            truncated=True,
+            review_item_id="r",
+        )
+        assert set(row) <= allowed, f"not in _MESSAGE_MAP: {set(row) - allowed}"

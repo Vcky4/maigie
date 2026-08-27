@@ -37,6 +37,8 @@ MOVED_SO_FAR = (
     "explicit-view gate",
     "skill badges",
     "history formatting",
+    "usage reconciliation and pricing",
+    "assistant row assembly",
 )
 STILL_IN_THE_HANDLER = (
     "session resolution",
@@ -45,9 +47,8 @@ STILL_IN_THE_HANDLER = (
     "memory context",
     "generation",
     "tool/action loop",
-    "persistence",
+    "the persistence write itself",
     "credit check and consumption",
-    "cost recording",
 )
 
 
@@ -318,3 +319,141 @@ def format_history(records: list[Any]) -> list[dict[str, Any]]:
             }
         )
     return history
+
+
+# ===========================================================================
+# Usage reconciliation and cost
+# ===========================================================================
+
+#: What produced a turn, written to `ChatMessage.askMode` (migration 049).
+#:
+#: The column exists so that "Ask Maigie was unmetered for its entire life" (plan §5.4) cannot recur
+#: *per surface* without showing up. An aggregate cost figure hides one surface bypassing accounting;
+#: a per-row mode does not. Until this, nothing wrote the column.
+ASK_MODE_WEBSOCKET = "ws"
+ASK_MODE_HTTP = "http"
+
+
+def resolve_usage(
+    *,
+    usage_info: dict[str, Any] | None,
+    message: str,
+    response: str,
+    context: Any = None,
+    history: Any = None,
+    model_name: str,
+    user_tier: str,
+    cost_calculator: Any,
+    revenue_calculator: Any,
+) -> AskUsage:
+    """Reconcile what the provider reported against what we estimated, and price it.
+
+    **The fallback is the point.** Providers do not always return token counts, and when they do not,
+    the turn still has to be charged. Charging it needs a number, and the only available one is the
+    estimate — so the estimate has to be *the same* estimate the pre-flight credit check used, computed
+    by the same function. It was two copies of the arithmetic before, in two places, which is a
+    divergence that shows up as a learner being checked against one number and billed on another.
+
+    Falls back only when **both** counts are zero. A provider reporting input tokens and no output
+    tokens is reporting a real zero-output reply, not an absent measurement, and overwriting that with
+    an estimate would invent output that did not happen.
+
+    `cost_calculator` and `revenue_calculator` are injected for the same reason `build_skill_badges`
+    takes its badge maps: it keeps this testable without importing the billing domain into a module the
+    handler imports, and without a live pricing table in the test.
+    """
+    reported_input = (usage_info or {}).get("input_tokens", 0) or 0
+    reported_output = (usage_info or {}).get("output_tokens", 0) or 0
+
+    if reported_input == 0 and reported_output == 0:
+        input_tokens = estimate_prompt_tokens(message=message, context=context, history=history)
+        output_tokens = estimate_prompt_tokens(message=response)
+        logger.debug(
+            "Provider reported no token counts; falling back to the pre-flight estimate "
+            "(input=%d output=%d)",
+            input_tokens,
+            output_tokens,
+        )
+    else:
+        input_tokens = reported_input
+        output_tokens = reported_output
+
+    return AskUsage(
+        model_name=model_name,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost_calculator(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            model_name=model_name,
+        ),
+        revenue_usd=revenue_calculator(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            user_tier=user_tier,
+        ),
+    )
+
+
+# ===========================================================================
+# Persistence
+# ===========================================================================
+
+
+def build_assistant_row(
+    *,
+    session_id: str,
+    user_id: str,
+    content: str,
+    usage: AskUsage,
+    ask_mode: str,
+    review_item_id: str | None = None,
+    reply_to_message_id: str | None = None,
+    components: list[dict[str, Any]] | None = None,
+    suggestion_text: str | None = None,
+    citations: list[dict[str, Any]] | None = None,
+    truncated: bool = False,
+) -> dict[str, Any]:
+    """Build the `ChatMessage` row for an assistant turn, in the repository's wire shape.
+
+    Returned rather than written, so the caller owns the transaction and this stays testable without a
+    database. Keys are the camelCase names `intelligence_repo._MESSAGE_MAP` allows; that map raises on
+    an unknown key, so a typo here fails loudly instead of silently dropping a column.
+
+    **Optional keys are omitted rather than set to `None`,** and the difference is not cosmetic. The
+    repository maps what it is given; a key present with `None` overwrites, a key absent leaves the
+    column at its default. `citations` in particular distinguishes three states — absent means grounding
+    was not attempted, `[]` means it was attempted and found nothing, and a list means it was cited —
+    and passing `None` explicitly would collapse the first two.
+
+    **This function does not decide whether a turn is worth persisting.** A failed generation must not
+    reach it at all; the handler's error branches return before this point, and
+    `tests/test_chat_ws_frames.py::TestAFailedGenerationIsNotAnAnswer` is what holds that.
+    """
+    row: dict[str, Any] = {
+        "sessionId": session_id,
+        "userId": user_id,
+        "reviewItemId": review_item_id,
+        "role": "ASSISTANT",
+        "content": content,
+        "tokenCount": usage.total_tokens,
+        "inputTokens": usage.input_tokens,
+        "outputTokens": usage.output_tokens,
+        "modelName": usage.model_name,
+        "costUsd": usage.cost_usd,
+        "revenueUsd": usage.revenue_usd,
+        "askMode": ask_mode,
+    }
+
+    if reply_to_message_id:
+        row["replyToMessageId"] = reply_to_message_id
+    if components:
+        row["componentData"] = components
+    if suggestion_text:
+        row["suggestionText"] = suggestion_text
+    if citations is not None:
+        row["citations"] = citations
+    if truncated:
+        row["truncated"] = True
+
+    return row

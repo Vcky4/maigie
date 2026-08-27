@@ -1808,54 +1808,39 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 # 9. Clean response text
                 clean_response = response_text.strip()
 
-                # 11. Calculate actual token usage and consume credits
-                # Use actual token counts from API
-                actual_input_tokens = usage_info.get("input_tokens", 0)
-                actual_output_tokens = usage_info.get("output_tokens", 0)
-
-                # Fall back to the estimate when the provider reported no counts. Same arithmetic as the
-                # pre-flight check, via `ask_service`, so the number a learner is charged cannot drift
-                # from the number they were checked against — they were two copies of it before.
-                if actual_input_tokens == 0 and actual_output_tokens == 0:
-                    actual_input_tokens = ask_service.estimate_prompt_tokens(
-                        message=llm_user_text,
-                        context=enriched_context,
-                        history=formatted_history,
-                    )
-                    actual_output_tokens = ask_service.estimate_prompt_tokens(
-                        message=clean_response
-                    )
-
-                actual_total_tokens = actual_input_tokens + actual_output_tokens
+                # 11. Reconcile token usage, price it, and consume credits.
+                #
+                # Reconciliation and pricing are `ask_service.resolve_usage`; the estimate fallback is
+                # the same function the pre-flight check used, so a learner cannot be checked against
+                # one number and charged on another. See its docstring for why the fallback triggers
+                # only when *both* counts are zero.
+                usage = ask_service.resolve_usage(
+                    usage_info=usage_info,
+                    message=llm_user_text,
+                    response=clean_response,
+                    context=enriched_context,
+                    history=formatted_history,
+                    model_name=usage_info.get(
+                        "model_name", default_model_for(LlmTask.CHAT_TOOLS_USAGE_FALLBACK)
+                    ),
+                    user_tier=str(user_obj.tier) if user_obj.tier else "FREE",
+                    cost_calculator=calculate_ai_cost,
+                    revenue_calculator=calculate_revenue,
+                )
 
                 # Consume credits based on actual token usage
                 credit_result = None
                 try:
                     credit_result = await consume_credits(
                         user_obj,
-                        actual_total_tokens,
+                        usage.total_tokens,
                         operation="chat_message",
                         db_client=None,
                         space_id=circle_credit_id,
                     )
                 except SubscriptionLimitError as e:
                     # This shouldn't happen if check above worked, but handle gracefully
-                    print(f"Warning: Credit consumption failed: {e}")
-
-                # Calculate costs and revenue
-                model_name = usage_info.get(
-                    "model_name", default_model_for(LlmTask.CHAT_TOOLS_USAGE_FALLBACK)
-                )
-                cost_usd = calculate_ai_cost(
-                    input_tokens=actual_input_tokens,
-                    output_tokens=actual_output_tokens,
-                    model_name=model_name,
-                )
-                revenue_usd = calculate_revenue(
-                    input_tokens=actual_input_tokens,
-                    output_tokens=actual_output_tokens,
-                    user_tier=str(user_obj.tier) if user_obj.tier else "FREE",
-                )
+                    logger.warning("Credit consumption failed after a completed turn: %s", e)
 
                 # 12. Save AI Message to DB (with component data for persistence)
                 assistant_review_item_id = None
@@ -1881,25 +1866,23 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     query_badge=_query_type_to_skill_badge,
                 )
 
-                create_data: dict = {
-                    "sessionId": session.id,
-                    "userId": user.id,
-                    "reviewItemId": assistant_review_item_id,
-                    "role": "ASSISTANT",
-                    "content": main_content,
-                    "tokenCount": actual_total_tokens,
-                    "inputTokens": actual_input_tokens,
-                    "outputTokens": actual_output_tokens,
-                    "modelName": model_name,
-                    "costUsd": cost_usd,
-                    "revenueUsd": revenue_usd,
-                }
-                if ai_reply_target_id:
-                    create_data["replyToMessageId"] = ai_reply_target_id
-                if all_components:
-                    create_data["componentData"] = all_components
-                if suggestion_text:
-                    create_data["suggestionText"] = suggestion_text
+                # `askMode` gets its first writer here. The column landed with migration 049 and nothing
+                # set it, so per-surface metering was still impossible — which is the gap it exists to
+                # close. `citations` is deliberately not passed: on this path generation goes through the
+                # router (plan Decision F, amended), and no adapter returns grounding sources, so
+                # "grounding was not attempted" is the truthful state and an absent key is how the column
+                # says it.
+                create_data = ask_service.build_assistant_row(
+                    session_id=session.id,
+                    user_id=user.id,
+                    content=main_content,
+                    usage=usage,
+                    ask_mode=ask_service.ASK_MODE_WEBSOCKET,
+                    review_item_id=assistant_review_item_id,
+                    reply_to_message_id=ai_reply_target_id,
+                    components=all_components,
+                    suggestion_text=suggestion_text,
+                )
 
                 assistant_message = await intelligence_repo.create_message(data=create_data)
                 assistant_reply_preview = _serialize_reply_preview(
