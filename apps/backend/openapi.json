@@ -10924,6 +10924,7 @@
                 "enum": [
                   "SETUP",
                   "IN_PROGRESS",
+                  "AWAITING_REVIEW",
                   "COMPLETED"
                 ],
                 "type": "string"
@@ -27122,6 +27123,7 @@
                   "enum": [
                     "SETUP",
                     "IN_PROGRESS",
+                    "AWAITING_REVIEW",
                     "COMPLETED"
                   ],
                   "type": "string"

@@ -46,6 +46,22 @@ class ProgressRepository:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
+    async def list_goals_for_prep(self, prep_id: str) -> list[Goal]:
+        """Every goal attached to one preparation, whatever its status.
+
+        Unscoped by learner on purpose: `Goal.prepId` is only ever set from a preparation the learner
+        owns, and the caller — `prep_outcome_service` — has already loaded that preparation through a
+        user-scoped read. It filters on `userId` itself rather than trusting that, which is belt and
+        braces on a join that cannot currently cross learners.
+
+        All statuses, because the caller needs to know a goal is already `COMPLETED` or `ARCHIVED` rather
+        than resolving it a second time.
+        """
+        async with await self._session() as session:
+            return list(
+                (await session.execute(select(Goal).where(Goal.prep_id == prep_id))).scalars().all()
+            )
+
     async def list_goals(
         self,
         user_id: str,

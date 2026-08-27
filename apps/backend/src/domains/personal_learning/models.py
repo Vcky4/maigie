@@ -953,8 +953,20 @@ PreparationType = Literal[
 ]
 
 # The only values the service ever writes. `SETUP` on create, `IN_PROGRESS` once
-# material is uploaded, `COMPLETED` on completion or when the target date passes.
-PreparationStatus = Literal["SETUP", "IN_PROGRESS", "COMPLETED"]
+# material is uploaded, `AWAITING_REVIEW` once the exam date has passed, and
+# `COMPLETED` only when the learner has said how it went.
+#
+# `AWAITING_REVIEW` replaced a date-based flip straight to `COMPLETED`, which
+# asserted an outcome nobody had recorded — a learner who missed an exam they were
+# 30% ready for got a preparation marked finished. Waiting for an answer is neither
+# finished nor overdue, and it needed a name of its own to be either.
+PreparationStatus = Literal["SETUP", "IN_PROGRESS", "AWAITING_REVIEW", "COMPLETED"]
+
+#: What the learner did about the sitting. Three of the four are not failure.
+#:
+#: `postponed` is the only one that legitimately produces a new exam date, and it is
+#: legitimate because the learner said so rather than because anything inferred it.
+PrepAttendance = Literal["sat", "missed", "postponed", "cancelled"]
 
 #: Phases a quiz session passes through while it is `GENERATING`. Typed rather than a
 #: bare string so the client gets a closed set to switch on: a wait screen that has to
@@ -1510,6 +1522,98 @@ class PrepDetailResponse(PrepSummaryResponse):
     days_until_exam: int | None = None
     progress: PrepProgressSummary
     focus: PrepFocusRecommendation | None = None
+
+
+# ===========================================================================
+# Post-exam review
+# ===========================================================================
+
+
+class PrepOutcomeRequest(CamelModel):
+    """How the sitting went, as the learner reports it.
+
+    **Two ratings, and they are different questions.** `experienceRating` is how the
+    exam went; `preparationRating` is how well the preparation served them. Someone can
+    be well prepared and have a bad day, or scrape through badly prepared — and it is
+    the second that says anything about us. Collapsing them would make both useless.
+
+    Both are optional, because a learner who only wants to say "I missed it" has told us
+    something worth recording and should not be blocked on rating anything.
+    """
+
+    attended: PrepAttendance
+    #: 1-5, five points so "about as expected" is expressible. Refused when the learner
+    #: did not sit the exam — there is no experience of an exam nobody took, and storing
+    #: one would be a rating of nothing.
+    experience_rating: int | None = Field(default=None, ge=1, le=5)
+    preparation_rating: int | None = Field(default=None, ge=1, le=5)
+    reflection: str | None = Field(default=None, max_length=2000)
+    #: Required when `attended` is `postponed`, refused otherwise. This is the one path
+    #: on which an exam date moves, and it moves because the learner said it did.
+    postponed_to: datetime | None = None
+
+
+class PrepResultRequest(CamelModel):
+    """The result, recorded whenever it arrives.
+
+    Separate from `PrepOutcomeRequest` because results arrive weeks later. Requiring it
+    up front would either block the review or invite a made-up number.
+    """
+
+    #: Deliberately unconstrained in range: a mark can be out of 100, a GPA out of 4, or
+    #: a raw score out of 900. `resultScale` is what makes it interpretable.
+    result_value: float
+    #: What the value is out of, or what it means — "100", "GPA", "pass/fail". Not a
+    #: closed set, because grading scales are not.
+    result_scale: str | None = Field(default=None, max_length=40)
+
+
+class PrepOutcomeResponse(CamelModel):
+    """One recorded sitting.
+
+    `examDate` is the date this answer is *about*, which is not necessarily the
+    preparation's current `examDate`: a postponed sitting moves that column and this row
+    keeps the one it refers to.
+
+    The readiness figures are what was believed on the day the learner answered. They are
+    never rewritten — if the readiness formula is later recalibrated, that is a new
+    interpretation rather than a correction of this record.
+    """
+
+    id: str
+    prep_id: str
+    exam_date: datetime
+    attended: str
+    experience_rating: int | None = None
+    preparation_rating: int | None = None
+    reflection: str | None = None
+    result_value: float | None = None
+    result_scale: str | None = None
+    result_recorded_at: datetime | None = None
+    answered_at: datetime
+    readiness_percent: float | None = None
+    average_mastery_percent: float | None = None
+    topics_total: int | None = None
+    topics_strong: int | None = None
+    target_readiness: int | None = None
+
+
+class PrepReviewState(CamelModel):
+    """Whether this preparation is waiting on an answer, and what has been asked.
+
+    Published so a client can render the ask without inferring it from `status` plus a
+    date comparison — two clients inferring the same thing separately is how they come to
+    disagree about it.
+    """
+
+    #: True when the exam date has passed, nothing has been answered, and the learner has
+    #: not declined. The one condition under which a client should show the review.
+    awaiting: bool
+    asked_at: datetime | None = None
+    reminders_sent: int = 0
+    declined_at: datetime | None = None
+    #: The recorded answer for the current sitting, when there is one.
+    outcome: PrepOutcomeResponse | None = None
 
 
 # ===========================================================================

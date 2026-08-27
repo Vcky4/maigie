@@ -44,6 +44,7 @@ from .db_models import (
     Notification,
     PracticeObservation,
     PrepMaterial,
+    PrepOutcome,
     PrepQuestion,
     PrepQuestionFlag,
     PrepReadinessSnapshot,
@@ -3100,6 +3101,121 @@ class PersonalLearningRepository:
             await s.flush()
             await s.refresh(snapshot)
             return snapshot
+
+    # -----------------------------------------------------------------------
+    # Post-exam outcomes
+    # -----------------------------------------------------------------------
+
+    async def upsert_prep_outcome(
+        self,
+        *,
+        prep_id: str,
+        exam_date: datetime,
+        values: dict[str, Any],
+        session: AsyncSession | None = None,
+    ) -> PrepOutcome:
+        """Record how one sitting went.
+
+        Idempotent on ``(prepId, examDate)``, matching `upsert_readiness_snapshot`: a retried submit, or
+        a learner correcting their answer, updates the row rather than recording the exam twice. A
+        postponed preparation's next sitting carries a different `examDate` and so gets its own row,
+        which is the whole reason this is a table.
+        """
+        async with self._use_session(session) as s:
+            existing = (
+                await s.execute(
+                    select(PrepOutcome).where(
+                        PrepOutcome.prep_id == prep_id,
+                        PrepOutcome.exam_date == exam_date,
+                    )
+                )
+            ).scalar_one_or_none()
+
+            if existing is not None:
+                for field, value in values.items():
+                    setattr(existing, field, value)
+                await s.flush()
+                await s.refresh(existing)
+                return existing
+
+            outcome = PrepOutcome(prep_id=prep_id, exam_date=exam_date, **values)
+            s.add(outcome)
+            await s.flush()
+            await s.refresh(outcome)
+            return outcome
+
+    async def find_prep_outcome(
+        self,
+        *,
+        prep_id: str,
+        exam_date: datetime,
+        session: AsyncSession | None = None,
+    ) -> PrepOutcome | None:
+        """The recorded answer for one sitting, if there is one."""
+        async with self._read_session(session) as s:
+            return (
+                await s.execute(
+                    select(PrepOutcome).where(
+                        PrepOutcome.prep_id == prep_id,
+                        PrepOutcome.exam_date == exam_date,
+                    )
+                )
+            ).scalar_one_or_none()
+
+    async def list_prep_outcomes(
+        self, prep_id: str, *, session: AsyncSession | None = None
+    ) -> list[PrepOutcome]:
+        """Every recorded sitting of this preparation, oldest first.
+
+        More than one is the normal case for a postponed exam, and the order is the order they were sat.
+        """
+        async with self._read_session(session) as s:
+            return list(
+                (
+                    await s.execute(
+                        select(PrepOutcome)
+                        .where(PrepOutcome.prep_id == prep_id)
+                        .order_by(PrepOutcome.exam_date.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+    async def list_preps_awaiting_review(
+        self,
+        *,
+        before: datetime,
+        limit: int = 500,
+        session: AsyncSession | None = None,
+    ) -> list[ExamPrep]:
+        """Preparations whose exam has passed and which are still waiting on an answer.
+
+        Bounded and ordered oldest-exam-first, so a backlog is worked through in the order the exams
+        happened rather than by id.
+
+        Deliberately **not** filtered on `reviewAskedAt`: this is the set that should be *in* the
+        awaiting state, and the caller decides separately whether to ask again. Declining is respected
+        here rather than in the caller, because a learner who said no should not appear in a list of
+        people to ask.
+        """
+        async with self._read_session(session) as s:
+            return list(
+                (
+                    await s.execute(
+                        select(ExamPrep)
+                        .where(
+                            ExamPrep.exam_date < before,
+                            ExamPrep.status.notin_(("COMPLETED",)),
+                            ExamPrep.review_declined_at.is_(None),
+                        )
+                        .order_by(ExamPrep.exam_date.asc())
+                        .limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
 
     async def list_readiness_snapshots(
         self,

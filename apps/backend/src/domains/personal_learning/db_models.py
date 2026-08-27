@@ -211,7 +211,33 @@ class ExamPrep(Base, TimestampMixin):
     target_readiness: Mapped[int | None] = mapped_column("targetReadiness", Integer, nullable=True)
     exam_date: Mapped[datetime] = mapped_column("examDate", DateTime(timezone=True), nullable=False)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
+    #: `SETUP` | `IN_PROGRESS` | `AWAITING_REVIEW` | `COMPLETED`.
+    #:
+    #: `AWAITING_REVIEW` means the exam date has passed and the learner has not yet said how it went. It
+    #: exists because the two states it sits between were being conflated: a preparation whose date had
+    #: passed was set straight to `COMPLETED` by a nightly sweep, which asserted an outcome nobody had
+    #: recorded. Waiting is not finished, and it is not overdue either — it is a question outstanding.
+    #: `PrepOutcome` is the answer, and only that answer moves this to `COMPLETED`.
     status: Mapped[str] = mapped_column(String, default="SETUP", server_default="SETUP")
+
+    # --- The post-exam ask, and its budget ---
+    #
+    #: When the learner was first asked how the exam went. Null until asked.
+    review_asked_at: Mapped[datetime | None] = mapped_column(
+        "reviewAskedAt", DateTime(timezone=True), nullable=True
+    )
+    #: How many reminders have been sent. Bounded, because this is a message arriving after a possibly
+    #: bad experience and the honest number of times to ask is small. Reset when a postponed
+    #: preparation gets a new date, since that is a new sitting and a new question.
+    review_reminders_sent: Mapped[int] = mapped_column(
+        "reviewRemindersSent", Integer, nullable=False, default=0, server_default="0"
+    )
+    #: When the learner said they did not want to answer. **A dismissal is an answer**, so this stops the
+    #: asking permanently for this sitting — distinct from having never been asked, and distinct from
+    #: having answered.
+    review_declined_at: Mapped[datetime | None] = mapped_column(
+        "reviewDeclinedAt", DateTime(timezone=True), nullable=True
+    )
 
     space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
 
@@ -1067,6 +1093,128 @@ class PrepReadinessSnapshot(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<PrepReadinessSnapshot prep={self.prep_id} on={self.captured_on}>"
+
+
+# ---------------------------------------------------------------------------
+# PrepOutcome
+# ---------------------------------------------------------------------------
+
+
+class PrepOutcome(Base, TimestampMixin):
+    """How one sitting of a preparation actually went, in the learner's own words.
+
+    **This is what completes a preparation.** Before it, the only completion path was a beat task that
+    set `status = COMPLETED` for every preparation whose `examDate` had passed — so a learner who was
+    30 percent ready for an exam they missed got a preparation recorded as finished. A clock is not an
+    outcome: the date passing says the exam happened, not that they sat it, not that they were ready,
+    and not that it went well. The only party who knows is the learner, and nothing had ever asked.
+
+    **A row rather than columns on `ExamPrep`.** A postponed exam is a second sitting of the same
+    preparation and produces a second outcome; columns would overwrite the first, which is the one piece
+    of history this table exists to keep. `examDate` is carried here for that reason — it records *which*
+    sitting the answer is about, and the unique constraint on `(prepId, examDate)` makes the write
+    idempotent per sitting.
+
+    **Two ratings, deliberately separate.** `experienceRating` is how the exam went; `preparationRating`
+    is how well the preparation served them. A learner can be well prepared and still have a bad day, or
+    scrape through badly prepared. Collapsing the two would make every signal derived from them useless
+    — and it is `preparationRating` that says anything about us.
+
+    **The readiness figures are snapshotted, not looked up later.** `PrepReadinessSnapshot` already holds
+    the daily trajectory and these are recoverable from it, but copying them makes the calibration
+    question — did our readiness figure predict anything? — a single-table query, and immune to the
+    snapshot being pruned. They are what was believed on the day, and are never rewritten with hindsight.
+
+    Nothing here is interpreted on write. The rating is a fact and goes in a row; any conclusion drawn
+    from it is derived on read, the same discipline `goal_metrics.derived_progress` follows.
+    """
+
+    __tablename__ = "PrepOutcome"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    prep_id: Mapped[str] = mapped_column(
+        "prepId", String, ForeignKey("ExamPrep.id", ondelete="CASCADE"), index=True
+    )
+    #: Denormalised from `ExamPrep.userId` so authorisation is one predicate and needs no join.
+    #: `GoalProgressSnapshot.userId` carries the same duplication for the same reason.
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    #: Which sitting this answers for. Copied from `ExamPrep.examDate` at the moment of the answer,
+    #: because a postponed preparation moves that column and this row must keep the date it refers to.
+    exam_date: Mapped[datetime] = mapped_column("examDate", DateTime(timezone=True), nullable=False)
+    #: `sat` | `missed` | `postponed` | `cancelled`. Three of the four are not failure, and the
+    #: distinction matters: a postponed exam is the one case where a new date is legitimate, and it is
+    #: legitimate because the learner said so rather than because anything inferred it.
+    attended: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: How the exam went, 1-5. Null when they did not sit it — there is no experience of an exam nobody
+    #: took, and `0` would be a score.
+    experience_rating: Mapped[int | None] = mapped_column(
+        "experienceRating", Integer, nullable=True
+    )
+    #: How well the preparation served them, 1-5. Five points, so "about as expected" is expressible;
+    #: the same scale as `experienceRating` so the two can be compared.
+    preparation_rating: Mapped[int | None] = mapped_column(
+        "preparationRating", Integer, nullable=True
+    )
+    #: The learner's own words. The scale is what correlates; this is where the actual reason lives, and
+    #: it cannot be inferred from anything else on the row.
+    reflection: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The result, when they have it — often weeks later, which is why it is a separate nullable write
+    #: rather than a required field on the first answer.
+    result_value: Mapped[float | None] = mapped_column("resultValue", Float, nullable=True)
+    #: What `resultValue` is out of, or what it means — "100", "GPA", "pass/fail". Stored because a bare
+    #: number is uninterpretable, and grading scales are not a closed set.
+    result_scale: Mapped[str | None] = mapped_column("resultScale", String, nullable=True)
+    result_recorded_at: Mapped[datetime | None] = mapped_column(
+        "resultRecordedAt", DateTime(timezone=True), nullable=True
+    )
+    answered_at: Mapped[datetime] = mapped_column(
+        "answeredAt", DateTime(timezone=True), nullable=False
+    )
+
+    # --- What was believed on the day, kept so the belief can be scored later ---
+    #
+    #: `topicsStrong / topicsTotal` as of the answer, the headline readiness figure. Null when there was
+    #: nothing to measure — never `0`, which would claim a measured absence of readiness.
+    readiness_percent: Mapped[float | None] = mapped_column(
+        "readinessPercent", Float, nullable=True
+    )
+    average_mastery_percent: Mapped[float | None] = mapped_column(
+        "averageMasteryPercent", Float, nullable=True
+    )
+    topics_total: Mapped[int | None] = mapped_column("topicsTotal", Integer, nullable=True)
+    topics_strong: Mapped[int | None] = mapped_column("topicsStrong", Integer, nullable=True)
+    #: The learner's stated target at the time, so "did they reach what they were aiming at" stays
+    #: answerable after they edit the target.
+    target_readiness: Mapped[int | None] = mapped_column("targetReadiness", Integer, nullable=True)
+
+    __table_args__ = (
+        # One answer per sitting. A retried submit updates rather than recording the exam twice, and a
+        # postponed preparation's second sitting has a different `examDate` so it gets its own row.
+        UniqueConstraint("prepId", "examDate", name="PrepOutcome_prepId_examDate_key"),
+        Index("PrepOutcome_userId_answeredAt_idx", "userId", "answeredAt"),
+        # A closed set in the database as well as in Pydantic. `Reflection.type` is the precedent, and
+        # it is there because an unconstrained String let a task write `"WEEKLY"` while the service
+        # branched on `"weekly"` for months.
+        CheckConstraint(
+            "attended IN ('sat', 'missed', 'postponed', 'cancelled')",
+            name="PrepOutcome_attended_check",
+        ),
+        CheckConstraint(
+            '"experienceRating" IS NULL OR ("experienceRating" BETWEEN 1 AND 5)',
+            name="PrepOutcome_experienceRating_check",
+        ),
+        CheckConstraint(
+            '"preparationRating" IS NULL OR ("preparationRating" BETWEEN 1 AND 5)',
+            name="PrepOutcome_preparationRating_check",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PrepOutcome prep={self.prep_id} attended={self.attended}>"
 
 
 # ---------------------------------------------------------------------------
