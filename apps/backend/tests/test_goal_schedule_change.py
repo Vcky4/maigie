@@ -114,8 +114,8 @@ class TestDateAuthority:
 # ===========================================================================
 
 
-def _change(previous, new) -> tuple:
-    return ("goal-1", previous, new)
+def _change(previous, new, reason="learner_edited") -> tuple:
+    return ("goal-1", previous, new, reason)
 
 
 class TestDeriveScheduleHistory:
@@ -207,11 +207,46 @@ class TestDeriveScheduleHistory:
         assert history["goal-1"].extended_count == 1
 
     @pytest.mark.asyncio
+    async def test_the_systems_own_extensions_are_counted_separately(self):
+        """The distinction the ladder's extension budget rests on. Conflating the two would either spend
+        a learner's budget on their own re-planning, or let the system extend indefinitely."""
+        rows = [
+            _change(NOW, NOW + timedelta(days=7), "learner_edited"),
+            _change(NOW + timedelta(days=7), NOW + timedelta(days=21), "system_extended"),
+            _change(NOW + timedelta(days=21), NOW + timedelta(days=30), "system_extended"),
+            _change(NOW + timedelta(days=30), NOW + timedelta(days=40), "plan_regenerated"),
+        ]
+        with patch.object(goal_metrics, "get_session_factory", lambda: lambda: _rows_session(rows)):
+            history = await goal_metrics.derive_schedule_history(["goal-1"])
+
+        assert history["goal-1"].extended_count == 4
+        assert history["goal-1"].system_extended_count == 2
+
+    @pytest.mark.asyncio
+    async def test_a_learners_own_edit_never_counts_against_the_system(self):
+        rows = [_change(NOW, NOW + timedelta(days=30), "learner_edited")]
+        with patch.object(goal_metrics, "get_session_factory", lambda: lambda: _rows_session(rows)):
+            history = await goal_metrics.derive_schedule_history(["goal-1"])
+
+        assert history["goal-1"].extended_count == 1
+        assert history["goal-1"].system_extended_count == 0
+
+    @pytest.mark.asyncio
+    async def test_a_system_extension_pulled_earlier_is_not_counted(self):
+        """The `system_extended` label is not enough on its own — the count is of deadlines that moved
+        *later*, whoever moved them."""
+        rows = [_change(NOW + timedelta(days=30), NOW, "system_extended")]
+        with patch.object(goal_metrics, "get_session_factory", lambda: lambda: _rows_session(rows)):
+            history = await goal_metrics.derive_schedule_history(["goal-1"])
+
+        assert history["goal-1"].system_extended_count == 0
+
+    @pytest.mark.asyncio
     async def test_several_goals_are_attributed_separately(self):
         rows = [
-            ("goal-1", NOW, NOW + timedelta(days=7)),
-            ("goal-2", NOW, NOW - timedelta(days=7)),
-            ("goal-1", NOW + timedelta(days=7), NOW + timedelta(days=30)),
+            ("goal-1", NOW, NOW + timedelta(days=7), "learner_edited"),
+            ("goal-2", NOW, NOW - timedelta(days=7), "learner_edited"),
+            ("goal-1", NOW + timedelta(days=7), NOW + timedelta(days=30), "learner_edited"),
         ]
         with patch.object(goal_metrics, "get_session_factory", lambda: lambda: _rows_session(rows)):
             history = await goal_metrics.derive_schedule_history(["goal-1", "goal-2"])
@@ -371,13 +406,25 @@ class TestTheReasonTokens:
             assert f"'{authority}'" in sql, authority
         assert sql.count("'") // 2 == len(get_args(goal_metrics.DateAuthority))
 
-    def test_there_is_no_token_without_a_writer(self):
-        """`system_extended` is deliberately absent: the nightly ladder that would extend a deadline
-        unprompted is not built, and a value the schema offers and nothing can produce is the
-        accept-and-ignore defect this codebase keeps closing. It arrives with its writer."""
+    def test_every_token_has_a_writer(self):
+        """`system_extended` was withheld until the nightly ladder existed, because a value the schema
+        offers and nothing can produce is the accept-and-ignore defect this codebase keeps closing. It
+        arrived with `goal_lifecycle_service`. This pins the rule rather than the snapshot: each token
+        must be written by something in `src`."""
+        import pathlib
+        import re
+
         from src.domains.progress.db_models import GoalScheduleChange
 
-        assert "system_extended" not in GoalScheduleChange.REASONS
+        src = pathlib.Path(__file__).resolve().parents[1] / "src"
+        written = set()
+        for path in src.rglob("*.py"):
+            for match in re.finditer(r'reason="([a-z_]+)"', path.read_text()):
+                written.add(match.group(1))
+
+        assert set(GoalScheduleChange.REASONS) <= written, (
+            f"tokens with no writer: {sorted(set(GoalScheduleChange.REASONS) - written)}"
+        )
 
 
 # ===========================================================================

@@ -556,6 +556,15 @@ class GoalScheduleHistory:
     #: learner time, and counting them would inflate the one number that is supposed to mean "this
     #: goal has been given more room than it started with".
     extended_count: int
+    #: How many of those extensions the **system** made, unprompted.
+    #:
+    #: A narrower count than `extended_count` on purpose, and the two must not be conflated. The wire
+    #: publishes the wider one, because the learner's question is "has this deadline moved" and it does
+    #: not matter who moved it. The ladder's extension budget reads this one, because the budget exists
+    #: to stop the *system* extending indefinitely rather than having a conversation — a learner moving
+    #: their own deadline is them stating a new intention, and spending their budget on it would mean
+    #: refusing to help someone for the crime of having re-planned.
+    system_extended_count: int
     #: The deadline this goal started with, from the earliest recorded change. `None` when nothing has
     #: moved, or when the first recorded change was a date being set for the first time.
     #:
@@ -594,6 +603,7 @@ async def derive_schedule_history(goal_ids: list[str]) -> dict[str, GoalSchedule
                     GoalScheduleChange.goal_id,
                     GoalScheduleChange.previous_date,
                     GoalScheduleChange.new_date,
+                    GoalScheduleChange.reason,
                 )
                 .where(GoalScheduleChange.goal_id.in_(goal_ids))
                 .order_by(GoalScheduleChange.created_at.asc())
@@ -601,10 +611,12 @@ async def derive_schedule_history(goal_ids: list[str]) -> dict[str, GoalSchedule
         ).all()
 
     counts: dict[str, int] = {}
+    system_counts: dict[str, int] = {}
     originals: dict[str, datetime | None] = {}
-    for goal_id, previous_date, new_date in rows:
+    for goal_id, previous_date, new_date, reason in rows:
         if goal_id not in counts:
             counts[goal_id] = 0
+            system_counts[goal_id] = 0
             # The earliest row's previous date, whether or not that row was an extension. A deadline
             # pulled forward and later pushed back still started somewhere.
             originals[goal_id] = previous_date
@@ -612,10 +624,14 @@ async def derive_schedule_history(goal_ids: list[str]) -> dict[str, GoalSchedule
             continue
         if _utc(new_date) > _utc(previous_date):
             counts[goal_id] += 1
+            if reason == "system_extended":
+                system_counts[goal_id] += 1
 
     return {
         goal_id: GoalScheduleHistory(
-            extended_count=count, original_target_date=originals.get(goal_id)
+            extended_count=count,
+            system_extended_count=system_counts.get(goal_id, 0),
+            original_target_date=originals.get(goal_id),
         )
         for goal_id, count in counts.items()
     }

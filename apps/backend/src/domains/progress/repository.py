@@ -19,6 +19,7 @@ from src.shared.field_mapping import map_fields
 from .db_models import (
     Achievement,
     Goal,
+    GoalLifecycleAction,
     GoalMilestone,
     GoalScheduleChange,
     ReviewItem,
@@ -120,6 +121,64 @@ class ProgressRepository:
     # -----------------------------------------------------------------------
     # Goal schedule changes
     # -----------------------------------------------------------------------
+
+    async def create_lifecycle_action(self, data: dict[str, Any]) -> GoalLifecycleAction:
+        """Record what the nightly ladder did to a goal. Insert only.
+
+        Written whether or not the notification that accompanied it survived quiet hours or the daily
+        cap, because what is recorded is the decision, not the message. Counting only delivered messages
+        would let a suppressed warning re-escalate the same goal every night.
+        """
+        async with await self._session() as session:
+            action = GoalLifecycleAction(**self._map_lifecycle_action_data(data))
+            session.add(action)
+            await session.commit()
+            await session.refresh(action)
+            return action
+
+    async def list_goals_for_lifecycle_review(
+        self, *, now: datetime, horizon: datetime, not_acted_since: datetime, limit: int = 500
+    ) -> list[Goal]:
+        """Active dated goals close enough to their deadline to be worth a decision, off cooldown.
+
+        **Bounded in SQL to the goals the ladder can actually act on.** Whether a goal is *at risk* is a
+        question about derived progress and cannot be asked in SQL — it needs the measured current value,
+        which is one query per metric kind. So the filter here is the part that is expressible: the two
+        rungs that do anything both require the deadline to be near or past, and `horizon` is that line.
+        A goal at risk with three months left gets no action from this pass, so loading it to measure it
+        would be work spent to decide to do nothing.
+
+        `targetDate IS NOT NULL`, because every rung is a statement about a deadline. A goal with no
+        deadline cannot be behind one — the same rule `is_at_risk` applies when it returns `False` for an
+        open-ended goal rather than calling slow progress a problem.
+
+        The cooldown is a `NOT EXISTS` against `GoalLifecycleAction` rather than a column on the goal.
+        A stamp on the row would say when the ladder last acted but not what it did, and "was this goal
+        extended or merely warned" is what the next decision turns on.
+
+        Ordered by deadline so that a fleet larger than ``limit`` serves the most urgent goals first.
+        """
+        recent_action = (
+            select(GoalLifecycleAction.id)
+            .where(
+                GoalLifecycleAction.goal_id == Goal.id,
+                GoalLifecycleAction.created_at >= not_acted_since,
+            )
+            .exists()
+        )
+        async with await self._session() as session:
+            stmt = (
+                select(Goal)
+                .where(
+                    Goal.status == "ACTIVE",
+                    Goal.target_date.is_not(None),
+                    Goal.target_date < horizon,
+                    ~recent_action,
+                )
+                .order_by(Goal.target_date.asc())
+                .limit(limit)
+            )
+            return list((await session.execute(stmt)).scalars().all())
 
     async def create_schedule_change(self, data: dict[str, Any]) -> GoalScheduleChange:
         """Record that a goal's deadline moved.
@@ -523,6 +582,15 @@ class ProgressRepository:
         "dateAuthority": "date_authority",
     }
 
+    #: Assembled by the ladder, never by a client. Mapped anyway so a column added to the table without
+    #: being wired here fails loudly rather than being dropped.
+    _LIFECYCLE_ACTION_FIELD_MAP = {
+        "goalId": "goal_id",
+        "userId": "user_id",
+        "action": "action",
+        "trigger": "trigger",
+    }
+
     _MILESTONE_FIELD_MAP = {
         "goalId": "goal_id",
         "title": "title",
@@ -604,6 +672,11 @@ class ProgressRepository:
 
     def _map_schedule_change_data(self, data: dict[str, Any]) -> dict[str, Any]:
         return map_fields(data, self._SCHEDULE_CHANGE_FIELD_MAP, entity="_map_schedule_change_data")
+
+    def _map_lifecycle_action_data(self, data: dict[str, Any]) -> dict[str, Any]:
+        return map_fields(
+            data, self._LIFECYCLE_ACTION_FIELD_MAP, entity="_map_lifecycle_action_data"
+        )
 
     def _map_milestone_data(self, data: dict[str, Any]) -> dict[str, Any]:
         return map_fields(data, self._MILESTONE_FIELD_MAP, entity="_map_milestone_data")

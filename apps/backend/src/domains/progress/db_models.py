@@ -230,11 +230,15 @@ class GoalScheduleChange(Base):
     #: `Goal_metricKind_check` — an unconstrained String is how `Reflection.type` ended up with the
     #: Celery task writing `"WEEKLY"` while the service branched on `"weekly"`.
     #:
-    #: Both tokens have a writer today. There is deliberately **no** `system_extended` token yet: the
-    #: nightly ladder that would extend a deadline on the learner's behalf is not built, and a value the
-    #: schema offers and nothing can produce is the accept-and-ignore defect this codebase keeps
-    #: closing. It arrives with its writer.
-    REASONS = ("learner_edited", "plan_regenerated")
+    #: Every token has a writer. `system_extended` was deliberately withheld when this table was added,
+    #: because the nightly ladder that extends a deadline on the learner's behalf did not exist and a
+    #: value the schema offers and nothing can produce is the accept-and-ignore defect this codebase
+    #: keeps closing. It arrived with `goal_lifecycle_service` (migration 053).
+    #:
+    #: `system_extended` is the reason this table exists at all. The other two are a learner or an LLM
+    #: acting on a request; this one is the system moving a deadline with nobody watching, which is
+    #: exactly the change that would otherwise make a goal look healthier for having been given more time.
+    REASONS = ("learner_edited", "plan_regenerated", "system_extended")
 
     id: Mapped[str] = mapped_column(
         String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
@@ -280,7 +284,7 @@ class GoalScheduleChange(Base):
         Index("GoalScheduleChange_goalId_createdAt_idx", "goalId", "createdAt"),
         Index("GoalScheduleChange_userId_idx", "userId"),
         CheckConstraint(
-            "reason IN ('learner_edited', 'plan_regenerated')",
+            "reason IN ('learner_edited', 'plan_regenerated', 'system_extended')",
             name="GoalScheduleChange_reason_check",
         ),
         CheckConstraint(
@@ -291,6 +295,96 @@ class GoalScheduleChange(Base):
 
     def __repr__(self) -> str:
         return f"<GoalScheduleChange goal={self.goal_id} reason={self.reason}>"
+
+
+# ---------------------------------------------------------------------------
+# GoalLifecycleAction
+# ---------------------------------------------------------------------------
+
+
+class GoalLifecycleAction(Base):
+    """One thing the nightly ladder did to one goal, and the condition that triggered it.
+
+    **This is what makes "one action per goal per pass" enforceable across passes.** A ladder with no
+    memory is a ladder that extends the same deadline every night and sends the same warning every
+    morning, which is how a system meant to help becomes the thing the learner mutes. The cooldown is
+    read from here.
+
+    It cannot be read from the notification table instead, and that is worth stating because it looks
+    like it could. `notification_service.create_notification` returns `None` when quiet hours or the
+    daily cap suppress a message, leaving no row — so a suppressed warning would look like a warning
+    never sent, and the goal would be escalated again the next night. The same trap the preparation ask
+    and the weekly check-in both had to close. What is recorded here is the *decision*, which happened,
+    not the message, which may not have arrived.
+
+    Separate from `GoalScheduleChange` despite the overlap on extensions, because the two answer
+    different questions and one cannot serve both. `GoalScheduleChange` is the deadline's audit trail —
+    every move, by anyone, including learner edits — and it is what `extendedCount` publishes. This is
+    the ladder's own record, including the actions that move no date at all. An extension writes to
+    both: a deadline that moved must appear in the audit or `extendedCount` lies, and an action the
+    ladder took must appear here or the cooldown lies.
+
+    A log: rows accumulate, nothing is updated in place, so `Base` without `TimestampMixin` and an
+    explicit `createdAt` — the shape `ScheduleBehaviourLog` and `GoalScheduleChange` already use.
+
+    The learner's *response* to an action — deprioritise, keep going, already done — is deliberately
+    absent. Nothing asks for one yet; the affordance is phase 6 of the plan, and the columns arrive with
+    it rather than sitting here empty, which is the rule this table's `REASONS` sibling follows too.
+    """
+
+    __tablename__ = "GoalLifecycleAction"
+
+    #: What the ladder did.
+    #:
+    #: - `extended` — the deadline was moved out, by a measured amount, on a goal whose date is the
+    #:   learner's own to move.
+    #: - `asked_to_confirm` — the extension budget is spent. Extending a ninth time would produce a goal
+    #:   that cannot fail; the honest move is to ask whether it is still wanted.
+    #: - `warned` — the learner was told the real numbers, with no change to the goal. This is the only
+    #:   action available on an external deadline, because an exam does not move.
+    ACTIONS = ("extended", "asked_to_confirm", "warned")
+
+    #: The condition that selected the action, recorded so the log can later answer which rung actually
+    #: helped. Without it every row reads "we extended a deadline" with no way to tell a goal that was
+    #: slipping from one that had already run out of time.
+    TRIGGERS = ("at_risk_due_soon", "deadline_passed")
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    goal_id: Mapped[str] = mapped_column(
+        "goalId", String, ForeignKey("Goal.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    trigger: Mapped[str] = mapped_column(String, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        "createdAt",
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+    )
+
+    __table_args__ = (
+        # Leads with `goalId` and carries `createdAt`, because the only question asked of this table on
+        # the hot path is "when did we last act on this goal", once per candidate goal per night.
+        Index("GoalLifecycleAction_goalId_createdAt_idx", "goalId", "createdAt"),
+        Index("GoalLifecycleAction_userId_idx", "userId"),
+        CheckConstraint(
+            "action IN ('extended', 'asked_to_confirm', 'warned')",
+            name="GoalLifecycleAction_action_check",
+        ),
+        CheckConstraint(
+            "trigger IN ('at_risk_due_soon', 'deadline_passed')",
+            name="GoalLifecycleAction_trigger_check",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<GoalLifecycleAction goal={self.goal_id} action={self.action}>"
 
 
 # ---------------------------------------------------------------------------

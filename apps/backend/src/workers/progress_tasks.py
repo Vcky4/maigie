@@ -136,6 +136,45 @@ def capture_goal_progress_task():
         loop.close()
 
 
+@celery_app.task(
+    name="progress.review_goal_lifecycle",
+    queue="default",
+    max_retries=2,
+    time_limit=900,
+    soft_time_limit=840,
+)
+def review_goal_lifecycle_task():
+    """Take at most one action on each goal whose deadline is near or already passed.
+
+    **Nothing used to look.** `is_at_risk`, `is_due_soon` and `is_overdue` were written, pure, and read
+    only when a learner opened a page — so a goal went overdue and the only thing that noticed was a
+    label on a screen the learner had stopped visiting.
+
+    `default` rather than `heavy`: the candidate set is bounded in SQL to goals with a deadline inside the
+    due-soon horizon, which is a small slice of the goal table rather than a walk over all of it.
+
+    Runs after `progress.capture_goal_progress` on purpose. Extensions are sized from the rate recorded in
+    `GoalProgressSnapshot`, so reviewing before the night's snapshot was written would size today's
+    decision from a rate a day out of date.
+    """
+    import asyncio
+
+    async def _review():
+        from src.domains.progress.services import goal_lifecycle_service
+        from src.shared.database.session import ensure_db
+
+        await ensure_db()
+        counts = await goal_lifecycle_service.review_goals()
+        logger.info("Goal lifecycle actions taken: %s", counts or "none")
+        return counts
+
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_review())
+    finally:
+        loop.close()
+
+
 def get_beat_schedule() -> dict:
     """Beat entries for the progress domain.
 
@@ -155,5 +194,15 @@ def get_beat_schedule() -> dict:
             "task": "progress.capture_goal_progress",
             "schedule": crontab(hour=1, minute=30),
             "options": {"queue": "heavy"},
+        },
+        # 02:30, an hour after the snapshot above. That order is load-bearing: an extension is sized from
+        # the rate recorded in `GoalProgressSnapshot`, so reviewing first would size tonight's decision
+        # from a rate that is a day stale. Also clear of 02:00 (`learning.analyze_behaviour`), because
+        # both walk learners and open their own connections, and the pooler has been exhausted once
+        # already in this programme by concurrent reads.
+        "progress.review_goal_lifecycle": {
+            "task": "progress.review_goal_lifecycle",
+            "schedule": crontab(hour=2, minute=30),
+            "options": {"queue": "default"},
         },
     }
