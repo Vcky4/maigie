@@ -382,6 +382,7 @@ class TestTheExtractionInventoryIsHonest:
             "history formatting": "format_history",
             "usage reconciliation and pricing": "resolve_usage",
             "assistant row assembly": "build_assistant_row",
+            "context cache keying": "context_cache_key_parts",
         }
         assert set(ask_service.MOVED_SO_FAR) == set(expected)
         for stage, attribute in expected.items():
@@ -599,3 +600,143 @@ class TestAssistantRowAssembly:
             review_item_id="r",
         )
         assert set(row) <= allowed, f"not in _MESSAGE_MAP: {set(row) - allowed}"
+
+
+# ---------------------------------------------------------------------------
+# Context cache keying
+# ---------------------------------------------------------------------------
+
+
+class TestContextCacheKeyParts:
+    """A key missing an id that changes the result serves one learner's context as another's.
+
+    The TTL is 300 seconds, so a collision is not a momentary glitch — it is five minutes of a topic
+    being answered with a different topic's facts.
+    """
+
+    def test_no_ids_means_nothing_to_cache(self):
+        assert ask_service.context_cache_key_parts(user_id="u1", context={}) is None
+
+    def test_a_missing_context_is_not_an_error(self):
+        assert ask_service.context_cache_key_parts(user_id="u1", context=None) is None
+
+    def test_context_with_only_non_id_keys_is_not_cached(self):
+        """`content` is pasted in per turn, so it identifies nothing and must not create an entry."""
+        parts = ask_service.context_cache_key_parts(
+            user_id="u1", context={"content": "some pasted text"}
+        )
+        assert parts is None
+
+    @pytest.mark.parametrize("id_name", ["noteId", "topicId", "courseId", "reviewItemId"])
+    def test_each_id_alone_produces_a_key(self, id_name):
+        parts = ask_service.context_cache_key_parts(user_id="u1", context={id_name: "x1"})
+        assert parts is not None
+        assert "x1" in parts
+
+    @pytest.mark.parametrize("id_name", ["noteId", "topicId", "courseId", "reviewItemId"])
+    def test_changing_any_single_id_changes_the_key(self, id_name):
+        """The collision test. Every id in the key must move the key on its own."""
+        base = {"noteId": "n", "topicId": "t", "courseId": "c", "reviewItemId": "r"}
+        other = {**base, id_name: "CHANGED"}
+        assert ask_service.context_cache_key_parts(
+            user_id="u1", context=base
+        ) != ask_service.context_cache_key_parts(user_id="u1", context=other)
+
+    def test_the_user_is_part_of_the_key(self):
+        """Enriched context is per-learner. A key without the user crosses accounts."""
+        context = {"topicId": "t1"}
+        assert ask_service.context_cache_key_parts(
+            user_id="u1", context=context
+        ) != ask_service.context_cache_key_parts(user_id="u2", context=context)
+
+    def test_absent_ids_are_placeheld_so_positions_do_not_shift(self):
+        """Without a placeholder, {"topicId": "x"} and {"noteId": "x"} would build the same parts."""
+        by_note = ask_service.context_cache_key_parts(user_id="u1", context={"noteId": "x"})
+        by_topic = ask_service.context_cache_key_parts(user_id="u1", context={"topicId": "x"})
+        assert by_note != by_topic
+
+    def test_the_key_is_namespaced(self):
+        parts = ask_service.context_cache_key_parts(user_id="u1", context={"topicId": "t"})
+        assert parts[:2] == ["chat", "context"]
+
+    def test_it_is_stable_for_the_same_input(self):
+        context = {"topicId": "t", "courseId": "c"}
+        assert ask_service.context_cache_key_parts(
+            user_id="u1", context=context
+        ) == ask_service.context_cache_key_parts(user_id="u1", context=context)
+
+    def test_unread_ids_are_deliberately_absent(self):
+        """`examPrepId` and `spaceId` ride on the context but enrichment does not read them, so they
+        must not be in the key. This test is the reminder to add them here in the same change that
+        starts reading them — it is documenting the audit, not asserting they are unimportant."""
+        parts = ask_service.context_cache_key_parts(
+            user_id="u1", context={"examPrepId": "p1", "spaceId": "s1"}
+        )
+        assert parts is None
+
+
+class TestCacheableContext:
+    def test_volatile_keys_are_stripped(self):
+        enriched = {
+            "topicId": "t1",
+            "topicTitle": "Entropy",
+            "pageContext": "Review mode instructions...",
+            "content": "pasted",
+            "noteContent": "note body",
+            "retrieved_items": ["a"],
+            "topicResources": [{"id": "r"}],
+            "topicUploadedResources": [{"id": "u"}],
+        }
+        result = ask_service.cacheable_context(enriched)
+        assert result == {"topicId": "t1", "topicTitle": "Entropy"}
+
+    def test_fetched_facts_survive(self):
+        enriched = {"courseTitle": "Thermo", "courseDescription": "d", "moduleTitle": "m"}
+        assert ask_service.cacheable_context(enriched) == enriched
+
+    def test_the_input_is_not_mutated(self):
+        enriched = {"topicId": "t", "pageContext": "x"}
+        ask_service.cacheable_context(enriched)
+        assert "pageContext" in enriched
+
+    def test_every_volatile_key_is_actually_excluded(self):
+        enriched = dict.fromkeys(ask_service.VOLATILE_CONTEXT_KEYS, "value")
+        assert ask_service.cacheable_context(enriched) == {}
+
+    def test_page_context_is_volatile(self):
+        """Named explicitly because it is the one that looks like a fetched fact and is not: it is a
+        generated instruction block that differs between review mode and topic mode."""
+        assert "pageContext" in ask_service.VOLATILE_CONTEXT_KEYS
+
+
+class TestMergeCachedContext:
+    def test_cached_facts_are_overlaid(self):
+        merged = ask_service.merge_cached_context({"topicId": "t"}, {"topicTitle": "Entropy"})
+        assert merged == {"topicId": "t", "topicTitle": "Entropy"}
+
+    def test_the_cached_value_wins_on_conflict(self):
+        """Deliberate and worth pinning: the cached half holds fetched facts about ids, so on a key
+        collision it is the enrichment result rather than a client guess."""
+        merged = ask_service.merge_cached_context(
+            {"topicTitle": "client guess"}, {"topicTitle": "fetched"}
+        )
+        assert merged["topicTitle"] == "fetched"
+
+    def test_no_cache_yields_a_copy_of_the_context(self):
+        context = {"topicId": "t"}
+        assert ask_service.merge_cached_context(context, None) == context
+
+    def test_an_empty_cache_entry_is_treated_as_no_cache(self):
+        context = {"topicId": "t"}
+        assert ask_service.merge_cached_context(context, {}) == context
+
+    def test_neither_argument_is_mutated(self):
+        context = {"topicId": "t"}
+        cached = {"topicTitle": "Entropy"}
+        ask_service.merge_cached_context(context, cached)
+        assert context == {"topicId": "t"}
+        assert cached == {"topicTitle": "Entropy"}
+
+    def test_the_result_is_a_new_object(self):
+        context = {"topicId": "t"}
+        assert ask_service.merge_cached_context(context, None) is not context

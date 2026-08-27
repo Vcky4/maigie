@@ -39,6 +39,7 @@ MOVED_SO_FAR = (
     "history formatting",
     "usage reconciliation and pricing",
     "assistant row assembly",
+    "context cache keying",
 )
 STILL_IN_THE_HANDLER = (
     "session resolution",
@@ -457,3 +458,91 @@ def build_assistant_row(
         row["truncated"] = True
 
     return row
+
+
+# ===========================================================================
+# Context cache keying
+# ===========================================================================
+
+#: Context keys that must never be written to the cache.
+#:
+#: Two different reasons, and both matter:
+#:
+#: - **Derived per turn.** `pageContext` is a generated instruction block that depends on what the
+#:   enrichment found — review mode reads differently from topic mode. `retrieved_items` is the result
+#:   of a retrieval over *this* question. Caching either would replay one turn's reasoning into the next.
+#: - **Supplied per turn by the client.** `content` and `noteContent` are pasted in with the message, so
+#:   they are not a property of the ids at all. `topicResources` and `topicUploadedResources` are
+#:   attached separately and can change without any id changing.
+#:
+#: The cache is keyed on ids only (see `context_cache_key_parts`), so anything here that got cached
+#: would be served for a turn whose value differs — for up to the 300-second TTL. Adding a derived key
+#: to enrichment without adding it here is the way that regresses, which is why this is a named
+#: constant with a test rather than a set literal inline.
+VOLATILE_CONTEXT_KEYS = frozenset(
+    {
+        "pageContext",
+        "content",
+        "noteContent",
+        "retrieved_items",
+        "topicResources",
+        "topicUploadedResources",
+    }
+)
+
+#: The identifiers whose values determine what enrichment fetches. Order is fixed because it is part of
+#: the key.
+_CONTEXT_CACHE_IDS = ("noteId", "topicId", "courseId", "reviewItemId")
+
+
+def context_cache_key_parts(
+    *, user_id: str, context: dict[str, Any] | None
+) -> list[str] | None:
+    """The cache key parts for an enriched context, or `None` when there is nothing worth caching.
+
+    Returns parts rather than a formatted key so this stays pure and the caller keeps ownership of the
+    namespacing. The decision here is *what identifies a context*, which is the part that can be wrong.
+
+    **Every id that changes what enrichment fetches has to be in here.** Two contexts that agree on
+    these parts will share one cache entry for the TTL, so an id that affects the result but not the key
+    serves one learner's topic as another's. `user_id` is a part for the same reason: these rows are
+    per-learner and a key without it would cross accounts.
+
+    Audited 2026-08-27 against the enrichment block: the only client-supplied ids it reads are these
+    four. `examPrepId` and `spaceId` are carried on the context but not read by enrichment, so they are
+    correctly absent — add them here in the same change that starts reading them.
+
+    Returns `None` when no id is present, which is the case where enrichment has nothing to look up.
+    A key built from four dashes would be a single shared entry for every context-free turn.
+    """
+    context = context or {}
+    values = [context.get(name) for name in _CONTEXT_CACHE_IDS]
+    if not any(values):
+        return None
+    return ["chat", "context", user_id, *[value or "-" for value in values]]
+
+
+def cacheable_context(enriched: dict[str, Any]) -> dict[str, Any]:
+    """Strip the per-turn values out of an enriched context before it is cached.
+
+    See `VOLATILE_CONTEXT_KEYS` for why each one is excluded.
+    """
+    return {key: value for key, value in enriched.items() if key not in VOLATILE_CONTEXT_KEYS}
+
+
+def merge_cached_context(
+    context: dict[str, Any], cached: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Overlay a cached enrichment onto the context the client just sent.
+
+    **The client's context wins on conflict, and the order is deliberate.** The cached half holds
+    fetched facts about ids — a topic's title, a course's description — while the incoming half holds
+    what the learner is doing right now. If a key appears in both, the live one is the current truth and
+    the cached one is up to 300 seconds stale.
+
+    Returns a new dict; neither argument is mutated. A `None` cached value yields a copy of the context,
+    so callers do not need to branch.
+    """
+    if not cached:
+        return dict(context)
+    return {**context, **cached}

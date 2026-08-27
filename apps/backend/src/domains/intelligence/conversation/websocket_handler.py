@@ -908,28 +908,18 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 enriched_context = None
                 if context:
                     enriched_context = context.copy()
-                    cache_key = None
                     cached_context = None
-                    note_id = context.get("noteId")
-                    topic_id = context.get("topicId")
-                    course_id = context.get("courseId")
-                    review_item_id = context.get("reviewItemId")
-                    if note_id or topic_id or course_id or review_item_id:
-                        cache_key = cache.make_key(
-                            [
-                                "chat",
-                                "context",
-                                user.id,
-                                note_id or "-",
-                                topic_id or "-",
-                                course_id or "-",
-                                review_item_id or "-",
-                            ]
-                        )
+                    # Which ids identify a cached enrichment is `ask_service.context_cache_key_parts`,
+                    # and it is a named function because an id that changes what enrichment fetches but
+                    # is missing from the key serves one learner's topic as another's for the TTL.
+                    # `None` means there is no id to look up, so there is nothing to cache.
+                    key_parts = ask_service.context_cache_key_parts(user_id=user.id, context=context)
+                    cache_key = cache.make_key(key_parts) if key_parts else None
+                    if cache_key:
                         cached_context = await cache.get(cache_key)
 
                     if cached_context:
-                        enriched_context = {**context, **cached_context}
+                        enriched_context = ask_service.merge_cached_context(context, cached_context)
                     else:
                         # Fetch review details if reviewItemId is provided (review mode in chat)
                         if context.get("reviewItemId"):
@@ -1235,20 +1225,14 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             )
 
                         if cache_key:
-                            cacheable_context = {
-                                key: value
-                                for key, value in enriched_context.items()
-                                if key
-                                not in {
-                                    "pageContext",
-                                    "content",
-                                    "noteContent",
-                                    "retrieved_items",
-                                    "topicResources",
-                                    "topicUploadedResources",
-                                }
-                            }
-                            await cache.set(cache_key, cacheable_context, expire=300)
+                            # The exclusion set is `ask_service.VOLATILE_CONTEXT_KEYS`, which documents
+                            # why each key is per-turn. Adding a derived key to enrichment without
+                            # adding it there is how a stale value starts being replayed for 300s.
+                            await cache.set(
+                                cache_key,
+                                ask_service.cacheable_context(enriched_context),
+                                expire=300,
+                            )
 
                     # Include direct content if provided (for summaries, etc.)
                     if context.get("content"):
