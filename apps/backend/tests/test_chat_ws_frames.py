@@ -599,10 +599,17 @@ class TestAFailedGenerationIsNotAnAnswer:
     persistence step, so a provider outage was written into the learner's history as something Maigie
     said — indistinguishable, on reload, from a real reply.
 
-    This mattered more than it looked. The LLM routing layer is unmigrated and `get_llm_router()` raises
-    unconditionally, so **every** turn took the generic branch and every learner was told "I'm sorry, I
-    encountered an error" by a Maigie that had never been asked. Failing visibly is what makes that
-    legible instead of looking like a model with nothing to say.
+    This mattered more than it looked. When these tests were written the LLM routing layer was
+    unmigrated and `get_llm_router()` raised unconditionally, so **every** turn took the generic branch
+    and every learner was told "I'm sorry, I encountered an error" by a Maigie that had never been
+    asked. Failing visibly is what made that legible instead of looking like a model with nothing to
+    say — and it is what led to the routing layer being migrated rather than worked around.
+
+    **That premise is no longer current: the routing layer is migrated and `get_llm_router()` returns a
+    real router.** These tests are kept and still matter, for the reason they were written: they inject
+    the failure directly rather than relying on the subsystem being broken, so they guard the invariant
+    itself. A provider outage, a timeout or an exhausted fallback chain all still reach these branches,
+    and none of them may become a stored answer.
     """
 
     @staticmethod
@@ -631,7 +638,12 @@ class TestAFailedGenerationIsNotAnAnswer:
         result["consume"].assert_not_awaited()
 
     def test_the_unmigrated_router_is_reported_as_a_failure_not_an_answer(self):
-        """The specific case that is live today."""
+        """Was the live case; now a regression guard.
+
+        `UnmigratedSubsystemError` is not an `LLMProviderError`, so it takes the generic branch. Kept
+        because the generic branch is the one that used to persist a fabricated answer, and because
+        other unmigrated subsystems still raise this type.
+        """
         from src.shared.infrastructure.unmigrated import UnmigratedSubsystemError
 
         result = run(
