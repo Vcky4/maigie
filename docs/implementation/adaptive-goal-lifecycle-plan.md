@@ -305,14 +305,14 @@ New, because none of it exists. Modelled on `CourseOutlineSatisfaction`
 
 Assumes the §8 decisions are made first. Engineer-days of focused work, not calendar.
 
-**Phases 0 and 1 are implemented on the backend.** See §10 for what shipped, what changed against this
+**Phases 0, 1 and 2 are implemented on the backend.** See §10 for what shipped, what changed against this
 plan, and what is still open.
 
 | | Work | Days | Risk |
 | --- | --- | --- | --- |
 | **0** | ~~**Stop declaring missed exams complete.**~~ **Shipped.** | 1 | **Low, high value** |
 | **1** | **The post-exam review** (§6). **Backend shipped**; both clients' forms outstanding. | 5–7 | Medium — new schema and new copy on a sensitive moment |
-| **2** | **Derive date authority** + a `GoalScheduleChange` log + surface "extended N times". No behaviour change yet. | 2 | Low |
+| **2** | ~~**Derive date authority** + a `GoalScheduleChange` log + surface "extended N times".~~ **Shipped**, no behaviour change. See §10.1. | 2 | Low |
 | **3** | **Time-triggered redistribution.** Make `_redistribute_plan` reachable without learner action, which is the actual gap. | 1–2 | Low |
 | **4** | **The nightly pass**, ladder implemented, one action per goal, cooldown enforced. Reuses existing metrics and `_redistribute_plan`. | 4–5 | Medium |
 | **5** | **Notification path fixes** — learner-local quiet hours, priority bypass of the daily cap, push on the learning path. | 3–4 | Medium — touches every notification |
@@ -449,15 +449,81 @@ behaviour being asserted. Mutating the `topics_total <= 0` guard away left the t
   learner at their cap may not see the ask, which is why the ask is also on the dashboard.
 - **Nothing consumes the outcomes yet.** Calibration is phase 7 and is gated on volume, not effort.
 
+### 10.1 Implementation record — phase 2, backend
+
+Shipped in `maigie/apps/backend`. Verified: **3,464 tests passing** (baseline 3,432, +32 new), `ruff check
+src tests` clean, `export_openapi.py --check` in sync, single alembic head. **8 mutations applied one at a
+time; 8 caught.**
+
+**No behaviour change.** Nothing new moves a deadline, no predicate changed, and no existing response field
+changed meaning. What changed is that a deadline moving is now recorded and published.
+
+| Piece | Where |
+| --- | --- |
+| `date_authority(goal)` — derived, `external` \| `learner` | `goal_metrics.py`, beside the other derived labels |
+| `GoalScheduleChange` table | `progress/db_models.py`, migration `051_goal_sched_change` |
+| The one rule for what counts as a change | `services/goal_schedule_log.py`, `record_date_change` |
+| Batched read of the count | `goal_metrics.derive_schedule_history`, one query for a whole page |
+| Wire fields | `GoalResponse.dateAuthority`, `.extendedCount`, `.originalTargetDate` |
+| Writers wired | `goal_service.update_goal` (`learner_edited`), `planning_impl.regenerate_goal_plan` (`plan_regenerated`) |
+
+**Decisions made while building**
+
+1. **`extendedCount` counts only deadlines pushed *later*.** Pulling a deadline forward, and setting a first
+   deadline on a goal that had none, are both recorded as changes but excluded from the count. Neither buys
+   the learner room, and a count that includes ordinary edits is a warning light that is always on.
+2. **`dateAuthority` is snapshotted onto each log row**, though it stays derived everywhere else. `Goal.prepId`
+   is `ON DELETE SET NULL`, so deleting a preparation would retroactively reclassify every past change on its
+   goal as the learner's own — and what an entry records is what was true when the date moved. Same argument
+   `050` makes for copying readiness onto the outcome.
+3. **`originalTargetDate` is published, not applied.** It is the denominator `elapsed_percent` arguably should
+   use, but re-basing that window changes every pace figure on every surface. That is a behaviour change with
+   its own decision, and this phase was scoped not to make it.
+4. **The reason token set holds only what has a writer.** No `system_extended`, because the ladder that would
+   extend a deadline unprompted does not exist; no `learnerResponse`/`respondedAt` columns, because nothing
+   asks yet. Both arrive with their writers, on the same grounds migration 032 removed a column nothing wrote.
+5. **Derived in memory, not aggregated in SQL.** The interesting figure is *the previous date on the earliest
+   row*, not `min(previousDate)` — a deadline pulled forward and later pushed out has a minimum that was never
+   the goal's original window. One query for the page, attributed in memory, as `derive_current_values` does.
+6. **A failure to log never fails the edit.** The edit is what the learner asked for; the log is bookkeeping
+   about it.
+
+**Found while implementing**
+
+- **`regenerate_goal_plan` rewrites externally-owned deadlines today.** It recomputes `targetDate` from a
+  requested duration in weeks and writes it without reading date authority, so regenerating a plan can move a
+  date that came from an exam. Left as-is — blocking it is a behaviour change and belongs with the ladder —
+  but it is now recorded, which is what makes it findable.
+- **`POST /progress/goals/{id}/regenerate-plan` is broken for an unrelated reason.**
+  `intelligence/action/action_service.py` is a stub holding only `execute`, so the `action_service.create_schedule`
+  call in that route's block-creation loop raises `AttributeError`. The deadline write happens *before* the
+  loop, so in production the date moves and then the request 500s. Not touched here; it needs its own fix.
+- **`index=True` on the model would have named the index differently from the migration**
+  (`ix_GoalScheduleChange_userId` versus `GoalScheduleChange_userId_idx`), which is how autogenerate ends up
+  proposing to add an index that already exists. Declared in `__table_args__` with the migration's name.
+
+**Still open on phase 2**
+
+- **Neither client shows any of it.** `extendedCount` and `originalTargetDate` are on the wire and nothing
+  renders them, so a goal extended three times still *looks* comfortable to a learner. §5.2 asks for the
+  surfaces to show it; that is client work.
+- **`ReflectGoal` does not carry the new fields.** It is the second goal read model
+  (`personal_learning/models.py`) with its own naming convention, so Reflect goal cards cannot show extension
+  history yet.
+- **The log starts empty and cannot be backfilled.** Past date moves left no trace anywhere, so `extendedCount`
+  reads `0` for every goal that was extended before this shipped. That is truthful but it means the number is
+  only useful going forward.
+
 ## 11. What is not known
 
 - **No runtime measurement.** Everything here comes from reading the source. In particular the *number* of
-  learners currently sitting on overdue goals is unmeasured, and it determines whether phase 2 is urgent or
-  merely correct. `is_overdue` is pure and already written — it can be run over the goal table as a script
+  learners currently sitting on overdue goals is unmeasured, and it determines whether the nightly pass
+  (phase 4) is urgent or merely correct. `is_overdue` is pure and already written — it can be run over the goal table as a script
   before committing to any of this.
 - **Whether the observed-throughput extension is stable enough to schedule against.** `consistencyScore`
   and `avgSessionMinutes` only became non-NULL recently, so there may not yet be enough history to size an
-  extension from. Phase 1's change log is what would reveal it.
+  extension from. Phase 2's change log is what would reveal it, now that it exists — but it starts empty, so
+  the answer is some months away.
 - **Whether learners answer nudges at all.** The entire ladder past "notify" assumes a response rate that
   has never been observed, because no deadline nudge has ever been sent. Phase 6 is where that assumption
   gets tested, and phase 8 depends on it.
