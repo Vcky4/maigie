@@ -262,10 +262,13 @@ This is what `get_llm_router()` needs, and it is why chat could not produce a re
 explains nine of the still-skipped test files, which are tests for these exact modules and are
 sitting written and unused.
 
-**Superseded by steps 1–5, 2026-08-26.** `get_llm_router()` now returns a real router and six of
-those nine test files are collected. Two adapters plus `gemini_embedding` remain (step 6) and the
-dynamic-override half of `feature_flags` remains (step 7). The table above is kept as the inventory
-of what the pre-migration package held; the per-step records below are the current state.
+**Superseded — the migration is complete, steps 1–6, 2026-08-26/27.** `get_llm_router()` returns a
+real router, all four provider adapters are ported and registered, and eight of those nine test files
+are collected. Step 7 turned out not to be a migration task at all; see the closing record below. The
+table above is kept as the inventory of what the pre-migration package held. **The per-step records
+below are the current state, and each is dated — read the latest, not the first.** What is left is not
+migration work: one real provider call has still never been made, and two configuration gaps stop
+`EMBEDDING` and `openai:gpt-4o` from routing.
 
 **Suggested sequence**, each step independently verifiable and each unskipping its own tests:
 
@@ -275,7 +278,7 @@ of what the pre-migration package held; the per-step records below are the curre
 4. ~~One provider adapter end to end (Gemini, since `gemini_sdk.py` already exists).~~ **Done.** Constructed and exercised by step 5.
 5. ~~`router.py` — needs 1–4; unskips `test_end_to_end_routing`.~~ **Done, 2026-08-26.** `get_llm_router()` returns a real router; see the step 5 record below.
 6. ~~The remaining two adapters (`openai_chat_tools`, `anthropic_chat_tools`) plus `gemini_embedding`; unskips `test_openai_chat_tools`.~~ **Done, 2026-08-27.** See the step 6 record below.
-7. ~~`feature_flags.py` with real storage, replacing the fail-closed stub.~~ **Mostly done in step 5, and the premise here was wrong** — see "the sequence was wrong about step 7" below. What remains is only the `FeatureFlagStore`-backed dynamic overrides and the admin config path, not the service itself.
+7. ~~`feature_flags.py` with real storage, replacing the fail-closed stub.~~ **The service was restored in step 5. The "real storage" half is not a migration task at all** — it describes something that never existed in any commit. See "step 7 was never a migration task" below. **The migration is complete at step 6.**
 
 ### Migration progress, 2026-08-26 — steps 1–4
 
@@ -517,6 +520,54 @@ register does not take the other two down.
 OpenAI adapter has 23 real unit tests behind it; Anthropic and the embedding adapter have none. No
 request has gone to OpenAI or Anthropic.
 
+### Step 7 was never a migration task — the migration is complete at step 6
+
+Surveyed 2026-08-27, before writing any code, and no code was written as a result.
+
+Step 7 read "`feature_flags.py` with real storage, replacing the fail-closed stub". The stub was
+replaced in step 5. The "real storage" half **describes a capability that has never existed in any
+commit of this repository**, so there is nothing to migrate and the sequence ends at step 6.
+
+Four checks, all against `4953972^` and the current tree:
+
+| Check | Result |
+|---|---|
+| Concrete `FeatureFlagStore` implementation anywhere | **None.** The only file mentioning `get_all_flags` / `get_user_override` is `feature_flags.py`, i.e. the Protocol itself |
+| Callers constructing `FeatureFlagService` | **One**, `adapter_registry.py:228`, passing `enabled_providers` and `tier_allowlists` and **no `store=`** |
+| Consequence for `reload()` | `self._store` was always `None`, so it always returned at its first branch. `_user_overrides` was only ever written by the in-memory `set_user_override` |
+| `FeatureFlag` table or model, SQLAlchemy or migration | **None** |
+
+So the entire grant/revoke/override surface — `set_user_override`, `grant_user_access`,
+`revoke_user_access`, `remove_user_override`, `is_user_revoked`, `has_user_override`,
+`get_available_models_for_user` — was unreached before the migration and is unreached now: **zero
+callers outside `feature_flags.py`.** The one apparent hit is a docstring line in
+`adapter_registry.py`.
+
+**It was kept anyway, and that is deliberate.** `test_feature_flags.py` covers this surface with 65
+passing tests, and it is the natural seam for the feature if it is ever built. Deleting tested code to
+raise a coverage-of-reachable-code number would make the eventual feature a rewrite instead of a
+wiring job. It is dead, it is honest about being dead, and it costs nothing.
+
+**What the two halves would actually take**, if product wants them. Both are **net-new feature work
+with no consumer today** — the admin router is commented out in `app.py` — so neither was built:
+
+- **Persistent per-user provider overrides.** Needs a table (there is no `FeatureFlag` model), a
+  migration, a SQLAlchemy `FeatureFlagStore` implementing the two Protocol methods, and `store=` wired
+  at the single construction site. The service side is already written and tested against it.
+- **Admin-tunable LLM config.** This is the capability step 5 recorded losing. The pre-migration
+  `system_config_service.py` (159 lines) was a `SystemConfig` key-value table with a 60-second
+  in-memory cache, read by the registry to override `LLM_ENABLED_PROVIDERS`, the tier allowlists and
+  both fallback chains without a redeploy. **There is no `SystemConfig` model or migration in the
+  current tree**, so restoring it means modelling the table as well as porting the service — and it
+  only becomes reachable once the admin router is mounted. Until then, `Settings` is the single source
+  and `invalidate_llm_router()` only picks up in-memory changes.
+
+**Where the LLM subsystem now stands.** Steps 1–6 done. Five adapters register; the router selects,
+falls back across providers, records cost, and emits scoped usage; eight of the nine written-and-unused
+test files now run. Two things still gate a real answer, and neither is in §6: the two configuration
+gaps above (`EMBEDDING` and `openai:gpt-4o` route to nothing), and the fact that **no request has ever
+been made to a real provider from this codebase.**
+
 ---
 
 ## 7. Remaining stubs
@@ -747,11 +798,16 @@ target state for now, not debt to delete, so they are counted here as scope rath
    its mention in that module's docstring.
 2. **Decide on Paystack and referral rewards** (§5) — 31 call sites, deliberately not attempted
    without a payment sandbox.
-3. **The LLM subsystem** (§6) — steps 1–6 done; **only step 7 remains**, and it is now just the
-   `FeatureFlagStore`-backed dynamic overrides plus the admin config path, not the service. Eight of
-   the 9 test files run. Five adapters register and cross-provider fallback engages, but **no request
-   has been made to a real provider**, and two configuration gaps mean `EMBEDDING` and `openai:gpt-4o`
-   route to nothing (§6).
+3. ~~**The LLM subsystem** (§6) — the single largest item; unskips 9 test files.~~ **Migration
+   complete, steps 1–6, 2026-08-26/27.** Step 7 was never a migration task (§6). Eight of the 9 test
+   files run. What replaces this item, in order:
+   - **Send one real request to a provider.** Nothing in this codebase has ever done so. Everything
+     is verified against mocks, so the first live call is where remaining defects surface.
+   - **Decide the two configuration gaps** (§6): `LlmTask.EMBEDDING` and `openai:gpt-4o` are
+     registered but route to nothing, because no tier allowlist lists them. Both are product calls,
+     not migration work.
+   - **Decide on admin-tunable LLM config** (§6) — a capability that existed pre-migration and does
+     not now. Needs a `SystemConfig` model, which no longer exists, and a mounted admin router.
 4. **Device-token registration** (§2) — until an endpoint writes `DeviceToken` rows, push
    cannot deliver. Tied to mobile scope.
 5. **The chat subsystem stubs** (§7) — 22 functions. No longer blocked behind item 3; the router
