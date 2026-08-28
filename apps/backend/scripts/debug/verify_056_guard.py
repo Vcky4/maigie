@@ -132,7 +132,9 @@ async def _case(conn, name: str, *, expect_refused: bool, body) -> bool:
     # never ran. The custom `ERRCODE` exists precisely so this can be told apart from an incidental failure.
     from_guard = "MG001" in detail or "awaiting review and has no recorded outcome" in detail
     if refused and not from_guard:
-        print(f"  [ERROR] {name}\n         the probe itself failed, so nothing was tested:\n         {detail}")
+        print(
+            f"  [ERROR] {name}\n         the probe itself failed, so nothing was tested:\n         {detail}"
+        )
         return False
 
     ok = refused == expect_refused

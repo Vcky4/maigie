@@ -26,7 +26,7 @@ postponed. An unanswered preparation stays unanswered rather than being assumed 
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from src.shared.exceptions import NotFoundError, ValidationError
@@ -316,6 +316,99 @@ async def decline_review(*, user_id: str, prep_id: str) -> Any:
         reminders=prep.review_reminders_sent or 0,
     )
     return await repo.update_exam_prep(prep_id, {"reviewDeclinedAt": datetime.now(UTC)})
+
+
+#: How long after the answer to first ask for the mark.
+#:
+#: Two weeks, because a mark does not exist the day after the exam and an ask that arrives before the result
+#: does teaches the learner that this reminder is noise — after which the second one is ignored too. Erring
+#: late costs a delay; erring early costs the channel.
+RESULT_FIRST_ASK_DAYS = 14
+
+#: And how long between asks. The same interval, so the whole sequence is over in about six weeks.
+RESULT_ASK_INTERVAL_DAYS = 14
+
+#: Two, matching `MAX_REVIEW_REMINDERS`.
+#:
+#: The restraint is the design, for a reason specific to this ask: **the learner may simply not have a mark**,
+#: and no number of reminders will produce one. Chasing past two converts "we would like to know" into "this
+#: app nags", and the cost lands on the notification channel every other feature shares.
+MAX_RESULT_REMINDERS = 2
+
+
+async def remind_about_missing_results(*, now: datetime | None = None) -> int:
+    """Ask, a bounded number of times, for the mark on a sitting already reviewed.
+
+    **This is what unblocks readiness calibration.** `resultValue` is the only objective outcome signal the
+    system can obtain — `experienceRating` is a 1–5 self-report, and a readiness *percentage* cannot honestly
+    be scored against one. The field has existed on both clients since the review shipped and nothing ever
+    pointed at it, so the population carrying a mark was whoever happened to volunteer.
+
+    Returns the number of learners asked, which is the number of messages *attempted* — `create_notification`
+    can decline to deliver, and this deliberately counts the ask rather than the delivery, because the budget
+    it spends is the ask.
+
+    Never raises for one learner's sake: a failure on one outcome must not stop the sweep, for the same reason
+    `mark_preparations_awaiting_review` swallows per-preparation failures. The ask is best-effort; the counter
+    is what keeps it bounded.
+    """
+    from src.domains.progress.services import adaptive_response_metrics
+
+    from . import notification_service
+
+    moment = now or datetime.now(UTC)
+    outcomes = await repo.list_outcomes_awaiting_a_result(
+        answered_before=moment - timedelta(days=RESULT_FIRST_ASK_DAYS),
+        asked_before=moment - timedelta(days=RESULT_ASK_INTERVAL_DAYS),
+        max_reminders=MAX_RESULT_REMINDERS,
+    )
+
+    asked = 0
+    for outcome in outcomes:
+        try:
+            prep = await repo.find_exam_prep(outcome.prep_id, outcome.user_id)
+            # The preparation can have been deleted since the answer; the outcome row survives the cascade
+            # for `SET NULL` reasons but there is nothing to name in the message and nowhere to send them.
+            if prep is None:
+                continue
+
+            reminder = (outcome.result_reminders_sent or 0) + 1
+            await notification_service.create_notification(
+                user_id=outcome.user_id,
+                type="preparation_result",
+                title=f"Did you get your {prep.subject} result?",
+                body=(
+                    "Adding your mark lets us check whether our readiness estimate was any good — which is "
+                    "the only way it gets better. It takes a moment, and you can skip it."
+                ),
+                # Below the review ask itself (3). That question completes a preparation and expires as memory
+                # of the exam fades; this one is a nice-to-have about a number the learner either has or does
+                # not, so it must never outrank the daily plan.
+                priority=4,
+                action_data={
+                    "type": "navigate",
+                    "target": "exam-prep",
+                    "prepId": prep.id,
+                    # The review surface is where the field lives, on both clients.
+                    "tab": "review",
+                },
+            )
+            # Stamped whether or not the notification was delivered. The budget bounds how often we *ask*;
+            # treating a suppressed message as "not asked" would let a learner in permanent quiet hours be
+            # asked indefinitely.
+            await repo.record_result_reminder(outcome.id, now=moment)
+            asked += 1
+            adaptive_response_metrics.log_ask_event(
+                "result_asked",
+                prep_id=prep.id,
+                reminder=reminder,
+                days_since_answered=_days_since(outcome.answered_at),
+            )
+        except Exception:
+            logger.warning("Could not ask for the result on outcome %s", outcome.id, exc_info=True)
+
+    logger.info("Asked %d learner(s) for an exam result", asked)
+    return asked
 
 
 async def get_review_state(*, user_id: str, prep_id: str) -> dict[str, Any]:

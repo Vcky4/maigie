@@ -19,6 +19,7 @@ from . import (  # noqa: F401
     engagement,
     notifications,
     plan_redistribution,
+    prep_result,
     preparation,
     readiness_snapshots,
     recommendations,
@@ -59,6 +60,14 @@ def get_beat_schedule() -> dict:
         "learning.mark_completed_preparations": {
             "task": "learning.mark_completed_preparations",
             "schedule": crontab(hour=1, minute=0),
+            "options": {"queue": "default"},
+        },
+        # 01:30, after the review sweep at 01:00 and before the snapshots at 01:15 would clash — a
+        # preparation moved into review tonight has no outcome yet, so the two cannot contend for the same
+        # rows, but ordering them keeps the logs readable.
+        "learning.remind_prep_results": {
+            "task": "learning.remind_prep_results",
+            "schedule": crontab(hour=1, minute=30),
             "options": {"queue": "default"},
         },
         # Just after midnight, so a day's row reflects that day's finishing state.

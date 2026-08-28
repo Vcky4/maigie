@@ -3227,6 +3227,82 @@ class PersonalLearningRepository:
                 .all()
             )
 
+    async def list_outcomes_awaiting_a_result(
+        self,
+        *,
+        answered_before: datetime,
+        asked_before: datetime,
+        max_reminders: int,
+        limit: int = 500,
+        session: AsyncSession | None = None,
+    ) -> list[PrepOutcome]:
+        """Sittings the learner answered but never supplied a mark for, and which are due an ask.
+
+        The population phase 7 is waiting on. `resultValue` is optional because a mark arrives weeks after the
+        exam, and nothing has ever reminded anyone the field exists — so the answer is "roughly nobody
+        volunteers one", which is not a fact about learners.
+
+        Four conditions, each excluding a state that looks similar:
+
+        - **`resultValue IS NULL`** — a recorded mark is finished with, permanently.
+        - **`attended = 'sat'`** — a missed or cancelled exam has no mark to give, and asking for one would
+          be asking about something that did not happen. A `postponed` sitting is superseded by a later one
+          with its own review, so it is excluded too.
+        - **answered long enough ago** (`answeredAt < answered_before`) — the first ask waits, because a mark
+          does not exist the day after the exam and asking immediately teaches the learner the reminder is
+          noise.
+        - **not asked too recently** (`resultAskedAt` null, or older than `asked_before`) — spacing between
+          reminders, from the same clock rather than a per-row schedule.
+
+        Bounded, and oldest answer first: a backlog is worked in the order the exams were sat, and the mark
+        least likely to still be to hand is chased first.
+        """
+        async with self._read_session(session) as s:
+            return list(
+                (
+                    await s.execute(
+                        select(PrepOutcome)
+                        .where(
+                            PrepOutcome.result_value.is_(None),
+                            PrepOutcome.attended == "sat",
+                            PrepOutcome.answered_at < answered_before,
+                            PrepOutcome.result_reminders_sent < max_reminders,
+                            or_(
+                                PrepOutcome.result_asked_at.is_(None),
+                                PrepOutcome.result_asked_at < asked_before,
+                            ),
+                        )
+                        .order_by(PrepOutcome.answered_at.asc())
+                        .limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+    async def record_result_reminder(
+        self,
+        outcome_id: str,
+        *,
+        now: datetime,
+        session: AsyncSession | None = None,
+    ) -> None:
+        """Stamp the ask and increment its count, in one statement.
+
+        `resultRemindersSent + 1` computed in SQL rather than read-then-written, so two sweeps overlapping
+        cannot both read 1 and both write 2 — which would spend one ask from the budget and record it as one,
+        letting the learner be asked more times than the cap allows.
+        """
+        async with self._use_session(session) as s:
+            await s.execute(
+                update(PrepOutcome)
+                .where(PrepOutcome.id == outcome_id)
+                .values(
+                    result_asked_at=now,
+                    result_reminders_sent=PrepOutcome.result_reminders_sent + 1,
+                )
+            )
+
     async def list_preps_awaiting_review(
         self,
         *,

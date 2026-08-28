@@ -1192,6 +1192,19 @@ class PrepOutcome(Base, TimestampMixin):
     #: What `resultValue` is out of, or what it means — "100", "GPA", "pass/fail". Stored because a bare
     #: number is uninterpretable, and grading scales are not a closed set.
     result_scale: Mapped[str | None] = mapped_column("resultScale", String, nullable=True)
+    #: When we last asked for the mark, and how many times. The same pair as `ExamPrep.reviewAskedAt` /
+    #: `reviewRemindersSent`, for the same reason: a bounded number of asks about something the learner may
+    #: simply not have yet.
+    #:
+    #: A counter rather than a count of `Notification` rows, because a notification is not evidence the
+    #: learner was reached — it can be deferred by their daily allowance, held by quiet hours, or expire
+    #: unread, and `create_notification` can return `None`. What needs bounding is how often *we asked*.
+    result_asked_at: Mapped[datetime | None] = mapped_column(
+        "resultAskedAt", DateTime(timezone=True), nullable=True
+    )
+    result_reminders_sent: Mapped[int] = mapped_column(
+        "resultRemindersSent", Integer, nullable=False, default=0, server_default="0"
+    )
     result_recorded_at: Mapped[datetime | None] = mapped_column(
         "resultRecordedAt", DateTime(timezone=True), nullable=True
     )

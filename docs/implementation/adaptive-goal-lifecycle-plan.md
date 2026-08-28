@@ -1501,6 +1501,10 @@ and it concludes readiness is uninformative — true, but because *absence of da
 unreadiness*, not because a model is miscalibrated. Phase 7 would surface that and could not fix it. **The
 fix is upstream, in what readiness claims to measure.**
 
+**The mark arrived: 57 out of 100, against a predicted readiness of 0.0%.** Which is the whole argument above,
+in one row. `topicsStrong` was 0 of 10 and the learner passed. Any calibration that scored this would conclude
+the readiness model is badly miscalibrated; the truth is that it was measuring something else.
+
 #### Phase 8's blocker is one rung, not zero answers
 
 `scripts/debug/check_ladder_variance.py`:
@@ -1512,6 +1516,12 @@ asked_to_confirm   deadline_passed    fired=6  answered=0
 
 Phase 8 correlates *which* intervention helped. With one rung there is nothing to correlate, and answers
 would not create the contrast — a 100% response rate on six identical asks compares that rung against nothing.
+
+**Since confirmed by the first answer.** A learner answered `keep_going` on an `asked_to_confirm` /
+`deadline_passed` nudge, 1.0 days after it was asked — the nudge response rate is now 17% of 6. The goal
+stayed `ACTIVE`, which is the behaviour working: told to leave it alone, the ladder left it alone, and a
+status write here would have been the system acting on being asked not to. It closes the second loop end to
+end, and it changes nothing about the blocker: the answer landed on the only rung that has ever fired.
 
 Why only one, from the population: 42 active learner goals with deadlines, of which **6 are overdue** — and
 those 6 are exactly the ones acted on, all with `system_extended = 0`. So:
@@ -1598,12 +1608,57 @@ refuse *and* what it must allow — is what caught two of them.
 
 Neither phase is closer than §7 assumed, and the reasons are more specific and more actionable:
 
-1. **Prompt for the mark.** `resultValue` is the phase 7 gate, and the review already has a "add your result"
-   affordance on both clients. Nothing reminds anyone to use it weeks later — that is a small, buildable piece
-   with a direct line to unblocking calibration.
+1. ~~**Prompt for the mark.**~~ **Built — §10.17.** `resultValue` is the phase 7 gate and nothing pointed at
+   the field; there is now a bounded nightly ask.
 2. **Decide whether readiness should count evidence it cannot see** before calibrating anything against it.
 3. **Phase 8 waits on the ladder exercising its other rungs**, which is a function of the goal population, not
    of engineering. Until then it has one rung and no contrast.
+
+### 10.17 Asking for the mark — the ask phase 7 was actually waiting on
+
+Migration **057** plus a nightly sweep. `resultValue` is the only objective outcome signal the system can
+obtain, it has been on both clients since the review shipped, and **nothing ever pointed at the field** — so
+the population carrying a mark was whoever happened to volunteer, measured at one, and only because it was
+asked for by hand.
+
+| Piece | Where |
+| --- | --- |
+| `resultAskedAt`, `resultRemindersSent`, partial index | migration 057 |
+| `list_outcomes_awaiting_a_result`, `record_result_reminder` | `personal_learning/repository.py` |
+| `remind_about_missing_results` | `prep_outcome_service.py` |
+| Task + 01:30 beat entry | `tasks/prep_result.py` |
+
+**Cadence, agreed with the product owner:** first ask **14 days** after the review was answered, one more 14
+days later, then stop. Two, matching `MAX_REVIEW_REMINDERS`. Fourteen days because a mark does not exist the
+day after the exam, and an ask that arrives before the result does teaches the learner this reminder is noise —
+after which the second is ignored too. **Erring late costs a delay; erring early costs the channel.** Priority
+4, below the review ask at 3, because the review completes a preparation while this is a nice-to-have about a
+number the learner either has or does not.
+
+**Only `attended = 'sat'`.** A missed or cancelled sitting has no mark, and a `postponed` one is superseded by
+a later sitting with its own review. Asking anyway would be asking about something that did not happen.
+
+**A counter column, not a count of `Notification` rows** — the same choice `GoalLifecycleAction` documents. A
+notification is not evidence the learner was reached: delivery can be deferred by their daily allowance, held
+by quiet hours, or expire unread, and `create_notification` can return `None`. What must be bounded is how
+often *we asked*, and the counter is stamped whether or not the message went out. Refunding the budget on a
+suppressed message would let a learner whose quiet hours never open be asked forever.
+
+`resultRemindersSent + 1` is computed in SQL rather than read-then-written, so two overlapping sweeps cannot
+both read 1 and both write 2 — spending two asks and recording one.
+
+**Verified.** 17 tests, **3808 passing** overall, migration applied, columns and partial index confirmed. Six
+mutations, and the two that survived the first pass were both test defects worth recording:
+
+- **A tautological cap test.** It asserted the budget using `result_reminders_sent=MAX_RESULT_REMINDERS`, which
+  reads the constant under test — so raising the cap to 99 raised the fixture with it and the test passed. Now
+  a literal `2` in the behaviour test and a separate assertion pinning the constant, so changing either fails.
+- **A guard whose removal was invisible.** Deleting the `if prep is None` check changed no visible outcome: the
+  code went on to read `prep.id`, raised, and the per-outcome `except` swallowed it — same absence of
+  notification, same empty counter. The difference between "skipped, as designed" and "crashed, and we hid it"
+  only exists in the log, so the test now asserts **no warning was emitted**.
+
+The sweep asks nobody today, which is correct: the one outcome already carries its mark.
 
 ## 11. What is not known
 
@@ -1630,6 +1685,15 @@ Neither phase is closer than §7 assumed, and the reasons are more specific and 
   learners have one. Aggregate calibration may take many months of outcomes; per-learner calibration may
   never be reachable for the majority. Phase 7 should be scheduled against outcome *volume*, not a date, and
   until then readiness stays exactly as it is rather than being adjusted on thin evidence.
+- **A nudge on a space-scoped goal cannot be answered from anywhere.** `goal_service.list_goals` sets
+  `where["spaceId"] = None` when no space is requested, so a goal belonging to a space is excluded from the
+  personal goals list — and both clients' nudge prompts read exactly that list. One of the four nudged goals on
+  `okon.victor.u@gmail.com` is in a space, so its question is invisible to the prompt *and* to the library, and
+  the only record of it is a `GoalLifecycleAction` row nobody can reach. The exclusion looks deliberate for the
+  library; the prompt's need is different — it asks "you have an outstanding decision", which is not scoped to
+  a space. Fixing it by widening `list_goals` would change what the library shows, so it wants a decision
+  rather than a patch: either the prompt reads a purpose-built "goals awaiting an answer" read, or space goals
+  join the personal list.
 - `intelligence/observation/tracker.py` has five registered `@listen` handlers whose bodies are all
   `logger.debug` plus a `# Future:` comment. It is the natural home for some of phase 6, but it has never
   done anything, so treat it as an empty room rather than a foundation.
