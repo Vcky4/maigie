@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.domains.intelligence.conversation import ask_service
+from src.domains.intelligence.conversation import ask_service, context_enrichment
 
 
 class TestAskContext:
@@ -386,6 +386,9 @@ class TestTheExtractionInventoryIsHonest:
     """
 
     def test_every_stage_claimed_as_moved_is_actually_importable(self):
+        """Values are `"attribute"` for this module, or `("module", "attribute")` for a stage that left
+        the handler into a sibling. The inventory records what stopped being inline, which is not the
+        same question as what lives in this file."""
         expected = {
             "token estimation": "estimate_turn_tokens",
             "retrieval gate": "should_retrieve",
@@ -397,12 +400,21 @@ class TestTheExtractionInventoryIsHonest:
             "context cache keying": "context_cache_key_parts",
             "page context instruction blocks": "REVIEW_MODE_PAGE_CONTEXT",
             "context shaping (records to context keys)": "note_context_updates",
+            "session pinning and authorization": "resolve_session_for_turn",
+            "conversation titling": "should_retitle_session",
+            "new session row assembly": "new_session_row",
+            "owner-scoped context reads": (context_enrichment, "resolve_owned_topic"),
+            "context enrichment (branches, reads and cache)": (
+                context_enrichment,
+                "enrich_context",
+            ),
         }
         assert set(ask_service.MOVED_SO_FAR) == set(expected)
-        for stage, attribute in expected.items():
+        for stage, target in expected.items():
+            module, attribute = target if isinstance(target, tuple) else (ask_service, target)
             assert hasattr(
-                ask_service, attribute
-            ), f"{stage} is claimed as moved but {attribute} is absent"
+                module, attribute
+            ), f"{stage} is claimed as moved but {module.__name__}.{attribute} is absent"
 
     def test_the_two_inventories_do_not_overlap(self):
         assert not set(ask_service.MOVED_SO_FAR) & set(ask_service.STILL_IN_THE_HANDLER)
@@ -1039,3 +1051,365 @@ class TestFormatTopicUserNotes:
     def test_whitespace_is_stripped_from_titles_and_bodies(self):
         rendered = ask_service.format_topic_user_notes([a_note(title="  T  ", content="  b  ")])
         assert rendered == "## T\nb"
+
+
+# ---------------------------------------------------------------------------
+# Session resolution
+# ---------------------------------------------------------------------------
+#
+# These are the first tests in this file that cover an *impure* stage, and the readers are injected for
+# a reason beyond convenience: `_is_circle_member` is an unimplemented stub returning `False`, so a
+# space-room member does not exist anywhere in the running system. Every room branch below is only
+# reachable by supplying one. Testing against the real stub would test that rooms do not work.
+
+
+def a_session(session_id="sess_1", user_id="user_1", title=None):
+    return SimpleNamespace(id=session_id, user_id=user_id, title=title)
+
+
+async def no_session(_session_id):
+    return None
+
+
+async def no_space_group(_session_id):
+    return None
+
+
+async def not_a_member(_group, _user_id):
+    return False
+
+
+async def a_member(_group, _user_id):
+    return True
+
+
+def resolve_kwargs(**overrides):
+    kwargs = {
+        "requested_session_id": None,
+        "current_session": a_session(),
+        "user_id": "user_1",
+        "find_session": no_session,
+        "space_group_for_session": no_space_group,
+        "is_space_member": not_a_member,
+    }
+    kwargs.update(overrides)
+    return kwargs
+
+
+class TestSessionResolution:
+    @pytest.mark.asyncio
+    async def test_no_pinned_id_keeps_the_connections_session(self):
+        current = a_session("sess_current")
+        resolution = await ask_service.resolve_session_for_turn(
+            **resolve_kwargs(current_session=current)
+        )
+        assert resolution.allowed
+        assert resolution.session is current
+
+    @pytest.mark.asyncio
+    async def test_a_learner_may_pin_their_own_conversation(self):
+        pinned = a_session("sess_pinned", user_id="user_1")
+
+        async def find(session_id):
+            return pinned if session_id == "sess_pinned" else None
+
+        resolution = await ask_service.resolve_session_for_turn(
+            **resolve_kwargs(requested_session_id="sess_pinned", find_session=find)
+        )
+        assert resolution.allowed
+        assert resolution.session is pinned
+
+    @pytest.mark.asyncio
+    async def test_pinning_someone_elses_conversation_is_refused(self):
+        """The session id comes from the client on every message. Unchecked, it is a read and a write
+        into another learner's thread."""
+
+        async def find(_session_id):
+            return a_session("sess_theirs", user_id="user_2")
+
+        resolution = await ask_service.resolve_session_for_turn(
+            **resolve_kwargs(requested_session_id="sess_theirs", find_session=find)
+        )
+        assert not resolution.allowed
+        assert resolution.denial == ask_service.SESSION_DENIED_PINNED_OWNER
+        assert resolution.session is None, "a refused turn must have nowhere to be written"
+
+    @pytest.mark.asyncio
+    async def test_a_room_is_authorised_by_membership_not_ownership(self):
+        """A room's `ChatSession.user_id` is whoever created it. Falling through to the ownership rule
+        would hand every other member's room to its creator alone, so the room rule must come first.
+        """
+        room = a_session("sess_room", user_id="creator")
+
+        async def find(_session_id):
+            return room
+
+        async def group(_session_id):
+            return SimpleNamespace(id="group_1")
+
+        resolution = await ask_service.resolve_session_for_turn(
+            **resolve_kwargs(
+                requested_session_id="sess_room",
+                user_id="another_member",
+                find_session=find,
+                space_group_for_session=group,
+                is_space_member=a_member,
+            )
+        )
+        assert resolution.allowed
+        assert resolution.session is room
+        assert resolution.is_space_room
+
+    @pytest.mark.asyncio
+    async def test_a_non_member_cannot_pin_a_room_even_if_they_created_it_elsewhere(self):
+        async def find(_session_id):
+            return a_session("sess_room", user_id="user_1")
+
+        async def group(_session_id):
+            return SimpleNamespace(id="group_1")
+
+        resolution = await ask_service.resolve_session_for_turn(
+            **resolve_kwargs(
+                requested_session_id="sess_room",
+                find_session=find,
+                space_group_for_session=group,
+                is_space_member=not_a_member,
+            )
+        )
+        assert not resolution.allowed
+        assert resolution.denial == ask_service.SESSION_DENIED_PINNED_ROOM
+
+    @pytest.mark.asyncio
+    async def test_membership_is_rechecked_on_the_session_already_in_use(self):
+        """Membership can be revoked mid-conversation. The learner is on the room already, so nothing
+        is being pinned — and the recheck is the only thing standing between a removed member and the
+        room they were last in."""
+
+        async def group(_session_id):
+            return SimpleNamespace(id="group_1")
+
+        resolution = await ask_service.resolve_session_for_turn(
+            **resolve_kwargs(
+                current_session=a_session("sess_room"),
+                space_group_for_session=group,
+                is_space_member=not_a_member,
+            )
+        )
+        assert not resolution.allowed
+        assert resolution.denial == ask_service.SESSION_DENIED_ROOM_MEMBERSHIP
+
+    @pytest.mark.asyncio
+    async def test_a_missing_pinned_session_falls_back_rather_than_refusing(self):
+        """An id that resolves to nothing is not an authorization failure. Preserved from the handler:
+        the turn continues on the session the connection was already on."""
+        current = a_session("sess_current")
+        resolution = await ask_service.resolve_session_for_turn(
+            **resolve_kwargs(requested_session_id="sess_gone", current_session=current)
+        )
+        assert resolution.allowed
+        assert resolution.session is current
+
+    @pytest.mark.asyncio
+    async def test_a_lookup_failure_refuses_rather_than_using_another_conversation(self):
+        """The §5.5.12 fix. A raising lookup used to fall back to the current session, so the turn was
+        persisted, metered and charged in a conversation the learner did not pin — and the pinned thread
+        showed a gap, so they would ask again and pay twice."""
+        current = a_session("sess_current")
+
+        async def find(_session_id):
+            raise RuntimeError("database is down")
+
+        resolution = await ask_service.resolve_session_for_turn(
+            **resolve_kwargs(
+                requested_session_id="sess_pinned",
+                current_session=current,
+                find_session=find,
+            )
+        )
+        assert not resolution.allowed
+        assert resolution.denial == ask_service.SESSION_DENIED_LOOKUP_FAILED
+        assert resolution.session is None, (
+            "the fallback session is exactly what must not be used — a turn written there is "
+            "unfindable by the learner who sent it"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_lookup_failure_is_the_only_retryable_refusal(self):
+        """A permission refusal will refuse again, so telling the learner to retry would be a lie. A
+        read failure is transient, which is what makes refusing better than falling back and not merely
+        louder: the learner is told to do the one thing that will work."""
+
+        async def find(_session_id):
+            raise RuntimeError("database is down")
+
+        transient = await ask_service.resolve_session_for_turn(
+            **resolve_kwargs(requested_session_id="sess_pinned", find_session=find)
+        )
+        assert transient.retryable
+
+        async def find_theirs(_session_id):
+            return a_session("sess_theirs", user_id="user_2")
+
+        forbidden = await ask_service.resolve_session_for_turn(
+            **resolve_kwargs(requested_session_id="sess_theirs", find_session=find_theirs)
+        )
+        assert not forbidden.retryable
+
+    @pytest.mark.asyncio
+    async def test_an_allowed_turn_is_not_marked_retryable(self):
+        """`retryable` is a property of a refusal. A successful turn has nothing to retry, and a client
+        reading the flag off a non-refusal must not see `True`."""
+        resolution = await ask_service.resolve_session_for_turn(**resolve_kwargs())
+        assert resolution.allowed
+        assert not resolution.retryable
+
+    @pytest.mark.asyncio
+    async def test_a_personal_conversation_is_not_a_space_room(self):
+        resolution = await ask_service.resolve_session_for_turn(**resolve_kwargs())
+        assert not resolution.is_space_room
+        assert resolution.space_group is None
+
+    def test_every_denial_code_has_a_message(self):
+        """The handler indexes `SESSION_DENIAL_MESSAGES` by the code, so a code without one is a
+        `KeyError` on the refusal path — the path least likely to be exercised by hand."""
+        codes = {
+            ask_service.SESSION_DENIED_PINNED_ROOM,
+            ask_service.SESSION_DENIED_PINNED_OWNER,
+            ask_service.SESSION_DENIED_ROOM_MEMBERSHIP,
+            ask_service.SESSION_DENIED_LOOKUP_FAILED,
+        }
+        assert set(ask_service.SESSION_DENIAL_MESSAGES) == codes
+        assert all(ask_service.SESSION_DENIAL_MESSAGES[code] for code in codes)
+
+    def test_only_known_codes_are_retryable(self):
+        assert ask_service.RETRYABLE_SESSION_DENIALS <= set(ask_service.SESSION_DENIAL_MESSAGES)
+
+    def test_a_permission_refusal_does_not_invite_a_retry(self):
+        """Three of the four are permission. Marking one retryable would have the client offer a button
+        that cannot work."""
+        for code in (
+            ask_service.SESSION_DENIED_PINNED_ROOM,
+            ask_service.SESSION_DENIED_PINNED_OWNER,
+            ask_service.SESSION_DENIED_ROOM_MEMBERSHIP,
+        ):
+            assert code not in ask_service.RETRYABLE_SESSION_DENIALS
+
+    def test_the_two_room_refusals_are_worded_differently(self):
+        """Same condition, different words, on purpose: one is a room the learner was never in, the
+        other a membership that was revoked. Collapsing them is a wording change to a shipped surface.
+        """
+        assert (
+            ask_service.SESSION_DENIAL_MESSAGES[ask_service.SESSION_DENIED_PINNED_ROOM]
+            != ask_service.SESSION_DENIAL_MESSAGES[ask_service.SESSION_DENIED_ROOM_MEMBERSHIP]
+        )
+
+
+class TestNewSessionRow:
+    def test_it_is_a_personal_general_conversation(self):
+        row = ask_service.new_session_row("user_1")
+        assert row["userId"] == "user_1"
+        assert row["sessionType"] == ask_service.SESSION_TYPE_GENERAL
+
+    def test_is_space_room_is_written_explicitly(self):
+        """The connection's default-session query filters on it. A session created without it is
+        invisible to the query meant to find it again, so the learner gets a new conversation on every
+        connect."""
+        assert row_has_false(ask_service.new_session_row("user_1"), "isSpaceRoom")
+
+    def test_it_starts_on_the_default_title(self):
+        assert ask_service.new_session_row("user_1")["title"] == ask_service.NEW_CONVERSATION_TITLE
+
+
+def row_has_false(row, key):
+    return key in row and row[key] is False
+
+
+# ---------------------------------------------------------------------------
+# Naming a conversation
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveSessionTitle:
+    def test_a_short_question_becomes_its_own_title(self):
+        assert ask_service.derive_session_title("What is entropy?") == "What is entropy?"
+
+    def test_whitespace_is_collapsed_before_truncating(self):
+        """A pasted question arrives with newlines and runs of spaces. Truncate first and the title can
+        be 50 characters of blank space."""
+        assert ask_service.derive_session_title("What   is\n\n  entropy?") == "What is entropy?"
+
+    def test_a_long_question_is_clipped_and_marked(self):
+        title = ask_service.derive_session_title("e" * 200)
+        assert len(title) == ask_service.TITLE_MAX_LENGTH + 3
+        assert title.endswith("...")
+
+    def test_a_title_exactly_on_the_limit_is_not_marked(self):
+        title = ask_service.derive_session_title("e" * ask_service.TITLE_MAX_LENGTH)
+        assert title == "e" * ask_service.TITLE_MAX_LENGTH
+        assert not title.endswith("...")
+
+    def test_a_blank_message_yields_nothing(self):
+        assert ask_service.derive_session_title("   \n ") == ""
+
+
+def retitle_kwargs(**overrides):
+    kwargs = {
+        "current_title": ask_service.NEW_CONVERSATION_TITLE,
+        "user_message_count": 1,
+        "message": "What is entropy?",
+        "is_review_thread": False,
+    }
+    kwargs.update(overrides)
+    return kwargs
+
+
+class TestSessionTitleGate:
+    def test_the_first_message_of_an_unnamed_conversation_names_it(self):
+        assert ask_service.should_retitle_session(**retitle_kwargs())
+
+    def test_a_named_conversation_keeps_its_name(self):
+        """Otherwise the title follows the most recent question rather than identifying the thread, and
+        the history panel renames rows under the learner as they type."""
+        assert not ask_service.should_retitle_session(
+            **retitle_kwargs(current_title="Thermodynamics revision")
+        )
+
+    @pytest.mark.parametrize("title", [None, "", "New Chat"])
+    def test_an_untouched_title_is_recognised_in_all_its_forms(self, title):
+        assert ask_service.should_retitle_session(**retitle_kwargs(current_title=title))
+
+    def test_a_later_message_does_not_rename(self):
+        assert not ask_service.should_retitle_session(**retitle_kwargs(user_message_count=4))
+
+    def test_a_review_thread_is_never_titled(self):
+        assert not ask_service.should_retitle_session(**retitle_kwargs(is_review_thread=True))
+
+    def test_a_blank_message_does_not_title(self):
+        """An empty title is worse than the default; the default at least says 'new'."""
+        assert not ask_service.should_retitle_session(**retitle_kwargs(message="   "))
+
+    def test_the_cheap_gate_agrees_with_the_full_one_on_everything_but_the_count(self):
+        """The caller runs the cheap gate first so a named conversation does not pay for a `count(*)` on
+        every turn, forever. If the two disagree on a non-count condition, that skip is wrong."""
+        for override in (
+            {"current_title": "Named already"},
+            {"is_review_thread": True},
+            {"message": " "},
+        ):
+            kwargs = retitle_kwargs(**override)
+            cheap = ask_service.session_needs_a_title(
+                current_title=kwargs["current_title"],
+                message=kwargs["message"],
+                is_review_thread=kwargs["is_review_thread"],
+            )
+            assert cheap is False
+            assert ask_service.should_retitle_session(**kwargs) is False
+
+    def test_the_cheap_gate_passes_where_only_the_count_can_refuse(self):
+        kwargs = retitle_kwargs(user_message_count=9)
+        assert ask_service.session_needs_a_title(
+            current_title=kwargs["current_title"],
+            message=kwargs["message"],
+            is_review_thread=kwargs["is_review_thread"],
+        )
+        assert not ask_service.should_retitle_session(**kwargs)

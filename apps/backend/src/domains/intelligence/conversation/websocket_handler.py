@@ -19,7 +19,6 @@ from sqlalchemy import func, select
 from sqlalchemy import update as sa_update
 
 from src.config import settings
-from src.core.cache import cache
 from src.core.celery_app import celery_app
 from src.domains.billing.services.cost_calculator import calculate_ai_cost, calculate_revenue
 from src.domains.billing.services.credit_consumption_service import (
@@ -30,7 +29,7 @@ from src.domains.billing.services.credit_consumption_service import (
 )
 from src.domains.identity.db_models import ModelPreference
 from src.domains.identity.repository import IdentityRepository
-from src.domains.intelligence.conversation import ask_service, note_service
+from src.domains.intelligence.conversation import ask_service, context_enrichment
 from src.domains.intelligence.conversation.chat_greeting import (
     _build_greeting_components,
     _build_greeting_context,
@@ -38,7 +37,6 @@ from src.domains.intelligence.conversation.chat_greeting import (
 )
 from src.domains.intelligence.conversation.chat_helpers import (
     MAIGIE_MENTION_PATTERN,
-    _attach_topic_resources_context,
     _extract_suggestion,
     _get_circle_group_for_session,
     _is_circle_member,
@@ -217,12 +215,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
 
         if not session:
             session = await intelligence_repo.create_chat_session(
-                {
-                    "userId": user.id,
-                    "title": "New Chat",
-                    "isSpaceRoom": False,
-                    "sessionType": "general",
-                }
+                ask_service.new_session_row(user.id)
             )
 
         # 2b. Deliver pending AI nudges on connect
@@ -318,58 +311,42 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     # If not JSON, treat as plain text
                     pass
 
-                # 3.1 If client pins a sessionId, switch to it (per-message)
-                if context and context.get("sessionId"):
-                    requested_session_id = context.get("sessionId")
-                    try:
-                        pinned = await intelligence_repo.find_chat_session(requested_session_id)
-                        if pinned:
-                            pinned_circle_group = await _get_circle_group_for_session(
-                                None, pinned.id
-                            )
-                            if pinned_circle_group:
-                                if await _is_circle_member(pinned_circle_group, user.id):
-                                    session = pinned
-                                else:
-                                    await manager.send_connection_json(
-                                        {
-                                            "type": "error",
-                                            "payload": {
-                                                "message": "You are not allowed to access this space room."
-                                            },
-                                        },
-                                        connection_id,
-                                    )
-                                    continue
-                            elif pinned.user_id == user.id:
-                                session = pinned
-                            else:
-                                await manager.send_connection_json(
-                                    {
-                                        "type": "error",
-                                        "payload": {
-                                            "message": "You are not allowed to access this chat session."
-                                        },
-                                    },
-                                    connection_id,
-                                )
-                                continue
-                    except Exception:
-                        # If anything goes wrong, fall back to the current session
-                        pass
-
-                circle_group = await _get_circle_group_for_session(None, session.id)
-                is_circle_session = bool(circle_group)
-                if is_circle_session:
-                    if not await _is_circle_member(circle_group, user.id):
-                        await manager.send_connection_json(
-                            {
-                                "type": "error",
-                                "payload": {"message": "You are not a member of this space room."},
+                # 3.1 Resolve the session this turn belongs to and authorise the learner for it.
+                # The client pins `context.sessionId` per message to switch conversations without
+                # reconnecting, so this runs on every turn and not just at connect. The rules live in
+                # `ask_service.resolve_session_for_turn` — an unchecked session id is a write into
+                # someone else's thread, and the decision is worth testing without a socket.
+                resolution = await ask_service.resolve_session_for_turn(
+                    requested_session_id=(context or {}).get("sessionId"),
+                    current_session=session,
+                    user_id=user.id,
+                    find_session=intelligence_repo.find_chat_session,
+                    space_group_for_session=lambda session_id: _get_circle_group_for_session(
+                        None, session_id
+                    ),
+                    is_space_member=_is_circle_member,
+                )
+                if not resolution.allowed:
+                    # `retryable` distinguishes a permission refusal, which will refuse again, from a
+                    # transient read failure, which will not. Both clients already read this flag off
+                    # `error` frames — the failed-generation path put it there — so refusing a turn
+                    # whose session could not be read needs no new frame.
+                    await manager.send_connection_json(
+                        {
+                            "type": "error",
+                            "payload": {
+                                "message": ask_service.SESSION_DENIAL_MESSAGES[resolution.denial],
+                                "retryable": resolution.retryable,
                             },
-                            connection_id,
-                        )
-                        continue
+                        },
+                        connection_id,
+                    )
+                    continue
+
+                session = resolution.session
+                circle_group = resolution.space_group
+                is_circle_session = resolution.is_space_room
+                if is_circle_session:
                     manager.join_room(connection_id, session.id)
 
                 should_reply_as_ai = True
@@ -684,13 +661,16 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     except Exception as e:
                         logger.warning("Failed to start KB indexing: %s", e)
 
-                # Keep ChatSession title meaningful when the frontend relies on DB history.
-                # Update it from the very first general-chat USER message (not review threads).
+                # Name the conversation after the message that started it, so the history panel can
+                # tell two threads apart. The gate and the wording are `ask_service`'s; the `count(*)`
+                # stays here because it is a query, and it runs only when the cheap checks pass — a
+                # conversation that already has a name does not pay for a count on every turn.
                 try:
-                    if (
-                        (not context or not context.get("reviewItemId"))
-                        and getattr(session, "title", None) in (None, "", "New Chat")
-                        and (user_text or "").strip()
+                    is_review_thread = bool(context and context.get("reviewItemId"))
+                    if ask_service.session_needs_a_title(
+                        current_title=getattr(session, "title", None),
+                        message=user_text,
+                        is_review_thread=is_review_thread,
                     ):
                         factory = get_session_factory()
                         async with factory() as sa_session:
@@ -705,11 +685,15 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 )
                             )
                             user_msg_count = (await sa_session.execute(count_stmt)).scalar() or 0
-                        if user_msg_count == 1:
-                            cleaned = " ".join((user_text or "").strip().split())
-                            title = cleaned[:50] + ("..." if len(cleaned) > 50 else "")
+                        if ask_service.should_retitle_session(
+                            current_title=getattr(session, "title", None),
+                            user_message_count=user_msg_count,
+                            message=user_text,
+                            is_review_thread=is_review_thread,
+                        ):
                             await intelligence_repo.update_chat_session(
-                                session.id, {"title": title}
+                                session.id,
+                                {"title": ask_service.derive_session_title(user_text)},
                             )
                             # Refresh session object with new title
                             session = await intelligence_repo.find_chat_session(session.id)
@@ -904,319 +888,21 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
 
                 formatted_history = ask_service.format_history(history_records)
 
-                # 5.5. Enrich context with topic/course/note details if IDs are provided
-                enriched_context = None
-                if context:
-                    enriched_context = context.copy()
-                    cached_context = None
-                    # Which ids identify a cached enrichment is `ask_service.context_cache_key_parts`,
-                    # and it is a named function because an id that changes what enrichment fetches but
-                    # is missing from the key serves one learner's topic as another's for the TTL.
-                    # `None` means there is no id to look up, so there is nothing to cache.
-                    key_parts = ask_service.context_cache_key_parts(
-                        user_id=user.id, context=context
-                    )
-                    cache_key = cache.make_key(key_parts) if key_parts else None
-                    if cache_key:
-                        cached_context = await cache.get(cache_key)
-
-                    if cached_context:
-                        enriched_context = ask_service.merge_cached_context(context, cached_context)
-                    else:
-                        # Fetch review details if reviewItemId is provided (review mode in chat)
-                        if context.get("reviewItemId"):
-                            review_id = context["reviewItemId"]
-                            # Use raw SQLAlchemy for review item with nested includes
-                            from src.domains.personal_learning.db_models import Note as NoteModel
-                            from src.domains.progress.db_models import ReviewItem
-
-                            factory = get_session_factory()
-                            async with factory() as sa_session:
-                                stmt = select(ReviewItem).where(
-                                    ReviewItem.id == review_id,
-                                    ReviewItem.user_id == user.id,
-                                )
-                                result = await sa_session.execute(stmt)
-                                review = result.scalar_one_or_none()
-                                # Eagerly load related topic/module/course
-                                if review:
-                                    from src.domains.knowledge.db_models import (
-                                        Course,
-                                        Module,
-                                        Topic,
-                                    )
-
-                                    topic_stmt = (
-                                        select(Topic).where(Topic.id == review.topic_id)
-                                        if review.topic_id
-                                        else None
-                                    )
-                                    topic = None
-                                    if topic_stmt is not None:
-                                        topic_result = await sa_session.execute(topic_stmt)
-                                        topic = topic_result.scalar_one_or_none()
-                                    module = None
-                                    course = None
-                                    if topic and topic.module_id:
-                                        mod_stmt = select(Module).where(
-                                            Module.id == topic.module_id
-                                        )
-                                        mod_result = await sa_session.execute(mod_stmt)
-                                        module = mod_result.scalar_one_or_none()
-                                    if module and module.course_id:
-                                        course_stmt = select(Course).where(
-                                            Course.id == module.course_id
-                                        )
-                                        course_result = await sa_session.execute(course_stmt)
-                                        course = course_result.scalar_one_or_none()
-
-                            if review and topic:
-                                enriched_context.update(
-                                    ask_service.review_context_updates(
-                                        review=review,
-                                        topic=topic,
-                                        module=module,
-                                        course=course,
-                                    )
-                                )
-                        # Fetch note details if noteId is provided
-                        elif context.get("noteId"):
-                            note_id = context["noteId"]
-                            from src.domains.knowledge.db_models import Course, Module, Topic
-                            from src.domains.personal_learning.repository import (
-                                personal_learning_repo,
-                            )
-
-                            # Owner-filtered, via the repository's own read.
-                            #
-                            # This was `select(Note).where(Note.id == note_id)` with **no owner
-                            # filter**, while `noteId` comes straight off the client's message context.
-                            # So any learner could put another learner's note id on a turn and have its
-                            # `noteTitle`, `noteSummary` and full `noteContent` injected into the prompt
-                            # and answered about — a read of someone else's private note body. The
-                            # review branch immediately above always filtered on `user_id`, which is
-                            # what made the omission look deliberate rather than missing.
-                            #
-                            # `find_note(note_id, user_id)` is the repository's canonical by-id read and
-                            # already applies `Note.user_id == user_id`. Using it rather than adding a
-                            # second filter here means there is one owner-filtered path to keep correct
-                            # instead of two, and `Note` has no share or visibility column, so ownership
-                            # is the whole of the rule.
-                            note = await personal_learning_repo.find_note(note_id, user.id)
-
-                            factory = get_session_factory()
-                            async with factory() as sa_session:
-                                # Related topic/module/course are catalogue rows, not personal ones
-                                note_topic = None
-                                note_module = None
-                                note_course = None
-                                note_direct_course = None
-                                if note:
-                                    if note.topic_id:
-                                        t_stmt = select(Topic).where(Topic.id == note.topic_id)
-                                        t_result = await sa_session.execute(t_stmt)
-                                        note_topic = t_result.scalar_one_or_none()
-                                    if note_topic and note_topic.module_id:
-                                        m_stmt = select(Module).where(
-                                            Module.id == note_topic.module_id
-                                        )
-                                        m_result = await sa_session.execute(m_stmt)
-                                        note_module = m_result.scalar_one_or_none()
-                                    if note_module and note_module.course_id:
-                                        c_stmt = select(Course).where(
-                                            Course.id == note_module.course_id
-                                        )
-                                        c_result = await sa_session.execute(c_stmt)
-                                        note_course = c_result.scalar_one_or_none()
-                                    if not note_topic and note.course_id:
-                                        dc_stmt = select(Course).where(Course.id == note.course_id)
-                                        dc_result = await sa_session.execute(dc_stmt)
-                                        note_direct_course = dc_result.scalar_one_or_none()
-
-                            # If note not found, check if noteId is actually a topicId
-                            if not note:
-                                print(
-                                    f"⚠️ Note with ID {note_id} not found, checking if it's a topicId..."
-                                )
-                                from src.domains.knowledge.db_models import Course, Module, Topic
-
-                                factory = get_session_factory()
-                                async with factory() as sa_session:
-                                    t_stmt = select(Topic).where(Topic.id == note_id)
-                                    t_result = await sa_session.execute(t_stmt)
-                                    topic = t_result.scalar_one_or_none()
-                                    topic_module = None
-                                    topic_course = None
-                                    if topic and topic.module_id:
-                                        m_stmt = select(Module).where(Module.id == topic.module_id)
-                                        m_result = await sa_session.execute(m_stmt)
-                                        topic_module = m_result.scalar_one_or_none()
-                                    if topic_module and topic_module.course_id:
-                                        c_stmt = select(Course).where(
-                                            Course.id == topic_module.course_id
-                                        )
-                                        c_result = await sa_session.execute(c_stmt)
-                                        topic_course = c_result.scalar_one_or_none()
-                                if topic:
-                                    ln = await note_service.latest_note_for_topic(
-                                        None, topic.id, user.id
-                                    )
-                                    enriched_context.update(
-                                        ask_service.topic_context_updates(
-                                            topic=topic,
-                                            module=topic_module,
-                                            course=topic_course,
-                                        )
-                                    )
-                                    if ln:
-                                        print(
-                                            f"✅ Found topic with ID {note_id}, using latest note ID: {ln.id}"
-                                        )
-                                        # Owner-filtered like the branch above. `ln` already came from
-                                        # an owner-scoped lookup, so this re-fetch was not exploitable
-                                        # — but it was the same unfiltered `where(Note.id == ...)`
-                                        # shape as the hole that was, which is what made that one look
-                                        # normal. One read, one rule.
-                                        note = await personal_learning_repo.find_note(
-                                            ln.id, user.id
-                                        )
-                                        async with factory() as sa_session:
-                                            # Re-load relationships for the found note
-                                            note_topic = None
-                                            note_module = None
-                                            note_course = None
-                                            note_direct_course = None
-                                            if note and note.topic_id:
-                                                tt_stmt = select(Topic).where(
-                                                    Topic.id == note.topic_id
-                                                )
-                                                tt_result = await sa_session.execute(tt_stmt)
-                                                note_topic = tt_result.scalar_one_or_none()
-                                            if note_topic and note_topic.module_id:
-                                                mm_stmt = select(Module).where(
-                                                    Module.id == note_topic.module_id
-                                                )
-                                                mm_result = await sa_session.execute(mm_stmt)
-                                                note_module = mm_result.scalar_one_or_none()
-                                            if note_module and note_module.course_id:
-                                                cc_stmt = select(Course).where(
-                                                    Course.id == note_module.course_id
-                                                )
-                                                cc_result = await sa_session.execute(cc_stmt)
-                                                note_course = cc_result.scalar_one_or_none()
-                                        enriched_context["noteId"] = ln.id
-
-                            if note:
-                                enriched_context.update(
-                                    ask_service.note_context_updates(
-                                        note=note,
-                                        topic=note_topic,
-                                        module=note_module,
-                                        course=note_course,
-                                        direct_course=note_direct_course,
-                                    )
-                                )
-
-                        # Fetch topic details if topicId is provided (and not already fetched from note)
-                        elif context.get("topicId") and not enriched_context.get("topicTitle"):
-                            topic_id = context["topicId"]
-                            # Always preserve topicId in enriched_context (it should already be there from copy(), but ensure it)
-                            enriched_context["topicId"] = topic_id
-                            from src.domains.knowledge.db_models import Course, Module, Topic
-                            from src.domains.personal_learning.db_models import Note as NoteModel
-
-                            factory = get_session_factory()
-                            async with factory() as sa_session:
-                                t_stmt = select(Topic).where(Topic.id == topic_id)
-                                t_result = await sa_session.execute(t_stmt)
-                                topic = t_result.scalar_one_or_none()
-                                topic_module = None
-                                topic_course = None
-                                if topic and topic.module_id:
-                                    m_stmt = select(Module).where(Module.id == topic.module_id)
-                                    m_result = await sa_session.execute(m_stmt)
-                                    topic_module = m_result.scalar_one_or_none()
-                                if topic_module and topic_module.course_id:
-                                    c_stmt = select(Course).where(
-                                        Course.id == topic_module.course_id
-                                    )
-                                    c_result = await sa_session.execute(c_stmt)
-                                    topic_course = c_result.scalar_one_or_none()
-                            if topic:
-                                # `include_topic_id=False`: the id came from the client's context and is
-                                # how this topic was found, so writing it back is at best a no-op.
-                                enriched_context.update(
-                                    ask_service.topic_context_updates(
-                                        topic=topic,
-                                        module=topic_module,
-                                        course=topic_course,
-                                        include_topic_id=False,
-                                    )
-                                )
-                                # Fetch user notes for this topic
-                                async with factory() as sa_session:
-                                    notes_stmt = (
-                                        select(NoteModel)
-                                        .where(
-                                            NoteModel.topic_id == topic_id,
-                                            NoteModel.user_id == user.id,
-                                        )
-                                        .order_by(NoteModel.updated_at.asc())
-                                    )
-                                    notes_result = await sa_session.execute(notes_stmt)
-                                    topic_notes = notes_result.scalars().all()
-                                if topic_notes:
-                                    rendered_notes = ask_service.format_topic_user_notes(
-                                        list(topic_notes)
-                                    )
-                                    if rendered_notes:
-                                        enriched_context["topicUserNotes"] = rendered_notes
-                            else:
-                                # Topic not found - log for debugging but keep topicId in context
-                                print(
-                                    f"⚠️ Topic with ID {topic_id} not found during context enrichment"
-                                )
-                                print(
-                                    "⚠️ This topicId will still be passed to action service for validation"
-                                )
-
-                        # Fetch course details if courseId is provided (and not already fetched)
-                        elif context.get("courseId") and not enriched_context.get("courseTitle"):
-                            from src.domains.knowledge.db_models import Course
-
-                            factory = get_session_factory()
-                            async with factory() as sa_session:
-                                c_stmt = select(Course).where(Course.id == context["courseId"])
-                                c_result = await sa_session.execute(c_stmt)
-                                course = c_result.scalar_one_or_none()
-                            if course:
-                                enriched_context.update(
-                                    ask_service.course_context_updates(course=course)
-                                )
-
-                        # Always attach topic resources if topic context is available.
-                        if enriched_context.get("topicId"):
-                            await _attach_topic_resources_context(
-                                None, user.id, enriched_context["topicId"], enriched_context
-                            )
-
-                        if cache_key:
-                            # The exclusion set is `ask_service.VOLATILE_CONTEXT_KEYS`, which documents
-                            # why each key is per-turn. Adding a derived key to enrichment without
-                            # adding it there is how a stale value starts being replayed for 300s.
-                            await cache.set(
-                                cache_key,
-                                ask_service.cacheable_context(enriched_context),
-                                expire=300,
-                            )
-
-                    # Include direct content if provided (for summaries, etc.)
-                    if context.get("content"):
-                        enriched_context["content"] = context["content"]
-
-                    # Include note content if provided directly (not via noteId)
-                    if context.get("noteContent") and not enriched_context.get("noteContent"):
-                        enriched_context["noteContent"] = context["noteContent"]
+                # 5.5. Enrich the client's context with the rows its ids refer to.
+                #
+                # The whole block — the four mutually exclusive branches, their reads, the cache and
+                # the direct-content overlay — is `context_enrichment.enrich_context`. It lives there
+                # rather than here for two reasons. It is where both disclosures were (plan §5.5.11 and
+                # §5.5.14): every read is keyed on an id the client supplied, so the ownership rule is
+                # the whole job, and it is now stated once with the readers injected rather than
+                # open-coded four times. And it is the half of the turn `answer()` needs on the HTTP
+                # path, which cannot reach a body nested inside a WebSocket receive loop.
+                enriched_context = await context_enrichment.enrich_context(
+                    context=context,
+                    user_id=user.id,
+                    readers=context_enrichment.production_readers(),
+                    cache=context_enrichment.production_cache(),
+                )
 
                 if reply_target_message:
                     if not enriched_context:

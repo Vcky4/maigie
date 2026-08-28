@@ -42,10 +42,20 @@ MOVED_SO_FAR = (
     "context cache keying",
     "page context instruction blocks",
     "context shaping (records to context keys)",
+    "session pinning and authorization",
+    "conversation titling",
+    "new session row assembly",
+    "context enrichment (branches, reads and cache)",
+    # These two live in the sibling `context_enrichment` module rather than here. Named in this
+    # inventory anyway, because the inventory's job is to say what left the handler — not what landed
+    # in this file. Enrichment is a coherent unit with one rule (owner scoping) and it earned its own
+    # module; the shaping of what its reads return stays here.
+    "owner-scoped context reads",
 )
 STILL_IN_THE_HANDLER = (
-    "session resolution",
-    "the context fetches themselves",
+    "the connection's default session query",
+    "the history read",
+    "the space-room and reply context blocks",
     "retrieval call",
     "memory context",
     "generation",
@@ -850,3 +860,271 @@ def format_topic_user_notes(notes: list[Any]) -> str:
         blocks.append(f"## {head}\n{body}" if body else f"## {head}")
 
     return "\n\n---\n\n".join(block for block in blocks if block.strip())
+
+
+# ===========================================================================
+# Session resolution
+# ===========================================================================
+#
+# Which conversation a turn belongs to, and whether the learner may write to it. First of the impure
+# stages, and it moves in two halves for a reason: the *decision* is what can be wrong, and the
+# *fetches* are what need a database. The decision is here, driven by injected readers, so a
+# non-member being let into a room is now a failing test rather than a code review.
+#
+# The connection's default-session query stays in the handler for now — it is a SQLAlchemy statement
+# over `ChatSession` with no branching in it, so moving it buys nothing until `answer()` needs it.
+# `STILL_IN_THE_HANDLER` says so rather than claiming session resolution is finished.
+
+
+#: The title a conversation is created with, before its first message names it.
+#:
+#: Not a placeholder that nothing replaces — `should_retitle_session` and `derive_session_title` below
+#: are the replacement, and they are the reason this is a named constant: the retitle gate has to
+#: recognise the untouched default, so the two would silently disagree if the literal appeared twice.
+NEW_CONVERSATION_TITLE = "New Chat"
+
+#: Session kinds. `general` is Ask Maigie's personal conversation. `onboarding` and space rooms are
+#: created elsewhere and are out of this surface's scope (plan §4.2).
+SESSION_TYPE_GENERAL = "general"
+
+
+def new_session_row(user_id: str) -> dict[str, Any]:
+    """The row for a learner's personal Ask Maigie conversation, in the repository's wire shape.
+
+    Returned rather than written, like `build_assistant_row`, so the caller owns the transaction. Keys
+    are the camelCase names `intelligence_repo._map_chat_session` allows.
+
+    `isSpaceRoom` is explicit rather than left to a column default because the connection's
+    default-session query filters on it — a session created without it would be invisible to the query
+    that is supposed to find it again, and the learner would get a new conversation on every connect.
+    """
+    return {
+        "userId": user_id,
+        "title": NEW_CONVERSATION_TITLE,
+        "isSpaceRoom": False,
+        "sessionType": SESSION_TYPE_GENERAL,
+    }
+
+
+#: Why a learner was refused a session. Codes rather than strings, so the reason can be tested and the
+#: wording can change without a test changing with it.
+SESSION_DENIED_PINNED_ROOM = "pinned_room_forbidden"
+SESSION_DENIED_PINNED_OWNER = "pinned_session_forbidden"
+SESSION_DENIED_ROOM_MEMBERSHIP = "room_membership_denied"
+SESSION_DENIED_LOOKUP_FAILED = "session_lookup_failed"
+
+#: The messages the clients render, kept verbatim from the handler.
+#:
+#: **Two of these three say almost the same thing, and that is preserved deliberately.** A non-member
+#: pinning a room gets "not allowed to access", while a non-member on the room they are already in gets
+#: "not a member of" — same condition, different words, because the second is a membership that was
+#: revoked mid-conversation and the first is an attempt to reach a room the learner was never in.
+#: Collapsing them is a wording change to a shipped surface, which is not this extraction's business.
+#: `SESSION_DENIED_LOOKUP_FAILED` is the only one of the four that is not about permission, and its
+#: message says so: nothing was refused, the conversation could not be reached. It is phrased as
+#: retryable because it is — the learner sends the same message again.
+SESSION_DENIAL_MESSAGES: dict[str, str] = {
+    SESSION_DENIED_PINNED_ROOM: "You are not allowed to access this space room.",
+    SESSION_DENIED_PINNED_OWNER: "You are not allowed to access this chat session.",
+    SESSION_DENIED_ROOM_MEMBERSHIP: "You are not a member of this space room.",
+    SESSION_DENIED_LOOKUP_FAILED: (
+        "That conversation could not be opened just now. Please try sending your message again."
+    ),
+}
+
+#: Denials the learner can do something about by retrying. Only the lookup failure is transient; the
+#: other three are permission and will refuse again for as long as the permission stands.
+RETRYABLE_SESSION_DENIALS = frozenset({SESSION_DENIED_LOOKUP_FAILED})
+
+
+@dataclass(frozen=True, slots=True)
+class SessionResolution:
+    """Which session a turn writes to, or why it may not be written at all.
+
+    `denial` and `session` are mutually exclusive in practice: a refused turn has nowhere to go, and the
+    caller must return before it saves anything. Holding both on one object rather than raising keeps
+    the refusal a value the HTTP path can turn into a `403` and the socket path into an `error` frame,
+    without either transport catching an exception the other one throws.
+    """
+
+    session: Any = None
+    space_group: Any = None
+    denial: str | None = None
+
+    @property
+    def allowed(self) -> bool:
+        return self.denial is None
+
+    @property
+    def retryable(self) -> bool:
+        """Whether sending the same message again might work.
+
+        The clients already render `error` frames with a `retryable` flag from the failed-generation
+        path, so a refused turn can say which kind it is without any new frame vocabulary.
+        """
+        return self.denial in RETRYABLE_SESSION_DENIALS
+
+    @property
+    def is_space_room(self) -> bool:
+        """Whether this conversation is a space room rather than a personal one.
+
+        Read from the resolved group, not from `ChatSession.is_space_room`, because the group is what
+        membership was checked against. The column and the group can disagree — a room whose group was
+        deleted still has the column set — and trusting the column there would gate a turn on a
+        membership that no longer has anything to be a member of.
+        """
+        return bool(self.space_group)
+
+
+async def resolve_session_for_turn(
+    *,
+    requested_session_id: str | None,
+    current_session: Any,
+    user_id: str,
+    find_session: Any,
+    space_group_for_session: Any,
+    is_space_member: Any,
+) -> SessionResolution:
+    """Resolve the session a turn belongs to and authorise the learner for it.
+
+    The three readers are injected — `find_session(session_id)`, `space_group_for_session(session_id)`
+    and `is_space_member(group, user_id)`, all awaitable — so the authorisation rules can be tested
+    without a database, a socket or a space-room implementation. That last one matters here more than
+    elsewhere: `_is_circle_member` is an unimplemented stub returning `False` (see `chat_helpers`), so
+    every room branch below is currently unreachable in production and could only ever be verified by
+    injecting a member.
+
+    **The ownership check is the whole point of this function.** A session id arrives from the client on
+    every message and is used to switch conversations mid-connection, so an unchecked id is a read and a
+    write into someone else's thread. There are two rules, and which one applies depends on the kind of
+    session: a room is authorised by membership of its group, and a personal conversation by owning it.
+    A room is checked *first*, because a room's `ChatSession.user_id` is whoever created it, and falling
+    through to the ownership rule would hand every other member's room to its creator alone.
+
+    **A lookup failure refuses the turn. It used to fall back silently, and that was a defect**
+    (plan §5.5.12). The handler wrapped the lookup in `except Exception: pass` and carried on with
+    whatever session the connection was already on — so on a transient database error the learner's
+    question and Maigie's answer were persisted, metered and charged **in a conversation they did not
+    pin**, with nothing said. The pinned thread showed a gap, so the learner would ask again, and the
+    duplicate charge landed somewhere nobody would look for it.
+
+    Refusing needs no new frame vocabulary: both clients already render `error` with a `retryable` flag,
+    which the failed-generation path put there. `SESSION_DENIED_LOOKUP_FAILED` is marked retryable
+    because it is transient, which is what makes refusing better than falling back rather than merely
+    louder — the learner is told to send it again, which is exactly what they should do.
+
+    **A session id that resolves to nothing is not this case** and still falls back to the current
+    session. Nothing failed there; the id is simply stale, and refusing every stale id would break a
+    client holding a reference to a deleted conversation.
+    """
+    session = current_session
+
+    if requested_session_id:
+        try:
+            pinned = await find_session(requested_session_id)
+            if pinned:
+                pinned_group = await space_group_for_session(pinned.id)
+                if pinned_group:
+                    if await is_space_member(pinned_group, user_id):
+                        session = pinned
+                    else:
+                        return SessionResolution(denial=SESSION_DENIED_PINNED_ROOM)
+                elif pinned.user_id == user_id:
+                    session = pinned
+                else:
+                    return SessionResolution(denial=SESSION_DENIED_PINNED_OWNER)
+        except Exception as error:  # noqa: BLE001 — any read failure means the same thing here
+            logger.warning(
+                "Pinned session %s could not be resolved for user %s; refusing the turn rather "
+                "than writing it to session %s: %s",
+                requested_session_id,
+                user_id,
+                getattr(current_session, "id", None),
+                error,
+            )
+            return SessionResolution(denial=SESSION_DENIED_LOOKUP_FAILED)
+
+    space_group = await space_group_for_session(session.id)
+    if space_group and not await is_space_member(space_group, user_id):
+        return SessionResolution(denial=SESSION_DENIED_ROOM_MEMBERSHIP)
+
+    return SessionResolution(session=session, space_group=space_group)
+
+
+# ---------------------------------------------------------------------------
+# Naming a conversation
+# ---------------------------------------------------------------------------
+
+#: How much of the first message becomes the title. Long enough to tell two questions about the same
+#: topic apart, short enough for a history row.
+TITLE_MAX_LENGTH = 50
+
+
+def derive_session_title(message: str) -> str:
+    """Name a conversation after the message that started it.
+
+    Whitespace is collapsed before truncating, which is load-bearing rather than tidy: a pasted question
+    arrives with newlines and runs of spaces, and truncating that at 50 characters can spend the whole
+    title on blank space. Collapsing first means the 50 characters are 50 characters of words.
+
+    Truncation is marked with an ellipsis so a clipped title is visibly clipped — a title ending
+    mid-word with no marker reads as a learner who mistyped.
+    """
+    cleaned = " ".join((message or "").strip().split())
+    if len(cleaned) > TITLE_MAX_LENGTH:
+        return cleaned[:TITLE_MAX_LENGTH] + "..."
+    return cleaned
+
+
+def session_needs_a_title(
+    *,
+    current_title: str | None,
+    message: str,
+    is_review_thread: bool,
+) -> bool:
+    """Whether this conversation is a candidate for naming, judged without a query.
+
+    Split from `should_retitle_session` so the caller can skip the `count(*)` when the answer is already
+    no. That is not a micro-optimisation: the count runs per turn on a conversation that already has a
+    name, which is every turn after the first, forever.
+
+    Three conditions, each excluding a specific way of getting this wrong:
+
+    - **Only an untouched title.** A conversation the learner renamed, or one already named by its first
+      message, keeps its name. Without this the title would follow the most recent question rather than
+      identify the thread, so the history panel would rename rows under the learner as they typed.
+    - **Never a review thread.** Review conversations are addressed by their review item and are not
+      listed as conversations at all, so a title on one is invisible work.
+    - **Never a blank message.** An empty title is worse than the default: the default at least says
+      "new".
+    """
+    if is_review_thread:
+        return False
+    if current_title not in (None, "", NEW_CONVERSATION_TITLE):
+        return False
+    return bool((message or "").strip())
+
+
+def should_retitle_session(
+    *,
+    current_title: str | None,
+    user_message_count: int,
+    message: str,
+    is_review_thread: bool,
+) -> bool:
+    """Whether this turn is the one that names the conversation.
+
+    `session_needs_a_title`, plus the condition that needs a query: **only the first user message**,
+    counted after the message is saved, so `1` means this one. The count is over `USER` rows in the
+    thread rather than messages seen on this connection, because that is the only figure that survives a
+    reconnect mid-conversation — count in memory and a learner who reconnects gets their fourth question
+    as the thread's name.
+
+    `user_message_count` is passed in rather than queried because the query belongs to the caller's
+    transaction. The judgement is here; the counting is not.
+    """
+    if not session_needs_a_title(
+        current_title=current_title, message=message, is_review_thread=is_review_thread
+    ):
+        return False
+    return user_message_count == 1

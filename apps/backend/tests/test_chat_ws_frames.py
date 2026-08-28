@@ -344,7 +344,11 @@ class TestNoAwaitMismatches:
 
         import src.domains.intelligence.conversation.websocket_handler as handler
 
-        source = Path(inspect.getsourcefile(handler)).read_text()
+        # `encoding=` is not optional. `read_text()` defaults to the platform encoding, which is
+        # cp1252 on Windows, and the handler contains non-Latin-1 characters — so this guard raised
+        # `UnicodeDecodeError` on every Windows run and passed only on CI. A guard that is dead on the
+        # machine the code is written on is worse than no guard: it reports green where it never ran.
+        source = Path(inspect.getsourcefile(handler)).read_text(encoding="utf-8")
         awaited_state: dict[str, set[bool]] = {}
 
         class Visitor(ast.NodeVisitor):
