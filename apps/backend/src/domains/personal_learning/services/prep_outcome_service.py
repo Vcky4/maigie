@@ -218,6 +218,11 @@ async def record_outcome(*, user_id: str, prep_id: str, data: dict[str, Any]) ->
         **await _readiness_at_answer(prep_id),
     }
 
+    # **The outcome is written before the status, and that order is now load-bearing.** Migration 056 puts a
+    # database trigger on `AWAITING_REVIEW → COMPLETED` that refuses the transition unless an outcome exists
+    # for this sitting. `upsert_prep_outcome` commits in its own session, so the row is visible by the time
+    # the status write below runs. Reversing these two statements would make the only legitimate completion
+    # path fail against its own guard.
     outcome = await repo.upsert_prep_outcome(prep_id=prep_id, exam_date=sitting, values=values)
 
     if attended == "postponed":

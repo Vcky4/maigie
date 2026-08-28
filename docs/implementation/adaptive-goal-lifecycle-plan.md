@@ -1523,6 +1523,77 @@ those 6 are exactly the ones acted on, all with `system_extended = 0`. So:
 Both are live code paths that have never run against real data. Worth knowing separately from phase 8: the
 extension logic, which is the most consequential thing the ladder does, is **untested outside its unit tests**.
 
+#### Confirmed: learners prepare outside the app, so calibration must condition on practice volume
+
+The hypothesis above was put to the product owner, who confirmed it: *"it's possible that the user also
+prepared outside the app."* That settles what phase 7 may and may not do.
+
+`readinessPercent` and `averageMasteryPercent` are not wrong — 0 of 10 topics at the strong threshold is an
+accurate measurement of *in-app practice*. The error is interpretive: they are being read as readiness for the
+exam. A learner who revised from a textbook is indistinguishable from one who did not revise, and both read
+as unready.
+
+So **phase 7 must not score every outcome.** Calibrating over rows where the metric had no visibility measures
+the app's engagement, not its prediction, and would produce a confident conclusion that readiness is
+uninformative. The specification changes in two ways:
+
+- **Condition on practice volume.** Only score preparations where the learner practised enough for readiness
+  to be measuring something. `topicsAssessed` and `questionsAnswered` are both on the outcome row, so the
+  threshold is expressible today; what it should be is unknown and needs the data.
+- **Report the excluded population as a first-class result.** "Readiness could not be evaluated for N of M
+  sittings because the learner did not practise here" is a finding about the product, not a gap in the
+  analysis, and it is probably the more valuable of the two numbers.
+
+Neither is a code change today. Both are constraints on phase 7's design, recorded before the data arrives so
+the first analysis is not the one that gets it wrong.
+
+### 10.16 The database-level guard, and two bugs found writing it
+
+Approved and applied: migration **056**, a `BEFORE UPDATE` trigger on `ExamPrep` refusing
+`AWAITING_REVIEW → COMPLETED` when no `PrepOutcome` exists for the sitting the row describes.
+
+**Why the database and not Python.** The invariant was already documented in four places and enforced in
+`mark_completed`, and both clients hide the control. None of it helped, because the writer was a stale
+deployment talking to the same tables with its own old repository. A Python guard protects the version that
+contains it and nothing else — and every deploy is a window where two versions coexist. The rule now lives in
+the one place both versions share.
+
+Deliberately narrow. `SETUP`/`IN_PROGRESS → COMPLETED` still works, because abandoning a preparation before
+its exam is legitimate. `AWAITING_REVIEW → IN_PROGRESS` is untouched, which is the postponed path.
+`COMPLETED → AWAITING_REVIEW` is untouched, which is how the repair script works. `ERRCODE` is a custom
+`MG001` so callers can recognise this refusal rather than parsing a message, and there is a documented
+`DISABLE TRIGGER` escape for a genuine backfill — not a config flag, because a flag that can be left on is a
+guard that is off.
+
+**Two real bugs, both caught by verifying against the database rather than reasoning about it.**
+
+1. **A timezone-dependent comparison in the trigger.** `ExamPrep."examDate"` is `timestamp without time zone`
+   and `PrepOutcome."examDate"` is `timestamp with time zone`. Comparing them directly makes Postgres read the
+   naive side in the *session's* timezone — `True` under UTC, `False` under `Africa/Lagos` or
+   `America/New_York`. The first version did that. It passed against the production pooler, which happens to
+   be UTC, and would have **refused every legitimate completion** on any connection that was not, turning a
+   guard against data loss into an outage on the path it protects. Now `AT TIME ZONE 'UTC'` explicitly, which
+   matches what `_as_utc` and `goal_metrics._utc` already do on the Python side.
+2. **A false pass in the verification script.** Its first version omitted `User.role` and `tier`, both NOT
+   NULL with no default, so every case failed on the insert — and the two "expect refused" cases *passed*,
+   agreeing with the assertion for entirely the wrong reason. Only the must-allow cases exposed it. The script
+   now checks that a refusal carries `MG001`, so an incidental failure can never be mistaken for the guard
+   working.
+
+`scripts/debug/verify_056_guard.py` asserts all six behaviours inside rolled-back savepoints and reports
+**6/6**. Its own naive-versus-aware binding bug is documented in it: asyncpg silently interprets a naive
+datetime bound to a `timestamptz` column in the *client's* local timezone, which stored the outcome an hour
+off the preparation and made the guard look broken when it was correct.
+
+**`record_outcome`'s write order is now load-bearing** — the outcome is committed before the status, so the
+trigger can see it. A comment at the call site says so, because reversing those two statements would deadlock
+the only legitimate writer against its own guard.
+
+**Lesson, and it is the same one as §10.14.** Three of the four defects in this section were in the
+*checking*, not the thing checked: a trigger that agreed with the session timezone, a probe that agreed with
+itself, and a suite that skipped what it could not parse. Asserting both directions of a guard — what it must
+refuse *and* what it must allow — is what caught two of them.
+
 #### What this means for sequencing
 
 Neither phase is closer than §7 assumed, and the reasons are more specific and more actionable:
