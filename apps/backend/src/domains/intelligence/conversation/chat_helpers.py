@@ -1,19 +1,17 @@
-"""Helpers the chat WebSocket handler depends on. **Most of these are still unimplemented.**
+"""Helpers the chat WebSocket handler depends on. **Two of these are still unimplemented.**
 
 This module, `chat_greeting` and `component_response` were all created as stubs during the domain
 refactor, each with a docstring reading "implementation pending migration", and the migration never
-happened. Between them they supply the handler with circle-group lookup, room membership, reply
-previews, role mapping, topic resources, suggestion splitting, greeting context and both component
-formatters — so a great deal of what the chat pipeline appears to do is a `pass` or a `return None`.
+happened. That is the correction to the Ask Maigie plan's §2, which read this pipeline as complete and
+blocked only by an unmounted router: it is an orchestrator over code that was never brought across.
 
-That is the correction to the Ask Maigie plan's §2, which read this pipeline as complete and blocked only
-by an unmounted router. It is not complete. It is an orchestrator over code that was never brought
-across.
+**Four of the stubs are gone rather than fixed**, because the flows they served were removed. Space-room
+chat, the AI greeting and chat onboarding could none of them run — every entry point raised or returned
+nothing — so `_get_circle_group_for_session`, `_is_circle_member`, `MAIGIE_MENTION_PATTERN` and
+`_strip_maigie_mention` went with space rooms, and `chat_greeting` went with the greeting.
 
-**What changed here, and what deliberately did not.** The stubs stay stubs — implementing circle rooms
-is out of Ask Maigie's scope (plan §4.2) and inventing a suggestion-splitting heuristic would be
-inventing product behaviour. What is fixed is the three ways they were actively harmful rather than
-merely absent:
+What is fixed rather than removed is the three ways the remaining stubs were actively harmful rather
+than merely absent:
 
 - `_extract_suggestion` was `async` and returned `None`, while the handler called it *without* `await`
   and unpacked the result into two names. Any turn that produced components raised
@@ -24,16 +22,13 @@ merely absent:
 - `_map_db_role_to_client` returned the database's `"ASSISTANT"` unchanged, where both clients switch on
   `"assistant"`.
 
-`_get_circle_group_for_session` and `_is_circle_member` are left returning `None` and `False`. Read the
-note on `_is_circle_member` before implementing either.
+Still unimplemented and still needed: `_attach_topic_resources_context` and the suggestion split. Both
+belong to the working personal-chat path, so they are migrations waiting to happen rather than dead code.
 """
 
 from __future__ import annotations
 
-import re
 from typing import Any
-
-MAIGIE_MENTION_PATTERN = re.compile(r"@maigie\b", re.IGNORECASE)
 
 
 async def _attach_topic_resources_context(*args, **kwargs) -> None:
@@ -60,35 +55,6 @@ def _extract_suggestion(text: str | None) -> tuple[str, str | None]:
     object` — the whole tool-using path. Synchronous now, because there is nothing here to await.
     """
     return (text or "", None)
-
-
-async def _get_circle_group_for_session(*args, **kwargs) -> Any:
-    """The space-room chat group a session belongs to, or `None` for a personal conversation.
-
-    **Unimplemented, returns `None` unconditionally.** So `is_circle_session` is always false and every
-    space-room branch in the handler is unreachable: the `circle_message` broadcast, the room's knowledge
-    context, the `@maigie` mention gate, the per-space tier resolution and all nine `send_room_json`
-    calls. `subscribe` always answers "Unable to join this space room", because this returns `None`.
-
-    Space rooms are out of scope for the Ask Maigie plan (§4.2). Recorded rather than fixed so that the
-    plan's instruction not to *break* space rooms is understood correctly: there is nothing working to
-    break.
-    """
-    return None
-
-
-async def _is_circle_member(*args, **kwargs) -> bool:
-    """Whether a user may participate in a space room.
-
-    **Unimplemented, returns `False`** — deny by default, which is the safe direction.
-
-    **Read this before implementing it.** The handler called this without `await` at one point, and
-    `not <coroutine>` is always `False`, so the membership check passed for everyone. It was unreachable
-    only because `_get_circle_group_for_session` returns `None` first. The missing `await` is now added,
-    so a stub returning `False` denies as intended — but if you implement this function, verify the two
-    call sites reject a non-member, because the guard has never once run.
-    """
-    return False
 
 
 def _map_db_role_to_client(role: str) -> str:
@@ -125,8 +91,3 @@ def _serialize_reply_preview(
         "userId": getattr(message, "user_id", None),
         "userName": getattr(author, "name", None) if author is not None else fallback_user_name,
     }
-
-
-def _strip_maigie_mention(text: str) -> str:
-    """Strip an `@maigie` mention from a room message before it reaches the model."""
-    return MAIGIE_MENTION_PATTERN.sub("", text).strip()

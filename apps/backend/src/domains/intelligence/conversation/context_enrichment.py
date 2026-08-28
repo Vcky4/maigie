@@ -644,23 +644,19 @@ async def build_history(
     session_id: str,
     user_id: str,
     review_item_id: str | None,
-    is_space_room: bool,
     readers: ContextReaders,
 ) -> list[dict[str, Any]]:
     """The conversation so far, in the provider's history shape, oldest first.
 
-    Two isolation rules are decided here, and both are about a thread not inheriting messages that were
-    never part of it:
+    **A review thread sees only its own review, and general chat sees only rows with no review at all.**
+    So a spaced-repetition review does not answer against the learner's unrelated questions, and the
+    learner's next general question does not inherit the review. `review_item_id` is passed through
+    as-is, and `None` means "no review" rather than "any" — see `_read_history`.
 
-    - **A review thread sees only its own review.** General chat sees only rows with no review at all.
-      So a spaced-repetition review does not answer against the learner's unrelated questions, and the
-      learner's next general question does not inherit the review. `review_item_id` is passed through
-      as-is and `None` means "no review", not "any" — see `_read_history`.
-    - **In a space room the whole room is history; in a personal chat only the learner's own messages
-      are.** Expressed by passing `user_id=None` for a room, which is the one place in this module where
-      omitting the owner is correct rather than a defect: a room's history is by definition other
-      people's messages, and the learner's right to read them was established by the membership check in
-      `ask_service.resolve_session_for_turn`.
+    A second rule lived here: in a space room the whole room was history, expressed by passing
+    `user_id=None`. It went with space-room chat. `_read_history` still accepts `user_id=None` and still
+    documents what it means, because that is the reader's contract rather than this surface's, but
+    nothing passes it now — a personal conversation is only ever the learner's own messages.
 
     Reversed after the read, because the query takes the *newest* rows and the provider wants them
     oldest first.
@@ -669,7 +665,7 @@ async def build_history(
 
     records = await readers.read_history(
         session_id=session_id,
-        user_id=None if is_space_room else user_id,
+        user_id=user_id,
         review_item_id=review_item_id,
         limit=ask_service.HISTORY_LIMIT,
     )
@@ -686,7 +682,6 @@ async def attach_recall(
     context: dict[str, Any] | None,
     message: str,
     user_id: str,
-    is_space_room: bool,
     readers: ContextReaders,
 ) -> dict[str, Any] | None:
     """Add what the learner has written before, and what Maigie remembers, to this turn's context.
@@ -695,25 +690,21 @@ async def attach_recall(
     returns rather than mutates. The handler open-coded `if not enriched_context: enriched_context = {}`
     at both call sites, and a third stage forgetting it would have raised on `None`.
 
-    **Both are skipped entirely in a space room, and that is a privacy rule rather than an
-    optimisation.** Retrieval searches the learner's *private* material — their notes, their documents —
-    and long-term memory is a summary of their own conversations. Neither may reach a shared room, where
-    other members read the reply.
-
     **Both are best-effort.** A turn without recall is a worse answer; a turn that fails because recall
     failed is no answer. So each is wrapped and logged, and the turn continues.
 
-    `message` is the model-facing text. Retrieval used the raw text and memory the mention-stripped text
-    before this — a distinction with no reachable difference, since the two differ only in a space room
-    and both stages are skipped there. Unified on the model-facing text because that is what the answer
-    is generated from, so it is what the search should match; recorded because the old asymmetry would
-    have become a real difference the day space rooms worked.
+    **Both stages used to be skipped in a space room, and that skip was a privacy rule rather than an
+    optimisation:** retrieval searches the learner's private notes and documents, and memory summarises
+    their own conversations, so neither could be allowed to reach a room other members read. Space-room
+    chat is gone, so every turn here is personal and the skip has nothing to guard. **Recorded because
+    the rule outlives the code** — if room chat is ever built, this is one of the two places it has to be
+    re-established.
+
+    `message` is the model-facing text. Retrieval read the raw message and memory the mention-stripped
+    one, which differed only in a space room where both were skipped; unified on the model-facing text
+    because that is what the answer is generated from, so it is what the search should match.
     """
     from . import ask_service
-
-    if is_space_room:
-        logger.debug("Skipping retrieval and memory injection: this is a shared space room.")
-        return context
 
     if ask_service.should_retrieve(message):
         try:

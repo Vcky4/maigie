@@ -913,6 +913,9 @@ def a_message(content="hello", role="USER"):
 
 
 class TestHistoryIsolation:
+    """The review-thread rule. A second rule — a space room's history is the whole room — was removed
+    with space-room chat."""
+
     @pytest.mark.asyncio
     async def test_a_review_thread_asks_only_for_its_own_review(self):
         """Otherwise a spaced-repetition review answers against the learner's unrelated questions."""
@@ -921,7 +924,6 @@ class TestHistoryIsolation:
             session_id="sess_1",
             user_id="user_1",
             review_item_id="review_7",
-            is_space_room=False,
             readers=fake_readers(read_history=history_reader(calls=calls)),
         )
         assert calls[0]["review_item_id"] == "review_7"
@@ -935,37 +937,22 @@ class TestHistoryIsolation:
             session_id="sess_1",
             user_id="user_1",
             review_item_id=None,
-            is_space_room=False,
             readers=fake_readers(read_history=history_reader(calls=calls)),
         )
         assert calls[0]["review_item_id"] is None
 
     @pytest.mark.asyncio
-    async def test_a_personal_chat_asks_only_for_the_learners_own_messages(self):
+    async def test_it_asks_only_for_the_learners_own_messages(self):
+        """Every conversation on this surface is personal. A space room's history was the whole room,
+        passed as `user_id=None`; that went with space-room chat."""
         calls: list[dict] = []
         await context_enrichment.build_history(
             session_id="sess_1",
             user_id="user_1",
             review_item_id=None,
-            is_space_room=False,
             readers=fake_readers(read_history=history_reader(calls=calls)),
         )
         assert calls[0]["user_id"] == "user_1"
-
-    @pytest.mark.asyncio
-    async def test_a_space_room_asks_for_the_whole_rooms_messages(self):
-        """The one place in this module where omitting the owner is correct rather than a defect: a
-        room's history is by definition other people's messages, and the right to read them was
-        established by the membership check in `resolve_session_for_turn`."""
-        calls: list[dict] = []
-        await context_enrichment.build_history(
-            session_id="sess_room",
-            user_id="user_1",
-            review_item_id=None,
-            is_space_room=True,
-            readers=fake_readers(read_history=history_reader(calls=calls)),
-        )
-        assert calls[0]["user_id"] is None
 
     @pytest.mark.asyncio
     async def test_the_window_is_the_named_limit(self):
@@ -974,7 +961,6 @@ class TestHistoryIsolation:
             session_id="sess_1",
             user_id="user_1",
             review_item_id=None,
-            is_space_room=False,
             readers=fake_readers(read_history=history_reader(calls=calls)),
         )
         from src.domains.intelligence.conversation import ask_service
@@ -991,7 +977,6 @@ class TestHistoryIsolation:
             session_id="sess_1",
             user_id="user_1",
             review_item_id=None,
-            is_space_room=False,
             readers=fake_readers(read_history=history_reader(records=newest_first)),
         )
         assert [entry["parts"][0] for entry in history] == ["first", "second", "third"]
@@ -1015,26 +1000,6 @@ def recall_readers(*, retrieve=None, memory=None, calls=None):
 
     return fake_readers(retrieve=retrieve or default_retrieve, memory=memory or default_memory)
 
-
-class TestAttachRecall:
-    @pytest.mark.asyncio
-    async def test_a_space_room_gets_neither(self):
-        """**A privacy rule, not an optimisation.** Retrieval searches the learner's private notes and
-        documents, and memory summarises their own conversations. Neither may reach a room other members
-        read the reply in."""
-
-        async def forbidden(*_args):
-            raise AssertionError("must not run in a space room")
-
-        context = await context_enrichment.attach_recall(
-            context={"spaceId": "space_1"},
-            message="What did I write about entropy in my thermodynamics notes?",
-            user_id="user_1",
-            is_space_room=True,
-            readers=fake_readers(retrieve=forbidden, memory=forbidden),
-        )
-        assert context == {"spaceId": "space_1"}
-
     @pytest.mark.asyncio
     async def test_retrieved_items_reach_the_context(self):
         async def retrieve(_query, _user_id, _limit):
@@ -1046,7 +1011,6 @@ class TestAttachRecall:
             context={},
             message="What did I write about entropy in my notes?",
             user_id="user_1",
-            is_space_room=False,
             readers=recall_readers(retrieve=retrieve),
         )
         assert any("NOTE" in line for line in context["retrieved_items"])
@@ -1058,7 +1022,6 @@ class TestAttachRecall:
             context={},
             message="hi",
             user_id="user_1",
-            is_space_room=False,
             readers=recall_readers(calls=calls),
         )
         assert not [c for c in calls if c[0] == "retrieve"]
@@ -1072,7 +1035,6 @@ class TestAttachRecall:
             context={},
             message="hi",
             user_id="user_1",
-            is_space_room=False,
             readers=recall_readers(calls=calls),
         )
         assert [c for c in calls if c[0] == "memory"]
@@ -1087,7 +1049,6 @@ class TestAttachRecall:
             context={},
             message="Explain entropy from my notes please",
             user_id="user_1",
-            is_space_room=False,
             readers=recall_readers(calls=calls),
         )
         queries = {c[1] for c in calls}
@@ -1108,7 +1069,6 @@ class TestAttachRecall:
             context={},
             message="Explain entropy from my notes",
             user_id="user_1",
-            is_space_room=False,
             readers=recall_readers(retrieve=broken, memory=memory),
         )
         assert "retrieved_items" not in context
@@ -1123,7 +1083,6 @@ class TestAttachRecall:
             context={},
             message="Explain entropy from my notes",
             user_id="user_1",
-            is_space_room=False,
             readers=recall_readers(memory=broken),
         )
         assert context == {}
@@ -1140,7 +1099,6 @@ class TestAttachRecall:
             context=None,
             message="hi",
             user_id="user_1",
-            is_space_room=False,
             readers=recall_readers(memory=memory),
         )
         assert context == {"memory_context": "Remembered."}
@@ -1154,7 +1112,6 @@ class TestAttachRecall:
                 context=None,
                 message="hi",
                 user_id="user_1",
-                is_space_room=False,
                 readers=recall_readers(),
             )
             is None
@@ -1170,7 +1127,6 @@ class TestAttachRecall:
             context=original,
             message="hi",
             user_id="user_1",
-            is_space_room=False,
             readers=recall_readers(memory=memory),
         )
         assert original == {"topicId": "topic_1"}
@@ -1182,7 +1138,6 @@ class TestAttachRecall:
             context={},
             message="Explain entropy from my notes",
             user_id="user_42",
-            is_space_room=False,
             readers=recall_readers(calls=calls),
         )
         assert {c[2] for c in calls} == {"user_42"}
@@ -1194,7 +1149,162 @@ class TestAttachRecall:
             context={},
             message="Explain entropy from my notes",
             user_id="user_1",
-            is_space_room=False,
+            readers=recall_readers(calls=calls),
+        )
+        retrieve = [c for c in calls if c[0] == "retrieve"][0]
+        assert retrieve[3] == context_enrichment.RETRIEVAL_LIMIT
+
+
+class TestAttachRecall:
+    @pytest.mark.asyncio
+    async def test_retrieved_items_reach_the_context(self):
+        async def retrieve(_query, _user_id, _limit):
+            return [
+                {"similarity": 0.9, "objectType": "note", "objectId": "n1", "data": {"title": "E"}}
+            ]
+
+        context = await context_enrichment.attach_recall(
+            context={},
+            message="What did I write about entropy in my notes?",
+            user_id="user_1",
+            readers=recall_readers(retrieve=retrieve),
+        )
+        assert any("NOTE" in line for line in context["retrieved_items"])
+
+    @pytest.mark.asyncio
+    async def test_a_trivial_message_is_not_searched(self):
+        calls: list = []
+        await context_enrichment.attach_recall(
+            context={},
+            message="hi",
+            user_id="user_1",
+            readers=recall_readers(calls=calls),
+        )
+        assert not [c for c in calls if c[0] == "retrieve"]
+
+    @pytest.mark.asyncio
+    async def test_memory_runs_even_for_a_trivial_message(self):
+        """Retrieval is a search that needs something to search on; memory is what Maigie already knows
+        about this learner, and "hi" is exactly the turn where knowing them matters."""
+        calls: list = []
+        await context_enrichment.attach_recall(
+            context={},
+            message="hi",
+            user_id="user_1",
+            readers=recall_readers(calls=calls),
+        )
+        assert [c for c in calls if c[0] == "memory"]
+
+    @pytest.mark.asyncio
+    async def test_both_stages_see_the_same_model_facing_text(self):
+        """Retrieval used the raw text and memory the mention-stripped text before this — no reachable
+        difference, since they differ only in a space room where both are skipped, but it would have
+        become one the day space rooms worked."""
+        calls: list = []
+        await context_enrichment.attach_recall(
+            context={},
+            message="Explain entropy from my notes please",
+            user_id="user_1",
+            readers=recall_readers(calls=calls),
+        )
+        queries = {c[1] for c in calls}
+        assert queries == {"Explain entropy from my notes please"}
+
+    @pytest.mark.asyncio
+    async def test_a_failing_retrieval_does_not_lose_the_turn(self):
+        """An enrichment, not a precondition. A turn without recall is a worse answer; a turn that fails
+        because recall failed is no answer."""
+
+        async def broken(_query, _user_id, _limit):
+            raise RuntimeError("vector store is down")
+
+        async def memory(_user_id, _query):
+            return "They are revising thermodynamics."
+
+        context = await context_enrichment.attach_recall(
+            context={},
+            message="Explain entropy from my notes",
+            user_id="user_1",
+            readers=recall_readers(retrieve=broken, memory=memory),
+        )
+        assert "retrieved_items" not in context
+        assert context["memory_context"] == "They are revising thermodynamics."
+
+    @pytest.mark.asyncio
+    async def test_a_failing_memory_lookup_does_not_lose_the_turn(self):
+        async def broken(_user_id, _query):
+            raise RuntimeError("memory store is down")
+
+        context = await context_enrichment.attach_recall(
+            context={},
+            message="Explain entropy from my notes",
+            user_id="user_1",
+            readers=recall_readers(memory=broken),
+        )
+        assert context == {}
+
+    @pytest.mark.asyncio
+    async def test_a_context_is_created_when_there_was_none(self):
+        """Returned rather than mutated. The handler open-coded `if not context: context = {}` at both
+        call sites, and a third stage forgetting it would have raised on `None`."""
+
+        async def memory(_user_id, _query):
+            return "Remembered."
+
+        context = await context_enrichment.attach_recall(
+            context=None,
+            message="hi",
+            user_id="user_1",
+            readers=recall_readers(memory=memory),
+        )
+        assert context == {"memory_context": "Remembered."}
+
+    @pytest.mark.asyncio
+    async def test_nothing_found_leaves_an_absent_context_absent(self):
+        """An empty dict and `None` mean different things downstream, so finding nothing must not
+        manufacture a context."""
+        assert (
+            await context_enrichment.attach_recall(
+                context=None,
+                message="hi",
+                user_id="user_1",
+                readers=recall_readers(),
+            )
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_callers_context_is_not_mutated(self):
+        async def memory(_user_id, _query):
+            return "Remembered."
+
+        original = {"topicId": "topic_1"}
+        await context_enrichment.attach_recall(
+            context=original,
+            message="hi",
+            user_id="user_1",
+            readers=recall_readers(memory=memory),
+        )
+        assert original == {"topicId": "topic_1"}
+
+    @pytest.mark.asyncio
+    async def test_the_owner_reaches_both_stages(self):
+        calls: list = []
+        await context_enrichment.attach_recall(
+            context={},
+            message="Explain entropy from my notes",
+            user_id="user_42",
+            readers=recall_readers(calls=calls),
+        )
+        assert {c[2] for c in calls} == {"user_42"}
+
+    @pytest.mark.asyncio
+    async def test_the_retrieval_limit_is_the_named_constant(self):
+        calls: list = []
+        await context_enrichment.attach_recall(
+            context={},
+            message="Explain entropy from my notes",
+            user_id="user_1",
             readers=recall_readers(calls=calls),
         )
         retrieve = [c for c in calls if c[0] == "retrieve"][0]

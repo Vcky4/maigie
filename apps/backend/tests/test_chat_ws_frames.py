@@ -236,7 +236,6 @@ async def drive(
         patch.object(wh, "manager", manager),
         patch.object(ce, "production_readers", lambda: test_readers),
         patch.object(wh, "get_session_factory", lambda: FakeDbSession),
-        patch.object(wh, "_get_circle_group_for_session", AsyncMock(return_value=None)),
         patch.object(wh, "get_feature_flag_service", lambda: flags),
         patch.object(wh, "_get_user_model_preference", AsyncMock(return_value=None)),
         patch.object(
@@ -341,6 +340,8 @@ class TestNoAwaitMismatches:
     - `_build_greeting_components` — async, not awaited: a coroutine was stored as `componentData` and
       then iterated.
     - `_is_circle_member` — async, not awaited: `not <coroutine>` is always `False`, so the room
+      (These three belonged to the greeting and space-room flows, both since deleted. Kept in the
+      record because they are the evidence for why this detector is static rather than behavioural.)
       membership guard authorised everyone. Unreachable only because the group lookup returns `None`
       first, which is luck rather than defence.
 
@@ -401,28 +402,38 @@ class TestNoAwaitMismatches:
         )
 
     def test_the_detector_finds_a_planted_mismatch(self):
-        """Guards the guard. An inspection that silently matches nothing passes forever."""
+        """Guards the guard. An inspection that silently matches nothing passes forever.
+
+        The planted mismatch is a real async helper the handler calls, resolved by name the same way
+        `mismatches()` resolves its targets — so this fails if `getattr`-on-the-module stops working,
+        which is the assumption the whole detector rests on. It used to plant `_is_circle_member`, which
+        went with space-room chat.
+        """
         import ast
         import inspect
 
+        import src.domains.intelligence.conversation.websocket_handler as handler
+
         source = "async def f(): pass\nx = f()\n"
-        tree = ast.parse(source)
-        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+        calls = [n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.Call)]
         assert calls, "the detector's own parsing assumption is wrong"
-        assert inspect.iscoroutinefunction(
-            __import__(
-                "src.domains.intelligence.conversation.chat_helpers", fromlist=["_is_circle_member"]
-            )._is_circle_member
-        ), "_is_circle_member stopped being async; re-check its two call sites for the missing await"
+
+        target = getattr(handler, "_get_user_model_preference", None)
+        assert target is not None, "the detector resolves names off the handler module; that broke"
+        assert inspect.iscoroutinefunction(target), (
+            "_get_user_model_preference stopped being async; the detector's notion of an async "
+            "target needs re-checking"
+        )
 
 
 class TestStubsAreHonestRatherThanHarmful:
-    """Three modules the handler depends on are unimplemented stubs.
+    """Two modules the handler depends on are still unimplemented stubs.
 
     `chat_helpers`, `chat_greeting` and `component_response` were created during the domain refactor with
-    "implementation pending migration" docstrings, and the migration never happened. They are left
-    unimplemented — circle rooms are out of Ask Maigie's scope and a suggestion-splitting heuristic would
-    be invented product behaviour — but they must be *absent*, not actively wrong.
+    "implementation pending migration" docstrings, and the migration never happened. `chat_greeting` is
+    gone — the greeting flow it served could not run, so it was deleted rather than deferred. What
+    remains must be *absent*, not actively wrong: an unimplemented helper that returns `{}` where the
+    caller expects a shape is worse than one that returns nothing.
     """
 
     def test_a_suggestion_split_returns_the_answer_whole(self):
@@ -477,13 +488,24 @@ class TestStubsAreHonestRatherThanHarmful:
         assert _map_db_role_to_client("ASSISTANT") == "assistant"
         assert _map_db_role_to_client("USER") == "user"
 
-    def test_room_membership_denies_by_default(self):
-        """The stub must fail closed. It is the only thing standing in front of a room right now."""
-        import asyncio
+    def test_the_removed_room_helpers_have_not_come_back(self):
+        """Space-room chat was removed because it could not run: the group lookup returned `None`
+        unconditionally, so no session was ever a room. If these names reappear, the room path is being
+        rebuilt — which is fine, but its membership guard has never once executed, so it needs tests
+        before it gates anything."""
+        from src.domains.intelligence.conversation import chat_helpers
 
-        from src.domains.intelligence.conversation.chat_helpers import _is_circle_member
-
-        assert asyncio.run(_is_circle_member("group", "user_1")) is False
+        for name in (
+            "_is_circle_member",
+            "_get_circle_group_for_session",
+            "_strip_maigie_mention",
+            "MAIGIE_MENTION_PATTERN",
+        ):
+            assert not hasattr(chat_helpers, name), (
+                f"{name} is back. Space-room chat was deleted, not deferred — see the plan's record. "
+                "If it is being rebuilt, the membership check needs a test that a non-member is "
+                "refused, because that branch has never run."
+            )
 
 
 class TestKeepalive:

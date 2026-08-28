@@ -7,13 +7,18 @@ the HTTP path had quietly stopped persisting anything, stopped routing through t
 stopped recording cost, and nobody noticed because the surface still answered. So everything above the
 transport lives here, once, and streaming is a callback rather than a second code path.
 
-**Why it is being filled in stages rather than written at once.** The pipeline currently lives inside
-`register_chat_websocket_routes`, which is one 1,900-line function containing four different flows —
-the personal ask turn, space-room chat, the AI greeting, and onboarding — sharing local variables
-throughout. Only the first is Ask Maigie (plan §4.2 puts the others out of scope), and the other three
-have to come out still working. Moving that in one commit would be unreviewable and unverifiable, so it
-moves one seam at a time, with `tests/test_chat_ws_frames.py` holding the observable frame contract
-still after each step.
+**Why it is being filled in stages rather than written at once.** The pipeline lived inside
+`register_chat_websocket_routes`, one ~2,100-line function that contained four different flows — the
+personal ask turn, space-room chat, the AI greeting, and onboarding — sharing local variables
+throughout. Moving that in one commit would be unreviewable, so it moves one seam at a time, with
+`tests/test_chat_ws_frames.py` holding the observable frame contract still after each step.
+
+**Three of those four flows have since been deleted rather than moved, and that changes the shape of
+what is left.** Space-room chat, the greeting and onboarding could none of them run: every entry point
+either returned nothing or raised on a signature the caller did not match, and each failure was caught
+and fell through to ordinary chat. So there was no working behaviour to preserve, and `answer()` does
+not have to take the union of four flows' parameters — only the personal turn's. The plan's record has
+the detail; what matters here is that "still working" no longer applies to anything but one flow.
 
 What has moved so far: the decisions that are **pure** — no database, no socket, no model. Those are the
 ones that can be tested directly and were previously only reachable by driving a WebSocket, which is why
@@ -56,7 +61,7 @@ MOVED_SO_FAR = (
 )
 STILL_IN_THE_HANDLER = (
     "the connection's default session query",
-    "the space-room and reply context blocks",
+    "the reply context block",
     "generation",
     "tool/action loop",
     "the persistence write itself",
@@ -652,33 +657,13 @@ REVIEW_MODE_PAGE_CONTEXT = (
     "Do not ask the user to click any button; completion is automatic when you call complete_review."
 )
 
-#: Base instructions for a turn inside a shared space room.
-_SPACE_ROOM_PAGE_CONTEXT = (
-    "You are participating in a shared learning space chat room. "
-    "Respond with the space's discussion in mind, not the user's private study history. "
-    "Keep responses collaborative and suitable for the whole room."
-)
-
-#: Appended when the learner is replying to a specific room message.
-_SPACE_ROOM_REPLY_SUFFIX = " When replyContext is present, respond to that specific room message."
-
-
-def space_room_page_context(*, has_reply_target: bool = False) -> str:
-    """Instructions for a turn in a shared space room.
-
-    **"not the user's private study history" is a privacy boundary, not a style note.** A space room is
-    shared, so the personal context that makes Ask Maigie useful one-to-one would be a disclosure here.
-    The handler enforces the same boundary structurally by skipping retrieval for room turns; this is
-    the half of it the model is told.
-
-    Currently unreachable: `chat_helpers._get_circle_group_for_session` is unimplemented and returns
-    `None`, so no turn is ever classified as a room turn. Space rooms are out of scope for the Ask
-    Maigie plan (§4.2) and this is extracted as-is rather than fixed — but note that a room turn has
-    never run, so this text has never reached a model.
-    """
-    if has_reply_target:
-        return _SPACE_ROOM_PAGE_CONTEXT + _SPACE_ROOM_REPLY_SUFFIX
-    return _SPACE_ROOM_PAGE_CONTEXT
+# The space-room instruction block lived here. It went with space-room chat, which could not run:
+# `_get_circle_group_for_session` returned `None` unconditionally, so no turn was ever classified as a
+# room turn and this text never reached a model. Its one interesting line — "not the user's private
+# study history" — was a privacy boundary rather than a style note, and if room chat is ever built the
+# boundary has to be re-established on both sides: in the instructions *and* structurally, by keeping
+# personal retrieval and long-term memory out of a shared room (see `context_enrichment.attach_recall`,
+# which enforced exactly that and no longer needs to).
 
 
 # ===========================================================================
@@ -882,8 +867,10 @@ def format_topic_user_notes(notes: list[Any]) -> str:
 #: recognise the untouched default, so the two would silently disagree if the literal appeared twice.
 NEW_CONVERSATION_TITLE = "New Chat"
 
-#: Session kinds. `general` is Ask Maigie's personal conversation. `onboarding` and space rooms are
-#: created elsewhere and are out of this surface's scope (plan §4.2).
+#: Session kinds. `general` is Ask Maigie's personal conversation, and now the only kind this surface
+#: creates. Space-room sessions are still created by the `learning_spaces` domain and still carry
+#: `is_space_room`, which is why the connection's default-session query keeps filtering on it — without
+#: that filter a learner's personal conversation could resolve to a room's session.
 SESSION_TYPE_GENERAL = "general"
 
 
@@ -907,32 +894,25 @@ def new_session_row(user_id: str) -> dict[str, Any]:
 
 #: Why a learner was refused a session. Codes rather than strings, so the reason can be tested and the
 #: wording can change without a test changing with it.
-SESSION_DENIED_PINNED_ROOM = "pinned_room_forbidden"
 SESSION_DENIED_PINNED_OWNER = "pinned_session_forbidden"
-SESSION_DENIED_ROOM_MEMBERSHIP = "room_membership_denied"
 SESSION_DENIED_LOOKUP_FAILED = "session_lookup_failed"
 
 #: The messages the clients render, kept verbatim from the handler.
 #:
-#: **Two of these three say almost the same thing, and that is preserved deliberately.** A non-member
-#: pinning a room gets "not allowed to access", while a non-member on the room they are already in gets
-#: "not a member of" — same condition, different words, because the second is a membership that was
-#: revoked mid-conversation and the first is an attempt to reach a room the learner was never in.
-#: Collapsing them is a wording change to a shipped surface, which is not this extraction's business.
-#: `SESSION_DENIED_LOOKUP_FAILED` is the only one of the four that is not about permission, and its
-#: message says so: nothing was refused, the conversation could not be reached. It is phrased as
-#: retryable because it is — the learner sends the same message again.
+#: The two differ in kind, not just in wording. One is about permission, and repeating the turn will
+#: refuse again. The other is not a refusal at all — nothing was denied, the conversation could not be
+#: reached — and its message says so, because retrying is exactly what the learner should do.
+#:
+#: Two room-membership codes lived here until space-room chat was removed. They are gone with it.
 SESSION_DENIAL_MESSAGES: dict[str, str] = {
-    SESSION_DENIED_PINNED_ROOM: "You are not allowed to access this space room.",
     SESSION_DENIED_PINNED_OWNER: "You are not allowed to access this chat session.",
-    SESSION_DENIED_ROOM_MEMBERSHIP: "You are not a member of this space room.",
     SESSION_DENIED_LOOKUP_FAILED: (
         "That conversation could not be opened just now. Please try sending your message again."
     ),
 }
 
-#: Denials the learner can do something about by retrying. Only the lookup failure is transient; the
-#: other three are permission and will refuse again for as long as the permission stands.
+#: Denials the learner can do something about by retrying. Only the lookup failure is transient; a
+#: permission refusal will refuse again for as long as the permission stands.
 RETRYABLE_SESSION_DENIALS = frozenset({SESSION_DENIED_LOOKUP_FAILED})
 
 
@@ -947,7 +927,6 @@ class SessionResolution:
     """
 
     session: Any = None
-    space_group: Any = None
     denial: str | None = None
 
     @property
@@ -963,17 +942,6 @@ class SessionResolution:
         """
         return self.denial in RETRYABLE_SESSION_DENIALS
 
-    @property
-    def is_space_room(self) -> bool:
-        """Whether this conversation is a space room rather than a personal one.
-
-        Read from the resolved group, not from `ChatSession.is_space_room`, because the group is what
-        membership was checked against. The column and the group can disagree — a room whose group was
-        deleted still has the column set — and trusting the column there would gate a turn on a
-        membership that no longer has anything to be a member of.
-        """
-        return bool(self.space_group)
-
 
 async def resolve_session_for_turn(
     *,
@@ -981,24 +949,23 @@ async def resolve_session_for_turn(
     current_session: Any,
     user_id: str,
     find_session: Any,
-    space_group_for_session: Any,
-    is_space_member: Any,
 ) -> SessionResolution:
     """Resolve the session a turn belongs to and authorise the learner for it.
 
-    The three readers are injected — `find_session(session_id)`, `space_group_for_session(session_id)`
-    and `is_space_member(group, user_id)`, all awaitable — so the authorisation rules can be tested
-    without a database, a socket or a space-room implementation. That last one matters here more than
-    elsewhere: `_is_circle_member` is an unimplemented stub returning `False` (see `chat_helpers`), so
-    every room branch below is currently unreachable in production and could only ever be verified by
-    injecting a member.
+    `find_session(session_id)` is injected so the authorisation rule can be tested without a database or
+    a socket.
 
     **The ownership check is the whole point of this function.** A session id arrives from the client on
     every message and is used to switch conversations mid-connection, so an unchecked id is a read and a
-    write into someone else's thread. There are two rules, and which one applies depends on the kind of
-    session: a room is authorised by membership of its group, and a personal conversation by owning it.
-    A room is checked *first*, because a room's `ChatSession.user_id` is whoever created it, and falling
-    through to the ownership rule would hand every other member's room to its creator alone.
+    write into someone else's thread. Ask Maigie is the personal, one-to-one surface, so there is one
+    rule: the learner must own the conversation.
+
+    **There used to be a second rule, for space-room chat, and it is gone with the flow it served.**
+    A room was authorised by group membership and was checked *first*, because a room's
+    `ChatSession.user_id` is whoever created it. Both halves rested on `_get_circle_group_for_session`,
+    which returned `None` unconditionally, so no session was ever a room and the room rule never ran.
+    Removed rather than left in place: an authorisation branch that has never executed is not a
+    safeguard, it is an untested path that reads like one.
 
     **A lookup failure refuses the turn. It used to fall back silently, and that was a defect**
     (plan §5.5.12). The handler wrapped the lookup in `except Exception: pass` and carried on with
@@ -1022,13 +989,7 @@ async def resolve_session_for_turn(
         try:
             pinned = await find_session(requested_session_id)
             if pinned:
-                pinned_group = await space_group_for_session(pinned.id)
-                if pinned_group:
-                    if await is_space_member(pinned_group, user_id):
-                        session = pinned
-                    else:
-                        return SessionResolution(denial=SESSION_DENIED_PINNED_ROOM)
-                elif pinned.user_id == user_id:
+                if pinned.user_id == user_id:
                     session = pinned
                 else:
                     return SessionResolution(denial=SESSION_DENIED_PINNED_OWNER)
@@ -1043,11 +1004,7 @@ async def resolve_session_for_turn(
             )
             return SessionResolution(denial=SESSION_DENIED_LOOKUP_FAILED)
 
-    space_group = await space_group_for_session(session.id)
-    if space_group and not await is_space_member(space_group, user_id):
-        return SessionResolution(denial=SESSION_DENIED_ROOM_MEMBERSHIP)
-
-    return SessionResolution(session=session, space_group=space_group)
+    return SessionResolution(session=session)
 
 
 # ---------------------------------------------------------------------------

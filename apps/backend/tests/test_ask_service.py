@@ -818,31 +818,6 @@ class TestReviewModePageContext:
         assert "{" not in ask_service.REVIEW_MODE_PAGE_CONTEXT
 
 
-class TestSpaceRoomPageContext:
-    def test_it_forbids_using_private_study_history(self):
-        """A privacy boundary, not a style note: a space room is shared, so the personal context that
-        makes Ask Maigie useful one-to-one would be a disclosure here."""
-        assert "not the user's private study history" in ask_service.space_room_page_context()
-
-    def test_the_reply_instruction_is_absent_by_default(self):
-        assert "replyContext" not in ask_service.space_room_page_context()
-
-    def test_the_reply_instruction_is_appended_when_replying(self):
-        assert "replyContext" in ask_service.space_room_page_context(has_reply_target=True)
-
-    def test_the_base_text_is_unchanged_by_the_suffix(self):
-        base = ask_service.space_room_page_context()
-        assert ask_service.space_room_page_context(has_reply_target=True).startswith(base)
-
-    def test_calling_it_twice_does_not_accumulate_the_suffix(self):
-        """The handler used `+=` on a dict value, so a second pass over the same context would have
-        appended twice. Returning a fresh string makes that impossible."""
-        first = ask_service.space_room_page_context(has_reply_target=True)
-        second = ask_service.space_room_page_context(has_reply_target=True)
-        assert first == second
-        assert first.count("replyContext") == 1
-
-
 # ---------------------------------------------------------------------------
 # Context shaping
 # ---------------------------------------------------------------------------
@@ -1059,10 +1034,10 @@ class TestFormatTopicUserNotes:
 # Session resolution
 # ---------------------------------------------------------------------------
 #
-# These are the first tests in this file that cover an *impure* stage, and the readers are injected for
-# a reason beyond convenience: `_is_circle_member` is an unimplemented stub returning `False`, so a
-# space-room member does not exist anywhere in the running system. Every room branch below is only
-# reachable by supplying one. Testing against the real stub would test that rooms do not work.
+# The first tests in this file covering an *impure* stage. `find_session` is injected so the one
+# authorisation rule Ask Maigie has — the learner must own the conversation — is checkable without a
+# database or a socket. A second rule for space-room membership was removed with space-room chat; it had
+# never executed, because the group lookup it depended on returned `None` unconditionally.
 
 
 def a_session(session_id="sess_1", user_id="user_1", title=None):
@@ -1073,26 +1048,12 @@ async def no_session(_session_id):
     return None
 
 
-async def no_space_group(_session_id):
-    return None
-
-
-async def not_a_member(_group, _user_id):
-    return False
-
-
-async def a_member(_group, _user_id):
-    return True
-
-
 def resolve_kwargs(**overrides):
     kwargs = {
         "requested_session_id": None,
         "current_session": a_session(),
         "user_id": "user_1",
         "find_session": no_session,
-        "space_group_for_session": no_space_group,
-        "is_space_member": not_a_member,
     }
     kwargs.update(overrides)
     return kwargs
@@ -1135,70 +1096,6 @@ class TestSessionResolution:
         assert not resolution.allowed
         assert resolution.denial == ask_service.SESSION_DENIED_PINNED_OWNER
         assert resolution.session is None, "a refused turn must have nowhere to be written"
-
-    @pytest.mark.asyncio
-    async def test_a_room_is_authorised_by_membership_not_ownership(self):
-        """A room's `ChatSession.user_id` is whoever created it. Falling through to the ownership rule
-        would hand every other member's room to its creator alone, so the room rule must come first.
-        """
-        room = a_session("sess_room", user_id="creator")
-
-        async def find(_session_id):
-            return room
-
-        async def group(_session_id):
-            return SimpleNamespace(id="group_1")
-
-        resolution = await ask_service.resolve_session_for_turn(
-            **resolve_kwargs(
-                requested_session_id="sess_room",
-                user_id="another_member",
-                find_session=find,
-                space_group_for_session=group,
-                is_space_member=a_member,
-            )
-        )
-        assert resolution.allowed
-        assert resolution.session is room
-        assert resolution.is_space_room
-
-    @pytest.mark.asyncio
-    async def test_a_non_member_cannot_pin_a_room_even_if_they_created_it_elsewhere(self):
-        async def find(_session_id):
-            return a_session("sess_room", user_id="user_1")
-
-        async def group(_session_id):
-            return SimpleNamespace(id="group_1")
-
-        resolution = await ask_service.resolve_session_for_turn(
-            **resolve_kwargs(
-                requested_session_id="sess_room",
-                find_session=find,
-                space_group_for_session=group,
-                is_space_member=not_a_member,
-            )
-        )
-        assert not resolution.allowed
-        assert resolution.denial == ask_service.SESSION_DENIED_PINNED_ROOM
-
-    @pytest.mark.asyncio
-    async def test_membership_is_rechecked_on_the_session_already_in_use(self):
-        """Membership can be revoked mid-conversation. The learner is on the room already, so nothing
-        is being pinned — and the recheck is the only thing standing between a removed member and the
-        room they were last in."""
-
-        async def group(_session_id):
-            return SimpleNamespace(id="group_1")
-
-        resolution = await ask_service.resolve_session_for_turn(
-            **resolve_kwargs(
-                current_session=a_session("sess_room"),
-                space_group_for_session=group,
-                is_space_member=not_a_member,
-            )
-        )
-        assert not resolution.allowed
-        assert resolution.denial == ask_service.SESSION_DENIED_ROOM_MEMBERSHIP
 
     @pytest.mark.asyncio
     async def test_a_missing_pinned_session_falls_back_rather_than_refusing(self):
@@ -1265,19 +1162,11 @@ class TestSessionResolution:
         assert resolution.allowed
         assert not resolution.retryable
 
-    @pytest.mark.asyncio
-    async def test_a_personal_conversation_is_not_a_space_room(self):
-        resolution = await ask_service.resolve_session_for_turn(**resolve_kwargs())
-        assert not resolution.is_space_room
-        assert resolution.space_group is None
-
     def test_every_denial_code_has_a_message(self):
         """The handler indexes `SESSION_DENIAL_MESSAGES` by the code, so a code without one is a
         `KeyError` on the refusal path — the path least likely to be exercised by hand."""
         codes = {
-            ask_service.SESSION_DENIED_PINNED_ROOM,
             ask_service.SESSION_DENIED_PINNED_OWNER,
-            ask_service.SESSION_DENIED_ROOM_MEMBERSHIP,
             ask_service.SESSION_DENIED_LOOKUP_FAILED,
         }
         assert set(ask_service.SESSION_DENIAL_MESSAGES) == codes
@@ -1287,22 +1176,10 @@ class TestSessionResolution:
         assert ask_service.RETRYABLE_SESSION_DENIALS <= set(ask_service.SESSION_DENIAL_MESSAGES)
 
     def test_a_permission_refusal_does_not_invite_a_retry(self):
-        """Three of the four are permission. Marking one retryable would have the client offer a button
-        that cannot work."""
-        for code in (
-            ask_service.SESSION_DENIED_PINNED_ROOM,
-            ask_service.SESSION_DENIED_PINNED_OWNER,
-            ask_service.SESSION_DENIED_ROOM_MEMBERSHIP,
-        ):
-            assert code not in ask_service.RETRYABLE_SESSION_DENIALS
-
-    def test_the_two_room_refusals_are_worded_differently(self):
-        """Same condition, different words, on purpose: one is a room the learner was never in, the
-        other a membership that was revoked. Collapsing them is a wording change to a shipped surface.
-        """
-        assert (
-            ask_service.SESSION_DENIAL_MESSAGES[ask_service.SESSION_DENIED_PINNED_ROOM]
-            != ask_service.SESSION_DENIAL_MESSAGES[ask_service.SESSION_DENIED_ROOM_MEMBERSHIP]
+        """Marking a permission refusal retryable would have the client offer a button that cannot
+        work."""
+        assert ask_service.SESSION_DENIED_PINNED_OWNER not in (
+            ask_service.RETRYABLE_SESSION_DENIALS
         )
 
 
