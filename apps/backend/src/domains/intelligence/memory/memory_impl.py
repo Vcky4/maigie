@@ -301,7 +301,9 @@ async def generate_learning_insights(user_id: str) -> list[dict]:
                     else (
                         "afternoon"
                         if 12 <= peak_hour < 17
-                        else "evening" if 17 <= peak_hour < 21 else "night"
+                        else "evening"
+                        if 17 <= peak_hour < 21
+                        else "night"
                     )
                 )
                 await intelligence_repo.upsert_insight(

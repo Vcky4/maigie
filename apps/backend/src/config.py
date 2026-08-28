@@ -296,12 +296,8 @@ class Settings(BaseSettings):
     LLM_RETRY_BASE_DELAY_SECONDS: float = 1.0
 
     # Fallback chains (comma-separated provider:model pairs)
-    FALLBACK_CHAT_DEFAULT: str = (
-        "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o-mini,anthropic:claude-sonnet-4-20250514"
-    )
-    FALLBACK_CHAT_TOOLS: str = (
-        "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
-    )
+    FALLBACK_CHAT_DEFAULT: str = "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o-mini,anthropic:claude-sonnet-4-20250514"
+    FALLBACK_CHAT_TOOLS: str = "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
 
     # Feature flags — enabled providers (comma-separated)
     LLM_ENABLED_PROVIDERS: str = "gemini,openai"

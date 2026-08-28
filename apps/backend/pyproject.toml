@@ -61,11 +61,14 @@ pytest-asyncio = "^0.24.0"
 # Lets repository tests run their queries against a real engine instead of skipping
 # whenever no Postgres is configured. Test-only: nothing in `src` targets SQLite.
 aiosqlite = "^0.20.0"
+# Ruff is the only formatter and the only linter. Black and isort were both here until the
+# layout rules lived in two places at once: `[tool.black]` and `[tool.ruff]` each declared
+# `line-length` and `target-version`, and the lint config ignored `E203` purely to stay out
+# of Black's way. isort was never invoked by CI or the Dockerfile at all — ruff's `I` rules
+# have been sorting imports for as long as they have been selected.
 ruff = "^0.6.0"
-black = "^25.12.0"
 mypy = "^1.11.0"
 coverage = "^7.12.0"
-isort = "^7.0.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -81,12 +84,24 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
-# F401 = Unused imports
-# F841 = Unused local variables
-# N818 = Exception naming
-# E501 = Line length
-# E203: whitespace before ':' — Black slices; keep Black as source of truth for layout
-ignore = ["E501", "E203", "N818", "F401", "F841", "N803", "N815", "UP035"]
+# This ignore list was copied wholesale from the old `.flake8` when the project moved to ruff,
+# which carried flake8's compromises across with it. Two of them are worth revisiting rather
+# than inheriting: **F401 hides 165 unused imports and F841 hides 15 unused local variables**,
+# and an assigned-but-unused variable is usually the trace of a code path that was removed.
+# `ruff check --fix` clears the imports; the variables want reading one at a time.
+#
+# E501 = Line length. Legitimately off: neither a formatter nor a linter can wrap a long URL
+#   or a prose docstring, and this codebase has 3,647 lines over 100 characters that are
+#   almost entirely comments and strings. The formatter enforces width where width is
+#   enforceable.
+# N818 = Exception naming (five classes not suffixed `Error`).
+# F401 = Unused imports.
+# F841 = Unused local variables.
+#
+# `E203` was here too, with a comment about keeping Black as the source of truth for layout.
+# It is a preview-only rule in ruff, so ignoring it never had any effect — it was guarding
+# against a check that was never running.
+ignore = ["E501", "N818", "F401", "F841", "N803", "N815", "UP035"]
 
 [tool.ruff.lint.per-file-ignores]
 # Test files set env vars before imports (SKIP_DB_FIXTURE pattern)
@@ -105,10 +120,6 @@ ignore = ["E501", "E203", "N818", "F401", "F841", "N803", "N815", "UP035"]
 # method. Ruff reads the `type(...)` base as a metaclass and expects `cls`.
 "src/workers/celery_app.py" = ["N804"]
 
-[tool.black]
-line-length = 100
-target-version = ["py312"]
-#NEW
 [tool.mypy]
 python_version = "3.12"
 warn_return_any = true
@@ -130,9 +141,4 @@ filterwarnings = [
     # Pydantic v2 migration (our models still use class-based Config in places)
     "ignore::pydantic.warnings.PydanticDeprecatedSince20",
 ]
-
-
-
-[tool.isort]
-profile = "black"
 

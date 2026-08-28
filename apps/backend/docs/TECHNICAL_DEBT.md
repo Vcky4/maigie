@@ -676,6 +676,35 @@ flake8 checked, and keeping two linters meant two ignore lists to drift apart �
 that has not existed for some time. Also fixed: `[project.license]` was a table, which made
 every `poetry` invocation print a deprecation warning; `poetry check` is now clean.
 
+### Black and isort are retired too — ruff formats as well as lints
+
+The paragraph above says flake8's config was gone. **`.flake8` was still on disk**, and its
+comment still read *"This project uses flake8 and black for linting/formatting"* — a file
+describing a setup that had not existed for months. It is deleted now, along with black and
+isort.
+
+The reason is that layout had two owners. `[tool.black]` and `[tool.ruff]` each declared
+`line-length = 100` and a py312 target, so a change to one was a silent divergence from the
+other, and the lint config carried `E203` in its ignore list with a comment about keeping Black
+as the source of truth. `E203` is **preview-only in ruff**, so that ignore had never had any
+effect — it was guarding against a check that was never running. isort was worse: the dependency
+and `[tool.isort]` were present, and nothing in CI or the Dockerfile had ever invoked it. Ruff's
+`I` rules have been sorting imports the whole time.
+
+`ruff format` disagreed with black on **3 of 548 files**, and in each case black was the worse
+output: it wrapped a 108-character string in parentheses that left the line over the limit, split
+an `assert` into a parenthesised condition plus a message that was still too long, and collapsed a
+four-deep nested ternary onto one line. The formatter now runs in CI as
+`ruff format --check --diff .`, which names the offending lines rather than only the files.
+
+**What this did not fix, and should.** The ruff ignore list was copied wholesale from `.flake8`
+when the project migrated, which carried flake8's compromises across: `F401` hides **165 unused
+imports** and `F841` hides **15 unused local variables**, none of them in `__init__.py`, so none
+is a legitimate re-export. An assigned-but-unused variable is usually the trace of a code path
+that was deleted, which is the same class of defect as a writer nobody calls. `ruff check --fix`
+clears the imports mechanically; the variables want reading one at a time, so they are left for
+their own pass rather than folded into a tooling change.
+
 ---
 
 ## 10. Tests

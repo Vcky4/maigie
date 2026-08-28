@@ -210,9 +210,7 @@ class TestTheEmitterInventoryIsHonest:
         emitted, listened = _event_names()
 
         resolved = sorted(name for name in EMITTERS_WITHOUT_A_LISTENER if name in listened)
-        assert (
-            not resolved
-        ), f"These have listeners now and should be removed from EMITTERS_WITHOUT_A_LISTENER: {resolved}"
+        assert not resolved, f"These have listeners now and should be removed from EMITTERS_WITHOUT_A_LISTENER: {resolved}"
 
     def test_the_inventory_only_names_emitted_events(self):
         emitted, _listened = _event_names()

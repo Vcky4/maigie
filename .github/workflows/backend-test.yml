@@ -45,7 +45,11 @@ jobs:
         run: poetry install --no-root
       - name: Run Linting
         run: |
-          poetry run black . --check --diff || (poetry run black . --diff && exit 1)
+          # Ruff is both the formatter and the linter. Black used to own the first line here,
+          # which meant two tools declaring `line-length` and `target-version` and a lint config
+          # that ignored `E203` to stay out of Black's way. `--diff` prints what would change, so
+          # a failure names the lines rather than only the files.
+          poetry run ruff format --check --diff .
           poetry run ruff check src tests alembic
       - name: Verify OpenAPI Contract Is Committed
         run: poetry run python scripts/export_openapi.py --check

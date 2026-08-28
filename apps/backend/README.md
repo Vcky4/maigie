@@ -71,12 +71,12 @@ bash scripts/start-beat.sh
 
 ## Code Style
 
-- Formatter: **Black** (line-length 100)
-- Linter: **Ruff**
+**Ruff is both the formatter and the linter** — line-length 100 and target py312, declared once in
+`[tool.ruff]`. Black and isort were retired; see `docs/TECHNICAL_DEBT.md`.
 
 ```bash
-poetry run black src tests
-poetry run ruff check src
+poetry run ruff format .                    # CI runs this with --check --diff
+poetry run ruff check src tests alembic
 ```
 
 ## Testing
