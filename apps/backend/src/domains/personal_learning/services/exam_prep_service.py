@@ -10,7 +10,7 @@ import logging
 from datetime import UTC, datetime, timezone
 from typing import Any
 
-from src.shared.exceptions import MaigieError, NotFoundError
+from src.shared.exceptions import ConflictError, MaigieError, NotFoundError
 
 from ..repository import personal_learning_repo as repo
 from . import prep_material_context
@@ -694,14 +694,31 @@ async def list_topics(*, user_id: str, prep_id: str) -> list[dict[str, Any]]:
 
 
 async def mark_completed(*, user_id: str, prep_id: str) -> Any:
-    """
-    Mark a preparation as completed.
+    """Mark a preparation as completed, for a learner finishing one *before* its exam.
 
-    Req 4.10: Preserve all data for review.
+    Abandoning a preparation, or deciding they are done with it early. Req 4.10: preserve all data.
+
+    **Refuses once the exam has passed**, and that refusal is the point of this function now. A
+    preparation in `AWAITING_REVIEW` is waiting on the one question only the learner can answer, and
+    completing it here would set `COMPLETED` with no `PrepOutcome` behind it — restoring the exact claim
+    the review exists to remove, through a control that says nothing about the exam. Both clients hide the
+    button in that state, but a hidden button is a UI decision and this is an invariant: the only path from
+    `AWAITING_REVIEW` to `COMPLETED` is `prep_outcome_service.submit_prep_outcome`.
+
+    A `409` rather than a `422`: nothing about the request is malformed, the preparation is simply in a
+    state where this is not the way it finishes.
     """
     prep = await repo.find_exam_prep(prep_id, user_id)
     if not prep:
         raise NotFoundError("Preparation", prep_id)
+    if getattr(prep, "status", None) == "AWAITING_REVIEW":
+        raise ConflictError(
+            "This preparation is waiting for your review",
+            detail=(
+                "Its exam has passed, so it finishes when you say how it went rather than by being "
+                "marked complete. Answer the review to close it."
+            ),
+        )
     result = await repo.update_exam_prep(prep_id, {"status": "COMPLETED"})
 
     # Record in activity feed

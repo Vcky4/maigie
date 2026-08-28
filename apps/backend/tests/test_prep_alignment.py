@@ -26,7 +26,7 @@ from src.domains.personal_learning.services import (
     prep_focus,
     prep_readiness,
 )
-from src.shared.exceptions import MaigieError
+from src.shared.exceptions import ConflictError, MaigieError
 
 OWNER = "user-owner"
 NOW = datetime.now(UTC)
@@ -761,6 +761,52 @@ class TestPreparationCompletionAndDeletion:
         assert ("prep-1", OWNER) in repo.preps
         assert repo.topics["prep-1"]
         assert recorded[0] == "preparation_completed"
+
+    @pytest.mark.asyncio
+    async def test_completing_is_refused_once_the_exam_has_passed(self, repo):
+        """`AWAITING_REVIEW` has exactly one exit, and it is not this one.
+
+        Observed for real: four preparations the review sweep had asked about were `COMPLETED` seven hours
+        later with no `PrepOutcome` behind them. The immediate cause was a stale deployment running the
+        pre-review version of the nightly task, but the reason it could happen at all is that nothing
+        enforced the invariant — `COMPLETED` was documented as reachable only through the learner's answer
+        and reachable in practice by anything that could write the column.
+
+        Both clients hide the button in this state. A hidden button is a UI decision; this is the rule.
+        """
+        repo.add_prep("prep-1", OWNER, status="AWAITING_REVIEW")
+
+        with pytest.raises(ConflictError):
+            await exam_prep_service.mark_completed(user_id=OWNER, prep_id="prep-1")
+
+        # Nothing written at all. A refusal that had already updated the status would be worse than no
+        # refusal, because the error would say the completion failed while the row said it happened.
+        assert repo.updated == []
+        assert ("prep-1", OWNER) in repo.preps
+
+    @pytest.mark.asyncio
+    async def test_completing_early_is_still_allowed(self, repo, monkeypatch):
+        """The guard is narrow on purpose: abandoning a preparation before its exam stays possible."""
+
+        async def noop(**kwargs):
+            return None
+
+        async def check_milestones(user_id, counters):
+            return None
+
+        monkeypatch.setattr(
+            "src.domains.personal_learning.services.activity_feed_service.record", noop
+        )
+        monkeypatch.setattr(
+            "src.domains.personal_learning.services.milestone_service.check_milestones",
+            check_milestones,
+        )
+
+        for status in ("SETUP", "IN_PROGRESS"):
+            repo.updated.clear()
+            repo.add_prep("prep-early", OWNER, status=status)
+            await exam_prep_service.mark_completed(user_id=OWNER, prep_id="prep-early")
+            assert repo.updated == [("prep-early", {"status": "COMPLETED"})]
 
     @pytest.mark.asyncio
     async def test_deleting_removes_the_preparation(self, repo):

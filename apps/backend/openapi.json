@@ -27804,7 +27804,7 @@
     },
     "/api/v1/learning/preparations/{prep_id}/complete": {
       "post": {
-        "description": "Mark a preparation as completed.\n\nKept for a learner finishing a preparation *before* its exam date — abandoning it, or deciding they\nare done. Once the date has passed the honest completion path is the review below, which records how\nit actually went rather than only that it is over.",
+        "description": "Mark a preparation as completed.\n\nKept for a learner finishing a preparation *before* its exam date — abandoning it, or deciding they\nare done. Once the date has passed this **refuses with a 409**: the honest completion path is then the\nreview below, which records how it actually went rather than only that it is over.",
         "operationId": "mark_prep_completed_api_v1_learning_preparations__prep_id__complete_post",
         "parameters": [
           {

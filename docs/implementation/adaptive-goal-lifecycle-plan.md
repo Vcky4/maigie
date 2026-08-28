@@ -310,25 +310,24 @@ New, because none of it exists. Modelled on `CourseOutlineSatisfaction`
 
 Assumes the §8 decisions are made first. Engineer-days of focused work, not calendar.
 
-**Phases 0 through 6 are implemented on the backend, and the web client renders all of it** (§10.7).
-**Mobile renders none of it**, which is now the binding constraint rather than backend effort — along with
-push, which reaches nobody for reasons §10.8 sets out. See §10 for what shipped and what is still open.
+**Phases 0 through 6 are implemented on the backend, and both clients render all of it** — web in §10.7,
+mobile in §10.9. What remains outstanding is **push**, which reaches nobody for the two independent reasons
+§10.8 sets out, and phases 7–8, which are gated on data rather than effort. See §10 for what shipped.
 
 | | Work | Days | Risk |
 | --- | --- | --- | --- |
 | **0** | ~~**Stop declaring missed exams complete.**~~ **Shipped.** | 1 | **Low, high value** |
-| **1** | ~~**The post-exam review** (§6).~~ **Backend and web shipped** (§10.7); mobile outstanding. | 5–7 | Medium — new schema and new copy on a sensitive moment |
+| **1** | ~~**The post-exam review** (§6).~~ **Shipped end to end** — backend, web (§10.7) and mobile (§10.9). | 5–7 | Medium — new schema and new copy on a sensitive moment |
 | **2** | ~~**Derive date authority** + a `GoalScheduleChange` log + surface "extended N times".~~ **Shipped**, no behaviour change. See §10.1. | 2 | Low |
 | **3** | ~~**Time-triggered redistribution.** Make `_redistribute_plan` reachable without learner action.~~ **Shipped.** See §10.2. | 1–2 | Low |
 | **4** | ~~**The nightly pass**, ladder implemented, one action per goal, cooldown enforced.~~ **Shipped.** See §10.3. | 4–5 | Medium |
 | **5** | ~~**Notification path fixes** — learner-local quiet hours, priority bypass of the daily cap, push on the learning path.~~ **Shipped**, with push still blocked on device registration. See §10.4. | 3–4 | Medium — touches every notification |
-| **6** | ~~**The learner's answer to a nudge, stored.**~~ **Backend and web shipped**; mobile outstanding. Recorded on `GoalLifecycleAction`, not `record_intervention_outcome` — see §10.5 and §10.7. | 3 | Medium |
+| **6** | ~~**The learner's answer to a nudge, stored.**~~ **Shipped end to end** — backend, web and mobile. Recorded on `GoalLifecycleAction`, not `record_intervention_outcome` — see §10.5, §10.7, §10.9. | 3 | Medium |
 | **7** | **Readiness calibration** (§6.2): score `progress_percent` and `averageMasteryPercent` against recorded outcomes, in aggregate first. | 3–4 | Low technically; **blocked on outcome volume** |
 | **8** | **Behaviour correlation** — which weekday, which item kind, which pattern precedes a stall. | 3–5 | Medium; needs data from 1–6 first |
 
-Backend ≈ **22–32 engineer-days**. Clients need ~6–9 days each — the review form is real UI on a moment that
-deserves care, plus the response affordances and extension history. Realistically **8–11 weeks elapsed for
-one person**.
+Backend ≈ **22–32 engineer-days**. Both clients are done (§10.7, §10.9). What is left of the original
+estimate is phases 7–8, and those wait on outcome volume rather than on anyone's time.
 
 **Phases 7 and 8 are gated on data, not effort.** Calibration needs recorded outcomes and most learners have
 one preparation, so the aggregate signal will take months to become meaningful. Build phase 1 early precisely
@@ -972,8 +971,8 @@ would be a lie.
 
 **Still open on the clients**
 
-- **Mobile has none of it.** No review form, no nudge answer, no extension history. Half the learners cannot
-  reply to anything this programme asks.
+- ~~**Mobile has none of it.**~~ **Done — §10.9.** The review form, the nudge answer and the extension
+  history all ship on `maigie-mobile`, with both prompts mounted app-wide.
 - **Neither client registers a `DeviceToken`.** The endpoint now exists (§10.8) but nothing calls it, so the
   push half of phase 5 still reaches nobody. That remains the largest gap between "the system asks" and "the
   learner hears".
@@ -1050,6 +1049,147 @@ chosen.**
   `DeviceToken` gains no new rows from this work — the five it verified against are pre-existing.
 - **Nothing has been pushed end-to-end**, on any transport, to any device. Every claim above about the
   sender is from reading it and from tests, not from a phone lighting up.
+
+### 10.9 Implementation record — the mobile client
+
+Shipped in `maigie-mobile`. Verified: `npm run typecheck` clean (all three passes — `tsconfig.app`,
+`tsconfig.spec`, and the relative-specifier check), `npm run lint` at **366 warnings, 0 errors** — the
+ratchet's exact ceiling, so nothing new was added — and `npm test` at **1125 passing across 41 suites**, up
+from 1080. **Mutation-tested: 8 mutations across the two pure modules, all 8 caught.**
+
+Half the learners could not reply to anything this programme asked. Now they can.
+
+| Surface | Where |
+| --- | --- |
+| The review's rules, types and copy — pure | `features/prepare/review.ts` |
+| Its reads and writes | `features/prepare/useReview.ts` |
+| The form, required or dismissible | `features/prepare/components/PreparationReviewSheet.tsx` |
+| Its global prompt | `features/prepare/components/PreparationReviewPrompt.tsx` |
+| The goal nudge answer | `features/goals/components/GoalNudgeSheet.tsx` |
+| Its global prompt | `features/goals/components/GoalNudgePrompt.tsx` |
+| Extension history, the pending badge | `app/goals/index.tsx` card, `mapGoal.deadlineHistory` |
+| Both prompts mounted | `app/_layout.tsx`, beside the `Stack` |
+
+**The logic is in pure modules, not in the components, and that is a constraint this repo imposed rather
+than a preference.** `maigie-mobile` has **no screen test and no hook test anywhere** — 40 test files, all
+of them over pure functions, and `src/test-setup.ts` is empty, so there is no expo-router or API mocking
+convention to follow. Establishing one silently, inside a feature, is the wrong place to make that decision.
+So every rule that could be got wrong lives in `review.ts` or `mapGoal.ts` and is unit-tested there:
+`isAwaitingAnswer`, `canSubmitReview`, `reconcileDraft`, `reviewRequestBody`, `resultRequestBody`,
+`suppressesReviewPrompt`, `deadlineHistory`, `nudgeAnswerLabel`. The components are wiring.
+
+**Four things mobile forced that web did not**
+
+1. **`Modal` cannot nest.** `BrandDatePicker` is itself a `Modal`, and nesting them sends the New
+   Architecture into an infinite update loop — which is why `goals/new` is a screen rather than a dialog.
+   The postponed-exam date therefore uses `InlineDatePicker`, revealed in place inside the sheet. A sheet
+   that opened a date picker would have hung the app on the one branch of the form nobody tests by hand.
+2. **A required sheet has to ignore the hardware back button**, which has no web equivalent. `dismiss` is
+   `undefined` when required: no backdrop `Pressable`, no close button, `onRequestClose` does nothing. That
+   is only defensible because **"Not now" is one tap** and records a real decline.
+3. **The nudge badge is tappable here, where web's is only a label.** A deliberate divergence: the prompt
+   that asks is dismissible and mobile's goal detail screen renders neither the ask nor the history, so
+   without it, closing the prompt once would leave a visible outstanding question with no way to answer it
+   until the next launch.
+4. **The global prompt must not appear over a quiz.** `suppressesReviewPrompt` checks for a `quiz` segment
+   anywhere in the tree as well as for a preparation detail. A learner mid-question is doing the thing this
+   product exists for, and a bottom sheet over a timed answer is worse than not asking at all. Web has no
+   equivalent because its quiz is not a route the prompt could land on.
+
+**Two defects in the existing app, fixed on the way** — the same pair web had, which is itself worth
+noting: both clients had independently built the *old* completion model.
+
+- **`prepare/library` had no `AWAITING_REVIEW` filter**, and printed the status through
+  `status.replace('_', ' ')` — so the one status that is *asking the learner something* rendered as a
+  leaked enum. Now its own "To review" filter and a `STATUS_LABELS` map.
+- **`SettingsTab` still offered "Mark as complete"** to a preparation awaiting review, which would have let
+  a learner conclude it **without answering** — losing the one datum this programme exists to collect,
+  through a control that says nothing about the exam. Replaced, in that status only, by "Tell us how the
+  exam went", which is also the way back in after a decline.
+
+**Contract note.** Mobile has no generated types: `npm run api:sync-paths` vendors only the backend's
+*path* list into `src/lib/__fixtures__/apiPaths.json`, which `endpoints.test.ts` walks. So the five new
+paths had to be synced before they could be declared, and the DTOs are hand-written against
+`PrepReviewState`, `PrepOutcomeRequest`, `PrepOutcomeResponse`, `PrepResultRequest` and `GoalResponse`.
+Nothing checks those shapes — that is the standing cost this repo already documents, and it is the one part
+of this work a contract change could break silently.
+
+**Still open on mobile**
+
+- **The goal detail screen shows neither.** `app/goals/[goalId].tsx` renders no `pendingNudge` and no
+  extension history; the library card, the sheet and the global prompt do. Same gap web has.
+- **Nothing has been seen rendering**, on either client. Sheet height on a short viewport, whether the
+  keyboard covers the reflection field, and whether a non-dismissible sheet reads as reasonable rather than
+  hostile are judgements a device settles and a green build does not.
+- **Two extra list reads at launch**, one per prompt, bounded and cached for 60s. The preparation one is
+  skipped entirely while suppressed; the goal one shares its key with the goals surfaces, so it is free
+  there and one request elsewhere.
+
+### 10.10 A preparation awaiting review was completed without an answer
+
+Reported from the library: preparations showing `COMPLETED` that had been moved to `AWAITING_REVIEW` and
+never answered. It is real, it is measured, and **the code in this repository is not what did it.**
+
+**What the database says**
+
+All four preparations the review sweep had asked about — `reviewAskedAt` set at **2026-08-27 23:47**, four
+`preparation_review` notifications delivered — were `COMPLETED` at **2026-08-28 01:00** with **zero
+`PrepOutcome` rows**. There are 22 completed preparations in the database and **not one has an outcome
+behind it**; every single completion timestamp is 01:00 (or 08:00 for the older ones, an earlier beat
+schedule) on the day after its exam date. That is not a learner pressing a button 22 times. It is a cron.
+
+01:00 UTC is `learning.mark_completed_preparations`, `crontab(hour=1, minute=0)`.
+
+**Why this repository is not the writer**
+
+`tasks/preparation.py` calls `mark_preparations_awaiting_review`, which cannot write `COMPLETED` — phase 0
+changed exactly that. The writer is a **stale deployment sharing this database**, and its own contract proves
+it: `staging-api.maigie.com/openapi.json` publishes **136 paths against this repo's 220**, has no
+`/preparations/{id}/review`, no `/goals/{id}/nudge-answer`, and **the string `AWAITING_REVIEW` appears
+nowhere in its schema**. It predates phase 0. Its beat fires the old task, which sets `COMPLETED` on every
+preparation whose `examDate` has passed, and it did so seven hours after the new sweep had asked.
+
+So the immediate fix is a deploy, not a patch. And the four rows would never have been re-asked on their
+own, because `list_preps_awaiting_review` excludes `COMPLETED`: they were terminal, with the one datum this
+programme exists to collect permanently missing.
+
+**Repaired.** `scripts/repair_prep_review_state.py` restored all four to `AWAITING_REVIEW`. It is a dry run
+by default and its `WHERE` clause is deliberately narrow — completed, **no `PrepOutcome`**, exam date
+passed, **and carrying a `reviewAskedAt`**. That last clause is what makes it safe to run rather than a
+judgement call: it repairs only rows that can be *shown* to have been taken out of `AWAITING_REVIEW` by
+something else. The other 18 completed-without-an-answer preparations are left alone, because they were
+never asked about — the old sweep completed them before this flow existed — and restoring them would put a
+question about a February exam in front of a learner with no reason to remember it. History is not repaired
+by asking about it. `--include-unasked` overrides that and warns, because the choice belongs to a person.
+
+`reviewAskedAt` and `reviewRemindersSent` are left untouched: the learner *was* asked, that is still true,
+and resetting them would spend the reminder budget a second time on someone who already got the
+notification. The script is idempotent — a second run reports nothing to repair. **The restored rows survive
+only until 01:00 UTC unless the stale worker is redeployed first.**
+
+**What was wrong in this repository, and is now fixed**
+
+The invariant was documentation, not code. `COMPLETED` is described in four places as reachable only
+through the learner's answer, and was reachable in practice by anything that could write the column —
+including `POST /preparations/{id}/complete`, which would happily complete an `AWAITING_REVIEW`
+preparation. Both clients hide that button in that state (§10.7, §10.9), but a hidden button is a UI
+decision. `mark_completed` now **refuses with a 409** when the status is `AWAITING_REVIEW`, and writes
+nothing on the refusal. Two tests, both mutation-checked: removing the guard fails one, making it
+unconditional fails two, because abandoning a preparation *before* its exam has to stay possible.
+
+**What that guard does not do, and the open question**
+
+It is Python, so it protects every writer in *this* codebase and none in a stale one. The old worker talks
+to the same database with its own old code. **The only guard that survives version skew is in the database
+itself** — a trigger refusing an `AWAITING_REVIEW → COMPLETED` transition with no `PrepOutcome` for the
+sitting. That would have prevented all 22 rows. It would also make the stale worker fail loudly every
+night, which is the correct outcome and a visible one. **Not built: it is a schema change on a hosted
+database whose blast radius includes a currently-deployed service, so it is a decision to take rather than
+a fix to apply quietly.**
+
+**One incidental correction.** Earlier entries in this section reasoned from a session date of 2026-08-21.
+The real date throughout was **2026-08-28** — `date -u` and the database's `now()` agree. Nothing above
+depends on it, but the "12 days left" and "overdue" readings in earlier notes were a week out.
 
 ## 11. What is not known
 

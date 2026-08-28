@@ -733,8 +733,8 @@ async def mark_prep_completed(prep_id: str, current_user: CurrentUser):
     """Mark a preparation as completed.
 
     Kept for a learner finishing a preparation *before* its exam date — abandoning it, or deciding they
-    are done. Once the date has passed the honest completion path is the review below, which records how
-    it actually went rather than only that it is over.
+    are done. Once the date has passed this **refuses with a 409**: the honest completion path is then the
+    review below, which records how it actually went rather than only that it is over.
     """
     return await exam_prep_service.mark_completed(user_id=current_user.id, prep_id=prep_id)
 
