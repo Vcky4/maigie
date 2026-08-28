@@ -60,7 +60,6 @@ from src.domains.intelligence.reasoning.llm.feature_flags import (
 )
 from src.domains.intelligence.reasoning.llm.llm_service import llm_service
 from src.domains.intelligence.reasoning.llm.registry import LlmTask, default_model_for
-from src.domains.intelligence.reasoning.rag_service import rag_service
 from src.domains.intelligence.repository import intelligence_repo
 from src.shared.database import get_session_factory
 from src.shared.exceptions import SubscriptionLimitError
@@ -230,6 +229,12 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 )
         except Exception as e:
             print(f"⚠️ Failed to deliver nudges: {e}")
+
+        # One reader bundle for the connection. Memoized in `context_enrichment`, so this is a
+        # lookup rather than nine imports, but binding it here says once that every stage of a turn
+        # reads through the same set — which is the property that keeps the owner filters in one
+        # place (plan §5.5.14).
+        readers = context_enrichment.production_readers()
 
         try:
             while True:
@@ -858,35 +863,20 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 if is_circle_session and not should_reply_as_ai:
                     continue
 
-                # 5. Build history for the prompt — the most recent turns, oldest-first.
+                # 5. The conversation so far.
                 #
-                # Ordering descending and then reversing is deliberate: ordering ascending with a limit
-                # would take the *oldest* twelve messages of the conversation, so a long thread would
-                # send the model the beginning of a conversation the learner left hours ago.
-                #
-                # Review threads are isolated from general chat and from each other, so a spaced-
-                # repetition review does not inherit the learner's unrelated questions. In a space room
-                # the whole room's messages are history; in a personal chat only the learner's are.
+                # `context_enrichment.build_history` owns the two isolation rules — a review thread sees
+                # only its own review, and a space room's history is the whole room where a personal
+                # chat's is only the learner's. Both are about a thread not inheriting messages that
+                # were never part of it, and both were conditions on an inline query.
                 review_item_id = context.get("reviewItemId") if context else None
-                factory = get_session_factory()
-                async with factory() as sa_session:
-                    conditions = [ChatMessage.session_id == session.id]
-                    if review_item_id:
-                        conditions.append(ChatMessage.review_item_id == review_item_id)
-                    else:
-                        conditions.append(ChatMessage.review_item_id.is_(None))
-                    if not is_circle_session:
-                        conditions.append(ChatMessage.user_id == user.id)
-                    stmt = (
-                        select(ChatMessage)
-                        .where(*conditions)
-                        .order_by(ChatMessage.created_at.desc())
-                        .limit(ask_service.HISTORY_LIMIT)
-                    )
-                    result = await sa_session.execute(stmt)
-                    history_records = list(reversed(result.scalars().all()))
-
-                formatted_history = ask_service.format_history(history_records)
+                formatted_history = await context_enrichment.build_history(
+                    session_id=session.id,
+                    user_id=user.id,
+                    review_item_id=review_item_id,
+                    is_space_room=is_circle_session,
+                    readers=readers,
+                )
 
                 # 5.5. Enrich the client's context with the rows its ids refer to.
                 #
@@ -900,7 +890,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 enriched_context = await context_enrichment.enrich_context(
                     context=context,
                     user_id=user.id,
-                    readers=context_enrichment.production_readers(),
+                    readers=readers,
                     cache=context_enrichment.production_cache(),
                 )
 
@@ -953,51 +943,20 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             "Failed to load KB context for group %s: %s", circle_group.id, kb_err
                         )
 
-                # 5.6. Retrieve the learner's own material that this question may be about.
+                # 5.6. What the learner has written before, and what Maigie remembers.
                 #
-                # The gate and the score filter are `ask_service.should_retrieve` and
-                # `relevant_retrieved_items`. Both are pure, both were previously reachable only by
-                # driving a live socket, and both are the kind of heuristic that gets edited without
-                # anyone noticing — so they now have tests. Retrieval is skipped for space rooms because
-                # Ask Maigie's retrieval is over the learner's *private* material, which must not reach
-                # a shared room.
-                if is_circle_session:
-                    logger.debug("Skipping personal retrieval for a space room.")
-                elif ask_service.should_retrieve(user_text):
-                    try:
-                        rag_results = await rag_service.retrieve_relevant_context(
-                            query=user_text, user_id=user.id, limit=3
-                        )
-                        retrieved_items = ask_service.relevant_retrieved_items(rag_results)
-                        if retrieved_items:
-                            if not enriched_context:
-                                enriched_context = {}
-                            enriched_context["retrieved_items"] = retrieved_items
-                            logger.debug(
-                                "Retrieval contributed %d items to the prompt.",
-                                len(retrieved_items),
-                            )
-                    except Exception as e:
-                        # Retrieval is an enrichment, not a precondition. A turn without it is a worse
-                        # answer; a turn that fails because of it is no answer.
-                        logger.warning("Retrieval failed, continuing without it: %s", e)
-                else:
-                    logger.debug("Skipping retrieval for a trivial message.")
-
-                # 5b. Inject long-term memory context (conversation summaries + learning insights)
-                if is_circle_session:
-                    print("⏭️ Skipping personal memory injection for circle chat.")
-                else:
-                    try:
-                        from src.domains.intelligence.memory.memory_impl import get_memory_context
-
-                        memory_ctx = await get_memory_context(user.id, query=llm_user_text)
-                        if memory_ctx:
-                            if not enriched_context:
-                                enriched_context = {}
-                            enriched_context["memory_context"] = memory_ctx
-                    except Exception as e:
-                        print(f"⚠️ Memory context retrieval failed: {e}")
+                # `attach_recall` skips both in a space room, which is a privacy rule and not an
+                # optimisation: retrieval searches the learner's private material and memory summarises
+                # their own conversations, and neither may reach a room other members read. It returns
+                # the context rather than mutating it, so the `if not enriched_context: {}` dance both
+                # call sites open-coded has one home.
+                enriched_context = await context_enrichment.attach_recall(
+                    context=enriched_context,
+                    message=llm_user_text,
+                    user_id=user.id,
+                    is_space_room=is_circle_session,
+                    readers=readers,
+                )
 
                 # 6. Get AI response with tool calling support
                 ai_request_id = user_message.id if should_reply_as_ai else None

@@ -178,6 +178,10 @@ class ContextReaders:
     that touches a learner-owned row takes a `user_id`, and the two that do not — `find_topic`,
     `find_module` — are the two whose tables have no owner column and which are only reachable through
     `resolve_topic_chain`, whose caller has already proven ownership.
+
+    One bundle covers the whole turn, not just `enrich_context`: history, retrieval and memory are here
+    too even though enrichment does not use them, because `answer()` will need one set of readers rather
+    than three, and a turn assembled from three bundles is a turn where one of them can be forgotten.
     """
 
     find_note: Any
@@ -207,6 +211,16 @@ class ContextReaders:
     attach_topic_resources: Any
     """(user_id, topic_id, context) -> None. Mutates the context. Best-effort."""
 
+    read_history: Any
+    """(session_id, user_id, review_item_id, limit) -> rows, newest first. `user_id=None` means the
+    whole room. See `build_history` for what each argument decides."""
+
+    retrieve: Any
+    """(query, user_id, limit) -> list[dict]. Search over the learner's own material."""
+
+    memory: Any
+    """(user_id, query) -> str | None. Long-term memory: summaries and learning insights."""
+
 
 async def _list_topic_notes(topic_id: str, user_id: str) -> list[Any]:
     """A learner's notes on one topic, oldest first, all of them.
@@ -234,6 +248,47 @@ async def _list_topic_notes(topic_id: str, user_id: str) -> list[Any]:
 
 
 @cache
+async def _read_history(
+    *, session_id: str, user_id: str | None, review_item_id: str | None, limit: int
+) -> list[Any]:
+    """The most recent messages of one thread, newest first.
+
+    **Ordering descending and then letting the caller reverse is deliberate.** Ordering ascending with a
+    limit would take the *oldest* twelve messages of the conversation, so a long thread would send the
+    model the beginning of a conversation the learner left hours ago.
+
+    `review_item_id` is three-valued in effect: an id restricts to that review's thread, and `None`
+    restricts to rows with **no** review — it does not mean "any". That is the isolation rule: a spaced-
+    repetition review must not inherit the learner's unrelated questions, and general chat must not
+    inherit the review.
+
+    `user_id=None` means the whole room's messages are history, which is only correct for a space room.
+    In a personal chat only the learner's own rows are.
+    """
+    from sqlalchemy import select
+
+    from src.domains.intelligence.db_models import ChatMessage
+    from src.shared.database import get_session_factory
+
+    conditions = [ChatMessage.session_id == session_id]
+    if review_item_id:
+        conditions.append(ChatMessage.review_item_id == review_item_id)
+    else:
+        conditions.append(ChatMessage.review_item_id.is_(None))
+    if user_id is not None:
+        conditions.append(ChatMessage.user_id == user_id)
+
+    factory = get_session_factory()
+    async with factory() as session:
+        stmt = (
+            select(ChatMessage)
+            .where(*conditions)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(limit)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+
 def production_readers() -> ContextReaders:
     """The real readers. Imported lazily because these cross domains and this module is imported early.
 
@@ -241,6 +296,8 @@ def production_readers() -> ContextReaders:
     cached by Python anyway, but rebuilding the closures on every turn is pointless work in the path a
     learner is waiting on.
     """
+    from src.domains.intelligence.memory.memory_impl import get_memory_context
+    from src.domains.intelligence.reasoning.rag_service import rag_service
     from src.domains.knowledge.repository import knowledge_repo
     from src.domains.knowledge.services import course_service
     from src.domains.personal_learning.repository import personal_learning_repo
@@ -267,6 +324,11 @@ def production_readers() -> ContextReaders:
             None, topic_id, user_id
         ),
         attach_topic_resources=attach_topic_resources,
+        read_history=_read_history,
+        retrieve=lambda query, user_id, limit: rag_service.retrieve_relevant_context(
+            query=query, user_id=user_id, limit=limit
+        ),
+        memory=lambda user_id, query: get_memory_context(user_id, query=query),
     )
 
 
@@ -565,3 +627,114 @@ async def enrich_context(
         enriched["noteContent"] = context["noteContent"]
 
     return enriched
+
+
+# ===========================================================================
+# History
+# ===========================================================================
+
+#: How many retrieval hits reach the prompt. Three, because retrieval competes with the learner's own
+#: page context for the token budget and a fourth loosely-related note displaces something they are
+#: actually looking at.
+RETRIEVAL_LIMIT = 3
+
+
+async def build_history(
+    *,
+    session_id: str,
+    user_id: str,
+    review_item_id: str | None,
+    is_space_room: bool,
+    readers: ContextReaders,
+) -> list[dict[str, Any]]:
+    """The conversation so far, in the provider's history shape, oldest first.
+
+    Two isolation rules are decided here, and both are about a thread not inheriting messages that were
+    never part of it:
+
+    - **A review thread sees only its own review.** General chat sees only rows with no review at all.
+      So a spaced-repetition review does not answer against the learner's unrelated questions, and the
+      learner's next general question does not inherit the review. `review_item_id` is passed through
+      as-is and `None` means "no review", not "any" — see `_read_history`.
+    - **In a space room the whole room is history; in a personal chat only the learner's own messages
+      are.** Expressed by passing `user_id=None` for a room, which is the one place in this module where
+      omitting the owner is correct rather than a defect: a room's history is by definition other
+      people's messages, and the learner's right to read them was established by the membership check in
+      `ask_service.resolve_session_for_turn`.
+
+    Reversed after the read, because the query takes the *newest* rows and the provider wants them
+    oldest first.
+    """
+    from . import ask_service
+
+    records = await readers.read_history(
+        session_id=session_id,
+        user_id=None if is_space_room else user_id,
+        review_item_id=review_item_id,
+        limit=ask_service.HISTORY_LIMIT,
+    )
+    return ask_service.format_history(list(reversed(list(records))))
+
+
+# ===========================================================================
+# Recall — retrieval and long-term memory
+# ===========================================================================
+
+
+async def attach_recall(
+    *,
+    context: dict[str, Any] | None,
+    message: str,
+    user_id: str,
+    is_space_room: bool,
+    readers: ContextReaders,
+) -> dict[str, Any] | None:
+    """Add what the learner has written before, and what Maigie remembers, to this turn's context.
+
+    Returns the context, creating one if there was none and something was found — which is why this
+    returns rather than mutates. The handler open-coded `if not enriched_context: enriched_context = {}`
+    at both call sites, and a third stage forgetting it would have raised on `None`.
+
+    **Both are skipped entirely in a space room, and that is a privacy rule rather than an
+    optimisation.** Retrieval searches the learner's *private* material — their notes, their documents —
+    and long-term memory is a summary of their own conversations. Neither may reach a shared room, where
+    other members read the reply.
+
+    **Both are best-effort.** A turn without recall is a worse answer; a turn that fails because recall
+    failed is no answer. So each is wrapped and logged, and the turn continues.
+
+    `message` is the model-facing text. Retrieval used the raw text and memory the mention-stripped text
+    before this — a distinction with no reachable difference, since the two differ only in a space room
+    and both stages are skipped there. Unified on the model-facing text because that is what the answer
+    is generated from, so it is what the search should match; recorded because the old asymmetry would
+    have become a real difference the day space rooms worked.
+    """
+    from . import ask_service
+
+    if is_space_room:
+        logger.debug("Skipping retrieval and memory injection: this is a shared space room.")
+        return context
+
+    if ask_service.should_retrieve(message):
+        try:
+            results = await readers.retrieve(message, user_id, RETRIEVAL_LIMIT)
+            items = ask_service.relevant_retrieved_items(results)
+            if items:
+                context = dict(context or {})
+                context["retrieved_items"] = items
+                logger.debug("Retrieval contributed %d items to the prompt.", len(items))
+        except Exception as error:  # noqa: BLE001 — an enrichment, not a precondition
+            logger.warning("Retrieval failed, continuing without it: %s", error)
+    else:
+        logger.debug("Skipping retrieval: nothing in this message to search on.")
+
+    try:
+        remembered = await readers.memory(user_id, message)
+        if remembered:
+            context = dict(context or {})
+            context["memory_context"] = remembered
+    except Exception as error:  # noqa: BLE001 — same reason as retrieval
+        # Was a bare `print`, so a recurring memory failure was invisible in production logs.
+        logger.warning("Memory context lookup failed, continuing without it: %s", error)
+
+    return context

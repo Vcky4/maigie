@@ -408,6 +408,8 @@ class TestTheExtractionInventoryIsHonest:
                 context_enrichment,
                 "enrich_context",
             ),
+            "history isolation rules": (context_enrichment, "build_history"),
+            "retrieval and memory recall": (context_enrichment, "attach_recall"),
         }
         assert set(ask_service.MOVED_SO_FAR) == set(expected)
         for stage, target in expected.items():

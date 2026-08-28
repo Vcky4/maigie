@@ -46,18 +46,17 @@ MOVED_SO_FAR = (
     "conversation titling",
     "new session row assembly",
     "context enrichment (branches, reads and cache)",
-    # These two live in the sibling `context_enrichment` module rather than here. Named in this
+    "history isolation rules",
+    "retrieval and memory recall",
+    # These four live in the sibling `context_enrichment` module rather than here. Named in this
     # inventory anyway, because the inventory's job is to say what left the handler — not what landed
-    # in this file. Enrichment is a coherent unit with one rule (owner scoping) and it earned its own
-    # module; the shaping of what its reads return stays here.
+    # in this file. Everything the prompt is built from is a coherent unit with one rule running through
+    # it (owner scoping) and it earned its own module; the shaping of what its reads return stays here.
     "owner-scoped context reads",
 )
 STILL_IN_THE_HANDLER = (
     "the connection's default session query",
-    "the history read",
     "the space-room and reply context blocks",
-    "retrieval call",
-    "memory context",
     "generation",
     "tool/action loop",
     "the persistence write itself",

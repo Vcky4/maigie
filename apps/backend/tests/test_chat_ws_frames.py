@@ -41,12 +41,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import APIRouter
 
+import src.domains.intelligence.conversation.context_enrichment as ce
 import src.domains.intelligence.conversation.websocket_handler as wh
 from src.shared.infrastructure.socket_manager import manager as real_manager
 
@@ -220,8 +222,19 @@ async def drive(
 
     credit_result = MagicMock(warning=None, notice=None, purchased_balance_remaining=0)
 
+    # The thread read is injected rather than reached through a patched session factory. It used to be
+    # an inline query in the handler, so patching `wh.get_session_factory` covered it; it now lives in
+    # `context_enrichment` behind `ContextReaders.read_history`, which is the seam that exists for
+    # exactly this. Retrieval and memory need no stub — both are best-effort and their failure against
+    # an absent database is caught and logged, which these tests want to keep true.
+    async def no_history(*, session_id, user_id, review_item_id, limit):
+        return []
+
+    test_readers = replace(ce.production_readers(), read_history=no_history)
+
     with (
         patch.object(wh, "manager", manager),
+        patch.object(ce, "production_readers", lambda: test_readers),
         patch.object(wh, "get_session_factory", lambda: FakeDbSession),
         patch.object(wh, "_get_circle_group_for_session", AsyncMock(return_value=None)),
         patch.object(wh, "get_feature_flag_service", lambda: flags),
