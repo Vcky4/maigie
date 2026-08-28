@@ -335,6 +335,13 @@ estimate is phases 7–8, and those wait on outcome volume rather than on anyone
 one preparation, so the aggregate signal will take months to become meaningful. Build phase 1 early precisely
 because it starts the clock; do not schedule phase 7 against it.
 
+**Measured, once the first review was answered: neither gate is the one written above.** §10.15 sets both out.
+Phase 7 is not waiting on outcome *count* — it is waiting on an outcome that carries a **mark**, because
+`resultValue` is optional and arrives weeks later, and a readiness percentage cannot be calibrated against a
+five-point self-report. Phase 8 is not waiting on *answers* — it is waiting on the ladder to use more than one
+rung, because **1 of its 6 action/trigger combinations has ever fired**, and a 100% answer rate on one rung
+compares it against nothing.
+
 **Cheapest meaningful slice: phases 0 + 3.** Two to three days, no new schema. It stops the system asserting
 that a missed exam went fine, and makes rescheduling reach the learners who need it — the inactive ones.
 Phase 1 is the next-most valuable and the one that makes everything after it possible.
@@ -1455,6 +1462,77 @@ staleness check.
 **Lesson.** Every one of these was a *checker* failing silently rather than code failing loudly, and the
 suite was green throughout. A green suite is evidence about the tests that ran, and says nothing about the
 ones that quietly stopped.
+
+### 10.15 The first answer, and what it says the real blockers are
+
+One review has been answered. It is one data point and settles nothing statistically, but it changes what
+phases 7 and 8 are actually waiting for — and both differ from §7's estimate.
+
+**The loop works end to end, for the first time.** Sweep → `AWAITING_REVIEW` → notification → ask → answer →
+`COMPLETED` with an outcome behind it. Response rate 25% of asks, median reply **0.6 days**.
+
+**And the answer came from a preparation that had been declined.** `reviewDeclinedAt` is set on it. Under the
+behaviour before §10.12, `awaiting` went false on a decline, the review surface said "Nothing to review yet",
+and this answer **could not have been given**. The change that looked like a copy fix earned the first data
+point in the programme.
+
+#### Phase 7's blocker is a mark, not a count
+
+What the outcome carries:
+
+| Prediction | Learner |
+| --- | --- |
+| `readinessPercent` **0.0** | `experienceRating` **3** — about as expected |
+| `targetReadiness` 85 | `preparationRating` **4** — prepared me well |
+| `averageMasteryPercent` 3.9, `topicsStrong` 0/10 | `resultValue` **null** |
+
+Two things follow.
+
+**`resultValue` is null**, and it is optional by design because a mark arrives weeks after the exam. So the
+only outcome signal is a 1–5 self-report, and calibrating a readiness *percentage* against a five-point
+subjective scale is not calibration. **Phase 7's gate is outcomes carrying `resultValue`**, which is a
+strictly smaller and slower population than outcomes.
+
+**More importantly, this single row already disagrees with itself in a way calibration would misread.** We
+predicted 0% ready — 0 of 10 topics practised — and the learner reported the exam went about as expected and
+the preparation served them well. `averageMasteryPercent` measures **in-app practice**, so a learner who
+revised outside the app is indistinguishable from one who did not revise. Run calibration over rows like this
+and it concludes readiness is uninformative — true, but because *absence of data is being read as evidence of
+unreadiness*, not because a model is miscalibrated. Phase 7 would surface that and could not fix it. **The
+fix is upstream, in what readiness claims to measure.**
+
+#### Phase 8's blocker is one rung, not zero answers
+
+`scripts/debug/check_ladder_variance.py`:
+
+```
+asked_to_confirm   deadline_passed    fired=6  answered=0
+1 of 6 combinations have ever fired.
+```
+
+Phase 8 correlates *which* intervention helped. With one rung there is nothing to correlate, and answers
+would not create the contrast — a 100% response rate on six identical asks compares that rung against nothing.
+
+Why only one, from the population: 42 active learner goals with deadlines, of which **6 are overdue** — and
+those 6 are exactly the ones acted on, all with `system_extended = 0`. So:
+
+- **`extended`** needs `at_risk_due_soon`, which has never selected: the other 36 goals are neither overdue
+  nor close enough to be at risk.
+- **`warned`** needs external authority, and exactly **one** external goal exists — not overdue.
+
+Both are live code paths that have never run against real data. Worth knowing separately from phase 8: the
+extension logic, which is the most consequential thing the ladder does, is **untested outside its unit tests**.
+
+#### What this means for sequencing
+
+Neither phase is closer than §7 assumed, and the reasons are more specific and more actionable:
+
+1. **Prompt for the mark.** `resultValue` is the phase 7 gate, and the review already has a "add your result"
+   affordance on both clients. Nothing reminds anyone to use it weeks later — that is a small, buildable piece
+   with a direct line to unblocking calibration.
+2. **Decide whether readiness should count evidence it cannot see** before calibrating anything against it.
+3. **Phase 8 waits on the ladder exercising its other rungs**, which is a function of the goal population, not
+   of engineering. Until then it has one rung and no contrast.
 
 ## 11. What is not known
 
