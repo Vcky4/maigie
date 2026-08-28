@@ -243,3 +243,76 @@ class TestTheSweep:
 
         assert good.status == "AWAITING_REVIEW"
         assert moved == 1
+
+
+class TestTheWritesReachTheDatabase:
+    """**The gap that let a shipped feature be broken in three places.**
+
+    Every test above stubs the repository, so `_map_exam_prep` — the allowlist every write to `ExamPrep`
+    passes through — was never on the path. Migration 050 added three columns and nothing added them to
+    that map, so in production the sweep moved a preparation to `AWAITING_REVIEW` and then failed to
+    record that it had asked; the budget stayed at zero and it would have re-asked every night forever.
+    `decline_review` raised outright, and a postponed exam's write was refused with it.
+
+    A fake that is laxer than the database will always agree with the code. These two tests are about the
+    real mapper, so they fail if a column is added to the model and not wired.
+    """
+
+    def test_every_writable_column_has_a_mapping(self):
+        """The general rule, so the next column added is caught rather than the next bug reported.
+
+        `id`, `createdAt` and `updatedAt` are excluded: the first is generated and the other two belong to
+        `TimestampMixin`, so none is a field a service passes in.
+        """
+        from src.domains.personal_learning.db_models import ExamPrep
+        from src.domains.personal_learning.repository import personal_learning_repo
+
+        # The map is built inside the method, so it is probed one column at a time: `map_fields` raises
+        # `UnmappedFieldError` for a key it does not know, which is exactly the production failure.
+        columns = sorted(
+            column.name
+            for column in ExamPrep.__table__.columns
+            if column.name not in {"id", "createdAt", "updatedAt"}
+        )
+        unmapped = []
+        for name in columns:
+            try:
+                personal_learning_repo._map_exam_prep({name: None})
+            except Exception:
+                unmapped.append(name)
+
+        assert not unmapped, (
+            f"{len(unmapped)} ExamPrep column(s) cannot be written through _map_exam_prep: "
+            f"{unmapped}. A service passing one of these gets UnmappedFieldError at runtime."
+        )
+
+    def test_the_payloads_the_services_actually_send_are_accepted(self):
+        """The three writes that were broken, as their call sites send them."""
+        from datetime import UTC, datetime
+
+        from src.domains.personal_learning.repository import personal_learning_repo as repo
+
+        now = datetime.now(UTC)
+        # `mark_preparations_awaiting_review`: recording that the ask went out.
+        assert repo._map_exam_prep({"reviewAskedAt": now, "reviewRemindersSent": 1}) == {
+            "review_asked_at": now,
+            "review_reminders_sent": 1,
+        }
+        # `decline_review`: "Not now".
+        assert repo._map_exam_prep({"reviewDeclinedAt": now}) == {"review_declined_at": now}
+        # `record_outcome`, postponed: a new sitting is a new question, so the budget starts again.
+        assert repo._map_exam_prep(
+            {
+                "examDate": now,
+                "status": "IN_PROGRESS",
+                "reviewAskedAt": None,
+                "reviewRemindersSent": 0,
+                "reviewDeclinedAt": None,
+            }
+        ) == {
+            "exam_date": now,
+            "status": "IN_PROGRESS",
+            "review_asked_at": None,
+            "review_reminders_sent": 0,
+            "review_declined_at": None,
+        }

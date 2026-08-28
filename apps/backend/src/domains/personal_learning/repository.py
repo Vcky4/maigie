@@ -1009,6 +1009,21 @@ class PersonalLearningRepository:
             "description": "description",
             "status": "status",
             "spaceId": "space_id",
+            # The post-exam review's ask-tracking columns (migration 050).
+            #
+            # **Their absence broke three paths and the allowlist is the only reason it was noticed.**
+            # `mark_preparations_awaiting_review` could move a preparation to `AWAITING_REVIEW` but not
+            # record that it had asked — so the reminder budget stayed at zero and the sweep would have
+            # re-asked every night forever, which is precisely the failure the budget exists to prevent.
+            # `decline_review` raised outright, so "Not now" was unusable. And a postponed exam's write
+            # carries `examDate` in the same payload, so postponing was refused entirely.
+            #
+            # No test caught it: every test of these paths uses a fake repository whose `update_exam_prep`
+            # records the dict, so the mapper was never on the path. The same shape of gap as the
+            # unapplied migrations — fakes and code agreeing with each other by construction.
+            "reviewAskedAt": "review_asked_at",
+            "reviewRemindersSent": "review_reminders_sent",
+            "reviewDeclinedAt": "review_declined_at",
         }
         return map_fields(data, field_map, entity="_map_exam_prep")
 
