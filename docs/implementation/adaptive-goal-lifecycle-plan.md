@@ -1397,14 +1397,64 @@ no test can see it read. Replaced with a `_action()` helper carrying every colum
 
 **Verification.** **3,676 passing** (from 3,650), `ruff` clean, OpenAPI in sync — no contract change, because
 there is no endpoint: this is an operator question and the app has no admin surface to hang one on. **21 new
-tests, 6 mutations on the funnel arithmetic, all 6 caught.** Six failures in the suite are in
-`test_local_imports.py` under `classrooms`/`intelligence` and arrived with commit `8b74e02`, which is not
-part of this work.
+tests, 6 mutations on the funnel arithmetic, all 6 caught.** The six `test_local_imports.py` failures that
+appeared alongside this work are unrelated to it and are dealt with in §10.14.
 
 **The first reading answers the question it was built for: no, phase 7 is not worth building yet** — 0
 recorded outcomes. And it says why in a way a bare 0% could not: not because learners ignore us, but because
 4 have been asked and 18 never were. The script prints that conclusion itself, including the reminder to
 check that the deployment running the sweep is current.
+
+### 10.14 A byte-order mark had switched off a checker, one file at a time
+
+Not part of this programme, found because CI went red on it. Recorded because the mechanism is worth knowing.
+
+`test_local_imports.py` verifies that every `from src.… import name` written inside a function body actually
+resolves — the class of bug that only fires when the code path runs. It scans with `ast.parse` and had:
+
+```python
+try:
+    tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+except SyntaxError:
+    continue
+```
+
+**Four files carried a UTF-8 BOM.** Read as plain `utf-8` the BOM survives as a `\ufeff` character, `ast.parse`
+rejects it as an invalid non-printable, and `continue` dropped the file without a word. So the checker reported
+success on a set it had quietly stopped covering.
+
+Between them those four files hid **five function-local imports of names that do not exist**, from
+2026-07-15 until commit `8b74e02` stripped the BOMs in an unrelated formatting pass. Then the checker started
+doing its job — and *still* could not say so, because of a second bug: the submodule fallback called
+`find_spec("module.attr")`, which **raises** when the parent is a module rather than a package. Six genuine
+failures arrived as `ModuleNotFoundError: __path__ attribute not found` from three frames inside `importlib`,
+with nothing naming the file or the symbol.
+
+Three fixes:
+
+1. **`utf-8-sig`**, which strips a BOM if present and is a no-op otherwise.
+2. **Unparseable files are recorded and asserted empty**, so coverage can no longer shrink in silence.
+   Coverage that can quietly narrow is not coverage.
+3. **`_provides` guards the submodule probe** and returns `False` for every shape of missing target, so a
+   real miss produces this test's own message.
+
+**The five defects are registered, not fixed, and that is deliberate.** All of it is unreachable: the
+`classrooms` router is commented out in `src/app.py`, and `get_skill_registry`, `execute_skill` and
+`planning_service.generate_study_plan` have no callers anywhere. Two of the five have **no target to point
+at** — `_require_role` exists nowhere in `src`, so "fixing" it means writing an authorization check for routes
+that are not mounted, and `planning_impl.create_study_plan(user_id, goal, …)` is a different function from the
+`generate_study_plan(user_id, course_id)` the facade wants, not a rename. Inventing either to turn a test
+green would be worse than recording the truth. The honest fix is to delete the dead facades or finish the
+migration, which belongs to whoever owns those domains.
+
+The register uses **strict xfail**, so the moment one resolves — fixed, or deleted — it becomes an unexpected
+pass and fails until the entry goes. A second test asserts every entry still matches a real import. Both
+proved by mutation: adding `get_registry` fails the suite; registering a nonexistent import fails the
+staleness check.
+
+**Lesson.** Every one of these was a *checker* failing silently rather than code failing loudly, and the
+suite was green throughout. A green suite is evidence about the tests that ran, and says nothing about the
+ones that quietly stopped.
 
 ## 11. What is not known
 
