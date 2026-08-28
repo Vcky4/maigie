@@ -48,24 +48,41 @@ MAX_REVIEW_REMINDERS = 2
 def is_awaiting_review(prep: Any, *, now: datetime | None = None) -> bool:
     """Whether this preparation is waiting on the learner to say how the exam went.
 
-    Three conditions, and each excludes a state that looks similar and is not:
+    Two conditions, each excluding a state that looks similar and is not:
 
     - the exam date has passed — before that there is nothing to review;
-    - it is not already `COMPLETED` — an answered preparation is finished;
-    - the learner has not declined — **a dismissal is an answer**, and continuing to ask someone who
-      said no is the failure mode this budget exists to prevent.
+    - it is not already `COMPLETED` — an answered preparation is finished.
+
+    ## Declining does not clear this, and that is a correction
+
+    It used to. The result was a preparation that contradicted itself on screen: the status said
+    `AWAITING_REVIEW`, the badge said "to review", the page asked "How did it go?" — and the form beneath it
+    said **"Nothing to review yet"**, because `awaiting` was false. A learner who had tapped "Not now" once
+    could never answer again from the surface built for answering.
+
+    The bug was one predicate serving two different questions:
+
+    - **"Is this preparation waiting on an answer?"** A decline is irrelevant. Nothing has been said about
+      the exam, the preparation is not finished, and the question is still open. This function.
+    - **"Should we chase this learner about it?"** A decline is decisive. That is enforced where chasing
+      happens — `list_preps_awaiting_review` filters `reviewDeclinedAt IS NULL` in SQL, so the nightly
+      sweep and its notification budget are untouched by this change — and by the clients' *global* prompt,
+      which reads `declinedAt` and skips them.
+
+    So a decline still silences every reminder and every prompt that follows the learner around. What it no
+    longer does is silence the preparation's own page, because **opening that preparation is not something
+    that happens by accident**: its exam has passed, so there is no other reason to be there. Asking again
+    is answering the only question the visit could be about.
 
     Derived rather than stored, for the reason `goal_metrics.status_label` gives about its own labels: a
-    stored "awaiting" is wrong the moment the learner answers, and two readers computing it separately
-    from a status plus a date comparison is how they come to disagree.
+    stored "awaiting" is wrong the moment the learner answers, and two readers computing it separately from
+    a status plus a date comparison is how they come to disagree.
     """
     moment = now or datetime.now(UTC)
     exam_date = _as_utc(getattr(prep, "exam_date", None))
     if exam_date is None or exam_date >= moment:
         return False
-    if getattr(prep, "status", None) == "COMPLETED":
-        return False
-    return getattr(prep, "review_declined_at", None) is None
+    return getattr(prep, "status", None) != "COMPLETED"
 
 
 def _as_utc(value: datetime | None) -> datetime | None:

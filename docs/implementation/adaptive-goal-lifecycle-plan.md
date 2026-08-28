@@ -1191,6 +1191,139 @@ a fix to apply quietly.**
 The real date throughout was **2026-08-28** — `date -u` and the database's `now()` agree. Nothing above
 depends on it, but the "12 days left" and "overdue" readings in earlier notes were a week out.
 
+### 10.11 A preparation past its exam stops taking on new work
+
+**A completed preparation rendered the identical in-progress workspace.** Same "Start practice" button, same
+"Recommended next" hero, opening on the topics list; the one thing that distinguished it — what actually
+happened in the exam — was four tabs away, labelled "Outcome" among six siblings. And practice really did
+still start.
+
+**The rule.** `AWAITING_REVIEW` and `COMPLETED` take on no new study work. Extraction and starting a quiz
+answer **409**. Everything already there stays fully readable: topics, materials, the question bank, the
+timeline, the readiness history, the analytics.
+
+**Reads stay open, and that asymmetry is the whole design.** That material is the record of work the learner
+did. Hiding it would be deleting it in effect, and a learner who wants to look at their own question bank in
+January has done nothing wrong.
+
+**Why generation closes is not tidiness.** A quiz writes `QuizSession` rows and moves topic mastery, which
+feeds `averageMasteryPercent` — the readiness figure §6.2 wants to score against the recorded outcome.
+Practising afterwards **rewrites the prediction after the result is known**, which is the one measurement
+calibration cannot survive. Someone who wants to keep practising this material wants a new preparation, or
+Learn.
+
+| Where | What |
+| --- | --- |
+| `exam_prep_service.ensure_accepts_new_work` | The rule, and `CLOSED_TO_NEW_WORK` |
+| `exam_prep_service.extract_topics` | Guarded before the model is called |
+| `quiz_engine.start_quiz` | Guarded **before** the "no topics yet" check |
+| `apps/web/.../prepare/utils/prepStatus.ts` | The client vocabulary, web |
+| `maigie-mobile/src/features/prepare/prepStatus.ts` | The same, mobile, with tests |
+
+**Order matters in `start_quiz`.** The status check runs before the topics check, so a finished preparation
+with no topics says "this is finished" rather than "extract topics first" — advice for a step that is itself
+refused, which walks the learner round a loop.
+
+**`generate_preparation_plan` needed nothing**: it already refuses a target date in the past.
+
+**Two messages and two codes, not one.** `PREP_AWAITING_REVIEW` and `PREP_COMPLETED`, named the way
+`PREP_TOPICS_REQUIRED` already is. An awaiting preparation has something for the learner to *do* and a
+completed one does not, so one shared sentence would send someone with an outstanding review to a dead end —
+and a client that knows only "something conflicted" can do nothing but print it. `ConflictError` gained an
+optional `code`; existing callers keep `CONFLICT`.
+
+**Both clients: the outcome leads.** The detail surface opens on the review rather than on topics, the hero
+carries the recorded outcome or the outstanding question instead of a practice CTA, and the status is finally
+shown on the detail page — it had only ever been on the library row, so a learner arriving from a
+notification could not tell a finished preparation from an active one. The countdown is suppressed, because
+"-3 days left" is worse than meaningless.
+
+**Twelve affordances, closed in five places rather than twelve.** Almost all practice entry points read one
+derived flag, so the gate went into the flag: `hasPractice` on web's workspace, and `practiceReady` in both
+dashboard mappers. Then the picker filters past-exam preparations out (choosing from a list, an unpickable
+option is noise), while the launcher shows a blocked panel (arrived by URL asking about one preparation, so
+owed an explanation), and the runner keeps a 409 backstop for deep links — branching on the code, so it
+reads as a rule rather than "Could not start practice" beside a red cross.
+
+**Three defects found while doing it, none of them about the exam**
+
+- **Session-history rows started a new quiz.** Both clients, dashboard and workspace: tapping a *finished*
+  session under "Recent sessions" silently began a fresh one. There is no route for viewing a completed
+  session, so they now open the preparation, where that session's result already lives. One web test
+  asserted the old route and was updated with the reason.
+- **`AWAITING_REVIEW` is inside the dashboard's `ACTIVE_STATUSES`**, deliberately — it wants attention most.
+  So an awaiting preparation genuinely contributes focus topics, and every one of those rows was a live link
+  into a refusal. Both mappers now build a past-exam id set from the only place a status appears on that
+  payload.
+- **Mobile's focus rows ignored `route`** and built their own parameterised push, so a guard living only in
+  the route string would have been silently bypassed. Hence `canPractise` as a published flag.
+
+**Verification.** Backend: **231 passing** across the prep and quiz suites, 8 mutations caught across the
+guard and its two call sites. Web: typecheck at its **13 pre-existing** errors, lint byte-identical to
+baseline, **387 tests**, build green. Mobile: typecheck clean, lint at the **366** ratchet ceiling, **1138
+tests** across 42 suites, 5 mutations on `prepStatus` all caught.
+
+**Not verified.** Whether a preparation opening on its outcome reads as finished rather than broken is a
+judgement a device settles. §10.12 records what the first screenshot found.
+
+### 10.12 What the first screenshot found, and the decline rule it changed
+
+The first time any of this was seen rendering it was wrong in two ways, and one of them exposed a design
+error rather than a bug.
+
+**The review tab body had no column span.** It was a direct child of a twelve-column grid carrying no
+`col-span`, so it took **one** column — a sixty-pixel strip of vertical text. Its neighbours escape the same
+trap by carrying the span inside their own root element, and `PreparationReview` does not. Invisible until
+now because the review tab had never been the default; a finished preparation opening on it is what surfaced
+it. Fixed by wrapping the body, like the analytics tab.
+
+**The hero asked "How did Statistics final go?" above empty space.** `PreparationReview` returns `null` when
+`embedded` and there is nothing to ask, which is right for a popup that would otherwise appear to say
+"nothing to see" and wrong directly under a heading that just asked a question. Two ways to reach it, and
+the second is not fixable:
+
+1. A **declined** review — fixed at the source, below.
+2. A preparation the **old date-based sweep** closed: `COMPLETED` with no `PrepOutcome`, of which this
+   database has 18, and which will never have one. Only describable, so it is now described: "This
+   preparation was closed before we started asking how exams went…". The hero reads the review state
+   directly and renders a heading only when there is content under it, so the whole class of bug is gone
+   rather than its two instances.
+
+**The design error: `is_awaiting_review` was answering two different questions.**
+
+The screenshot showed a preparation whose badge said "to review", whose hero asked how it went, and whose
+form said **"Nothing to review yet"**. All three were reading the same database row. `awaiting` was false
+because a decline had been recorded, and a learner who tapped "Not now" once could never answer again from
+the surface built for answering.
+
+The two questions:
+
+- **"Is this preparation waiting on an answer?"** A decline is irrelevant. Nothing has been said about the
+  exam, the preparation is not finished, the question is open. This is what `awaiting` now means.
+- **"Should we chase this learner about it?"** A decline is decisive.
+
+Chasing is still stopped, in the two places that do it: `list_preps_awaiting_review` filters
+`reviewDeclinedAt IS NULL` in SQL, so the sweep and its reminder budget are untouched — there is a test for
+that and it still passes — and both clients' *global* prompt reads `declinedAt` and skips. What a decline no
+longer silences is the preparation's own page, **because there is no reason to open a preparation whose exam
+has passed except to do something about it.**
+
+**Which introduced a trap, caught before shipping.** With `declinedAt` no longer gating the dialog, "Not
+now" closed a required surface that immediately re-opened — the single exit leading straight back in. So
+"asks again when they open the preparation" is scoped to **the visit**: `reviewClosedThisVisit` on both
+clients, component state, resets on navigating away and back. Having just responded is not a new visit. Web's
+`onClose` was `() => undefined`, which had been safe only while the recorded decline did this job.
+
+`isAwaitingAnswer` (the page) and `shouldPromptGlobally` (the prompt) are now separate predicates on mobile,
+with a test asserting the second is strictly narrower — so they cannot quietly drift into being the same
+test. Three mutations on them, all caught. Backend: **233 passing**, with the old
+`test_a_dismissal_stops_the_waiting` inverted and its reasoning recorded, plus two new cases covering
+declined-then-answered.
+
+**Lesson worth keeping.** A green build, a clean typecheck and a passing suite said nothing about either
+defect. One was a missing CSS class on a branch no test renders; the other was a predicate that was
+internally consistent, tested, and answering the wrong question. **The screenshot found both in one look.**
+
 ## 11. What is not known
 
 - ~~**No runtime measurement.**~~ **Partly answered — §10.6.** Measured against the development database once

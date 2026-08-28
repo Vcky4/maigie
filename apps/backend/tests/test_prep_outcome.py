@@ -145,11 +145,24 @@ class TestAwaitingReview:
     def test_does_not_wait_once_completed(self):
         assert prep_outcome_service.is_awaiting_review(_prep(status="COMPLETED")) is False
 
-    def test_a_dismissal_stops_the_waiting(self):
-        """**A dismissal is an answer.** Continuing to ask someone who said no is the failure the
-        reminder budget exists to prevent, and declining must end it outright rather than decrement it.
+    def test_a_dismissal_does_not_stop_the_waiting(self):
+        """**Changed deliberately.** This asserted `False`, and that was the wrong answer.
+
+        One predicate was serving two different questions. "Is this preparation waiting on an answer?" — a
+        decline is irrelevant; nothing has been said about the exam and the preparation is not finished.
+        "Should we chase this learner?" — a decline is decisive, and that is enforced in
+        `list_preps_awaiting_review`, which filters `reviewDeclinedAt IS NULL` in SQL, plus the clients'
+        global prompt.
+
+        Conflating them produced a page that contradicted itself: status `AWAITING_REVIEW`, a "to review"
+        badge, a hero asking "How did it go?", and a form underneath saying **"Nothing to review yet"**. A
+        learner who tapped "Not now" once could never answer again from the surface built for answering.
+
+        The reminders are still silenced. Only the preparation's own page keeps asking — and opening a
+        preparation whose exam has passed does not happen by accident.
         """
-        assert prep_outcome_service.is_awaiting_review(_prep(review_declined_at=NOW)) is False
+        assert prep_outcome_service.is_awaiting_review(_prep(review_declined_at=NOW)) is True
+
 
     def test_reads_a_naive_exam_date_without_raising(self):
         """`ExamPrep.examDate` is stored **without** an offset while the ORM declares it as having one, so
@@ -487,3 +500,38 @@ class TestReviewState:
         assert state["outcome"] is None
         # The first sitting is still real history, reachable through the history read.
         assert len(await prep_outcome_service.list_outcomes(user_id=OWNER, prep_id="prep-1")) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_declined_review_is_still_awaiting_and_says_so(self, repo):
+        """The state a learner can act on after saying "not now".
+
+        `awaiting` stays true and `declinedAt` is published beside it, and that pair is the whole fix: the
+        preparation's own page ignores the date and asks again, while the global prompt reads it and stays
+        quiet. Before this, `awaiting` went false and the review surface said "Nothing to review yet" about
+        a preparation whose badge said "to review".
+
+        `outcome` is still null, because declining is not an answer about the exam — which is also why the
+        preparation is not `COMPLETED`.
+        """
+        await prep_outcome_service.decline_review(user_id=OWNER, prep_id="prep-1")
+
+        state = await prep_outcome_service.get_review_state(user_id=OWNER, prep_id="prep-1")
+
+        assert state["awaiting"] is True
+        assert state["declinedAt"] is not None
+        assert state["outcome"] is None
+        assert repo.prep.status != "COMPLETED"
+
+    @pytest.mark.asyncio
+    async def test_declining_then_answering_still_records_the_answer(self, repo):
+        """The point of keeping the surface open: the learner can change their mind."""
+        await prep_outcome_service.decline_review(user_id=OWNER, prep_id="prep-1")
+        await prep_outcome_service.record_outcome(
+            user_id=OWNER, prep_id="prep-1", data={"attended": "sat", "preparationRating": 3}
+        )
+
+        state = await prep_outcome_service.get_review_state(user_id=OWNER, prep_id="prep-1")
+
+        assert state["awaiting"] is False
+        assert state["outcome"] is not None
+        assert state["outcome"].preparation_rating == 3
