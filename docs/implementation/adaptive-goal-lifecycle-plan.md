@@ -310,14 +310,14 @@ New, because none of it exists. Modelled on `CourseOutlineSatisfaction`
 
 Assumes the §8 decisions are made first. Engineer-days of focused work, not calendar.
 
-**Phases 0 through 6 are implemented on the backend.** See §10 for what shipped, what changed against this
-plan, and what is still open. **No client renders any of it** — every phase from 1 onwards has an outstanding
-UI half, and that is now the binding constraint rather than backend effort.
+**Phases 0 through 6 are implemented on the backend, and the web client renders all of it** (§10.7).
+**Mobile renders none of it**, which is now the binding constraint rather than backend effort — along with
+push, which reaches nobody for reasons §10.8 sets out. See §10 for what shipped and what is still open.
 
 | | Work | Days | Risk |
 | --- | --- | --- | --- |
 | **0** | ~~**Stop declaring missed exams complete.**~~ **Shipped.** | 1 | **Low, high value** |
-| **1** | **The post-exam review** (§6). **Backend shipped**; both clients' forms outstanding. | 5–7 | Medium — new schema and new copy on a sensitive moment |
+| **1** | ~~**The post-exam review** (§6).~~ **Backend and web shipped** (§10.7); mobile outstanding. | 5–7 | Medium — new schema and new copy on a sensitive moment |
 | **2** | ~~**Derive date authority** + a `GoalScheduleChange` log + surface "extended N times".~~ **Shipped**, no behaviour change. See §10.1. | 2 | Low |
 | **3** | ~~**Time-triggered redistribution.** Make `_redistribute_plan` reachable without learner action.~~ **Shipped.** See §10.2. | 1–2 | Low |
 | **4** | ~~**The nightly pass**, ladder implemented, one action per goal, cooldown enforced.~~ **Shipped.** See §10.3. | 4–5 | Medium |
@@ -348,25 +348,37 @@ because the learner said it was postponed.
 extensions. Decision 6 in part: the cooldown is seven days per goal, so a goal produces at most one message
 a week; whether the post-exam ask bypasses the daily cap is still phase 5's to settle.
 
+Answered by shipped work:
+
+1. ~~**How many times may a `learner`-authority goal extend before the system asks instead?**~~ **Three**,
+   counting only the system's own extensions. §10.3.
+2. ~~**What state is "awaiting your answer"?**~~ **Two different answers, deliberately.** A preparation got a
+   real status value, `AWAITING_REVIEW` (§10.1) — it is a lifecycle state the learner and both clients need
+   to see. A *goal* got none: "waiting" is derived from the most recent `GoalLifecycleAction` having no
+   response, published as `pendingNudge` (§10.5). The difference is that a preparation is waiting on one
+   question with one answer, where a goal may be nudged repeatedly, so a status value would have had to
+   encode which nudge.
+3. ~~**What terminal state does an unanswered preparation reach?**~~ It stays `AWAITING_REVIEW`, and the
+   *asking* terminates rather than the state: `MAX_REVIEW_REMINDERS = 2`, after which nothing more is sent
+   (§10.1). So it is never `COMPLETED` on silence, and the learner is not nagged by their own history —
+   the row is an honest record that the exam happened and we do not know how it went.
+4. ~~**What scale for the two ratings?**~~ **1–5 for both**, same shape so they can be compared, odd so
+   "about as expected" is expressible. §10.1.
+5. ~~**Is "deprioritise" `ARCHIVED`, or a new paused state?**~~ **`ARCHIVED`.** §10.5.
+6. ~~**How many deadline nudges per goal per week, and does the post-exam ask bypass the daily cap?**~~ At
+   most **one per goal per week** (`GOAL_ACTION_COOLDOWN_DAYS = 7`, §10.3). And the cap question stopped
+   mattering: it no longer *drops* anything, it defers to the learner's next day, so the post-exam ask
+   takes its turn rather than needing an exemption. Only `goal_at_risk` is `PRIORITY_TIME_CRITICAL`, because
+   it is the one message whose value expires with the deadline it describes. §10.4.
+
 Still open:
 
-1. ~~**How many times may a `learner`-authority goal extend before the system asks instead?**~~ Answered:
-   three. See §10.3.
-2. **What state is "awaiting your answer"?** `Goal.status` is `ACTIVE | COMPLETED | ARCHIVED | CANCELLED`
-   (`progress/models.py:37`) and `ExamPrep.status` is `SETUP | IN_PROGRESS | COMPLETED`
-   (`personal_learning/models.py:957`). Neither has a value
-   for it, and adding one is a contract change for both clients. Alternative: keep `ACTIVE` and let the
-   *absence of an outcome row* be the state, which adds no enum value but makes every reader do a join.
-3. **What terminal state does an unanswered preparation reach?** It must not be `COMPLETED`. It also should
-   not stay `ACTIVE` forever, or the learner is nagged by their own history.
-4. **What scale for the two ratings?** Recommend the same shape for both so they can be compared, and an
-   odd number of points so "about as expected" is expressible.
-5. ~~**Is "deprioritise" `ARCHIVED`, or a new paused state?**~~ Answered: `ARCHIVED`. See §10.5.
-6. **How many deadline nudges per goal per week is acceptable**, given the cap of five notifications per day
-   across everything? And does the post-exam ask count against that cap or bypass it?
 7. **Should extending a goal's date also move `Course.targetDate`?** They are two records of one intention
-   and they will disagree otherwise.
+   and they will disagree otherwise. Unchanged: the ladder moves the goal only.
 8. **Per-topic goals** (§9) — wanted, or does one course goal plus plan items already cover it?
+9. **Expo push or FCM?** New, and it blocks delivery outright — see §10.8. The backend sender speaks FCM;
+   every stored token is an `ExponentPushToken`. Either the mobile app registers a native FCM token, or the
+   backend gains an Expo sender. Nothing arrives until this is decided.
 
 ## 9. On per-topic goals
 
@@ -962,14 +974,82 @@ would be a lie.
 
 - **Mobile has none of it.** No review form, no nudge answer, no extension history. Half the learners cannot
   reply to anything this programme asks.
-- **Nothing registers a `DeviceToken`**, so the push half of phase 5 still reaches nobody on either client.
-  That remains the single largest gap between "the system asks" and "the learner hears".
+- **Neither client registers a `DeviceToken`.** The endpoint now exists (§10.8) but nothing calls it, so the
+  push half of phase 5 still reaches nobody. That remains the largest gap between "the system asks" and "the
+  learner hears".
 - **The goal detail page shows neither.** `ReflectGoalDetailPage` renders no `pendingNudge` and no extension
   history; only the goals list card and the dialog do. Left alone deliberately under the standing instruction
   not to touch the Reflect surfaces.
 - **None of it has been seen rendering.** Dialog sizing, scroll behaviour on a long form in a short viewport,
   and whether a required dialog reads as reasonable rather than hostile are judgements a screenshot settles
   and a green build does not.
+
+### 10.8 Device token registration — and why push still reaches nobody
+
+§5.4 said "fix the notification path first". The in-app half was fixed in phase 5. This is the push half, and
+the honest summary is: **the hole is now one layer deeper than it was, not closed.**
+
+**What shipped**
+
+| Piece | Where |
+| --- | --- |
+| `PUT /api/v1/users/me/device-tokens` | `identity/routes.py::register_device_token` |
+| `DELETE /api/v1/users/me/device-tokens` | `identity/routes.py::unregister_device_token` |
+| `upsert_device_token`, `delete_device_token`, `count_device_tokens` | `identity/repository.py` |
+| `DeviceTokenRequest` / `DeviceTokenResponse` | `identity/models.py` |
+| The Expo-token guard | `shared/infrastructure/push_notifications.py` |
+
+`tests/test_device_tokens.py` — **10 tests**; three more in `tests/test_push_notifications.py`, now 18.
+Mutation-tested: 4 mutations in the repository and 2 in the sender, all caught.
+
+**The upsert is keyed on the token, and reassigns the owner.** Keying on the user was the obvious shape and
+it is wrong: a device that changes hands — resold, family tablet, a spare handed to a sibling — would keep
+delivering learner A's notifications to whoever now holds it, and those notifications quote goal titles and
+exam names. Keyed on the token, registration by learner B moves ownership, which is what physically
+happened. The cost is that a shared device can only be registered to one learner at a time, which is correct
+for a push channel: whoever logged in last is who is holding it. `DELETE` is scoped to the caller's own
+`userId`, so nobody can unregister a device they do not hold.
+
+**`platform` is a closed set.** The column has no CHECK constraint, and the sender builds per-platform
+payload blocks — Android config, APNs config — so an unrecognised value produces a device that is registered,
+counted, and silently receives nothing. A `Literal` rejects it at the boundary instead.
+
+**`deviceCount` is in the response for one reason:** from outside, "push is off for this learner" and "push
+is on and nothing has ever been sent" look identical. That indistinguishability is precisely why the
+notification path went unnoticed as undeliverable for so long, and a count is the cheapest way to stop it
+recurring.
+
+**The finding: registration was not the only thing missing.** With the endpoint written, the five
+`DeviceToken` rows already in the development database became legible — and every one of them is an
+`ExponentPushToken[...]`, 41 characters, issued by **Expo's** push service. This application's sender builds
+`firebase_admin.messaging.Message` objects for **FCM**. The two are different transports.
+
+Two things follow, and both had to be handled before any send could be trusted:
+
+1. **FCM rejects an Expo token as `INVALID_ARGUMENT`**, and `INVALID_ARGUMENT` is in
+   `_DEAD_TOKEN_ERROR_CODES`, which prunes. So the first push after registration existed would have
+   **deleted all five rows** — the only record that those devices exist — and reported it as routine
+   cleanup. The guard now skips tokens with the Expo prefix and keeps them. An Expo token is not a dead FCM
+   token; it is a live token for a service this sender does not talk to. Skipping is reversible, deleting is
+   not.
+2. **`FIREBASE_SERVICE_ACCOUNT_PATH` and `_JSON` are both unset**, so even a correctly-shaped FCM token
+   returns `skipped` today. This is independent of the first problem: fixing either alone still delivers
+   nothing.
+
+**This is a decision for the product, not something to resolve by writing code.** Either mobile registers a
+native FCM token — Expo exposes it as `getDevicePushTokenAsync()` rather than
+`getExpoPushTokenAsync()` — and the existing sender is kept, or the backend gains an Expo sender and the
+FCM one becomes the fallback. The first keeps one transport and one credential; the second keeps Expo's
+build and OTA ergonomics on mobile. Both are defensible, they are not combinable without keeping two
+senders, and the tokens are preserved either way so neither choice is foreclosed. **Raised rather than
+chosen.**
+
+**Still open**
+
+- **No client calls either endpoint.** Web has no service worker and mobile has no registration call, so
+  `DeviceToken` gains no new rows from this work — the five it verified against are pre-existing.
+- **Nothing has been pushed end-to-end**, on any transport, to any device. Every claim above about the
+  sender is from reading it and from tests, not from a phone lighting up.
 
 ## 11. What is not known
 

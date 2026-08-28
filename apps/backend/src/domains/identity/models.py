@@ -6,6 +6,7 @@ and OAuth flows live here.
 """
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer
 
@@ -236,6 +237,33 @@ class DeviceTimezoneRequest(BaseModel):
     """
 
     timezone: str = Field(min_length=1, max_length=64)
+
+
+class DeviceTokenRequest(BaseModel):
+    """A push token reported by the learner's device.
+
+    Until this existed nothing wrote `DeviceToken`, so every push the application sent returned
+    `no_tokens`: the whole notification path was built, correct, and delivered to nobody.
+
+    `platform` is a closed set rather than free text. The column has no CHECK constraint, and the sender
+    builds per-platform payloads — an Android config block and an APNs one — so a value it does not
+    recognise is a device that silently receives nothing.
+    """
+
+    token: str = Field(min_length=1, max_length=512)
+    platform: Literal["ANDROID", "IOS", "WEB"]
+
+
+class DeviceTokenResponse(BaseModel):
+    """Confirmation that a device is registered, and how many are.
+
+    `deviceCount` is returned so a client can distinguish "push is off for this learner" from "push is on
+    and nothing has been sent", which is otherwise indistinguishable from the outside — and the reason the
+    notification path went unnoticed as undeliverable for so long.
+    """
+
+    platform: str
+    deviceCount: int = 0
 
 
 class TimezoneResponse(BaseModel):

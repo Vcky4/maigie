@@ -3157,6 +3157,51 @@
         "title": "DeviceTimezoneRequest",
         "type": "object"
       },
+      "DeviceTokenRequest": {
+        "description": "A push token reported by the learner's device.\n\nUntil this existed nothing wrote `DeviceToken`, so every push the application sent returned\n`no_tokens`: the whole notification path was built, correct, and delivered to nobody.\n\n`platform` is a closed set rather than free text. The column has no CHECK constraint, and the sender\nbuilds per-platform payloads — an Android config block and an APNs one — so a value it does not\nrecognise is a device that silently receives nothing.",
+        "properties": {
+          "platform": {
+            "enum": [
+              "ANDROID",
+              "IOS",
+              "WEB"
+            ],
+            "title": "Platform",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "platform"
+        ],
+        "title": "DeviceTokenRequest",
+        "type": "object"
+      },
+      "DeviceTokenResponse": {
+        "description": "Confirmation that a device is registered, and how many are.\n\n`deviceCount` is returned so a client can distinguish \"push is off for this learner\" from \"push is on\nand nothing has been sent\", which is otherwise indistinguishable from the outside — and the reason the\nnotification path went unnoticed as undeliverable for so long.",
+        "properties": {
+          "deviceCount": {
+            "default": 0,
+            "title": "Devicecount",
+            "type": "integer"
+          },
+          "platform": {
+            "title": "Platform",
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform"
+        ],
+        "title": "DeviceTokenResponse",
+        "type": "object"
+      },
       "DifficultyLevel": {
         "enum": [
           "BEGINNER",
@@ -33814,6 +33859,93 @@
           }
         ],
         "summary": "Cancel Deletion",
+        "tags": [
+          "users",
+          "users"
+        ]
+      }
+    },
+    "/api/v1/users/me/device-tokens": {
+      "delete": {
+        "description": "Stop sending push to this device. **Clients must call this on sign-out.**\n\nA token left registered keeps the device attached to the learner who signed out, so the next person to\nuse that phone receives their notifications. Dead-token pruning does not help: the token is still\nvalid, it is the *attribution* that is wrong.\n\n`204` whether or not a row was removed. The outcome a client needs is \"this device is not registered\",\nand that is true either way — reporting `404` for an already-unregistered token would make a\ncorrectly-idempotent sign-out look like a failure.",
+        "operationId": "unregister_device_token_api_v1_users_me_device_tokens_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unregister Device Token",
+        "tags": [
+          "users",
+          "users"
+        ]
+      },
+      "put": {
+        "description": "Register this device to receive push notifications.\n\n**Nothing has ever written a `DeviceToken`.** The sender, the payload builders, the dead-token pruning\nand every notification that says \"we will tell you\" were all built and complete, and every push\nreturned `no_tokens` — so the entire notification path has been undeliverable for its whole life.\nThis is the missing half.\n\n`PUT` rather than `POST`, because registering the same device twice is not creating a second one. Safe\nto call on every app launch, which is how these rows will actually appear — the same pattern\n`PUT /me/timezone` relies on for the same reason.\n\n**Re-registering a token that belonged to someone else reassigns it.** FCM issues one token per app\ninstall, so a second learner signing in on the same phone presents the same token. Leaving it on the\nfirst learner would deliver their private notifications to the second learner's device, so the token\nalways follows whoever is signed in.",
+        "operationId": "register_device_token_api_v1_users_me_device_tokens_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceTokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Register Device Token",
         "tags": [
           "users",
           "users"

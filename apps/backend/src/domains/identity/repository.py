@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.database import get_session_factory
 
-from .db_models import User, UserPreferences
+from .db_models import DeviceToken, User, UserPreferences
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,77 @@ class IdentityRepository:
             await session.commit()
             await session.refresh(user)
             return user
+
+    # -----------------------------------------------------------------------
+    # Device tokens (push notifications)
+    # -----------------------------------------------------------------------
+
+    async def upsert_device_token(
+        self, *, user_id: str, token: str, platform: str
+    ) -> DeviceToken:
+        """Register a device for push, keyed on the **token** rather than the learner.
+
+        Until this existed nothing wrote `DeviceToken` at all, so every push in the application returned
+        `no_tokens` — the notification path was complete and delivered to nobody.
+
+        **Keyed on the token because a device changes hands.** FCM issues one token per app install, so
+        when a second learner signs in on the same phone the same token arrives with a different
+        `userId`. `token` is `UNIQUE`, so inserting blindly raises; and leaving the row on the first
+        learner is worse than an error — the row decides who a message is *sent for*, so the first
+        learner's private notifications would be delivered to the second learner's phone. Reassigning is
+        the only behaviour that is both correct and safe.
+
+        Idempotent, so a client may call it on every launch, which is how these rows will actually appear
+        — the same pattern `record_device_timezone` relies on.
+        """
+        async with await self._get_session() as session:
+            existing = (
+                await session.execute(select(DeviceToken).where(DeviceToken.token == token))
+            ).scalar_one_or_none()
+
+            if existing is not None:
+                existing.user_id = user_id
+                existing.platform = platform
+                await session.commit()
+                await session.refresh(existing)
+                return existing
+
+            row = DeviceToken(user_id=user_id, token=token, platform=platform)
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return row
+
+    async def delete_device_token(self, *, user_id: str, token: str) -> bool:
+        """Unregister one device. Returns whether a row was removed.
+
+        Scoped to the owner, so a token cannot be unregistered by whoever happens to know the string.
+
+        **Clients must call this on sign-out.** A token left behind keeps the device registered to the
+        learner who signed out, so the next person to use that phone receives their notifications. That
+        is the same hole `upsert_device_token` closes from the other direction, and it is the reason this
+        is an endpoint rather than something only the FCM error path prunes.
+        """
+        async with await self._get_session() as session:
+            result = await session.execute(
+                delete(DeviceToken).where(
+                    DeviceToken.token == token, DeviceToken.user_id == user_id
+                )
+            )
+            await session.commit()
+            return bool(result.rowcount)
+
+    async def count_device_tokens(self, user_id: str) -> int:
+        """How many devices this learner can be reached on.
+
+        Published so a client can tell "push is off" apart from "push is on and quiet", and so the
+        notification settings surface can stop implying a channel that reaches nothing.
+        """
+        async with await self._get_session() as session:
+            rows = await session.execute(
+                select(DeviceToken.id).where(DeviceToken.user_id == user_id)
+            )
+            return len(list(rows.scalars().all()))
 
     # -----------------------------------------------------------------------
     # Updates

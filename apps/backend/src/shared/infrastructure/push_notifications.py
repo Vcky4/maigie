@@ -14,13 +14,19 @@ this package had replaced with a silent ``pass``. Changes made during the restor
   blocking HTTP, and the original awaited nothing, stalling the event loop for the
   duration of a fan-out send.
 
-Two things are missing before this can actually deliver, and neither belongs to this
+Two things still stand between this and an actual delivery, and neither belongs to this
 module:
 
-1. Nothing writes ``DeviceToken`` rows. There is no registration endpoint, so every
-   send currently returns ``no_tokens``. That is reported honestly rather than being
-   dressed up as a success.
-2. Mobile is not in scope yet, which is why the registration surface does not exist.
+1. **Firebase is unconfigured**, so every send returns ``skipped``. That is reported
+   honestly rather than being dressed up as a success.
+2. **The stored tokens are Expo tokens and this sender speaks FCM.** Registration now
+   exists (``PUT /users/me/device-tokens``), and every row that predates it looks like
+   ``ExponentPushToken[...]`` — issued by Expo's push service, which is not a transport
+   this module can address. Which of the two the product should use is an open decision:
+   either the mobile app registers a native FCM token, or the backend gains an Expo
+   sender. Until it is made, those tokens are **skipped and kept** rather than pruned,
+   because FCM would reject them as ``INVALID_ARGUMENT`` and this module would then
+   delete the only record that those devices exist.
 
 Sends never raise. Callers include credit-purchase fulfilment and a Celery task, and a
 notification failure must not roll back a purchase or fail a job that did its work.
@@ -45,6 +51,9 @@ from src.shared.database import get_session_factory
 logger = logging.getLogger(__name__)
 
 _firebase_app: firebase_admin.App | None = None
+
+#: Expo's own push tokens, which this FCM sender cannot address. See `send_push_notification`.
+_EXPO_TOKEN_PREFIX = "ExponentPushToken["
 
 # FCM error codes meaning the token will never be valid again, so the row should go.
 _DEAD_TOKEN_ERROR_CODES = frozenset(
@@ -186,9 +195,36 @@ async def send_push_notification(
         return {"sent": 0, "failed": 0, "error": "device_token_lookup_failed"}
 
     if not tokens:
-        # Expected until a device-token registration endpoint exists.
         logger.info("No registered device tokens for user %s, nothing to send", user_id)
         return {"sent": 0, "failed": 0, "no_tokens": True}
+
+    # Tokens this transport cannot address, kept rather than destroyed.
+    #
+    # **The stored tokens are Expo tokens and this sender speaks FCM.** Every row that predates the
+    # registration endpoint looks like `ExponentPushToken[...]`, issued by Expo's push service, while this
+    # module builds `messaging.Message` objects for Firebase. FCM rejects them as `INVALID_ARGUMENT`,
+    # which `_DEAD_TOKEN_ERROR_CODES` treats as permanently invalid — so the first send would have
+    # **deleted every one of them**, and they are the only record that those devices exist.
+    #
+    # An Expo token is not a dead FCM token. It is a live token for a service this sender does not talk
+    # to, and which of the two transports the product should use is an open decision. Skipping is the
+    # reversible choice; deleting is not.
+    foreign = [token for token in tokens if token.startswith(_EXPO_TOKEN_PREFIX)]
+    tokens = [token for token in tokens if not token.startswith(_EXPO_TOKEN_PREFIX)]
+    if foreign:
+        logger.warning(
+            "Skipping %d Expo push token(s) for user %s: this sender is FCM. They are kept, not "
+            "pruned — see the module docstring.",
+            len(foreign),
+            user_id,
+        )
+    if not tokens:
+        return {
+            "sent": 0,
+            "failed": 0,
+            "no_tokens": True,
+            "unsupported_tokens": len(foreign),
+        }
 
     messages = _build_messages(tokens, title, body, data, image_url)
 

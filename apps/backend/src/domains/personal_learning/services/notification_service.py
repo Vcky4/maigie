@@ -34,10 +34,12 @@ Callers that count `if notification is not None` still work and are now simply a
 
 ## What is still not fixed
 
-Push is attempted, honestly, and will do nothing for every learner in production: **no code writes
-`DeviceToken` rows**, because there is no registration endpoint. `send_push_notification` reports that as
-`no_tokens` and `pushedAt` stays null, so the data says what happened instead of claiming a delivery. The
-in-app list is the channel that actually works today.
+Push is attempted, honestly, and still reaches nobody — but for a narrower reason than before.
+`PUT /users/me/device-tokens` now writes `DeviceToken` rows, so `no_tokens` is no longer universal. What
+remains is a transport mismatch: every token registered so far is an `ExponentPushToken[...]`, issued by
+Expo, while this application's sender speaks FCM. Those are skipped, not sent, and not pruned. Whichever way
+that is resolved, `pushedAt` stays null until a device is actually addressed, so the data says what happened
+instead of claiming a delivery. The in-app list is the channel that works today.
 """
 
 import logging
@@ -256,9 +258,10 @@ async def _push(row: Any, *, profile_type: str) -> None:
     Never raises and never reverses the delivery. The in-app list is the channel that works; a push is an
     extra, and its failure is not the notification's failure.
 
-    `pushedAt` is written **only when a device actually received something**. `send_push_notification`
-    returns `no_tokens` for every learner today, because nothing registers a `DeviceToken` — recording that
-    as a push would be a claim in the database that nothing sent anything to.
+    `pushedAt` is written **only when a device actually received something** — not when a send was merely
+    attempted. Today that means it stays null for everyone: registered tokens are Expo tokens and the sender
+    speaks FCM, so the result is `skipped`. Recording an attempt as a push would be a claim in the database
+    that nothing sent anything to.
     """
     from src.shared.infrastructure.push_notifications import send_push_notification
 

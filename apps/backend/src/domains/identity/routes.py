@@ -22,6 +22,8 @@ from .models import (
     CancelDeletionRequest,
     ChangePasswordRequest,
     DeviceTimezoneRequest,
+    DeviceTokenRequest,
+    DeviceTokenResponse,
     ForgotPasswordRequest,
     LinkReferralRequest,
     LoginRequest,
@@ -208,6 +210,55 @@ async def record_device_timezone(data: DeviceTimezoneRequest, current_user: Curr
     stored value unchanged in that case rather than reverting a deliberate choice.
     """
     return await services.record_device_timezone(user_id=current_user.id, timezone=data.timezone)
+
+
+# --- Push notification devices ---
+
+
+@users_router.put("/me/device-tokens", response_model=DeviceTokenResponse)
+async def register_device_token(data: DeviceTokenRequest, current_user: CurrentUser):
+    """Register this device to receive push notifications.
+
+    **Nothing has ever written a `DeviceToken`.** The sender, the payload builders, the dead-token pruning
+    and every notification that says "we will tell you" were all built and complete, and every push
+    returned `no_tokens` — so the entire notification path has been undeliverable for its whole life.
+    This is the missing half.
+
+    `PUT` rather than `POST`, because registering the same device twice is not creating a second one. Safe
+    to call on every app launch, which is how these rows will actually appear — the same pattern
+    `PUT /me/timezone` relies on for the same reason.
+
+    **Re-registering a token that belonged to someone else reassigns it.** FCM issues one token per app
+    install, so a second learner signing in on the same phone presents the same token. Leaving it on the
+    first learner would deliver their private notifications to the second learner's device, so the token
+    always follows whoever is signed in.
+    """
+    from .repository import identity_repo
+
+    await identity_repo.upsert_device_token(
+        user_id=current_user.id, token=data.token, platform=data.platform
+    )
+    return DeviceTokenResponse(
+        platform=data.platform,
+        deviceCount=await identity_repo.count_device_tokens(current_user.id),
+    )
+
+
+@users_router.delete("/me/device-tokens", status_code=status.HTTP_204_NO_CONTENT)
+async def unregister_device_token(data: DeviceTokenRequest, current_user: CurrentUser):
+    """Stop sending push to this device. **Clients must call this on sign-out.**
+
+    A token left registered keeps the device attached to the learner who signed out, so the next person to
+    use that phone receives their notifications. Dead-token pruning does not help: the token is still
+    valid, it is the *attribution* that is wrong.
+
+    `204` whether or not a row was removed. The outcome a client needs is "this device is not registered",
+    and that is true either way — reporting `404` for an already-unregistered token would make a
+    correctly-idempotent sign-out look like a failure.
+    """
+    from .repository import identity_repo
+
+    await identity_repo.delete_device_token(user_id=current_user.id, token=data.token)
 
 
 # --- Account Deletion ---

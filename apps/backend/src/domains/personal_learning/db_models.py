@@ -758,9 +758,11 @@ class Notification(Base, TimestampMixin):
     # **Distinct from `deliveredAt`, which it would be tempting to conflate.** `deliveredAt` means the row
     # was released into the learner's in-app list, which is a real channel and always succeeds. A push is a
     # second, best-effort channel that can be skipped for a dozen honest reasons: Firebase unconfigured, the
-    # learner opted out, or — universally today — no `DeviceToken` row exists because nothing registers one.
-    # `send_push_notification` reports `no_tokens` for that case, and recording it as a delivery would put a
-    # claim in the data that nothing sent anything to.
+    # learner opted out, no `DeviceToken` row for them, or a token this sender cannot address. Registration
+    # now exists (`PUT /users/me/device-tokens`), so `no_tokens` has stopped being universal — but every
+    # token stored so far is an Expo token and this sender speaks FCM, so it is still skipped rather than
+    # sent. `send_push_notification` reports each of those cases by name, and recording any of them as a
+    # delivery would put a claim in the data that nothing sent anything to.
     #
     # It is also the idempotency marker. `status` moving off `PENDING` is what stops a row being selected
     # again, so without this a crash between the send and the status write would push twice.
