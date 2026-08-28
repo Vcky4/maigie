@@ -39,9 +39,29 @@ from typing import Any
 from src.shared.time.stored_instants import ensure_utc_optional
 
 from ..repository import progress_repo
-from . import goal_metrics, goal_schedule_log
+from . import adaptive_response_metrics, goal_metrics, goal_schedule_log
 
 logger = logging.getLogger(__name__)
+
+
+def _days_since(moment: datetime | None) -> float | None:
+    """Days from `moment` until now, or `None` when it never happened."""
+    if moment is None:
+        return None
+    return round((datetime.now(UTC) - ensure_utc_optional(moment)).total_seconds() / 86_400, 2)
+
+
+def _log_answer(event: str, **fields: Any) -> None:
+    """Instrumentation that cannot cost the learner their answer.
+
+    The `record_lifecycle_response` write has already happened when this runs, so an exception here would
+    throw away a successful answer and return an error for work the database has kept. `warning`, not
+    `debug`: instrumentation failing quietly is instrumentation that has stopped without telling anyone.
+    """
+    try:
+        adaptive_response_metrics.log_ask_event(event, **fields)
+    except Exception:  # pragma: no cover - defensive
+        logger.warning("Could not log %s", event, exc_info=True)
 
 #: How long a goal is left alone after the ladder acts on it, in days.
 #:
@@ -182,9 +202,26 @@ async def record_answer(*, user_id: str, goal_id: str, response: str) -> Any:
     if status is not None and goal.status != status:
         await progress_repo.update_goal(goal_id, {"status": status})
 
-    logger.info(
-        "Learner answered a goal nudge",
-        extra={"goal_id": goal_id, "action": action.action, "response": response},
+    # Through the shared event shape rather than a bespoke `extra`, so this ask and the post-exam review can
+    # be compared in one query. The two response rates are the pair the programme is judged on, and until
+    # they were written the same way, comparing them meant reconciling two log formats by hand.
+    #
+    # Wrapped, because **instrumentation must never fail the learner's answer.** The answer is the hard part
+    # to obtain and the row is already written by the time we get here; losing it to a logging bug would be
+    # the worst possible trade. At `warning` rather than `debug` so a broken field is still visible — a
+    # silently swallowed instrumentation error is instrumentation that has stopped working without saying so.
+    _log_answer(
+        "nudge_answered",
+        goal_id=goal_id,
+        action=action.action,
+        trigger=action.trigger,
+        response=response,
+        # Which rung earned the answer, and how long it took. The rung is what phase 8 needs: a single
+        # overall rate cannot say whether `warned` is worth keeping.
+        days_since_asked=_days_since(action.created_at),
+        # True when this replaces an earlier answer. A learner who changes their mind is not a second
+        # learner, and counting them twice would inflate the rate.
+        revised=action.learner_response is not None,
     )
     return await progress_repo.find_goal(goal_id, user_id)
 
@@ -337,6 +374,9 @@ async def _record(goal: Any, *, action: str, trigger: str) -> None:
     """
     await progress_repo.create_lifecycle_action(
         {"goalId": goal.id, "userId": goal.user_id, "action": action, "trigger": trigger}
+    )
+    adaptive_response_metrics.log_ask_event(
+        "nudge_asked", goal_id=goal.id, action=action, trigger=trigger
     )
 
 

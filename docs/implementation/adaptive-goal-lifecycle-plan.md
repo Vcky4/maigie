@@ -312,7 +312,9 @@ Assumes the §8 decisions are made first. Engineer-days of focused work, not cal
 
 **Phases 0 through 6 are implemented on the backend, and both clients render all of it** — web in §10.7,
 mobile in §10.9. What remains outstanding is **push**, which reaches nobody for the two independent reasons
-§10.8 sets out, and phases 7–8, which are gated on data rather than effort. See §10 for what shipped.
+§10.8 sets out, and phases 7–8, which are gated on data rather than effort. **§10.13 is how you tell when
+that gate opens**: `scripts/check_adaptive_response_rates.py` reports the response rate to both asks, and its
+first reading is 0 answers from 4 asks with 18 candidates never asked. See §10 for what shipped.
 
 | | Work | Days | Risk |
 | --- | --- | --- | --- |
@@ -1324,6 +1326,86 @@ declined-then-answered.
 defect. One was a missing CSS class on a branch no test renders; the other was a predicate that was
 internally consistent, tested, and answering the wrong question. **The screenshot found both in one look.**
 
+### 10.13 Instrumenting the ask — and the first reading
+
+§11 asked for this: *"Instrument the ask itself — asked, answered, dismissed — from day one, so the next
+decision has a number."* Built, because it is the only remaining item that was not waiting on data, and
+waiting cost data that cannot be recovered.
+
+**Nothing new is stored, and that was the finding.** The instinct is an events table. Every fact needed was
+already in a column: `ExamPrep.reviewAskedAt`, `reviewRemindersSent`, `reviewDeclinedAt`,
+`PrepOutcome.answeredAt`, and `GoalLifecycleAction.learnerResponse` with a `respondedAt` the schema already
+CHECK-pairs to it. What was missing was **a read** — so producing the number meant a bespoke SQL script,
+which is why nobody had.
+
+| Piece | Where |
+| --- | --- |
+| The funnels, pure | `progress/services/adaptive_response_metrics.py` |
+| The report | `scripts/check_adaptive_response_rates.py` |
+| The log line, one per transition | `log_ask_event`, called from 5 sites |
+
+**The distinction the module exists for.** *"Asked and ignored"* and *"never asked"* are different failures
+with opposite remedies — rewrite the copy, or find out why the question never left the building. A rate whose
+denominator is candidates rather than asks hides the second inside the first, and the first reading proves it
+is not hypothetical:
+
+```
+--- The post-exam review ---
+  candidates       22
+  asked             4
+  NEVER ASKED      18   <-- not a response-rate problem
+  answered          0
+  declined          1
+  no reply          3
+  response rate     0%   (answered / asked)
+  engagement rate  25%   (answered or declined / asked)
+```
+
+A naive `answered / candidates` reads **0% against a denominator that is 82% noise** — the 18 are the
+preparations the old date-based sweep closed, which will never have an outcome. Anyone acting on that number
+would go and redesign copy for a question that was never asked.
+
+**Other decisions worth keeping**
+
+- **A rate is `None`, never `0.0`, when nothing was asked.** A programme that has asked nobody has not been
+  ignored, and the report prints "not asked yet" rather than a percentage.
+- **A decline is engagement, not silence.** `engagement_rate` counts it; `response_rate` does not. The gap
+  between them is the population who saw the ask and chose not to answer — a copy problem. The gap between
+  engagement and 100% is the population it never reached — a delivery problem. Two different teams, and one
+  number would have pointed at the wrong one.
+- **`answered` means a recorded `PrepOutcome`, not a `COMPLETED` status.** Those used to be the same thing.
+- **Median, not mean, time-to-answer.** With a handful of replies one six-week answer moves a mean more than
+  it should.
+- **Split by rung and by trigger**, which is the cut phase 8 needs: one overall rate cannot say whether
+  `warned` is worth keeping.
+- **The nudge funnel reports `declined: 0` always**, because that ask has no "not now" — its dialog is
+  dismissible and a dismissal writes nothing. So its `silent` mixes "closed it" with "never saw it", which
+  the review funnel can separate and this one cannot. Stated in the code, because comparing the two response
+  rates without knowing it would be comparing unlike things.
+- **Log lines are deliberately redundant** against the queries. The rows already answer "how many"; the lines
+  make the sequence visible in an aggregator without a database, and survive a row being deleted with its
+  preparation.
+- **Instrumentation is wrapped and cannot fail the write it describes.** The learner's answer is the hard
+  thing to obtain and is already committed by the time the log line runs. At `warning`, not `debug`, so a
+  broken field is still visible — instrumentation failing quietly is instrumentation that has stopped
+  without saying so.
+
+**A test-quality fix that came out of it.** The `GoalLifecycleAction` fakes in `test_goal_lifecycle.py` were
+`SimpleNamespace(id=…, action=…)` — two of six columns. Reading `trigger`, `createdAt` and `learnerResponse`
+failed against them, which is the fake doing its job; a narrower fake would let production code read a column
+no test can see it read. Replaced with a `_action()` helper carrying every column.
+
+**Verification.** **3,676 passing** (from 3,650), `ruff` clean, OpenAPI in sync — no contract change, because
+there is no endpoint: this is an operator question and the app has no admin surface to hang one on. **21 new
+tests, 6 mutations on the funnel arithmetic, all 6 caught.** Six failures in the suite are in
+`test_local_imports.py` under `classrooms`/`intelligence` and arrived with commit `8b74e02`, which is not
+part of this work.
+
+**The first reading answers the question it was built for: no, phase 7 is not worth building yet** — 0
+recorded outcomes. And it says why in a way a bare 0% could not: not because learners ignore us, but because
+4 have been asked and 18 never were. The script prints that conclusion itself, including the reminder to
+check that the deployment running the sweep is current.
+
 ## 11. What is not known
 
 - ~~**No runtime measurement.**~~ **Partly answered — §10.6.** Measured against the development database once
@@ -1342,7 +1424,9 @@ internally consistent, tested, and answering the wrong question. **The screensho
   arrives after a possibly-bad experience, which is the worst moment to ask anyone anything. The design
   mitigates by asking once with a small reminder budget and treating a dismissal as an answer, but the
   response rate is unknown and the calibration in §6.2 is worthless below some threshold nobody can predict.
-  Instrument the ask itself — asked, answered, dismissed — from day one, so the next decision has a number.
+  ~~Instrument the ask itself — asked, answered, dismissed — from day one, so the next decision has a
+  number.~~ **Built — §10.13.** The number is now one command away, and its first reading is **0 answers from
+  4 asks, with 18 candidates never asked at all.**
 - **How long calibration takes to mean anything.** 46 preparations exist across the whole database, and most
   learners have one. Aggregate calibration may take many months of outcomes; per-learner calibration may
   never be reachable for the majority. Phase 7 should be scheduled against outcome *volume*, not a date, and

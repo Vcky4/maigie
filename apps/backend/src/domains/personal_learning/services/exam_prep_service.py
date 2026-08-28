@@ -821,6 +821,8 @@ async def mark_preparations_awaiting_review() -> int:
     Returns the number of preparations moved into the awaiting state, not the number of messages sent —
     the two differ on every run after the first, and the status change is the part that matters.
     """
+    from src.domains.progress.services import adaptive_response_metrics
+
     from . import notification_service, prep_outcome_service
 
     now = datetime.now(UTC)
@@ -831,6 +833,9 @@ async def mark_preparations_awaiting_review() -> int:
         try:
             if prep.status != "AWAITING_REVIEW":
                 await repo.update_exam_prep(prep.id, {"status": "AWAITING_REVIEW"})
+                adaptive_response_metrics.log_ask_event(
+                    "review_asked", prep_id=prep.id, from_status=prep.status
+                )
                 moved += 1
 
             reminders = prep.review_reminders_sent or 0
@@ -840,6 +845,12 @@ async def mark_preparations_awaiting_review() -> int:
             ):
                 # Budget spent. The preparation stays in `AWAITING_REVIEW` — an honest record that the
                 # exam happened and we do not know how it went — and nothing more is sent.
+                #
+                # Logged, because this is the moment a learner passes out of reach and nothing else records
+                # it: the row looks identical to one still within its budget.
+                adaptive_response_metrics.log_ask_event(
+                    "review_budget_spent", prep_id=prep.id, reminders=reminders
+                )
                 continue
 
             await notification_service.create_notification(
@@ -871,6 +882,10 @@ async def mark_preparations_awaiting_review() -> int:
                     "reviewRemindersSent": reminders + (1 if prep.review_asked_at else 0),
                 },
             )
+            if prep.review_asked_at is not None:
+                adaptive_response_metrics.log_ask_event(
+                    "review_reminded", prep_id=prep.id, reminder=reminders + 1
+                )
         except Exception:
             logger.exception("Could not move a preparation into review", extra={"prep_id": prep.id})
 

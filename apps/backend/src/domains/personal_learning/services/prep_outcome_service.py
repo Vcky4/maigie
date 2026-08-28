@@ -85,6 +85,32 @@ def is_awaiting_review(prep: Any, *, now: datetime | None = None) -> bool:
     return getattr(prep, "status", None) != "COMPLETED"
 
 
+def _log_ask_event(event: str, **fields: Any) -> None:
+    """One line per transition in the post-exam ask.
+
+    Imported locally: `adaptive_response_metrics` lives in the `progress` domain and reads `ExamPrep`, so a
+    module-level import here would close an import cycle between the two domains.
+
+    Never allowed to break the write it describes. Instrumentation that can fail a learner's answer is worse
+    than no instrumentation — the whole reason the answer matters is that it is hard to get.
+    """
+    try:
+        from src.domains.progress.services import adaptive_response_metrics
+
+        adaptive_response_metrics.log_ask_event(event, **fields)
+    except Exception:  # pragma: no cover - defensive
+        logger.debug("Could not log %s", event, exc_info=True)
+
+
+def _days_since(moment: datetime | None) -> float | None:
+    """Whole-ish days from `moment` until now, or `None` when it never happened."""
+    if moment is None:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return round((datetime.now(UTC) - moment).total_seconds() / 86_400, 2)
+
+
 def _as_utc(value: datetime | None) -> datetime | None:
     """A naive timestamp read as UTC, so comparisons here cannot raise.
 
@@ -211,6 +237,22 @@ async def record_outcome(*, user_id: str, prep_id: str, data: dict[str, Any]) ->
         await _resolve_linked_goal(user_id=user_id, prep_id=prep_id)
 
     await _record_activity(user_id=user_id, prep=prep, attended=attended)
+    _log_ask_event(
+        "review_answered",
+        prep_id=prep_id,
+        attended=attended,
+        # The two facts a response rate cannot carry. `days_since_asked` says how long the ask stayed
+        # answerable, and `after_reminders` says whether it took chasing — a programme answered only after
+        # three reminders is a different programme from one answered on the first ask.
+        days_since_asked=_days_since(prep.review_asked_at),
+        after_reminders=prep.review_reminders_sent or 0,
+        # Whether they had previously set it aside. Nonzero means the "ask again on the page" rule earned
+        # an answer that the old behaviour would have lost outright.
+        after_decline=prep.review_declined_at is not None,
+        rated_experience=data.get("experienceRating") is not None,
+        rated_preparation=data.get("preparationRating") is not None,
+        wrote_reflection=bool(data.get("reflection")),
+    )
     return outcome
 
 
@@ -260,6 +302,14 @@ async def decline_review(*, user_id: str, prep_id: str) -> Any:
     prep = await repo.find_exam_prep(prep_id, user_id)
     if not prep:
         raise NotFoundError("Preparation", prep_id)
+    _log_ask_event(
+        "review_declined",
+        prep_id=prep_id,
+        # How long the ask sat before they set it aside, and how many reminders it took to get a reaction.
+        # Both are needed to tell "closed it immediately" from "endured three reminders and gave up".
+        days_since_asked=_days_since(prep.review_asked_at),
+        reminders=prep.review_reminders_sent or 0,
+    )
     return await repo.update_exam_prep(prep_id, {"reviewDeclinedAt": datetime.now(UTC)})
 
 

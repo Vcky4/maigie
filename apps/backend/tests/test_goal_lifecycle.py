@@ -578,6 +578,30 @@ class TestTheAnswer:
     `retention_service.record_intervention_outcome` has been in since it was written, with zero callers.
     """
 
+    @staticmethod
+    def _action(**overrides):
+        """A stand-in for a `GoalLifecycleAction` row, carrying **every** column the service may read.
+
+        The fakes here were `SimpleNamespace(id=..., action=...)`, which is two of six columns. That is not a
+        harmless shortcut: a fake narrower than the row lets production code read a column the test can
+        never see it read, and it did — adding instrumentation that reads `trigger`, `createdAt` and
+        `learnerResponse` failed against these fakes and would have passed against faithful ones only if the
+        code were correct. Keeping them complete is what makes that failure informative instead of noise.
+        """
+        return SimpleNamespace(
+            **{
+                "id": "a1",
+                "goal_id": "g1",
+                "user_id": "u1",
+                "action": "asked_to_confirm",
+                "trigger": "at_risk_due_soon",
+                "learner_response": None,
+                "responded_at": None,
+                "created_at": NOW - timedelta(days=2),
+                **overrides,
+            }
+        )
+
     def _wire(self, monkeypatch, *, goal, action):
         recorded: list[dict] = []
         updates: list[tuple[str, dict]] = []
@@ -614,7 +638,7 @@ class TestTheAnswer:
         """The learner asked for the goal exactly as it is. Touching its status would be the system doing
         something in response to being told to do nothing."""
         goal = _goal(status="ACTIVE")
-        action = SimpleNamespace(id="a1", action="asked_to_confirm")
+        action = self._action(action="asked_to_confirm")
         recorded, updates = self._wire(monkeypatch, goal=goal, action=action)
 
         await svc.record_answer(user_id="user-1", goal_id="goal-1", response="keep_going")
@@ -631,7 +655,7 @@ class TestTheAnswer:
         goal, and it takes the goal out of the at-risk counts — which is what "stop chasing me" means.
         """
         goal = _goal(status="ACTIVE")
-        action = SimpleNamespace(id="a1", action="asked_to_confirm")
+        action = self._action(action="asked_to_confirm")
         recorded, updates = self._wire(monkeypatch, goal=goal, action=action)
 
         await svc.record_answer(user_id="user-1", goal_id="goal-1", response="set_aside")
@@ -643,7 +667,7 @@ class TestTheAnswer:
     async def test_already_done_completes_it(self, monkeypatch):
         """The answer worth the most: it says the measurement is wrong rather than the learner."""
         goal = _goal(status="ACTIVE")
-        action = SimpleNamespace(id="a1", action="warned")
+        action = self._action(action="warned")
         _, updates = self._wire(monkeypatch, goal=goal, action=action)
 
         await svc.record_answer(user_id="user-1", goal_id="goal-1", response="already_done")
@@ -655,7 +679,7 @@ class TestTheAnswer:
         """Already archived, and they say set it aside again. The answer is still recorded — it is data about
         the ask — but the goal is not rewritten to the value it already holds."""
         goal = _goal(status="ARCHIVED")
-        action = SimpleNamespace(id="a1", action="asked_to_confirm")
+        action = self._action(action="asked_to_confirm")
         recorded, updates = self._wire(monkeypatch, goal=goal, action=action)
 
         await svc.record_answer(user_id="user-1", goal_id="goal-1", response="set_aside")
@@ -668,7 +692,7 @@ class TestTheAnswer:
         """A learner who says "keep going" on Monday and "set it aside" on Thursday has changed their mind,
         and the last word is the one that counts."""
         goal = _goal(status="ACTIVE")
-        action = SimpleNamespace(id="a1", action="asked_to_confirm")
+        action = self._action(action="asked_to_confirm")
         recorded, updates = self._wire(monkeypatch, goal=goal, action=action)
 
         await svc.record_answer(user_id="user-1", goal_id="goal-1", response="keep_going")
@@ -694,7 +718,7 @@ class TestTheAnswer:
         from src.shared.exceptions import NotFoundError
 
         goal = _goal(user_id="someone-else")
-        self._wire(monkeypatch, goal=goal, action=SimpleNamespace(id="a1", action="warned"))
+        self._wire(monkeypatch, goal=goal, action=self._action(action="warned"))
 
         with pytest.raises(NotFoundError):
             await svc.record_answer(user_id="user-1", goal_id="goal-1", response="keep_going")
@@ -705,7 +729,7 @@ class TestTheAnswer:
 
         goal = _goal()
         recorded, _ = self._wire(
-            monkeypatch, goal=goal, action=SimpleNamespace(id="a1", action="warned")
+            monkeypatch, goal=goal, action=self._action(action="warned")
         )
 
         with pytest.raises(ValidationError):
@@ -718,7 +742,7 @@ class TestTheAnswer:
         """The answer is the thing worth keeping. If archiving fails, the reply must still be on record —
         losing it means losing the only evidence about whether the ask worked."""
         goal = _goal(status="ACTIVE")
-        action = SimpleNamespace(id="a1", action="asked_to_confirm")
+        action = self._action(action="asked_to_confirm")
         recorded, _ = self._wire(monkeypatch, goal=goal, action=action)
 
         async def _boom(*_a, **_k):
