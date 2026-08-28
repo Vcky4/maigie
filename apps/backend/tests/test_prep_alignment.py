@@ -912,6 +912,80 @@ class TestTopicExtraction:
         assert categories == ["Foundations", None, None]
         assert all(models.PrepTopicResponse.model_validate(row) for row in created)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["AWAITING_REVIEW", "COMPLETED"])
+    async def test_extraction_is_refused_once_the_exam_has_happened(
+        self, repo, monkeypatch, status
+    ):
+        """No more topics for an exam that is behind the learner.
+
+        Refused **before** the provider is called, so a finished preparation does not spend a model request
+        to produce topics nobody can practise.
+        """
+        repo.add_prep("prep-1", OWNER, status=status)
+
+        async def should_not_run(*args, **kwargs):
+            raise AssertionError("the model was called for a preparation past its exam")
+
+        monkeypatch.setattr(
+            "src.domains.personal_learning.services.llm_resilient.generate_content_json",
+            should_not_run,
+        )
+
+        with pytest.raises(ConflictError):
+            await exam_prep_service.extract_topics(user_id=OWNER, prep_id="prep-1")
+
+
+class TestClosedToNewWork:
+    """What a preparation stops doing once its exam has happened, and what it keeps doing.
+
+    The asymmetry is the whole design: **reads stay open, generation closes.** Every topic, banked question
+    and readiness figure is the record of work the learner actually did, and hiding it would be deleting it
+    in effect. Making *more* of it is what stops.
+    """
+
+    @pytest.mark.parametrize("status", ["AWAITING_REVIEW", "COMPLETED"])
+    def test_refuses_after_the_exam(self, status):
+        with pytest.raises(ConflictError):
+            exam_prep_service.ensure_accepts_new_work(SimpleNamespace(status=status))
+
+    @pytest.mark.parametrize("status", ["SETUP", "IN_PROGRESS"])
+    def test_allows_a_preparation_still_being_worked(self, status):
+        # No exception, no return value — the guard is a gate, not a predicate.
+        assert exam_prep_service.ensure_accepts_new_work(SimpleNamespace(status=status)) is None
+
+    def test_says_something_different_in_each_closed_state(self):
+        """An awaiting preparation has something for the learner to do; a completed one does not.
+
+        One shared message would tell someone with an outstanding review that their preparation is
+        finished, which is both wrong and a dead end.
+        """
+        messages = {}
+        for status in ("AWAITING_REVIEW", "COMPLETED"):
+            with pytest.raises(ConflictError) as excinfo:
+                exam_prep_service.ensure_accepts_new_work(SimpleNamespace(status=status))
+            messages[status] = excinfo.value.message
+            assert excinfo.value.status_code == 409
+        assert messages["AWAITING_REVIEW"] != messages["COMPLETED"]
+        assert "review" in messages["AWAITING_REVIEW"].lower()
+
+    def test_each_state_carries_its_own_code(self):
+        """The clients branch on `code`, not on the message.
+
+        A generic `CONFLICT` leaves a client able only to print the sentence; a named code lets it offer the
+        review instead of a "try again" that would fail identically. Same reasoning as the existing
+        `PREP_TOPICS_REQUIRED` and `PREP_MATERIAL_REQUIRED`.
+        """
+        codes = {}
+        for status in ("AWAITING_REVIEW", "COMPLETED"):
+            with pytest.raises(ConflictError) as excinfo:
+                exam_prep_service.ensure_accepts_new_work(SimpleNamespace(status=status))
+            codes[status] = excinfo.value.code
+        assert codes == {
+            "AWAITING_REVIEW": "PREP_AWAITING_REVIEW",
+            "COMPLETED": "PREP_COMPLETED",
+        }
+
 
 # ---------------------------------------------------------------------------
 # Material upload

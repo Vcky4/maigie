@@ -275,9 +275,7 @@ async def _push(row: Any, *, profile_type: str) -> None:
             data={str(k): str(v) for k, v in (row.action_data or {}).items()},
         )
         if result.get("sent"):
-            await repo.update_status(
-                row.id, status="DELIVERED", pushed_at=datetime.now(UTC)
-            )
+            await repo.update_status(row.id, status="DELIVERED", pushed_at=datetime.now(UTC))
     except Exception:
         logger.exception("Push failed for a delivered notification", extra={"id": row.id})
 

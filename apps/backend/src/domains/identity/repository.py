@@ -124,9 +124,7 @@ class IdentityRepository:
     # Device tokens (push notifications)
     # -----------------------------------------------------------------------
 
-    async def upsert_device_token(
-        self, *, user_id: str, token: str, platform: str
-    ) -> DeviceToken:
+    async def upsert_device_token(self, *, user_id: str, token: str, platform: str) -> DeviceToken:
         """Register a device for push, keyed on the **token** rather than the learner.
 
         Until this existed nothing wrote `DeviceToken` at all, so every push in the application returned

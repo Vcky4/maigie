@@ -86,7 +86,10 @@ def test_available_dates_with_no_preference_is_every_day_in_the_window():
 def test_distribute_items_never_schedules_on_an_excluded_weekday():
     """The defect this closes: "Mon/Wed/Fri/Sat" used to produce work on the Tuesday."""
     items = svc._distribute_items(
-        _topics(12), days_available=21, start=MONDAY, max_daily_minutes=30,
+        _topics(12),
+        days_available=21,
+        start=MONDAY,
+        max_daily_minutes=30,
         preferred_days=MON_WED_FRI_SAT,
     )
 
@@ -115,9 +118,7 @@ def test_distribute_items_packs_a_day_up_to_the_budget():
 
 def test_distribute_items_without_a_preference_starts_today():
     """Unchanged behaviour: a fresh plan gives the learner something to do immediately."""
-    items = svc._distribute_items(
-        _topics(1), days_available=14, start=MONDAY, max_daily_minutes=60
-    )
+    items = svc._distribute_items(_topics(1), days_available=14, start=MONDAY, max_daily_minutes=60)
 
     assert items[0]["scheduledDate"] == MONDAY
 
@@ -143,7 +144,10 @@ def test_review_items_land_on_available_days_too():
     every study item on a chosen day and a review that is not.
     """
     study = svc._distribute_items(
-        _topics(9), days_available=28, start=MONDAY, max_daily_minutes=30,
+        _topics(9),
+        days_available=28,
+        start=MONDAY,
+        max_daily_minutes=30,
         preferred_days=MON_WED_FRI_SAT,
     )
     reviews = svc._add_review_items(
@@ -156,7 +160,10 @@ def test_review_items_land_on_available_days_too():
 
 def test_review_items_are_never_earlier_than_the_study_item():
     study = svc._distribute_items(
-        _topics(9), days_available=28, start=MONDAY, max_daily_minutes=30,
+        _topics(9),
+        days_available=28,
+        start=MONDAY,
+        max_daily_minutes=30,
         preferred_days=MON_WED_FRI_SAT,
     )
     reviews = svc._add_review_items(
@@ -169,9 +176,7 @@ def test_review_items_are_never_earlier_than_the_study_item():
 
 
 def test_review_items_are_dropped_rather_than_scheduled_past_the_plan_end():
-    study = svc._distribute_items(
-        _topics(6), days_available=2, start=MONDAY, max_daily_minutes=30
-    )
+    study = svc._distribute_items(_topics(6), days_available=2, start=MONDAY, max_daily_minutes=30)
     reviews = svc._add_review_items(study, days_available=2, start=MONDAY)
 
     assert reviews == []

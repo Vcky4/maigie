@@ -22,7 +22,16 @@ from src.domains.personal_learning.services import note_merge_service
 from src.shared.exceptions import NotFoundError, SubscriptionLimitError, ValidationError
 
 
-def _note(note_id: str, *, title: str, content: str, minutes_old: int = 0, topic="topic-1", course="course-1", tags=()):
+def _note(
+    note_id: str,
+    *,
+    title: str,
+    content: str,
+    minutes_old: int = 0,
+    topic="topic-1",
+    course="course-1",
+    tags=(),
+):
     return SimpleNamespace(
         id=note_id,
         title=title,
@@ -38,9 +47,15 @@ def _note(note_id: str, *, title: str, content: str, minutes_old: int = 0, topic
 def world(monkeypatch):
     world = SimpleNamespace(
         notes={
-            "n1": _note("n1", title="First sitting", content="- Anchored by the base case.", minutes_old=30),
-            "n2": _note("n2", title="Second sitting", content="- The step carries it.", minutes_old=20),
-            "n3": _note("n3", title="Third sitting", content="- My own hand-written line.", minutes_old=10),
+            "n1": _note(
+                "n1", title="First sitting", content="- Anchored by the base case.", minutes_old=30
+            ),
+            "n2": _note(
+                "n2", title="Second sitting", content="- The step carries it.", minutes_old=20
+            ),
+            "n3": _note(
+                "n3", title="Third sitting", content="- My own hand-written line.", minutes_old=10
+            ),
         },
         response="TITLE: Induction, whole\nCONTENT: - Anchored by the base case.\n- The step carries it.",
         created=[],
@@ -137,8 +152,12 @@ async def test_notes_are_ordered_oldest_first(world, user):
 
 
 async def test_tags_from_every_note_are_carried(world, user):
-    world.notes["n1"] = _note("n1", title="A", content="a", minutes_old=2, tags=("induction", "proofs"))
-    world.notes["n2"] = _note("n2", title="B", content="b", minutes_old=1, tags=("proofs", "revision"))
+    world.notes["n1"] = _note(
+        "n1", title="A", content="a", minutes_old=2, tags=("induction", "proofs")
+    )
+    world.notes["n2"] = _note(
+        "n2", title="B", content="b", minutes_old=1, tags=("proofs", "revision")
+    )
 
     await note_merge_service.merge_notes(user, note_ids=["n1", "n2"])
 
@@ -151,7 +170,9 @@ async def test_notes_from_two_topics_belong_to_neither(world, user):
 
     Picking one would put a note about two lessons on one of them, which is a quiet lie about what it covers.
     """
-    world.notes["n2"] = _note("n2", title="Elsewhere", content="b", minutes_old=1, topic="topic-2", course="course-2")
+    world.notes["n2"] = _note(
+        "n2", title="Elsewhere", content="b", minutes_old=1, topic="topic-2", course="course-2"
+    )
 
     await note_merge_service.merge_notes(user, note_ids=["n1", "n2"])
 

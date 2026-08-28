@@ -398,9 +398,9 @@ async def get_dashboard(
     }
     # Every source named in `source_sections` must have been gathered, and vice versa. Asserted rather
     # than assumed: adding a loader to one and forgetting the other is the mistake this shape invites.
-    assert outcomes.keys() == source_sections.keys(), (
-        f"gathered {sorted(outcomes)} but mapped {sorted(source_sections)}"
-    )
+    assert (
+        outcomes.keys() == source_sections.keys()
+    ), f"gathered {sorted(outcomes)} but mapped {sorted(source_sections)}"
 
     for source, result in outcomes.items():
         if isinstance(result, BaseException):

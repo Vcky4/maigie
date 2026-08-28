@@ -30,11 +30,7 @@ from pathlib import Path
 import pytest
 
 CONVERSATION = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "domains"
-    / "intelligence"
-    / "conversation"
+    Path(__file__).resolve().parents[1] / "src" / "domains" / "intelligence" / "conversation"
 )
 
 #: Names the `Note` SQLAlchemy model is imported under in this package.
@@ -64,8 +60,7 @@ def _statements_selecting_notes() -> list[tuple[str, int, str]]:
                 if not (isinstance(func, ast.Name) and func.id == "select"):
                     continue
                 if any(
-                    isinstance(arg, ast.Name) and arg.id in NOTE_MODEL_NAMES
-                    for arg in inner.args
+                    isinstance(arg, ast.Name) and arg.id in NOTE_MODEL_NAMES for arg in inner.args
                 ):
                     selects_note = True
                     break
@@ -83,9 +78,7 @@ def _statements_selecting_notes() -> list[tuple[str, int, str]]:
                     isinstance(c, ast.Call)
                     and isinstance(c.func, ast.Name)
                     and c.func.id == "select"
-                    and any(
-                        isinstance(a, ast.Name) and a.id in NOTE_MODEL_NAMES for a in c.args
-                    )
+                    and any(isinstance(a, ast.Name) and a.id in NOTE_MODEL_NAMES for a in c.args)
                     for c in ast.walk(child)
                 )
                 for child in ast.walk(node)

@@ -51,7 +51,9 @@ class TestAskContext:
     def test_unmodelled_keys_survive_in_raw(self):
         """Enrichment still reads keys the dataclass does not model. Losing them silently would be the
         plan's silent-discard class, moved into the extraction itself."""
-        context = ask_service.AskContext.from_client({"noteContent": "...", "pageContext": "review"})
+        context = ask_service.AskContext.from_client(
+            {"noteContent": "...", "pageContext": "review"}
+        )
         assert context.raw["noteContent"] == "..."
         assert context.raw["pageContext"] == "review"
 
@@ -159,7 +161,14 @@ class TestRetrievalScoreFilter:
         """The two retrieval paths disagree on the key name; dropping one would silently drop all its
         hits and look like "retrieval found nothing"."""
         items = ask_service.relevant_retrieved_items(
-            [{"score": 0.91, "objectType": "course", "objectId": "c1", "data": {"title": "Physics"}}]
+            [
+                {
+                    "score": 0.91,
+                    "objectType": "course",
+                    "objectId": "c1",
+                    "data": {"title": "Physics"},
+                }
+            ]
         )
         assert items == ["- COURSE: Physics (ID: c1)"]
 
@@ -204,7 +213,8 @@ class TestExplicitViewGate:
 
     def test_cards_are_suppressed_when_the_turn_also_created_something(self):
         """The model calls `get_user_courses` to check context while creating a study plan. Rendering
-        course cards then answers a question the learner did not ask, and buries the thing they did."""
+        course cards then answers a question the learner did not ask, and buries the thing they did.
+        """
         assert (
             ask_service.should_render_query_components(
                 message="show my courses and make me a plan",
@@ -239,7 +249,9 @@ class TestSkillBadges:
 
     @staticmethod
     def query_badge(query_type):
-        return {"goals": {"id": "goals", "name": "Goal Management", "icon": "target"}}.get(query_type)
+        return {"goals": {"id": "goals", "name": "Goal Management", "icon": "target"}}.get(
+            query_type
+        )
 
     def test_a_badge_is_built_from_an_executed_action(self):
         badges = ask_service.build_skill_badges(
@@ -388,14 +400,17 @@ class TestTheExtractionInventoryIsHonest:
         }
         assert set(ask_service.MOVED_SO_FAR) == set(expected)
         for stage, attribute in expected.items():
-            assert hasattr(ask_service, attribute), f"{stage} is claimed as moved but {attribute} is absent"
+            assert hasattr(
+                ask_service, attribute
+            ), f"{stage} is claimed as moved but {attribute} is absent"
 
     def test_the_two_inventories_do_not_overlap(self):
         assert not set(ask_service.MOVED_SO_FAR) & set(ask_service.STILL_IN_THE_HANDLER)
 
     def test_answer_is_not_yet_published(self):
         """`answer()` is the destination (Decision C). Until the impure stages move it would be a
-        facade over a pipeline that still lives elsewhere, and a facade is how two pipelines start."""
+        facade over a pipeline that still lives elsewhere, and a facade is how two pipelines start.
+        """
         assert not hasattr(ask_service, "answer"), (
             "ask_service.answer now exists. Remove this test, and make sure "
             "STILL_IN_THE_HANDLER reflects what genuinely moved."
@@ -550,7 +565,13 @@ class TestAssistantRowAssembly:
         """The repository maps what it is given: a key present with `None` overwrites, an absent key
         leaves the column alone."""
         row = a_row()
-        for key in ("replyToMessageId", "componentData", "suggestionText", "citations", "truncated"):
+        for key in (
+            "replyToMessageId",
+            "componentData",
+            "suggestionText",
+            "citations",
+            "truncated",
+        ):
             assert key not in row, f"{key} should be omitted when not supplied"
 
     def test_components_are_included_when_present(self):
@@ -829,7 +850,13 @@ def a_course(**kwargs):
 
 def a_note(**kwargs):
     return SimpleNamespace(
-        **{"id": "note_1", "title": "My note", "content": "note body", "summary": "a summary", **kwargs}
+        **{
+            "id": "note_1",
+            "title": "My note",
+            "content": "note body",
+            "summary": "a summary",
+            **kwargs,
+        }
     )
 
 
@@ -883,9 +910,7 @@ class TestReviewContextUpdates:
         assert "courseId" not in updates
 
     def test_a_missing_content_becomes_an_empty_string(self):
-        updates = ask_service.review_context_updates(
-            review=a_review(), topic=a_topic(content=None)
-        )
+        updates = ask_service.review_context_updates(review=a_review(), topic=a_topic(content=None))
         assert updates["topicContent"] == ""
 
 
@@ -963,9 +988,12 @@ class TestCourseContextUpdates:
         assert updates == {"courseTitle": "Physics", "courseDescription": "A course"}
 
     def test_a_missing_description_becomes_an_empty_string(self):
-        assert ask_service.course_context_updates(course=a_course(description=None))[
-            "courseDescription"
-        ] == ""
+        assert (
+            ask_service.course_context_updates(course=a_course(description=None))[
+                "courseDescription"
+            ]
+            == ""
+        )
 
     def test_it_does_not_write_the_course_id(self):
         """The caller already has it; that is how the course was found."""
@@ -998,9 +1026,9 @@ class TestFormatTopicUserNotes:
 
     def test_a_note_with_no_body_is_kept_as_a_bare_heading(self):
         """A title alone still tells the model what the learner thought worth recording."""
-        assert ask_service.format_topic_user_notes([a_note(title="Just a title", content=None)]) == (
-            "## Just a title"
-        )
+        assert ask_service.format_topic_user_notes(
+            [a_note(title="Just a title", content=None)]
+        ) == ("## Just a title")
 
     def test_no_notes_renders_as_empty(self):
         assert ask_service.format_topic_user_notes([]) == ""

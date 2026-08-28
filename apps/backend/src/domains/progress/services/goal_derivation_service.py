@@ -144,7 +144,9 @@ async def plan_derivations(
         # `goal_service.list_goals` forces `spaceId IS NULL` when no space is asked for, so using it
         # here would miss a space-scoped goal and then duplicate it.
         linked = (
-            await session.execute(select(Goal.course_id, Goal.prep_id).where(Goal.user_id == user_id))
+            await session.execute(
+                select(Goal.course_id, Goal.prep_id).where(Goal.user_id == user_id)
+            )
         ).all()
         taken_courses = {course_id for course_id, _ in linked if course_id}
         taken_preps = {prep_id for _, prep_id in linked if prep_id}

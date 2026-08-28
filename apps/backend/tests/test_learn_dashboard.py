@@ -158,8 +158,6 @@ class FakePersonalLearning:
     def __init__(self, owner: "FakeSources"):
         self.owner = owner
 
-
-
     async def list_recent_resources(self, user_id, *, take=6):
         self.owner._boom("resources")
         return self.owner.resources[:take], len(self.owner.resources)
@@ -655,7 +653,9 @@ class TestQueryCount:
         assert payload.featured is not None
         assert payload.featured.course_id == "c1"
 
-    async def test_the_featured_card_costs_one_lookup_when_its_course_is_off_the_page(self, sources):
+    async def test_the_featured_card_costs_one_lookup_when_its_course_is_off_the_page(
+        self, sources
+    ):
         """The case the reuse must not break.
 
         The course page is only the few most recently *updated* courses, so the resume target can sit
@@ -835,9 +835,9 @@ class TestConnectionBudget:
         assert len(gathers) >= 2, "the loaders were collapsed back into a single gather"
         for call in gathers:
             # `return_exceptions` is a keyword, so positional args are the awaitables.
-            assert len(call.args) <= 4, (
-                f"a gather takes {len(call.args)} awaitables; the pooler budget allows four"
-            )
+            assert (
+                len(call.args) <= 4
+            ), f"a gather takes {len(call.args)} awaitables; the pooler budget allows four"
 
     def test_every_gathered_source_is_mapped_to_sections(self):
         """The two orderings that used to have to agree silently.
@@ -854,9 +854,9 @@ class TestConnectionBudget:
         source = textwrap.dedent(inspect.getsource(learn_dashboard_service.get_dashboard))
         tree = ast.parse(source)
 
-        assert any(isinstance(node, ast.Assert) for node in ast.walk(tree)), (
-            "the guard that gathered sources and mapped sections agree has been removed"
-        )
+        assert any(
+            isinstance(node, ast.Assert) for node in ast.walk(tree)
+        ), "the guard that gathered sources and mapped sections agree has been removed"
 
         # Results are read by name. Subscripting a list of results is what the keying replaced, and it
         # is checked on the AST rather than the text because a comment mentioning `results[0]` — this

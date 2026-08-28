@@ -899,9 +899,7 @@ async def list_course_evidence(
     return items[:limit]
 
 
-async def list_prep_evidence(
-    *, user_id: str, prep_id: str, limit: int = 12
-) -> list[EvidenceItem]:
+async def list_prep_evidence(*, user_id: str, prep_id: str, limit: int = 12) -> list[EvidenceItem]:
     """Recent dated evidence for one exam preparation, newest first.
 
     The sibling of `list_course_evidence`, and it exists because `ExamPrep` has no join to `Course`
@@ -1192,6 +1190,7 @@ async def list_growth_milestones(
         )
 
     if since is not None or until is not None:
+
         def in_window(item: GrowthMilestone) -> bool:
             day = item.unlocked_at.date()
             if since is not None and day < since:

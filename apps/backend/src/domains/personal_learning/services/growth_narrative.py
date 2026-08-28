@@ -80,9 +80,7 @@ def build_drivers(trends: models.GrowthTrendsResponse) -> list[dict[str, Any]]:
             return
         if change == 0 and not last:
             return
-        candidates.append(
-            {"id": id_, "change": change, "figures": figures, "evidence": evidence}
-        )
+        candidates.append({"id": id_, "change": change, "figures": figures, "evidence": evidence})
 
     offer(
         "consistency",
@@ -105,7 +103,10 @@ def build_drivers(trends: models.GrowthTrendsResponse) -> list[dict[str, Any]]:
         trends.effort.change,
         trends.effort.last,
         {"effort score": trends.effort.last, "focused minutes": minutes},
-        _evidence(_score("effort", trends.effort.last), _count(minutes, "focused minute", "focused minutes")),
+        _evidence(
+            _score("effort", trends.effort.last),
+            _count(minutes, "focused minute", "focused minutes"),
+        ),
     )
 
     topics = _total(p.topics_completed for p in trends.points)
@@ -114,7 +115,10 @@ def build_drivers(trends: models.GrowthTrendsResponse) -> list[dict[str, Any]]:
         trends.mastery.change,
         trends.mastery.last,
         {"mastery percent": trends.mastery.last, "topics completed": topics},
-        _evidence(_percent(trends.mastery.last, "mastery"), _count(topics, "topic completed", "topics completed")),
+        _evidence(
+            _percent(trends.mastery.last, "mastery"),
+            _count(topics, "topic completed", "topics completed"),
+        ),
     )
 
     recall = [p.recall_percent for p in trends.points if p.recall_percent is not None]
@@ -125,7 +129,9 @@ def build_drivers(trends: models.GrowthTrendsResponse) -> list[dict[str, Any]]:
             round(recall[-1] - recall[0], 1),
             recall[-1],
             {"recall percent": recall[-1], "cards reviewed": cards},
-            _evidence(_count(cards, "card reviewed", "cards reviewed"), _percent(recall[-1], "recall")),
+            _evidence(
+                _count(cards, "card reviewed", "cards reviewed"), _percent(recall[-1], "recall")
+            ),
         )
 
     # Largest absolute movement first. Ordering by magnitude rather than by signed change so a sharp
@@ -207,7 +213,7 @@ def build_drivers_prompt(*, range_: str, skeleton: list[dict[str, Any]]) -> str:
         f"{lines or '(nothing moved measurably)'}\n\n"
         "For each id write a heading of at most eight words naming what changed in the learner's "
         "behaviour, and one sentence of at most thirty words explaining how that behaviour produced "
-        "the movement. Address the learner as \"you\".\n"
+        'the movement. Address the learner as "you".\n'
         # Both figures are already published beside the sentence — `evidence` and `change` are
         # rendered by the service — and a live run produced "resulting in a movement of +0 points
         # across the range", which is the card reciting its own badge instead of explaining anything.
@@ -263,7 +269,9 @@ _STEP_COURSE = ("Open the course", models.ReflectionActionKind.COURSE)
 _STEP_REVIEW = ("Review to keep it", models.ReflectionActionKind.FLASHCARD_REVIEW)
 
 
-def choose_next_step(detail: models.GrowthSubjectDetailResponse) -> tuple[str, str, models.ReflectionActionTarget]:
+def choose_next_step(
+    detail: models.GrowthSubjectDetailResponse,
+) -> tuple[str, str, models.ReflectionActionTarget]:
     """`(reason, label, target)` for the recommended next move on this subject.
 
     A ladder over what was measured, in the order a learner is blocked:
@@ -293,8 +301,7 @@ def choose_next_step(detail: models.GrowthSubjectDetailResponse) -> tuple[str, s
     weak = next((c for c in concepts if c.status == "needs_attention"), None)
     if weak is not None:
         return (
-            f"the topic \"{weak.title}\" is the least secure of "
-            f"{len(concepts)} in this subject",
+            f'the topic "{weak.title}" is the least secure of ' f"{len(concepts)} in this subject",
             _STEP_COURSE[0],
             models.ReflectionActionTarget(kind=_STEP_COURSE[1], entity_id=course_id),
         )
@@ -364,12 +371,12 @@ def build_subject_prompt(*, skeleton: dict[str, Any], range_: str, reason: str) 
         facts.append(f"mastery: {render_figure(skeleton['masteryPercent'])}%")
     if skeleton.get("change") is not None:
         sign = "+" if skeleton["change"] >= 0 else ""
-        facts.append(f"mastery change across the range: {sign}{render_figure(skeleton['change'])} points")
+        facts.append(
+            f"mastery change across the range: {sign}{render_figure(skeleton['change'])} points"
+        )
     else:
         facts.append("mastery change: not measured across this range")
-    facts.append(
-        f"topics completed: {skeleton['topicsCompleted']} of {skeleton['topicsTotal']}"
-    )
+    facts.append(f"topics completed: {skeleton['topicsCompleted']} of {skeleton['topicsTotal']}")
     bands = skeleton["bands"]
     facts.append(
         "topic standing: "
@@ -401,7 +408,7 @@ def build_subject_prompt(*, skeleton: dict[str, Any], range_: str, reason: str) 
         + "\n".join(f"- {fact}" for fact in facts)
         + "\n\nThe recommended next step has already been chosen, on these grounds: "
         f"{reason}. Write the focus paragraph and the step so that both argue for it.\n\n"
-        "Address the learner as \"you\". Return a JSON object with exactly these keys:\n"
+        'Address the learner as "you". Return a JSON object with exactly these keys:\n'
         '- "strength": a heading of at most seven words naming what is working\n'
         '- "strengthDetail": one sentence of at most thirty words supporting it\n'
         '- "focus": a heading of at most seven words naming where to look next\n'

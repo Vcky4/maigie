@@ -379,9 +379,7 @@ class GoalLifecycleAction(Base):
     trigger: Mapped[str] = mapped_column(String, nullable=False)
 
     #: The learner's reply, or null while they have not given one. See `RESPONSES`.
-    learner_response: Mapped[str | None] = mapped_column(
-        "learnerResponse", String, nullable=True
-    )
+    learner_response: Mapped[str | None] = mapped_column("learnerResponse", String, nullable=True)
     #: When they replied. Separate from the response rather than inferred from it, because "answered
     #: immediately" and "answered six days later" are different facts about how well the ask worked, and a
     #: null response with a timestamp would be a contradiction the schema should not allow.
@@ -410,7 +408,7 @@ class GoalLifecycleAction(Base):
             name="GoalLifecycleAction_trigger_check",
         ),
         CheckConstraint(
-            "\"learnerResponse\" IS NULL OR \"learnerResponse\" IN "
+            '"learnerResponse" IS NULL OR "learnerResponse" IN '
             "('keep_going', 'set_aside', 'already_done')",
             name="GoalLifecycleAction_learnerResponse_check",
         ),

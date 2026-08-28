@@ -1,4 +1,4 @@
-﻿"""
+"""
 Study Block (schedule) management â€” CRUD with Google Calendar sync.
 """
 

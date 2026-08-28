@@ -1,4 +1,4 @@
-﻿"""
+"""
 Memory service — long-term context for Intelligence.
 
 Manages conversation summaries, user facts, and interaction history.

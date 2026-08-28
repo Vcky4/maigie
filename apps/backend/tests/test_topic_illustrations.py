@@ -70,9 +70,7 @@ async def env(monkeypatch):
     other_module = await repo.create_module(
         {"courseId": other_course.id, "title": "M", "order": 1.0}
     )
-    other_topic = await repo.create_topic(
-        {"moduleId": other_module.id, "title": "T", "order": 1.0}
-    )
+    other_topic = await repo.create_topic({"moduleId": other_module.id, "title": "T", "order": 1.0})
 
     yield {
         "service": illustration_service,
@@ -135,9 +133,12 @@ async def test_a_row_with_nothing_drawable_is_refused(env):
     """
     service, topic = env["service"], env["topic"]
 
-    assert await service.record(
-        USER, topic_id=topic.id, mermaid="  ", display_math="\n", caption="nothing here"
-    ) is None
+    assert (
+        await service.record(
+            USER, topic_id=topic.id, mermaid="  ", display_math="\n", caption="nothing here"
+        )
+        is None
+    )
     assert await service.list_for_topic(USER, topic_id=topic.id) == []
 
 
@@ -146,8 +147,12 @@ async def test_an_unknown_source_falls_back_to_tutor(env):
     service, topic = env["service"], env["topic"]
 
     await service.record(
-        USER, topic_id=topic.id, mermaid="graph TD; A-->B;", display_math=None,
-        caption=None, source="whatever",
+        USER,
+        topic_id=topic.id,
+        mermaid="graph TD; A-->B;",
+        display_math=None,
+        caption=None,
+        source="whatever",
     )
     rows = await service.list_for_topic(USER, topic_id=topic.id)
     assert rows[0].source == "tutor"
@@ -168,9 +173,12 @@ async def test_a_storage_failure_is_swallowed_rather_than_raised(env, monkeypatc
 
     monkeypatch.setattr(repo, "create_topic_illustration", boom)
 
-    assert await service.record(
-        USER, topic_id=topic.id, mermaid="graph TD; A-->B;", display_math=None, caption=None
-    ) is None
+    assert (
+        await service.record(
+            USER, topic_id=topic.id, mermaid="graph TD; A-->B;", display_math=None, caption=None
+        )
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +226,11 @@ async def test_recording_against_another_learners_topic_is_refused(env):
 
     with pytest.raises(Exception):
         await service.record_checked(
-            USER, topic_id=other_topic.id, mermaid="graph TD; A-->B;",
-            display_math=None, caption=None,
+            USER,
+            topic_id=other_topic.id,
+            mermaid="graph TD; A-->B;",
+            display_math=None,
+            caption=None,
         )
 
 
@@ -260,8 +271,11 @@ async def test_newest_first(env):
 
     for label in ("first", "second", "third"):
         await service.record(
-            USER, topic_id=topic.id, mermaid=f"graph TD; {label};",
-            display_math=None, caption=label,
+            USER,
+            topic_id=topic.id,
+            mermaid=f"graph TD; {label};",
+            display_math=None,
+            caption=label,
         )
 
     rows = await service.list_for_topic(USER, topic_id=topic.id)

@@ -197,7 +197,11 @@ def build_prompt(*, skeleton: dict[str, Any], signal: str, reason: str) -> str:
         )
         facts.append(
             f"measured value: {current} of {render_figure(skeleton['targetValue'])}{unit}"
-            + ("" if skeleton["currentValueMeasured"] else " (entered by the learner, not measured)")
+            + (
+                ""
+                if skeleton["currentValueMeasured"]
+                else " (entered by the learner, not measured)"
+            )
         )
 
     if skeleton["targetDate"]:
@@ -256,7 +260,7 @@ def build_prompt(*, skeleton: dict[str, Any], signal: str, reason: str) -> str:
         + f"\n\nThe goal is travelling: {signal}.\n"
         f"The recommended next step has already been chosen, on these grounds: {reason}. "
         "Write the step so it argues for that.\n\n"
-        "Address the learner as \"you\". Return a JSON object with exactly these keys:\n"
+        'Address the learner as "you". Return a JSON object with exactly these keys:\n'
         '- "title": a heading of at most eight words naming what is true about this goal\n'
         '- "detail": one sentence of at most thirty-five words explaining why\n'
         '- "action": {"title", "detail"} — a heading of at most eight words for the recommended '
@@ -386,9 +390,7 @@ async def get_goal_insight(
     insight, next_action = assemble(
         written=written, signal=signal, label=label, target=target, reason=reason
     )
-    return models.GoalInsightResponse(
-        goalId=goal.id, insight=insight, nextAction=next_action
-    )
+    return models.GoalInsightResponse(goalId=goal.id, insight=insight, nextAction=next_action)
 
 
 async def _measure(

@@ -268,9 +268,7 @@ async def ensure_can_create_course(user: User) -> None:
         status_code=403,
         detail={
             "upgradeRequired": True,
-            "reason": (
-                f"You have used your {allowance} courses for this month on the free plan."
-            ),
+            "reason": (f"You have used your {allowance} courses for this month on the free plan."),
             "capability": "course_creation",
             "upgradeUrl": "/subscription",
             "trialAvailable": await feature_tier_service.trial_available(user.id),
@@ -356,7 +354,9 @@ async def update_course(*, course_id: str, user_id: str, data: dict[str, Any]) -
 
     # `title` is NOT NULL. Without this the database would reject the write with an integrity error
     # naming a constraint, which tells the client nothing it can act on.
-    nulled_required = [field for field in _COURSE_REQUIRED_FIELDS if field in data and data[field] is None]
+    nulled_required = [
+        field for field in _COURSE_REQUIRED_FIELDS if field in data and data[field] is None
+    ]
     if nulled_required:
         raise ValidationError(f"These fields cannot be cleared: {sorted(nulled_required)}")
 

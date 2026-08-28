@@ -642,7 +642,9 @@ class TestNarrativeComposition:
         narrative = reflection_narrative.assemble(
             deep=True,
             summary="s",
-            written={"patterns": {"keep": {"title": "Short sessions", "body": "You built a streak of"}}},
+            written={
+                "patterns": {"keep": {"title": "Short sessions", "body": "You built a streak of"}}
+            },
             signals=[],
             subjects=[],
             rhythm=[],
@@ -701,7 +703,6 @@ class TestDashboardDegradation:
         assert "achievements" not in sections["trends"]
         assert "trends" not in sections["achievements"]
         assert sections["activity"] == {"activity"}
-
 
 
 class TestSubjectActivity:
@@ -778,7 +779,8 @@ class TestSubjectActivity:
 
     async def test_zero_is_published_once_the_learner_tracks_time_somewhere(self):
         """The converse of Decision I, settled by `reflection_metrics.compute`'s `had_activity` gate:
-        once there is evidence the learner records time, "no sessions on this subject" is a finding."""
+        once there is evidence the learner records time, "no sessions on this subject" is a finding.
+        """
         activity = await self._by_course(
             # A session on another course, so tracking is evidently happening.
             session_rows=[
@@ -861,7 +863,6 @@ class TestSubjectActivity:
         assert None not in activity
         assert activity["course-1"].sessions == 0, "tracking happened, so zero is a finding"
 
-
     async def test_a_subject_with_no_row_reads_zero_when_the_learner_tracks_time(self):
         """Found by running this against real data, not by reading it.
 
@@ -902,7 +903,6 @@ class TestSubjectActivityNaming:
 
         assert "knowledge_check_accuracy_percent" in fields
         assert not any("recall" in name for name in fields)
-
 
 
 class TestConceptStatus:
@@ -951,9 +951,7 @@ class TestConceptStatus:
     def test_the_band_boundaries(self, percent, expected):
         from src.domains.personal_learning.services import reflect_aggregates
 
-        assert (
-            reflect_aggregates.concept_status(mastery_percent=percent, touched=True) == expected
-        )
+        assert reflect_aggregates.concept_status(mastery_percent=percent, touched=True) == expected
 
 
 class TestConceptMastery:
@@ -1042,9 +1040,9 @@ class TestConceptMasteryScope:
         from src.domains.personal_learning.services import reflect_aggregates
 
         source = inspect.getsource(reflect_aggregates.list_concept_mastery)
-        assert "UserTopicProgress" not in source.split('"""')[2], (
-            "a shared-course branch appeared; either the scope changed or this is dead code"
-        )
+        assert (
+            "UserTopicProgress" not in source.split('"""')[2]
+        ), "a shared-course branch appeared; either the scope changed or this is dead code"
 
     def test_no_per_topic_knowledge_check_verdict(self):
         """`TopicCheckAttempt` is one question per topic, re-answerable after the answer is revealed, so a
@@ -1054,7 +1052,6 @@ class TestConceptMasteryScope:
 
         fields = {f.name for f in reflect_aggregates.ConceptMastery.__dataclass_fields__.values()}
         assert not any("check" in name or "correct" in name for name in fields)
-
 
 
 class TestCourseEvidence:
@@ -1175,9 +1172,9 @@ class TestEvidenceExcludesUndatedWork:
         from src.domains.personal_learning.services import reflect_aggregates
 
         source = inspect.getsource(reflect_aggregates.list_course_evidence)
-        assert source.count("completed_at.is_not(None)") == 2, (
-            "both the topic and section reads must exclude undated completions"
-        )
+        assert (
+            source.count("completed_at.is_not(None)") == 2
+        ), "both the topic and section reads must exclude undated completions"
 
 
 class TestGoalEvidence:
@@ -1219,7 +1216,6 @@ class TestGoalEvidence:
         assert items == []
 
 
-
 class TestActivityTypeCounts:
     """The activity mix, and why it is raw types rather than categories.
 
@@ -1229,7 +1225,8 @@ class TestActivityTypeCounts:
 
     def test_the_counts_share_the_feed_condition_builder(self):
         """One builder, so the paged read, the per-day counts and the per-type counts cannot describe
-        different windows. Copying the predicate into a third reader is the failure this prevents."""
+        different windows. Copying the predicate into a third reader is the failure this prevents.
+        """
         import inspect
 
         from src.domains.personal_learning.repository import PersonalLearningRepository
@@ -1251,13 +1248,14 @@ class TestActivityTypeCounts:
         # otherwise the explanation itself trips the assertion.
         body = source.split('"""')[-1]
         for category in ("practice", "mastery", "notes", "community", "milestones"):
-            assert f'"{category}"' not in body, (
-                f"a category grouping for {category!r} appeared in the service body"
-            )
+            assert (
+                f'"{category}"' not in body
+            ), f"a category grouping for {category!r} appeared in the service body"
 
     def test_total_is_summed_from_the_day_counts_not_queried_again(self):
         """So the figure above the strip and the strip itself cannot disagree — the rule
-        `reflect_dashboard_service` follows when it composes its summary from already-loaded sources."""
+        `reflect_dashboard_service` follows when it composes its summary from already-loaded sources.
+        """
         import inspect
 
         from src.domains.personal_learning import routes
@@ -1271,7 +1269,6 @@ class TestActivityTypeCounts:
         fields = set(models.ActivityDayCountsResponse.model_fields)
 
         assert {"days", "total", "by_type", "available_types"} <= fields
-
 
 
 class TestGrowthMilestones:
@@ -1372,7 +1369,9 @@ class TestGrowthMilestones:
     async def test_ids_are_namespaced_across_the_two_tables(self):
         """Two independent id spaces in one list."""
         items = await self._milestones(
-            milestones=[self._milestone_row("7_day_streak", datetime(2026, 8, 20, tzinfo=UTC), "x")],
+            milestones=[
+                self._milestone_row("7_day_streak", datetime(2026, 8, 20, tzinfo=UTC), "x")
+            ],
             achievements=[self._achievement_row(datetime(2026, 8, 21, tzinfo=UTC), "x")],
         )
 
@@ -1498,10 +1497,10 @@ class TestActivityBreakdownUsesOneConnection:
                 return False
 
         with (
-            patch.object(activity_feed_service, "get_session_factory", lambda: _Session, create=True),
-            patch(
-                "src.shared.database.get_session_factory", lambda: _Session
+            patch.object(
+                activity_feed_service, "get_session_factory", lambda: _Session, create=True
             ),
+            patch("src.shared.database.get_session_factory", lambda: _Session),
             patch.object(activity_feed_service.repo, "count_feed_entries_by_day", _by_day),
             patch.object(activity_feed_service.repo, "count_feed_entries_by_type", _by_type),
             patch.object(activity_feed_service.repo, "list_feed_activity_types", _types),
@@ -1648,9 +1647,9 @@ class TestPrepEvidenceScope:
         stripped = "\n".join(lines)
 
         assert "completed_at.is_not(None)" in stripped, "completed sessions are the quiz source"
-        assert "completed_at.is_(None)" in stripped, (
-            "answers are read only for sessions that never completed"
-        )
+        assert (
+            "completed_at.is_(None)" in stripped
+        ), "answers are read only for sessions that never completed"
 
     def test_no_date_is_borrowed_from_updated_at(self):
         """`PrepTopic` has no `completedAt`, so a "topic mastered" item could only be dated by
@@ -1750,7 +1749,9 @@ class TestEvidenceMixesStoredTimestampKinds:
         )
 
         assert item.occurred_at.tzinfo is not None
-        assert item.occurred_at == datetime(2026, 8, 14, 9, 0, tzinfo=UTC), "read as UTC, not shifted"
+        assert item.occurred_at == datetime(
+            2026, 8, 14, 9, 0, tzinfo=UTC
+        ), "read as UTC, not shifted"
 
     def test_an_item_from_an_aware_column_is_left_alone(self):
         from src.domains.personal_learning.services.reflect_aggregates import EvidenceItem

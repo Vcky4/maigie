@@ -120,9 +120,7 @@ async def generate_for_topic(
     # Verified rather than assumed: the diagram from the reported failure was parsed against mermaid itself,
     # every construct in it is legal, and the only reason it would not draw is that it stops mid-label.
     if mermaid and _looks_truncated(mermaid):
-        raise ValidationError(
-            "The diagram was cut off before it finished. Try asking again."
-        )
+        raise ValidationError("The diagram was cut off before it finished. Try asking again.")
 
     return {
         "mermaid": mermaid,

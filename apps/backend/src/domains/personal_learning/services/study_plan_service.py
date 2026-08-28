@@ -1103,9 +1103,7 @@ MAX_TOLERATED_PAST_DUE = 2
 REDISTRIBUTION_COOLDOWN_DAYS = 7
 
 
-async def redistribute_drifted_plans(
-    *, now: datetime | None = None, limit: int = 500
-) -> int:
+async def redistribute_drifted_plans(*, now: datetime | None = None, limit: int = 500) -> int:
     """Repack the plans of learners who have gone quiet. Returns the number of plans moved.
 
     **This is the gap.** `_redistribute_plan` could only ever be reached by a learner editing their
@@ -1216,9 +1214,7 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> int:
     # not this walk's to allocate.
     items = await repo.list_plan_items(plan_id)
     pending_items = [
-        i
-        for i in items
-        if i.status == "PENDING" and getattr(i, "schedule_block_id", None) is None
+        i for i in items if i.status == "PENDING" and getattr(i, "schedule_block_id", None) is None
     ]
 
     if not pending_items:

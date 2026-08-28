@@ -117,9 +117,7 @@ async def main() -> None:
                     print(f"  ABSENT   {table}.{column}")
                     continue
                 nullable, default = rows[column]
-                print(
-                    f"  present  {table}.{column}  nullable={nullable} default={default}"
-                )
+                print(f"  present  {table}.{column}  nullable={nullable} default={default}")
 
         print("\nrow counts (must be identical before and after)")
         for table in COUNTED:

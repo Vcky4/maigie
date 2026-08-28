@@ -65,9 +65,7 @@ def upgrade() -> None:
 
     op.create_index(f"{TABLE}_userId_idx", TABLE, ["userId"])
     # The read path and the writer's idempotency in one: every lookup is by the full key.
-    op.create_unique_constraint(
-        f"{TABLE}_key_key", TABLE, ["userId", "kind", "entityId", "scope"]
-    )
+    op.create_unique_constraint(f"{TABLE}_key_key", TABLE, ["userId", "kind", "entityId", "scope"])
 
 
 def downgrade() -> None:

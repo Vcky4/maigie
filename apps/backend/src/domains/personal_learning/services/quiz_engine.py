@@ -173,6 +173,18 @@ async def start_quiz(
     if not prep:
         raise NotFoundError("Preparation", prep_id)
 
+    # No new practice once the exam has happened.
+    #
+    # Checked **before** the topics guard, so a finished preparation with no topics says "this is
+    # finished" rather than "extract topics first" — advice for a step that is itself now refused.
+    #
+    # Not only tidiness: a quiz writes `QuizSession` rows and moves topic mastery, which feeds
+    # `averageMasteryPercent` — the readiness figure the post-exam calibration in §6.2 scores against the
+    # recorded outcome. Practising afterwards rewrites the prediction after the result is known.
+    from . import exam_prep_service
+
+    exam_prep_service.ensure_accepts_new_work(prep)
+
     if not all_topics:
         # A bare ValueError here reached clients as a generic 500 via the
         # catch-all handler, hiding an actionable next step.

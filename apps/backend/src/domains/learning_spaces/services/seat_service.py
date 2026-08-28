@@ -1,4 +1,4 @@
-﻿"""
+"""
 Educator Seat management within Learning Spaces.
 
 Plus Seats give educators enhanced capabilities (advanced AI, more context).

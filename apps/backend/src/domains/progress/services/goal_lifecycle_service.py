@@ -209,7 +209,9 @@ async def _act_on(
             # here, in different words, from a different surface, about the same exam, would read as the
             # system not knowing what it had already said.
             return None
-        return await _extend_or_ask(goal, progress=progress, history=history, now=now, trigger="deadline_passed")
+        return await _extend_or_ask(
+            goal, progress=progress, history=history, now=now, trigger="deadline_passed"
+        )
 
     at_risk = goal_metrics.is_at_risk(
         progress=progress, created_at=goal.created_at, target_date=goal.target_date, now=now
@@ -246,11 +248,15 @@ async def _extend_or_ask(
     inventing a date would be the system making up a commitment on the learner's behalf.
     """
     spent = (history.system_extended_count if history else 0) >= MAX_SYSTEM_EXTENSIONS
-    days = None if spent else await _measured_extension_days(
-        goal, progress=progress, history=history, now=now
+    days = (
+        None
+        if spent
+        else await _measured_extension_days(goal, progress=progress, history=history, now=now)
     )
     if days is None:
-        return await _ask_to_confirm(goal, progress=progress, history=history, now=now, trigger=trigger)
+        return await _ask_to_confirm(
+            goal, progress=progress, history=history, now=now, trigger=trigger
+        )
 
     new_date = now + timedelta(days=days)
     await progress_repo.update_goal(goal.id, {"targetDate": new_date})
@@ -360,9 +366,7 @@ async def _notify(
             type=type,
             title=title,
             body=body,
-            priority=(
-                notification_service.PRIORITY_TIME_CRITICAL if time_critical else 3
-            ),
+            priority=(notification_service.PRIORITY_TIME_CRITICAL if time_critical else 3),
             action_data={"goalId": goal.id, "route": "goal"},
         )
     except Exception:
@@ -423,9 +427,8 @@ async def _measured_extension_days(
     needed = ceil(remaining / (gained / span_days))
 
     created = ensure_utc_optional(goal.created_at)
-    original = (
-        (history.original_target_date if history else None)
-        or ensure_utc_optional(goal.target_date)
+    original = (history.original_target_date if history else None) or ensure_utc_optional(
+        goal.target_date
     )
     original = ensure_utc_optional(original)
     cap = (original - created).days if created and original else 0

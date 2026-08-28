@@ -527,6 +527,9 @@ async def extract_topics(*, user_id: str, prep_id: str) -> list[Any]:
     prep = await repo.find_exam_prep(prep_id, user_id)
     if not prep:
         raise NotFoundError("Preparation", prep_id)
+    # Nothing new to extract for an exam that has already happened. The topics already there stay
+    # readable; see `ensure_accepts_new_work`.
+    ensure_accepts_new_work(prep)
 
     from . import llm_resilient
 
@@ -693,6 +696,58 @@ async def list_topics(*, user_id: str, prep_id: str) -> list[dict[str, Any]]:
     ]
 
 
+#: Statuses in which a preparation no longer takes on new study work.
+#:
+#: `AWAITING_REVIEW` and `COMPLETED` are grouped because the learner's *situation* is the same in both: the
+#: exam has happened. `COMPLETED` differs only in that they have told us how it went.
+CLOSED_TO_NEW_WORK = ("AWAITING_REVIEW", "COMPLETED")
+
+
+def ensure_accepts_new_work(prep: Any) -> None:
+    """Refuse to generate new study work for a preparation whose exam is behind the learner.
+
+    **Reads stay open; only generation closes.** The learner keeps every topic, every banked question, the
+    readiness history and the timeline — that material is the record of what they did, and hiding it would
+    be deleting their work in effect. What stops is *making more of it*: extracting further topics from
+    material for an exam that has happened, or starting a practice quiz for it.
+
+    The reason is not tidiness. A quiz taken after the exam writes `QuizSession` rows and moves topic
+    mastery, which feeds `averageMasteryPercent` — the readiness figure §6.2 wants to score against the
+    recorded outcome. Practising afterwards rewrites the prediction after the result is known, which is
+    precisely the measurement calibration cannot survive. A learner who wants to keep practising this
+    material wants a new preparation, or Learn.
+
+    Two messages rather than one, because the two states leave the learner in different places: an awaiting
+    preparation has something for them to *do*, and a completed one does not.
+
+    Raises `ConflictError` (409). Nothing about the request is malformed — the preparation is simply past the
+    point where this is what it is for.
+    """
+    status = getattr(prep, "status", None)
+    if status not in CLOSED_TO_NEW_WORK:
+        return
+    if status == "AWAITING_REVIEW":
+        raise ConflictError(
+            "This preparation is waiting for your review",
+            detail=(
+                "Its exam has passed, so there is no more practice to schedule for it. Tell us how it "
+                "went to close it — everything you have already built stays where it is."
+            ),
+            # Named rather than the generic `CONFLICT`, matching `PREP_TOPICS_REQUIRED` and
+            # `PREP_MATERIAL_REQUIRED`. A client that only knows "something conflicted" can do nothing but
+            # print the message; one that knows *which* rule can offer the review instead of a retry.
+            code="PREP_AWAITING_REVIEW",
+        )
+    raise ConflictError(
+        "This preparation is finished",
+        detail=(
+            "Its exam has passed and you have already reviewed it, so it does not take on new practice. "
+            "Your topics, questions and history stay available to read."
+        ),
+        code="PREP_COMPLETED",
+    )
+
+
 async def mark_completed(*, user_id: str, prep_id: str) -> Any:
     """Mark a preparation as completed, for a learner finishing one *before* its exam.
 
@@ -718,6 +773,7 @@ async def mark_completed(*, user_id: str, prep_id: str) -> Any:
                 "Its exam has passed, so it finishes when you say how it went rather than by being "
                 "marked complete. Answer the review to close it."
             ),
+            code="PREP_AWAITING_REVIEW",
         )
     result = await repo.update_exam_prep(prep_id, {"status": "COMPLETED"})
 
@@ -778,7 +834,10 @@ async def mark_preparations_awaiting_review() -> int:
                 moved += 1
 
             reminders = prep.review_reminders_sent or 0
-            if prep.review_asked_at is not None and reminders >= prep_outcome_service.MAX_REVIEW_REMINDERS:
+            if (
+                prep.review_asked_at is not None
+                and reminders >= prep_outcome_service.MAX_REVIEW_REMINDERS
+            ):
                 # Budget spent. The preparation stays in `AWAITING_REVIEW` — an honest record that the
                 # exam happened and we do not know how it went — and nothing more is sent.
                 continue
@@ -813,9 +872,7 @@ async def mark_preparations_awaiting_review() -> int:
                 },
             )
         except Exception:
-            logger.exception(
-                "Could not move a preparation into review", extra={"prep_id": prep.id}
-            )
+            logger.exception("Could not move a preparation into review", extra={"prep_id": prep.id})
 
     return moved
 

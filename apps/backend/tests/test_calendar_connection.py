@@ -125,7 +125,8 @@ class TestCalendarStatus:
 
     async def test_a_naive_expiry_is_not_compared_against_an_aware_now(self):
         """`googleCalendarTokenExpiresAt` is declared `DateTime(timezone=True)` but lives in a Prisma-era
-        table, so it can arrive naive — the mismatch that has already produced four 500s elsewhere."""
+        table, so it can arrive naive — the mismatch that has already produced four 500s elsewhere.
+        """
         status = await self._status(
             _user(
                 google_calendar_access_token="secret",
@@ -284,9 +285,7 @@ class TestCalendarRouteOrder:
         # Comments as well as the docstring: the code explains *why* it avoids `calendar.events`, so a
         # naive substring check matches the explanation and passes for the wrong reason.
         body = source.split('"""')[-1]
-        code = "\n".join(
-            line for line in body.splitlines() if not line.strip().startswith("#")
-        )
+        code = "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
 
         assert "calendar.app.created" in code
         assert "calendar.events" not in code, "the broader scope would reach existing calendars"
@@ -325,9 +324,15 @@ class TestPreferredTimesIsTyped:
         assert model.basis == "utc_assumed", "an unknown timezone must say so"
         assert model.timezone is None
         assert model.sessionCount == 4
-        assert round(
-            model.buckets.morning + model.buckets.afternoon + model.buckets.evening + model.buckets.night
-        ) == 100
+        assert (
+            round(
+                model.buckets.morning
+                + model.buckets.afternoon
+                + model.buckets.evening
+                + model.buckets.night
+            )
+            == 100
+        )
 
     def test_a_known_timezone_reports_a_local_basis(self):
         from zoneinfo import ZoneInfo

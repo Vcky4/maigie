@@ -63,5 +63,9 @@ async def schedule_first_review(data: dict) -> None:
     if review is not None:
         logger.info(
             "Review scheduled for completed topic",
-            extra={"user_id": user_id, "topic_id": topic_id, "next_review_at": review.next_review_at},
+            extra={
+                "user_id": user_id,
+                "topic_id": topic_id,
+                "next_review_at": review.next_review_at,
+            },
         )

@@ -2538,9 +2538,7 @@ async def get_growth_drivers(
     return await growth_service.get_drivers(user_id=current_user.id, range_=range)
 
 
-@router.get(
-    "/growth/subjects/{course_id}/insight", response_model=models.SubjectInsightResponse
-)
+@router.get("/growth/subjects/{course_id}/insight", response_model=models.SubjectInsightResponse)
 async def get_growth_subject_insight(
     course_id: str,
     current_user: CurrentUser,

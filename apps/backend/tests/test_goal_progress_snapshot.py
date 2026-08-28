@@ -223,7 +223,9 @@ class TestWhatIsRecorded:
             timezone_=LAGOS,
             now=datetime(2026, 8, 24, 1, 30, tzinfo=UTC),
             goals=[
-                _goal(progress=0.0, metric_kind="course_progress", course_id="c1", target_value=100.0)
+                _goal(
+                    progress=0.0, metric_kind="course_progress", course_id="c1", target_value=100.0
+                )
             ],
             measured_value=64.0,
         )
@@ -241,7 +243,9 @@ class TestTheStoredColumnIsBroughtUpToDate:
             timezone_=LAGOS,
             now=datetime(2026, 8, 24, 1, 30, tzinfo=UTC),
             goals=[
-                _goal(progress=0.0, metric_kind="course_progress", course_id="c1", target_value=100.0)
+                _goal(
+                    progress=0.0, metric_kind="course_progress", course_id="c1", target_value=100.0
+                )
             ],
             measured_value=64.0,
         )
@@ -304,9 +308,7 @@ class TestNoReconstruction:
         exist when this was written or it is inventing data.
         """
         assert not hasattr(goal_snapshot_service, "backfill")
-        assert not any(
-            name.startswith("backfill") for name in dir(goal_snapshot_service)
-        )
+        assert not any(name.startswith("backfill") for name in dir(goal_snapshot_service))
 
 
 class TestHistoryWindowEndsYesterday:

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Reasoning service — LLM orchestration for chat responses.
 
 **Both functions this module used to export were unreachable, and are deleted.**

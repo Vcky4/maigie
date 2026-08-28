@@ -538,9 +538,7 @@ class TestDerivedProgress:
     """One definition, used by the route, the portfolio and the nightly snapshot."""
 
     def _goal(self, **overrides):
-        return _portfolio_goal(
-            "ACTIVE", overrides.pop("progress", 0.0), NOW, None, **overrides
-        )
+        return _portfolio_goal("ACTIVE", overrides.pop("progress", 0.0), NOW, None, **overrides)
 
     def test_a_manual_goal_keeps_the_learners_own_figure(self):
         goal = self._goal(progress=35.0, metric_kind="manual")
@@ -657,9 +655,7 @@ async def _momentum_from_rows(rows, *, weeks: int, now: datetime) -> list:
             return False
 
     with patch.object(goal_metrics, "get_session_factory", lambda: _Session):
-        return await goal_metrics.get_goal_momentum(
-            user_id="u", goal_id="g", weeks=weeks, now=now
-        )
+        return await goal_metrics.get_goal_momentum(user_id="u", goal_id="g", weeks=weeks, now=now)
 
 
 class TestGoalMomentum:
@@ -878,7 +874,9 @@ class TestPortfolioHeadline:
 
     def test_the_strong_boundary_is_inclusive(self):
         at_threshold = goal_metrics.STRONG_PORTFOLIO_PROGRESS
-        assert goal_metrics.portfolio_headline(_portfolio(average_progress=at_threshold)) == "strong"
+        assert (
+            goal_metrics.portfolio_headline(_portfolio(average_progress=at_threshold)) == "strong"
+        )
         assert (
             goal_metrics.portfolio_headline(_portfolio(average_progress=at_threshold - 0.1))
             == "steady"

@@ -147,9 +147,7 @@ async def resolve(
     return composed
 
 
-async def _load(
-    *, user_id: str, kind: str, entity_id: str, scope: str
-) -> NarrativeCache | None:
+async def _load(*, user_id: str, kind: str, entity_id: str, scope: str) -> NarrativeCache | None:
     try:
         factory = get_session_factory()
         async with factory() as session:

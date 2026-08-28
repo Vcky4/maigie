@@ -321,9 +321,7 @@ async def load_local_session_times(
     return [to_learner_local(row.created_at, timezone_) for row in rows if row.created_at]
 
 
-def consistency_score_from(
-    local_session_times: list[datetime], *, as_of: datetime
-) -> float | None:
+def consistency_score_from(local_session_times: list[datetime], *, as_of: datetime) -> float | None:
     """The learner's consistency as it stood at `as_of`, or `None` if nothing was measured.
 
     The public entry point for asking the stored definition about a past day.

@@ -147,7 +147,8 @@ class TestAwaitingReview:
 
     def test_a_dismissal_stops_the_waiting(self):
         """**A dismissal is an answer.** Continuing to ask someone who said no is the failure the
-        reminder budget exists to prevent, and declining must end it outright rather than decrement it."""
+        reminder budget exists to prevent, and declining must end it outright rather than decrement it.
+        """
         assert prep_outcome_service.is_awaiting_review(_prep(review_declined_at=NOW)) is False
 
     def test_reads_a_naive_exam_date_without_raising(self):
@@ -306,7 +307,8 @@ class TestReadinessSnapshot:
     @pytest.mark.asyncio
     async def test_readiness_is_copied_onto_the_answer(self, repo):
         """The point of the whole change. `progress_percent` is a prediction that has never been compared
-        against an outcome, because no outcome existed; copying it here is what makes it falsifiable."""
+        against an outcome, because no outcome existed; copying it here is what makes it falsifiable.
+        """
         outcome = await prep_outcome_service.record_outcome(
             user_id=OWNER, prep_id="prep-1", data={"attended": "sat"}
         )
@@ -437,7 +439,8 @@ class TestReviewState:
     @pytest.mark.asyncio
     async def test_stops_awaiting_once_answered(self, repo):
         """Published as one field so a client does not infer it from `status` plus a date comparison —
-        two clients inferring that separately is how they come to disagree about the same preparation."""
+        two clients inferring that separately is how they come to disagree about the same preparation.
+        """
         await prep_outcome_service.record_outcome(
             user_id=OWNER, prep_id="prep-1", data={"attended": "sat", "preparationRating": 4}
         )

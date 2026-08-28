@@ -141,9 +141,7 @@ class TestBuildProgressSummary:
         every learner on every request. They now come from `_week_so_far`, and the builder's job is to
         report what it was given rather than to decide it."""
         profile = FakeProfile(avg_session_minutes=30.0)
-        result = _build_progress_summary(
-            profile, {}, weekly_minutes=42.5, topics_completed=3
-        )
+        result = _build_progress_summary(profile, {}, weekly_minutes=42.5, topics_completed=3)
         assert result["weeklyMinutes"] == 42.5
         assert result["topicsCompletedThisWeek"] == 3
 
@@ -397,9 +395,7 @@ class TestWeekSoFar:
         monday = (now - timedelta(days=now.weekday())).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
-        return SimpleNamespace(
-            start_time=monday + timedelta(days=days_into_week), duration=minutes
-        )
+        return SimpleNamespace(start_time=monday + timedelta(days=days_into_week), duration=minutes)
 
     async def test_topics_completed_this_week_are_counted(self):
         from datetime import timedelta

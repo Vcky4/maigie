@@ -170,9 +170,7 @@ class TestTheDeviceChangingHands:
         await identity_repo.upsert_device_token(
             user_id="learner-1", token="fcm-abc", platform="IOS"
         )
-        removed = await identity_repo.delete_device_token(
-            user_id="learner-1", token="fcm-abc"
-        )
+        removed = await identity_repo.delete_device_token(user_id="learner-1", token="fcm-abc")
 
         assert removed is True
         assert rows == []
@@ -185,9 +183,7 @@ class TestTheDeviceChangingHands:
         await identity_repo.upsert_device_token(
             user_id="learner-1", token="fcm-abc", platform="IOS"
         )
-        removed = await identity_repo.delete_device_token(
-            user_id="learner-2", token="fcm-abc"
-        )
+        removed = await identity_repo.delete_device_token(user_id="learner-2", token="fcm-abc")
 
         assert removed is False
         assert len(rows) == 1

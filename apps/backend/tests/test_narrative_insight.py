@@ -162,7 +162,9 @@ class TestResolve:
     @pytest.mark.asyncio
     async def test_a_non_dict_payload_is_treated_as_a_miss(self, monkeypatch):
         inputs = {"x": 1}
-        row = SimpleNamespace(inputs_hash=narrative_cache.fingerprint(inputs), payload=["not", "a", "dict"])
+        row = SimpleNamespace(
+            inputs_hash=narrative_cache.fingerprint(inputs), payload=["not", "a", "dict"]
+        )
         monkeypatch.setattr(narrative_cache, "_load", _returns(row))
         monkeypatch.setattr(narrative_cache, "_store", _record([]))
 
@@ -303,9 +305,7 @@ class TestDriverEvidence:
 
     def test_a_participle_noun_is_not_pluralised_by_a_suffix_rule(self):
         """The live bug: appending `s` to "card reviewed" produced "12 card revieweds"."""
-        assert (
-            growth_narrative._count(12, "card reviewed", "cards reviewed") == "12 cards reviewed"
-        )
+        assert growth_narrative._count(12, "card reviewed", "cards reviewed") == "12 cards reviewed"
         assert growth_narrative._count(1, "card reviewed", "cards reviewed") == "1 card reviewed"
 
     def test_a_score_carries_its_denominator(self):
@@ -345,14 +345,18 @@ class TestAssembleDrivers:
         skeleton = [{"id": "mastery", "change": 4.0, "impact": "growing", "evidence": "e"}]
         drivers = growth_narrative.assemble_drivers(
             skeleton=skeleton,
-            written={"mastery": {"title": "You returned more often", "detail": "you will start turning"}},
+            written={
+                "mastery": {"title": "You returned more often", "detail": "you will start turning"}
+            },
         )
         assert len(drivers) == 1
         assert drivers[0].detail is None
         assert drivers[0].title == "You returned more often"
 
     def test_the_measured_half_never_comes_from_the_model(self):
-        skeleton = [{"id": "mastery", "change": 4.0, "impact": "growing", "evidence": "74% mastery"}]
+        skeleton = [
+            {"id": "mastery", "change": 4.0, "impact": "growing", "evidence": "74% mastery"}
+        ]
         drivers = growth_narrative.assemble_drivers(
             skeleton=skeleton,
             written={
@@ -460,7 +464,12 @@ class TestSubjectSkeleton:
 
     def test_only_the_weakest_topic_is_named(self):
         skeleton = growth_narrative.build_subject_skeleton(
-            _detail(concepts=[_concept("needs_attention", "First"), _concept("needs_attention", "Second")])
+            _detail(
+                concepts=[
+                    _concept("needs_attention", "First"),
+                    _concept("needs_attention", "Second"),
+                ]
+            )
         )
         assert skeleton["weakestTopic"] == "First"
         assert "Second" not in str(skeleton)
@@ -593,9 +602,7 @@ class TestChooseNextAction:
         assert label == "Open your schedule"
 
     def test_a_prep_linked_goal_practises_it(self):
-        _, label, target = self._call(
-            goal=SimpleNamespace(id="g1", course_id="c1", prep_id="p1")
-        )
+        _, label, target = self._call(goal=SimpleNamespace(id="g1", course_id="c1", prep_id="p1"))
         assert (target.kind, target.entityId, target.mode) == ("preparation_practice", "p1", "weak")
         assert label == "Start focused practice"
 
@@ -674,7 +681,9 @@ class TestAssembleGoal:
         assert insight is None
 
     def test_an_unfinished_sentence_is_dropped_and_the_signal_survives(self):
-        insight, _ = self._assemble({"title": "This goal is behind", "detail": "you will start turn"})
+        insight, _ = self._assemble(
+            {"title": "This goal is behind", "detail": "you will start turn"}
+        )
         assert insight.detail is None
         assert insight.signal == "behind"
 
@@ -743,9 +752,7 @@ class TestNaiveTargetDate:
         """
         naive = datetime(2026, 7, 1, 0, 0)
         aware = naive.replace(tzinfo=UTC)
-        for kwargs in (
-            {"status": "ACTIVE", "progress": 10.0},
-        ):
+        for kwargs in ({"status": "ACTIVE", "progress": 10.0},):
             assert goal_metrics.is_overdue(
                 target_date=naive, now=self.NOW, **kwargs
             ) == goal_metrics.is_overdue(target_date=aware, now=self.NOW, **kwargs)

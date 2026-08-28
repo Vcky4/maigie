@@ -86,9 +86,7 @@ def upgrade() -> None:
     op.create_index(f"{TABLE}_goalId_idx", TABLE, ["goalId"])
     op.create_index(f"{TABLE}_userId_idx", TABLE, ["userId"])
     # The writer's idempotency, and the read path for one goal's series.
-    op.create_index(
-        f"{TABLE}_goalId_capturedOn_key", TABLE, ["goalId", "capturedOn"], unique=True
-    )
+    op.create_index(f"{TABLE}_goalId_capturedOn_key", TABLE, ["goalId", "capturedOn"], unique=True)
     # A learner's whole history, for the portfolio-level reads.
     op.create_index(f"{TABLE}_userId_capturedOn_idx", TABLE, ["userId", "capturedOn"])
 

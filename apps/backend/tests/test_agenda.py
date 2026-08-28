@@ -34,9 +34,11 @@ DAY = date.today() + timedelta(days=30)
 
 def _local(hour: int, minute: int = 0, *, day: date = DAY, timezone_=LAGOS) -> datetime:
     """An instant from the learner's wall clock."""
-    return datetime.combine(day, time(hour=hour, minute=minute)).replace(
-        tzinfo=timezone_.zone
-    ).astimezone(UTC)
+    return (
+        datetime.combine(day, time(hour=hour, minute=minute))
+        .replace(tzinfo=timezone_.zone)
+        .astimezone(UTC)
+    )
 
 
 def _fixed(start: datetime, minutes: int, title: str = "Class") -> agenda.AgendaEntry:
@@ -89,7 +91,8 @@ class TestPreferredWindowOrder:
 
     def test_a_utc_assumed_distribution_is_not_used_to_order_their_day(self):
         """`behaviour_service` flags this when the timezone was never captured. Those hours describe the
-        server's day, so placing a Lagos learner's work by them would be placing it by a London clock."""
+        server's day, so placing a Lagos learner's work by them would be placing it by a London clock.
+        """
         utc_assumed = {
             "buckets": {"morning": 0.0, "afternoon": 0.0, "evening": 90.0, "night": 10.0},
             "basis": "utc_assumed",
@@ -115,9 +118,7 @@ class TestPreferredWindowOrder:
 
     def test_night_is_skipped_unless_it_is_genuinely_their_top_window(self):
         """A learner with a handful of late sessions should not get study suggested at 23:00."""
-        order, _ = agenda.preferred_window_order(
-            _buckets(morning=60.0, night=40.0)
-        )
+        order, _ = agenda.preferred_window_order(_buckets(morning=60.0, night=40.0))
         assert "night" not in order
 
         top_night, _ = agenda.preferred_window_order(_buckets(night=70.0, morning=30.0))
@@ -147,7 +148,9 @@ class TestPlacement:
         )
 
         assert placed[0].placement == "default_window"
-        assert placed[0].window == "morning", "the neutral order starts with the earliest daytime window"
+        assert (
+            placed[0].window == "morning"
+        ), "the neutral order starts with the earliest daytime window"
 
     def test_it_places_around_something_already_fixed(self):
         """The learner has a class from 09:00 to 10:30 their time; a 30-minute item must not land in it."""
@@ -296,9 +299,9 @@ class TestPlacement:
         assert days == {DAY, DAY + timedelta(days=1)}
 
     def test_nothing_pending_places_nothing(self):
-        assert agenda.place_pending(
-            pending=[], timed=[], timezone_=LAGOS, preferred_times=None
-        ) == []
+        assert (
+            agenda.place_pending(pending=[], timed=[], timezone_=LAGOS, preferred_times=None) == []
+        )
 
     def test_an_unknown_timezone_still_places_work(self):
         """Placement degrades to UTC hours rather than refusing to schedule anything."""
@@ -349,18 +352,32 @@ class TestAgendaEntryNormalisesInstants:
 
     def test_the_two_kinds_can_be_sorted_together(self):
         naive = agenda.AgendaEntry(
-            id="a", source="schedule", title="A", detail=None,
-            start_at=datetime(2026, 8, 24, 9, 0), end_at=datetime(2026, 8, 24, 10, 0),
-            minutes=60, timed=True, placement="fixed",
+            id="a",
+            source="schedule",
+            title="A",
+            detail=None,
+            start_at=datetime(2026, 8, 24, 9, 0),
+            end_at=datetime(2026, 8, 24, 10, 0),
+            minutes=60,
+            timed=True,
+            placement="fixed",
         )
         aware = agenda.AgendaEntry(
-            id="b", source="space_session", title="B", detail=None,
+            id="b",
+            source="space_session",
+            title="B",
+            detail=None,
             start_at=datetime(2026, 8, 24, 8, 0, tzinfo=UTC),
             end_at=datetime(2026, 8, 24, 8, 30, tzinfo=UTC),
-            minutes=30, timed=True, placement="fixed",
+            minutes=30,
+            timed=True,
+            placement="fixed",
         )
 
-        assert [entry.id for entry in sorted([naive, aware], key=lambda e: e.start_at)] == ["b", "a"]
+        assert [entry.id for entry in sorted([naive, aware], key=lambda e: e.start_at)] == [
+            "b",
+            "a",
+        ]
 
 
 class TestAcceptPlacement:
@@ -451,9 +468,7 @@ class TestTopicReviewsAreNotShownTwice:
 
         class _Session:
             async def execute(self, *_a, **_k):
-                return SimpleNamespace(
-                    scalars=lambda: SimpleNamespace(all=lambda: rows)
-                )
+                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
 
             async def __aenter__(self):
                 return self
@@ -733,7 +748,14 @@ class TestAnAcceptedBlockKeepsItsOrigin:
             return [block], 1
 
         async def _links(_block_ids):
-            return {"block-1": {"planId": "plan-1", "planItemId": "i1", "topicId": "other", "prepId": None}}
+            return {
+                "block-1": {
+                    "planId": "plan-1",
+                    "planItemId": "i1",
+                    "topicId": "other",
+                    "prepId": None,
+                }
+            }
 
         with (
             patch.object(progress_repo, "list_blocks", _blocks),

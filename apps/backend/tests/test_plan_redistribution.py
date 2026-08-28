@@ -73,7 +73,10 @@ class FakeRepo:
         for plan in self.plans:
             if plan.status != "ACTIVE" or plan.deadline <= now:
                 continue
-            if plan.last_redistributed_at is not None and plan.last_redistributed_at >= not_swept_since:
+            if (
+                plan.last_redistributed_at is not None
+                and plan.last_redistributed_at >= not_swept_since
+            ):
                 continue
             past_due = [
                 i
@@ -345,7 +348,8 @@ class TestItSaysSo:
         morning and the learner's daily allowance can defer it to tomorrow; before phase 5 the allowance
         destroyed it outright and returned `None`, which is what this fake reproduces. The repack still
         happened either way, so the stamp must stand — otherwise the plan is repacked again tomorrow to
-        retry a message, and the learner's dates move a second time for the sake of an announcement."""
+        retry a message, and the learner's dates move a second time for the sake of an announcement.
+        """
         plan = _plan()
         items = [_item(f"i{n}") for n in range(4)]
         wire([plan], {plan.id: items}, suppress=True)

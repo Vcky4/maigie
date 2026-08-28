@@ -122,7 +122,7 @@ _REVISE_PROMPT = (
     "idea; do not narrate the correction.\n"
     "- Merge a repeated point rather than listing it twice.\n"
     "- Only widen the title if the session has genuinely moved beyond what it names.\n"
-    "- Write what was worked out, in the learner's interest. Never write \"the tutor explained\" or "
+    '- Write what was worked out, in the learner\'s interest. Never write "the tutor explained" or '
     '"we discussed".\n'
     "- Do not invent anything that is in neither the note nor the transcript.\n"
     "- No preamble, no closing summary, no headings above the first point.\n"
@@ -158,9 +158,7 @@ async def save_session_note(
     if session.note_id:
         new_turns = transcript.turn_count - session.turns_at_last_note
         if new_turns < MIN_TURNS_FOR_NOTE:
-            raise ValidationError(
-                "Your note is already up to date with this conversation."
-            )
+            raise ValidationError("Your note is already up to date with this conversation.")
         # Fetched before the generation, because a revision has to be given what it is revising. A note the
         # learner deleted in the meantime reads as "write a fresh one" rather than as a failure.
         try:
@@ -215,9 +213,7 @@ async def save_session_note(
 
     # Recorded on both paths, not just creation. The marker is what the "nothing new to say" check above
     # reads, so a revision that did not update it would let the next pass re-run over the same turns.
-    await session_store.remember_note(
-        session.session_id, note.id, turns=transcript.turn_count
-    )
+    await session_store.remember_note(session.session_id, note.id, turns=transcript.turn_count)
 
     # Charged after the note exists. A failed generation is not something to bill for.
     try:
@@ -291,9 +287,7 @@ async def finalise_session_note(
         logger.exception("Failed to write the end-of-session note for user %s", user.id)
         return None
 
-    logger.info(
-        "Wrote end-of-session note %s for user %s", saved.get("note_id"), user.id
-    )
+    logger.info("Wrote end-of-session note %s for user %s", saved.get("note_id"), user.id)
     return saved
 
 

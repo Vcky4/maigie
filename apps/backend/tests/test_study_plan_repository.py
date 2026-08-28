@@ -141,9 +141,7 @@ class TestItemUpdateIsScopedToItsPlan:
 
     async def test_updates_an_item_in_its_own_plan(self, repo, plan_with_items):
         plan, items = plan_with_items
-        updated = await repo.update_plan_item(
-            items[0].id, {"status": "COMPLETED"}, plan_id=plan.id
-        )
+        updated = await repo.update_plan_item(items[0].id, {"status": "COMPLETED"}, plan_id=plan.id)
         assert updated is not None
         assert updated.status == "COMPLETED"
 
@@ -766,9 +764,10 @@ async def test_completed_minutes_between_is_scoped_to_the_learner(repo):
     now = datetime.now(UTC)
     await repo.update_plan_item(item.id, {"completedAt": now}, plan_id=theirs.id)
 
-    assert await repo.completed_minutes_between(
-        USER, now - timedelta(days=7), now + timedelta(days=1)
-    ) == 0
+    assert (
+        await repo.completed_minutes_between(USER, now - timedelta(days=7), now + timedelta(days=1))
+        == 0
+    )
 
 
 async def test_list_plan_items_between_returns_the_window_in_schedule_order(repo):

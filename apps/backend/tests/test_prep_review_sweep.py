@@ -132,7 +132,8 @@ class TestTheSweep:
         `None`. Counting only messages that landed would let a held-back ask retry every night, turning a
         throttle into a backlog that arrives all at once. `run_weekly_check_ins` learned this the same way.
 
-        The fake still returns `None`, which is now the strictest case rather than the ordinary one."""
+        The fake still returns `None`, which is now the strictest case rather than the ordinary one.
+        """
         prep = _prep()
         repo, _ = wire([prep], suppress=True)
 
@@ -172,7 +173,8 @@ class TestTheSweep:
     @pytest.mark.asyncio
     async def test_the_first_ask_is_not_a_reminder(self, wire):
         """The budget counts reminders *after* the first ask, so a learner asked once has spent none of
-        it. Counting the first ask as a reminder would silently cost them one third of the budget."""
+        it. Counting the first ask as a reminder would silently cost them one third of the budget.
+        """
         prep = _prep()
         wire([prep])
 

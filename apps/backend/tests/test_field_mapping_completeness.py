@@ -54,7 +54,10 @@ class TestMapFields:
     def test_an_ignored_field_is_allowed_through_and_not_stored(self):
         """The escape hatch. A field handled elsewhere is exempted explicitly at the call site, so the
         decision is visible in a diff rather than implied by silence."""
-        assert map_fields({"handledElsewhere": 1}, {"a": "a"}, entity="x", ignore={"handledElsewhere"}) == {}
+        assert (
+            map_fields({"handledElsewhere": 1}, {"a": "a"}, entity="x", ignore={"handledElsewhere"})
+            == {}
+        )
 
     def test_an_omitted_key_stays_omitted(self):
         """What makes `exclude_unset=True` meaningful: "not sent" and "sent as null" must stay
@@ -104,7 +107,9 @@ class TestRejectUnclearable:
         from src.domains.knowledge.db_models import Topic
 
         # `knowledgeCheck` is the column, `knowledge_check` the attribute. Nullable, so allowed.
-        reject_unclearable({"knowledgeCheck": None}, Topic, field_map={"knowledgeCheck": "knowledge_check"})
+        reject_unclearable(
+            {"knowledgeCheck": None}, Topic, field_map={"knowledgeCheck": "knowledge_check"}
+        )
 
     def test_an_unknown_key_is_left_to_the_mapper(self):
         """Whether an unmapped field may be cleared is `map_fields`' business, not this one's — two
@@ -150,14 +155,16 @@ class TestNoSilentDropRemains:
             # and fails loudly at the constructor. Different behaviour, not a silent loss.
             if "identity" in str(path):
                 continue
-            for match in re.finditer(r"def (_map_[a-z_]+)\(.*?(?=\n    (?:@|def |async def )|\Z)", text, re.S):
+            for match in re.finditer(
+                r"def (_map_[a-z_]+)\(.*?(?=\n    (?:@|def |async def )|\Z)", text, re.S
+            ):
                 body = match.group(0)
                 if "map_fields(" not in body and "return {" in body:
                     offenders.append(f"{path.relative_to(SRC)}::{match.group(1)}")
 
-        assert offenders == [], (
-            f"These mappers build their result by hand rather than through `map_fields`: {offenders}."
-        )
+        assert (
+            offenders == []
+        ), f"These mappers build their result by hand rather than through `map_fields`: {offenders}."
 
 
 class TestRequestModelsAreFullyMappable:
@@ -175,11 +182,24 @@ class TestRequestModelsAreFullyMappable:
     #: Fields that legitimately never reach a mapper, with the reason each is exempt.
     EXEMPT = {
         # Read-side parameters: filters, pagination and sorting shape a query rather than a row.
-        "page", "pageSize", "sortBy", "sortOrder", "search", "limit", "offset", "cursor",
+        "page",
+        "pageSize",
+        "sortBy",
+        "sortOrder",
+        "search",
+        "limit",
+        "offset",
+        "cursor",
         # Routing and identity, supplied by the path or the token rather than the body.
-        "id", "userId",
+        "id",
+        "userId",
         # Generation and workflow inputs consumed by a service and never persisted as-is.
-        "type", "prompt", "query", "quality", "completed", "deckId",
+        "type",
+        "prompt",
+        "query",
+        "quality",
+        "completed",
+        "deckId",
     }
 
     def _request_models(self):
@@ -192,7 +212,9 @@ class TestRequestModelsAreFullyMappable:
                 continue
             try:
                 module = import_module(module_info.name)
-            except Exception:  # pragma: no cover - a module that cannot import is another test's problem
+            except (
+                Exception
+            ):  # pragma: no cover - a module that cannot import is another test's problem
                 continue
             for name, obj in vars(module).items():
                 if (
@@ -270,7 +292,12 @@ class TestResponseModelsAreFullyPopulated:
     #: Fields a route legitimately never names, with the reason.
     EXEMPT = {
         # Derived per request under a different local name, or carried by a nested model.
-        "createdAt", "updatedAt", "id", "userId", "title", "description",
+        "createdAt",
+        "updatedAt",
+        "id",
+        "userId",
+        "title",
+        "description",
     }
 
     def test_every_hand_built_response_field_is_named_by_its_route(self):

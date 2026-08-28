@@ -123,7 +123,9 @@ def to_growth_milestone(item) -> models.GrowthMilestone:
     )
 
 
-async def _range_milestones(*, user_id: str, since: date, until: date) -> list[models.GrowthMilestone]:
+async def _range_milestones(
+    *, user_id: str, since: date, until: date
+) -> list[models.GrowthMilestone]:
     """What the learner unlocked inside the trend window.
 
     Scoped to the same `since`/`until` as `points`, so the list beneath the chart cannot describe a
@@ -444,16 +446,12 @@ async def get_subject_insight(
     """
     from . import growth_narrative, narrative_cache
 
-    detail = await get_subject_detail(
-        user_id=user_id, course_id=course_id, range_=range_, now=now
-    )
+    detail = await get_subject_detail(user_id=user_id, course_id=course_id, range_=range_, now=now)
     locked = await narrative_cache.plus_gate(
         user_id, reason="Subject insight and recommendations require Maigie Plus"
     )
     if locked is not None:
-        return models.SubjectInsightResponse(
-            course_id=course_id, range=detail.range, locked=locked
-        )
+        return models.SubjectInsightResponse(course_id=course_id, range=detail.range, locked=locked)
 
     reason, label, target = growth_narrative.choose_next_step(detail)
     skeleton = growth_narrative.build_subject_skeleton(detail)

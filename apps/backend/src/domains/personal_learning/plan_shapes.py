@@ -42,8 +42,7 @@ PLAN_SHAPES: list[dict[str, Any]] = [
                 "id": "foundations",
                 "title": "Close the foundations gap",
                 "description": (
-                    "Audit current knowledge and strengthen the concepts the role "
-                    "depends on."
+                    "Audit current knowledge and strengthen the concepts the role " "depends on."
                 ),
                 "duration": "Week 1-2",
                 "outcomes": ["Skill baseline", "Core concept refresh", "Weekly recall"],
@@ -51,9 +50,7 @@ PLAN_SHAPES: list[dict[str, Any]] = [
             {
                 "id": "deliberate-practice",
                 "title": "Build through deliberate practice",
-                "description": (
-                    "Turn understanding into repeatable skill with focused exercises."
-                ),
+                "description": ("Turn understanding into repeatable skill with focused exercises."),
                 "duration": "Week 3-5",
                 "outcomes": ["Guided practice", "Feedback loops", "Weak-area reviews"],
             },
@@ -81,9 +78,7 @@ PLAN_SHAPES: list[dict[str, Any]] = [
         "id": "skill-mastery",
         "title": "Master a complex skill",
         "category": "Skill development",
-        "description": (
-            "Move from fragmented knowledge to confident, independent application."
-        ),
+        "description": ("Move from fragmented knowledge to confident, independent application."),
         "defaultTitle": "System design mastery",
         "defaultOutcome": (
             "Design scalable systems independently and explain architecture trade-offs "
@@ -130,9 +125,7 @@ PLAN_SHAPES: list[dict[str, Any]] = [
         "id": "portfolio",
         "title": "Complete a meaningful project",
         "category": "Portfolio outcome",
-        "description": (
-            "Organize learning around a project you can finish, explain, and share."
-        ),
+        "description": ("Organize learning around a project you can finish, explain, and share."),
         "defaultTitle": "Portfolio project launch",
         "defaultOutcome": (
             "Ship a polished portfolio project that demonstrates research, execution, "
@@ -149,9 +142,7 @@ PLAN_SHAPES: list[dict[str, Any]] = [
             {
                 "id": "build",
                 "title": "Build the core",
-                "description": (
-                    "Create the essential experience in small, reviewable increments."
-                ),
+                "description": ("Create the essential experience in small, reviewable increments."),
                 "duration": "Week 2-4",
                 "outcomes": ["Core workflow", "Weekly demos", "Decision notes"],
             },
@@ -167,9 +158,7 @@ PLAN_SHAPES: list[dict[str, Any]] = [
             {
                 "id": "publish",
                 "title": "Publish and reflect",
-                "description": (
-                    "Package the result, share it, and capture the next growth edge."
-                ),
+                "description": ("Package the result, share it, and capture the next growth edge."),
                 "duration": "Week 6",
                 "outcomes": ["Published project", "Case study", "Reflection"],
             },
@@ -179,9 +168,7 @@ PLAN_SHAPES: list[dict[str, Any]] = [
         "id": "habit",
         "title": "Build a consistent practice",
         "category": "Learning habit",
-        "description": (
-            "Create a sustainable rhythm for a subject that rewards regular practice."
-        ),
+        "description": ("Create a sustainable rhythm for a subject that rewards regular practice."),
         "defaultTitle": "Daily language practice",
         "defaultOutcome": (
             "Build a consistent practice rhythm and use the skill comfortably in "
@@ -191,18 +178,14 @@ PLAN_SHAPES: list[dict[str, Any]] = [
             {
                 "id": "start",
                 "title": "Make starting easy",
-                "description": (
-                    "Define a small repeatable session and remove common friction."
-                ),
+                "description": ("Define a small repeatable session and remove common friction."),
                 "duration": "Week 1",
                 "outcomes": ["Practice cue", "Starter routine", "Simple tracking"],
             },
             {
                 "id": "stabilize",
                 "title": "Stabilize the rhythm",
-                "description": (
-                    "Repeat the routine and adjust the load before increasing it."
-                ),
+                "description": ("Repeat the routine and adjust the load before increasing it."),
                 "duration": "Week 2-3",
                 "outcomes": ["Consistent sessions", "Weekly review", "Recovery plan"],
             },
@@ -216,9 +199,7 @@ PLAN_SHAPES: list[dict[str, Any]] = [
             {
                 "id": "sustain",
                 "title": "Create a sustainable system",
-                "description": (
-                    "Turn the temporary plan into an adaptable long-term practice."
-                ),
+                "description": ("Turn the temporary plan into an adaptable long-term practice."),
                 "duration": "Week 6",
                 "outcomes": ["Maintenance plan", "Progress review", "Next milestone"],
             },

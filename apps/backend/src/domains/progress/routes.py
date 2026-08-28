@@ -168,9 +168,7 @@ async def derive_goals(current_user: CurrentUser):
     has a goal is never given another one.
     """
     goals = await goal_derivation_service.derive_goals_for_user(current_user.id)
-    return models.DerivedGoalsResponse(
-        goals=await _goal_responses(goals), created=len(goals)
-    )
+    return models.DerivedGoalsResponse(goals=await _goal_responses(goals), created=len(goals))
 
 
 @router.get("/goals/summary", response_model=models.GoalSummaryResponse)
@@ -238,9 +236,7 @@ async def update_goal(goal_id: str, body: models.GoalUpdate, current_user: Curre
 
 
 @router.post("/goals/{goal_id}/nudge-answer", response_model=models.GoalResponse)
-async def answer_goal_nudge(
-    goal_id: str, body: models.GoalNudgeAnswer, current_user: CurrentUser
-):
+async def answer_goal_nudge(goal_id: str, body: models.GoalNudgeAnswer, current_user: CurrentUser):
     """Answer the nightly pass: keep going, set this aside, or it is already done.
 
     The reply is stored against the action it answers, which is what finally closes the loop — until now the
@@ -304,9 +300,7 @@ async def get_goal_history(
     rows = await goal_snapshot_service.list_history(
         user_id=current_user.id, goal_id=goal_id, since=since, until=until
     )
-    first = await goal_snapshot_service.first_captured_on(
-        user_id=current_user.id, goal_id=goal_id
-    )
+    first = await goal_snapshot_service.first_captured_on(user_id=current_user.id, goal_id=goal_id)
 
     return models.GoalProgressHistoryResponse(
         goalId=goal_id,
@@ -424,9 +418,7 @@ async def get_goal_momentum(
     )
     # Asked of the goal's whole history, not of the window: a learner who worked through their plan two
     # months ago must not be told completion is "not tracked yet".
-    tracked = await goal_metrics.completion_ever_recorded(
-        user_id=current_user.id, goal_id=goal_id
-    )
+    tracked = await goal_metrics.completion_ever_recorded(user_id=current_user.id, goal_id=goal_id)
 
     return models.GoalMomentumResponse(
         goalId=goal_id,
@@ -617,9 +609,7 @@ async def get_agenda(
 
     placed = [entry for entry in entries if not entry.timed]
     basis = (
-        "learner"
-        if any(entry.placement == "preferred_window" for entry in placed)
-        else "default"
+        "learner" if any(entry.placement == "preferred_window" for entry in placed) else "default"
     )
 
     return models.AgendaResponse(
@@ -648,12 +638,8 @@ async def get_agenda(
     )
 
 
-@router.post(
-    "/schedule/agenda/accept", response_model=models.StudyBlockResponse, status_code=201
-)
-async def accept_agenda_placement(
-    current_user: CurrentUser, body: models.AgendaAcceptRequest
-):
+@router.post("/schedule/agenda/accept", response_model=models.StudyBlockResponse, status_code=201)
+async def accept_agenda_placement(current_user: CurrentUser, body: models.AgendaAcceptRequest):
     """Turn a suggested placement into a real commitment.
 
     Until this is called, a placement is a computed suggestion and the learner owes it nothing. Accepting

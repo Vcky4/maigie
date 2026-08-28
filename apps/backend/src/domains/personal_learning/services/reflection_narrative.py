@@ -262,7 +262,7 @@ def _as_dict(value: Any) -> dict:
 
 
 # Sentence terminators, plus the closers a quoted sentence can legitimately end on.
-_SENTENCE_END = ('.', '!', '?', '"', "'", '”', '’', '…')
+_SENTENCE_END = (".", "!", "?", '"', "'", "”", "’", "…")
 
 
 def _finished_sentence(value: Any) -> str | None:

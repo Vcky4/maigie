@@ -59,7 +59,9 @@ def _call_sites() -> list[tuple[str, str, str, int]]:
     for path in SRC.rglob("*.py"):
         try:
             tree = ast.parse(path.read_text(encoding="utf-8-sig"))
-        except SyntaxError:  # pragma: no cover - a file that does not parse is another test's problem
+        except (
+            SyntaxError
+        ):  # pragma: no cover - a file that does not parse is another test's problem
             continue
 
         dotted = ".".join(path.relative_to(SRC.parent).with_suffix("").parts)
@@ -135,9 +137,15 @@ LISTENERS_WITHOUT_AN_EMITTER: dict[str, str] = {
 #:   `update_progress` read too.
 EMITTERS_WITHOUT_A_LISTENER: dict[str, tuple[str, str]] = {
     # --- fire from real code paths ---
-    "billing.credits_purchased": ("fires", "Emitted inline by `credit_service` on a real purchase."),
+    "billing.credits_purchased": (
+        "fires",
+        "Emitted inline by `credit_service` on a real purchase.",
+    ),
     "billing.subscription_cancelled": ("fires", "Emitted inline by `subscription_service`."),
-    "billing.referral_linked": ("fires", "Emitted inline by `identity.services` when a referral lands."),
+    "billing.referral_linked": (
+        "fires",
+        "Emitted inline by `identity.services` when a referral lands.",
+    ),
     "classroom.created": ("fires", "Emitted inline by `classroom_service`."),
     "classroom.session_started": ("fires", "Emitted inline by `session_service`."),
     "space.created": ("fires", "Emitted by `space_service` as well as the wrapper."),
@@ -202,9 +210,9 @@ class TestTheEmitterInventoryIsHonest:
         emitted, listened = _event_names()
 
         resolved = sorted(name for name in EMITTERS_WITHOUT_A_LISTENER if name in listened)
-        assert not resolved, (
-            f"These have listeners now and should be removed from EMITTERS_WITHOUT_A_LISTENER: {resolved}"
-        )
+        assert (
+            not resolved
+        ), f"These have listeners now and should be removed from EMITTERS_WITHOUT_A_LISTENER: {resolved}"
 
     def test_the_inventory_only_names_emitted_events(self):
         emitted, _listened = _event_names()
@@ -306,9 +314,7 @@ class TestEventNamesComeFromOneList:
     def test_every_call_site_resolves_to_a_known_constant(self):
         """Catches `SomeEvents.MISPELLED`, which resolves to nothing."""
         unresolved = [
-            (kind, module, lineno)
-            for kind, module, name, lineno in _call_sites()
-            if name is None
+            (kind, module, lineno) for kind, module, name, lineno in _call_sites() if name is None
         ]
         assert not unresolved, (
             f"These emit/listen sites name something that is not a constant in shared/events/types: "
@@ -334,7 +340,9 @@ class TestEventNamesComeFromOneList:
         passes vacuously — which is exactly how a census test becomes decoration."""
         sites = _call_sites()
 
-        assert len(sites) >= 45, f"only found {len(sites)} emit/listen sites; the resolver has drifted"
+        assert (
+            len(sites) >= 45
+        ), f"only found {len(sites)} emit/listen sites; the resolver has drifted"
         assert any(kind == "emit" for kind, _m, _n, _l in sites)
         assert any(kind == "listen" for kind, _m, _n, _l in sites)
 
@@ -356,13 +364,14 @@ class TestRegistration:
         register_handlers()
 
         for name in listened:
-            assert bus.get_handler_count(name) > 0, (
-                f"`{name}` has a @listen in the source but no handler registered at runtime"
-            )
+            assert (
+                bus.get_handler_count(name) > 0
+            ), f"`{name}` has a @listen in the source but no handler registered at runtime"
 
     def test_the_runtime_count_matches_the_source(self):
         """Ties the two together, so a handler that is registered twice — or a module imported for a
-        side effect somewhere else as well — shows up as a mismatch rather than a duplicate dispatch."""
+        side effect somewhere else as well — shows up as a mismatch rather than a duplicate dispatch.
+        """
         _emitted, listened = _event_names()
         register_handlers()
 
@@ -452,7 +461,9 @@ class TestTopicCompletionIsActedOn:
             "src.domains.progress.services.spaced_repetition_impl.create_review_item_for_topic",
             _boom,
         ):
-            assert await listeners.schedule_first_review({"user_id": "u1", "topic_id": "t1"}) is None
+            assert (
+                await listeners.schedule_first_review({"user_id": "u1", "topic_id": "t1"}) is None
+            )
 
 
 def _listener_source() -> str:
@@ -499,7 +510,8 @@ class TestStreakMilestones:
             created.append(kwargs)
 
         with patch(
-            "src.domains.personal_learning.services.notification_service.create_notification", _create
+            "src.domains.personal_learning.services.notification_service.create_notification",
+            _create,
         ):
             await events.handle_streak_updated({"user_id": "u1", "streak_count": streak})
 
@@ -519,7 +531,8 @@ class TestStreakMilestones:
             created.append(kwargs)
 
         with patch(
-            "src.domains.personal_learning.services.notification_service.create_notification", _create
+            "src.domains.personal_learning.services.notification_service.create_notification",
+            _create,
         ):
             await events.handle_streak_updated({"user_id": "u1", "streak_count": streak})
 

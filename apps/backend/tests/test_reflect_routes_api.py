@@ -347,9 +347,7 @@ class TestGrowthRoutes:
         self, client: AsyncClient, auth_headers: dict[str, str]
     ):
         """`byType` shares the paged read's filters, so its counts reconcile with `total`."""
-        response = await client.get(
-            f"{LEARNING}/activity-feed/daily-counts", headers=auth_headers
-        )
+        response = await client.get(f"{LEARNING}/activity-feed/daily-counts", headers=auth_headers)
 
         assert response.status_code == 200, response.text
         body = response.json()

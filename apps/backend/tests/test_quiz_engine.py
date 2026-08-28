@@ -19,6 +19,8 @@ os.environ.setdefault("SKIP_DB_FIXTURE", "1")
 from datetime import UTC, datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from src.domains.personal_learning import models
 from src.domains.personal_learning.services import quiz_engine
 from src.domains.personal_learning.services.quiz_engine import (
@@ -29,6 +31,7 @@ from src.domains.personal_learning.services.quiz_engine import (
     _suggest_next_step,
     _usable_question,
 )
+from src.shared.exceptions import ConflictError, MaigieError
 
 NOW = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
 
@@ -1099,3 +1102,75 @@ def test_a_quiz_across_all_topics_maps_a_null_topic_id():
 
     assert "topic_id" in mapped
     assert mapped["topic_id"] is None
+
+
+class TestPracticeClosesAfterTheExam:
+    """A preparation whose exam has happened does not start new quizzes.
+
+    Not tidiness. A quiz writes `QuizSession` rows and moves topic mastery, which feeds
+    `averageMasteryPercent` — the readiness figure the post-exam calibration scores against the recorded
+    outcome. Practising afterwards rewrites the prediction after the result is known, which is the one
+    measurement that calibration cannot survive.
+
+    Reads are unaffected, and deliberately so: the topics, the banked questions and the readiness history
+    are the record of work the learner did.
+    """
+
+    @staticmethod
+    def _patch_reads(monkeypatch, status: str, *, topics):
+        async def find_exam_prep(prep_id, user_id, **kwargs):
+            return SimpleNamespace(id=prep_id, user_id=user_id, subject="Statistics", status=status)
+
+        async def list_prep_topics(prep_id, **kwargs):
+            return topics
+
+        async def list_prep_materials(prep_id, **kwargs):
+            return []
+
+        for name, fn in (
+            ("find_exam_prep", find_exam_prep),
+            ("list_prep_topics", list_prep_topics),
+            ("list_prep_materials", list_prep_materials),
+        ):
+            monkeypatch.setattr(
+                f"src.domains.personal_learning.services.quiz_engine.repo.{name}", fn
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["AWAITING_REVIEW", "COMPLETED"])
+    async def test_starting_a_quiz_is_refused(self, monkeypatch, status):
+        topic = SimpleNamespace(id="t-1", title="Probability", mastery_score=40.0)
+        self._patch_reads(monkeypatch, status, topics=[topic])
+
+        with pytest.raises(ConflictError):
+            await quiz_engine.start_quiz(
+                user_id="u-1", prep_id="p-1", mode="FULL_PRACTICE", question_count=2
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["AWAITING_REVIEW", "COMPLETED"])
+    async def test_it_says_the_preparation_is_over_rather_than_asking_for_topics(
+        self, monkeypatch, status
+    ):
+        """Order matters: the status check runs before the "no topics yet" one.
+
+        A finished preparation with no topics would otherwise be told to extract topics first — advice for
+        a step that is itself now refused, which sends the learner around a loop.
+        """
+        self._patch_reads(monkeypatch, status, topics=[])
+
+        with pytest.raises(ConflictError):
+            await quiz_engine.start_quiz(
+                user_id="u-1", prep_id="p-1", mode="FULL_PRACTICE", question_count=2
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_preparation_before_its_exam_still_reaches_the_topics_check(self, monkeypatch):
+        """The guard is narrow: an in-progress preparation behaves exactly as it did."""
+        self._patch_reads(monkeypatch, "IN_PROGRESS", topics=[])
+
+        with pytest.raises(MaigieError) as excinfo:
+            await quiz_engine.start_quiz(
+                user_id="u-1", prep_id="p-1", mode="FULL_PRACTICE", question_count=2
+            )
+        assert excinfo.value.code == "PREP_TOPICS_REQUIRED"

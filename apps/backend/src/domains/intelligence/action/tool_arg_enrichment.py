@@ -43,9 +43,8 @@ async def _find_note(note_id: str):
 
     factory = get_session_factory()
     async with factory() as session:
-        return (
-            await session.execute(select(Note).where(Note.id == note_id))
-        ).scalar_one_or_none()
+        return (await session.execute(select(Note).where(Note.id == note_id))).scalar_one_or_none()
+
 
 _ID_ALIASES: tuple[tuple[str, str], ...] = (
     ("course_id", "courseId"),

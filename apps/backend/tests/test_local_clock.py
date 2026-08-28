@@ -56,9 +56,12 @@ class TestParsing:
         """The uncomfortable direction, chosen deliberately. A corrupt value means a message at a bad hour,
         which is visible and complainable; the alternative is one bad string silencing every notification for
         that learner with nothing reporting it."""
-        assert is_within_quiet_hours(
-            datetime(2026, 8, 27, 23, 0, tzinfo=UTC), LAGOS, parse_hhmm("garbage"), QUIET_TO
-        ) is False
+        assert (
+            is_within_quiet_hours(
+                datetime(2026, 8, 27, 23, 0, tzinfo=UTC), LAGOS, parse_hhmm("garbage"), QUIET_TO
+            )
+            is False
+        )
 
 
 class TestQuietHoursAreLocal:

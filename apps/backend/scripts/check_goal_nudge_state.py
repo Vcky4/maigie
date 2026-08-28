@@ -36,7 +36,9 @@ async def main() -> None:
     # naive-as-UTC, which is the same convention `goal_metrics._utc` applies on the read side.
     naive_now = now.replace(tzinfo=None)
     async with engine.connect() as conn:
-        print("--- goals the ladder would consider (active, dated, deadline within 7 days or past) ---")
+        print(
+            "--- goals the ladder would consider (active, dated, deadline within 7 days or past) ---"
+        )
         rows = (
             await conn.execute(
                 text(
@@ -51,7 +53,9 @@ async def main() -> None:
             print("  none")
         for gid, title, status, target, prep_id, kind, progress, created in rows:
             authority = "external" if prep_id else "learner"
-            overdue = "OVERDUE" if target and target.replace(tzinfo=None) < naive_now else "due soon"
+            overdue = (
+                "OVERDUE" if target and target.replace(tzinfo=None) < naive_now else "due soon"
+            )
             snaps = (
                 await conn.execute(
                     text(
@@ -70,9 +74,11 @@ async def main() -> None:
             predicted = (
                 "nothing (an external deadline that has passed is the post-exam review's job)"
                 if authority == "external" and target and target.replace(tzinfo=None) < naive_now
-                else "warned (external, due soon)"
-                if authority == "external"
-                else "extended, or asked_to_confirm if the rate cannot be measured"
+                else (
+                    "warned (external, due soon)"
+                    if authority == "external"
+                    else "extended, or asked_to_confirm if the rate cannot be measured"
+                )
             )
             print(f"    predicted action: {predicted}")
 

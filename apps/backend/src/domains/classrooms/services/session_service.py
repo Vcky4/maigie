@@ -1,4 +1,4 @@
-﻿"""
+"""
 Learning Session management — schedule, start, complete, cancel.
 """
 

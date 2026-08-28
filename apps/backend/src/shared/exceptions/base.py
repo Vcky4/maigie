@@ -69,10 +69,21 @@ class ForbiddenError(MaigieError):
 
 
 class ConflictError(MaigieError):
-    """Resource conflict (409)."""
+    """Resource conflict (409).
 
-    def __init__(self, message: str = "Resource conflict", detail: str | None = None):
-        super().__init__(message, status.HTTP_409_CONFLICT, "CONFLICT", detail)
+    `code` is overridable, defaulting to the generic `CONFLICT`. A 409 usually means "the thing you asked for
+    is not possible in the state this resource is in", and a client that wants to *explain* that state needs
+    to know which state — the generic code says only that something conflicted. Existing callers keep
+    `CONFLICT`; new ones can name the rule, the way `PREP_TOPICS_REQUIRED` already does.
+    """
+
+    def __init__(
+        self,
+        message: str = "Resource conflict",
+        detail: str | None = None,
+        code: str = "CONFLICT",
+    ):
+        super().__init__(message, status.HTTP_409_CONFLICT, code, detail)
 
 
 class SubscriptionLimitError(MaigieError):

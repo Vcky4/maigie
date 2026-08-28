@@ -326,9 +326,7 @@ def place_pending(
 _within_quiet_hours = is_within_quiet_hours
 
 
-async def get_agenda(
-    *, user_id: str, since: datetime, until: datetime
-) -> list[AgendaEntry]:
+async def get_agenda(*, user_id: str, since: datetime, until: datetime) -> list[AgendaEntry]:
     """Everything on the learner's days between two instants, timed work first in clock order.
 
     **Read sequentially, not gathered.** Four sources across three domains, each opening its own
@@ -674,9 +672,7 @@ async def _read_due_reviews(
         due_at = ensure_utc(batch["dueAt"])
         day = to_learner_local(due_at, timezone_).date()
         count = min(int(batch["count"]), MAX_REVIEW_BATCH)
-        minutes = max(
-            1, (count * flashcard_service.REVIEW_SECONDS_PER_CARD + 59) // 60
-        )
+        minutes = max(1, (count * flashcard_service.REVIEW_SECONDS_PER_CARD + 59) // 60)
         pending.append(
             _Pending(
                 day=day,
@@ -714,11 +710,7 @@ def _review_builder(
             source="review",
             title=f"Review: {deck_title}" if deck_title else "Flashcard review",
             # States the batch, and says so when the queue is longer than one sitting.
-            detail=(
-                f"{count} cards"
-                if total <= count
-                else f"{count} of {total} cards due"
-            ),
+            detail=(f"{count} cards" if total <= count else f"{count} of {total} cards due"),
             start_at=start or fallback,
             end_at=end or (fallback + timedelta(minutes=minutes)),
             minutes=minutes,

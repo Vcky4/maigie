@@ -63,9 +63,11 @@ async def main() -> None:
     async with engine.connect() as conn:
         print("--- preparations the new sweep asked about ---")
         for row in (await conn.execute(text(ASKED))).all():
-            flag = "   <-- COMPLETED AFTER BEING ASKED, NO ANSWER" if (
-                row.status == "COMPLETED" and row.outcomes == 0
-            ) else ""
+            flag = (
+                "   <-- COMPLETED AFTER BEING ASKED, NO ANSWER"
+                if (row.status == "COMPLETED" and row.outcomes == 0)
+                else ""
+            )
             print(
                 f"  {row.status:<16} outcomes={row.outcomes}"
                 f" reminders={row.reviewRemindersSent}"

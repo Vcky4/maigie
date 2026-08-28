@@ -353,7 +353,7 @@ class TopicIllustration(Base):
         # raises instead of returning a blank diagram.
         CheckConstraint(
             "(mermaid IS NOT NULL AND mermaid <> '') OR"
-            " (\"displayMath\" IS NOT NULL AND \"displayMath\" <> '')",
+            ' ("displayMath" IS NOT NULL AND "displayMath" <> \'\')',
             name="TopicIllustration_has_content",
         ),
     )

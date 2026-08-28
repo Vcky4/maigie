@@ -169,9 +169,7 @@ def local_day_bounds(instant: datetime, timezone: LearnerTimezone) -> tuple[date
     start_local = local.replace(hour=0, minute=0, second=0, microsecond=0)
     # Stepped as a local wall-clock day, then re-truncated, so a day containing a daylight-saving
     # transition is still exactly one local day rather than 23 or 25 hours from midnight.
-    end_local = (start_local + timedelta(days=1)).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    end_local = (start_local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     return start_local.astimezone(UTC), end_local.astimezone(UTC)
 
 

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Planning service â€” schedule generation and learning recommendations.
 
 Plans learning activities based on user goals, progress, and behaviour.

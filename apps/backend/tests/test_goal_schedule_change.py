@@ -143,7 +143,8 @@ class TestDeriveScheduleHistory:
     @pytest.mark.asyncio
     async def test_a_deadline_pulled_earlier_is_not_an_extension(self):
         """A learner bringing a deadline forward has not bought themselves room, and counting it would
-        make the one number that means "this goal has been given more time" mean "this goal was edited"."""
+        make the one number that means "this goal has been given more time" mean "this goal was edited".
+        """
         rows = [_change(NOW + timedelta(days=14), NOW)]
         with patch.object(goal_metrics, "get_session_factory", lambda: lambda: _rows_session(rows)):
             history = await goal_metrics.derive_schedule_history(["goal-1"])
@@ -269,7 +270,9 @@ class TestRecordDateChange:
 
         with patch.object(goal_schedule_log.progress_repo, "create_schedule_change", _create):
             await goal_schedule_log.record_date_change(
-                goal=_goal(target_date=NOW), new_date=NOW + timedelta(days=30), reason="learner_edited"
+                goal=_goal(target_date=NOW),
+                new_date=NOW + timedelta(days=30),
+                reason="learner_edited",
             )
 
         assert len(recorded) == 1
@@ -371,7 +374,9 @@ class TestRecordDateChange:
 
         with patch.object(goal_schedule_log.progress_repo, "create_schedule_change", _boom):
             await goal_schedule_log.record_date_change(
-                goal=_goal(target_date=NOW), new_date=NOW + timedelta(days=1), reason="learner_edited"
+                goal=_goal(target_date=NOW),
+                new_date=NOW + timedelta(days=1),
+                reason="learner_edited",
             )
 
 
@@ -422,9 +427,9 @@ class TestTheReasonTokens:
             for match in re.finditer(r'reason="([a-z_]+)"', path.read_text()):
                 written.add(match.group(1))
 
-        assert set(GoalScheduleChange.REASONS) <= written, (
-            f"tokens with no writer: {sorted(set(GoalScheduleChange.REASONS) - written)}"
-        )
+        assert (
+            set(GoalScheduleChange.REASONS) <= written
+        ), f"tokens with no writer: {sorted(set(GoalScheduleChange.REASONS) - written)}"
 
 
 # ===========================================================================

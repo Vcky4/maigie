@@ -186,9 +186,7 @@ async def test_a_recommendation_becomes_a_row_with_all_four_columns_set(repo, re
     assert stored.recommendation_score == 0.9
     assert stored.recommendation_source == "gemini_grounded"
     # The column `create_resource` did not even map, so this fails twice over on the old code.
-    assert stored.recommendation_reason == (
-        "Covers the exact shortest-path case you asked about."
-    )
+    assert stored.recommendation_reason == ("Covers the exact shortest-path case you asked about.")
 
 
 async def test_the_stored_url_is_the_resolved_one_not_the_proposed_one(repo, recommend):
@@ -268,9 +266,7 @@ async def test_an_item_with_no_url_is_discarded_rather_than_stored_blank(repo, r
 
 
 async def test_recommending_the_same_page_twice_does_not_store_it_twice(repo, recommend):
-    payload = _payload(
-        {"title": "Dijkstra", "url": "https://example.com/d", "score": 0.9}
-    )
+    payload = _payload({"title": "Dijkstra", "url": "https://example.com/d", "score": 0.9})
     reachable = {"https://example.com/d": "https://example.com/d"}
 
     first = await recommend(text=payload, reachable=reachable)(
@@ -661,9 +657,9 @@ async def test_the_search_prompt_demands_no_output_format(repo, recommend):
 
     search_prompt = recommend.prompts["search"].lower()
 
-    assert "json" not in search_prompt, (
-        "asking the search call for JSON makes Gemini skip the search; format in the second call"
-    )
+    assert (
+        "json" not in search_prompt
+    ), "asking the search call for JSON makes Gemini skip the search; format in the second call"
     assert "return only" not in search_prompt
     # And it must still be a search request that constrains what may be returned.
     assert "search the web" in search_prompt
@@ -692,7 +688,11 @@ async def test_the_format_prompt_transcribes_the_grounded_text(repo, recommend):
 
 async def test_an_empty_search_reply_does_not_reach_the_formatting_call(repo, recommend):
     """No point transcribing nothing, and a formatting call on an empty list invites invention."""
-    run = recommend(text=_payload({"title": "T", "url": "https://example.com/t"}), reachable={}, search_text="   ")
+    run = recommend(
+        text=_payload({"title": "T", "url": "https://example.com/t"}),
+        reachable={},
+        search_text="   ",
+    )
 
     result = await run(user_id=USER, query="x", limit=5)
 

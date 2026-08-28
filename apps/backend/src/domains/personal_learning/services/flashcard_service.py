@@ -859,9 +859,7 @@ async def list_decks(
     so a note page can ask for "the deck for this note" and get it with the aggregates
     already attached — one request rather than a lookup followed by a count.
     """
-    rows = await repo.list_decks_with_stats(
-        user_id, origin_type=origin_type, origin_id=origin_id
-    )
+    rows = await repo.list_decks_with_stats(user_id, origin_type=origin_type, origin_id=origin_id)
     return [_deck_payload(row) for row in rows]
 
 

@@ -260,9 +260,7 @@ async def test_search_is_case_insensitive(client: AsyncClient, auth_headers):
     await _create_course(client, auth_headers, title=f"Uppercase {marker.upper()}")
 
     payload = (
-        await client.get(
-            f"{BASE}/courses", params={"search": marker.lower()}, headers=auth_headers
-        )
+        await client.get(f"{BASE}/courses", params={"search": marker.lower()}, headers=auth_headers)
     ).json()
 
     assert payload["total"] == 1
@@ -297,9 +295,7 @@ async def test_difficulty_filter_is_case_insensitive_on_input(client: AsyncClien
     course = await _create_course(client, auth_headers, difficulty="ADVANCED")
 
     payload = (
-        await client.get(
-            f"{BASE}/courses", params={"difficulty": "advanced"}, headers=auth_headers
-        )
+        await client.get(f"{BASE}/courses", params={"difficulty": "advanced"}, headers=auth_headers)
     ).json()
 
     assert course["id"] in [item["id"] for item in payload["items"]]
@@ -740,7 +736,7 @@ async def test_the_library_card_carries_category_and_tags(client: AsyncClient, a
 
 
 async def test_an_unrated_course_reports_null_rather_than_zero(client: AsyncClient, auth_headers):
-    """"Nobody has rated this" and "everybody rated it zero" are different statements, and only one is
+    """ "Nobody has rated this" and "everybody rated it zero" are different statements, and only one is
     ever true of a new course."""
     created = await _create_course(client, auth_headers)
     detail = await client.get(f"{BASE}/courses/{created['id']}", headers=auth_headers)
@@ -762,7 +758,9 @@ async def test_rating_a_course_then_changing_it_updates_rather_than_adds(
     assert first.status_code == 200, first.text
     assert first.json() == {"average": 5.0, "count": 1, "yourRating": 5}
 
-    changed = await client.put(path, json={"value": 3, "comment": "on reflection"}, headers=auth_headers)
+    changed = await client.put(
+        path, json={"value": 3, "comment": "on reflection"}, headers=auth_headers
+    )
     assert changed.json() == {"average": 3.0, "count": 1, "yourRating": 3}
 
     fetched = await client.get(path, headers=auth_headers)
@@ -904,11 +902,11 @@ async def test_every_field_sent_to_course_create_is_stored(client: AsyncClient, 
 # ---------------------------------------------------------------------------
 
 
-async def _module_of(client: AsyncClient, headers: dict[str, str], course_id: str, **overrides) -> dict:
+async def _module_of(
+    client: AsyncClient, headers: dict[str, str], course_id: str, **overrides
+) -> dict:
     body = {"title": "Module", "order": 1, **overrides}
-    response = await client.post(
-        f"{BASE}/courses/{course_id}/modules", json=body, headers=headers
-    )
+    response = await client.post(f"{BASE}/courses/{course_id}/modules", json=body, headers=headers)
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -1057,15 +1055,11 @@ async def test_archive_then_unarchive_returns_a_course_to_the_library(
     diverge."""
     created = await _create_course(client, auth_headers)
 
-    archived = await client.post(
-        f"{BASE}/courses/{created['id']}/archive", headers=auth_headers
-    )
+    archived = await client.post(f"{BASE}/courses/{created['id']}/archive", headers=auth_headers)
     assert archived.status_code == 200, archived.text
     assert archived.json()["archived"] is True
 
-    restored = await client.post(
-        f"{BASE}/courses/{created['id']}/unarchive", headers=auth_headers
-    )
+    restored = await client.post(f"{BASE}/courses/{created['id']}/unarchive", headers=auth_headers)
     assert restored.status_code == 200, restored.text
     assert restored.json()["archived"] is False
 
@@ -1136,7 +1130,9 @@ async def test_the_free_tier_cap_is_checked_before_an_outline_is_generated(
     )
 
     assert response.status_code == 403, response.text
-    assert generated is False, "the outline was generated despite the learner being over their limit"
+    assert (
+        generated is False
+    ), "the outline was generated despite the learner being over their limit"
 
 
 async def test_the_course_cap_returns_the_shared_upgrade_payload(

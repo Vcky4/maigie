@@ -170,9 +170,37 @@ def estimate_turn_tokens(*, message: str, context: Any = None, history: Any = No
 #: learner is waiting on, and "hi" has nothing to retrieve against.
 _TRIVIAL_MESSAGES = frozenset(
     {
-        "hi", "hello", "hey", "thanks", "thank you", "ok", "okay", "yes", "no", "bye", "goodbye",
-        "help", "?", "cool", "great", "nice", "good", "bad", "sure", "yep", "nope", "what", "why",
-        "how", "when", "where", "who", "hm", "hmm", "ah", "oh",
+        "hi",
+        "hello",
+        "hey",
+        "thanks",
+        "thank you",
+        "ok",
+        "okay",
+        "yes",
+        "no",
+        "bye",
+        "goodbye",
+        "help",
+        "?",
+        "cool",
+        "great",
+        "nice",
+        "good",
+        "bad",
+        "sure",
+        "yep",
+        "nope",
+        "what",
+        "why",
+        "how",
+        "when",
+        "where",
+        "who",
+        "hm",
+        "hmm",
+        "ah",
+        "oh",
     }
 )
 
@@ -216,7 +244,9 @@ def relevant_retrieved_items(results: list[dict[str, Any]] | None) -> list[str]:
             continue
         data = item.get("data") or {}
         object_type = item.get("objectType", "unknown")
-        lines.append(f"- {object_type.upper()}: {data.get('title', 'Untitled')} (ID: {item.get('objectId')})")
+        lines.append(
+            f"- {object_type.upper()}: {data.get('title', 'Untitled')} (ID: {item.get('objectId')})"
+        )
     return lines
 
 
@@ -226,10 +256,32 @@ def relevant_retrieved_items(results: list[dict[str, Any]] | None) -> list[str]:
 
 #: Phrases that mean "show me my data" rather than "use my data to do something".
 _EXPLICIT_VIEW_PHRASES = (
-    "show my", "list my", "view my", "see my", "what are my", "show me my", "display my", "get my",
-    "fetch my", "my courses", "my goals", "my schedule", "my notes", "my resources", "what courses",
-    "what goals", "what schedule", "what notes", "show courses", "show goals", "show schedule",
-    "show notes", "list courses", "list goals", "list schedule", "list notes",
+    "show my",
+    "list my",
+    "view my",
+    "see my",
+    "what are my",
+    "show me my",
+    "display my",
+    "get my",
+    "fetch my",
+    "my courses",
+    "my goals",
+    "my schedule",
+    "my notes",
+    "my resources",
+    "what courses",
+    "what goals",
+    "what schedule",
+    "what notes",
+    "show courses",
+    "show goals",
+    "show schedule",
+    "show notes",
+    "list courses",
+    "list goals",
+    "list schedule",
+    "list notes",
 )
 
 
@@ -497,9 +549,7 @@ VOLATILE_CONTEXT_KEYS = frozenset(
 _CONTEXT_CACHE_IDS = ("noteId", "topicId", "courseId", "reviewItemId")
 
 
-def context_cache_key_parts(
-    *, user_id: str, context: dict[str, Any] | None
-) -> list[str] | None:
+def context_cache_key_parts(*, user_id: str, context: dict[str, Any] | None) -> list[str] | None:
     """The cache key parts for an enriched context, or `None` when there is nothing worth caching.
 
     Returns parts rather than a formatted key so this stays pure and the caller keeps ownership of the
@@ -532,9 +582,7 @@ def cacheable_context(enriched: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in enriched.items() if key not in VOLATILE_CONTEXT_KEYS}
 
 
-def merge_cached_context(
-    context: dict[str, Any], cached: dict[str, Any] | None
-) -> dict[str, Any]:
+def merge_cached_context(context: dict[str, Any], cached: dict[str, Any] | None) -> dict[str, Any]:
     """Overlay a cached enrichment onto the context the client just sent.
 
     **The client's context wins on conflict, and the order is deliberate.** The cached half holds
@@ -603,9 +651,7 @@ _SPACE_ROOM_PAGE_CONTEXT = (
 )
 
 #: Appended when the learner is replying to a specific room message.
-_SPACE_ROOM_REPLY_SUFFIX = (
-    " When replyContext is present, respond to that specific room message."
-)
+_SPACE_ROOM_REPLY_SUFFIX = " When replyContext is present, respond to that specific room message."
 
 
 def space_room_page_context(*, has_reply_target: bool = False) -> str:

@@ -63,9 +63,9 @@ def test_saved_resource_tags_is_a_json_column_not_an_array():
     from src.domains.personal_learning.db_models import SavedResource
 
     column = SavedResource.__table__.c.tags
-    assert isinstance(column.type, JSON), (
-        f"tags is {column.type!r}; the tag queries are written for a JSON column"
-    )
+    assert isinstance(
+        column.type, JSON
+    ), f"tags is {column.type!r}; the tag queries are written for a JSON column"
     assert column.nullable is True
 
 
@@ -92,7 +92,10 @@ def test_items_for_tag_query_matches_json_not_an_array():
 @pytest.mark.parametrize(
     "func_path",
     [
-        ("src.domains.personal_learning.repository", "PersonalLearningRepository.find_cross_type_tags"),
+        (
+            "src.domains.personal_learning.repository",
+            "PersonalLearningRepository.find_cross_type_tags",
+        ),
         ("src.domains.personal_learning.services.collection_service", "_find_items_for_tag"),
     ],
 )

@@ -336,9 +336,11 @@ async def run_gemini_chat_with_tools(
             stream_payload = message_content if iteration == 1 else tool_results
             llm_start = time.perf_counter()
             try:
-                response, streamed_turn_text, streamed_function_calls = (
-                    await _send_streaming_request(stream_payload)
-                )
+                (
+                    response,
+                    streamed_turn_text,
+                    streamed_function_calls,
+                ) = await _send_streaming_request(stream_payload)
             except StreamConsumerDisconnected as disc:
                 streamed_turn_text = disc.partial_turn_text
                 streamed_function_calls = []

@@ -309,7 +309,9 @@ async def test_a_note_already_up_to_date_is_not_regenerated(
     """
     session.note_id = "note-1"
     session.turns_at_last_note = conversation.turn_count
-    note_world.existing_note = SimpleNamespace(id="note-1", title="Induction", content="- Anchored.")
+    note_world.existing_note = SimpleNamespace(
+        id="note-1", title="Induction", content="- Anchored."
+    )
 
     with pytest.raises(ValidationError):
         await notes.save_session_note(user, session, conversation)
@@ -511,9 +513,7 @@ async def test_another_learners_session_is_refused(finalise_world, user, convers
 
 
 @pytest.mark.asyncio
-async def test_a_conversation_too_short_to_write_about_ends_quietly(
-    finalise_world, user, session
-):
+async def test_a_conversation_too_short_to_write_about_ends_quietly(finalise_world, user, session):
     """An ordinary ending, not a fault: the learner switched note-taking on and then said very little."""
     session.note_taking = True
     finalise_world.stored_session = session

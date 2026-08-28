@@ -128,17 +128,13 @@ async def check_urls(urls: list[str]) -> dict[str, CheckedUrl]:
             async with semaphore:
                 return await _check_one(client, url)
 
-        results = await asyncio.gather(
-            *(guarded(url) for url in unique), return_exceptions=True
-        )
+        results = await asyncio.gather(*(guarded(url) for url in unique), return_exceptions=True)
 
     checked: dict[str, CheckedUrl] = {}
     for url, result in zip(unique, results, strict=True):
         if isinstance(result, BaseException):
             logger.warning("URL check raised for %s: %s", url, result)
-            checked[url] = CheckedUrl(
-                original=url, resolved=None, status=None, reason="error"
-            )
+            checked[url] = CheckedUrl(original=url, resolved=None, status=None, reason="error")
         else:
             checked[url] = result
     return checked

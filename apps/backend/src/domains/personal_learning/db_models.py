@@ -2155,9 +2155,7 @@ class NarrativeCache(Base, TimestampMixin):
     payload: Mapped[dict] = mapped_column("payload", JSON, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint(
-            "userId", "kind", "entityId", "scope", name="NarrativeCache_key_key"
-        ),
+        UniqueConstraint("userId", "kind", "entityId", "scope", name="NarrativeCache_key_key"),
     )
 
     def __repr__(self) -> str:

@@ -75,7 +75,10 @@ class TestCircuitBreakerHalfOpenState:
             cb.record_failure("openai", "gpt-4o")
 
         # Simulate cooldown elapsed
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=1000.0 + 10.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time",
+            return_value=1000.0 + 10.0,
+        ):
             cb._last_failure_time[cb._key("openai", "gpt-4o")] = 1000.0
             state = cb.get_state("openai", "gpt-4o")
             assert state == CircuitState.HALF_OPEN
@@ -86,7 +89,10 @@ class TestCircuitBreakerHalfOpenState:
             cb.record_failure("openai", "gpt-4o")
 
         # Simulate cooldown elapsed
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=1000.0 + 10.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time",
+            return_value=1000.0 + 10.0,
+        ):
             cb._last_failure_time[cb._key("openai", "gpt-4o")] = 1000.0
             assert cb.should_allow("openai", "gpt-4o") is True
             # Second request should be rejected (only one probe allowed)
@@ -98,7 +104,10 @@ class TestCircuitBreakerHalfOpenState:
             cb.record_failure("openai", "gpt-4o")
 
         # Simulate cooldown elapsed
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=1000.0 + 10.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time",
+            return_value=1000.0 + 10.0,
+        ):
             cb._last_failure_time[cb._key("openai", "gpt-4o")] = 1000.0
             cb.should_allow("openai", "gpt-4o")  # Trigger transition to HALF_OPEN
             cb.record_success("openai", "gpt-4o")
@@ -110,7 +119,10 @@ class TestCircuitBreakerHalfOpenState:
             cb.record_failure("openai", "gpt-4o")
 
         # Simulate cooldown elapsed → transition to HALF_OPEN, then probe fails → back to OPEN
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=1000.0 + 10.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time",
+            return_value=1000.0 + 10.0,
+        ):
             cb._last_failure_time[cb._key("openai", "gpt-4o")] = 1000.0
             cb.should_allow("openai", "gpt-4o")  # Trigger transition to HALF_OPEN
             cb.record_failure("openai", "gpt-4o")
@@ -118,7 +130,9 @@ class TestCircuitBreakerHalfOpenState:
         # Should be back in OPEN state — check with a time that's within the new cooldown
         # record_failure set _last_failure_time to 1010.0 (the mocked time), so we check
         # at 1015.0 which is only 5s later (less than 10s cooldown)
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=1015.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=1015.0
+        ):
             assert cb.get_state("openai", "gpt-4o") == CircuitState.OPEN
 
 
@@ -171,7 +185,9 @@ class TestCircuitBreakerLogging:
 
     def test_logs_warning_on_open_transition(self, caplog):
         cb = CircuitBreaker(failure_threshold=3, cooldown_seconds=10.0)
-        with caplog.at_level("WARNING", logger="src.domains.intelligence.reasoning.llm.circuit_breaker"):
+        with caplog.at_level(
+            "WARNING", logger="src.domains.intelligence.reasoning.llm.circuit_breaker"
+        ):
             for _ in range(3):
                 cb.record_failure("openai", "gpt-4o")
         assert "OPEN" in caplog.text or "open" in caplog.text
@@ -181,8 +197,13 @@ class TestCircuitBreakerLogging:
         for _ in range(3):
             cb.record_failure("openai", "gpt-4o")
 
-        with caplog.at_level("WARNING", logger="src.domains.intelligence.reasoning.llm.circuit_breaker"):
-            with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=1000.0 + 10.0):
+        with caplog.at_level(
+            "WARNING", logger="src.domains.intelligence.reasoning.llm.circuit_breaker"
+        ):
+            with patch(
+                "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time",
+                return_value=1000.0 + 10.0,
+            ):
                 cb._last_failure_time[cb._key("openai", "gpt-4o")] = 1000.0
                 cb.get_state("openai", "gpt-4o")
         assert "half_open" in caplog.text
@@ -192,11 +213,16 @@ class TestCircuitBreakerLogging:
         for _ in range(3):
             cb.record_failure("openai", "gpt-4o")
 
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=1000.0 + 10.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time",
+            return_value=1000.0 + 10.0,
+        ):
             cb._last_failure_time[cb._key("openai", "gpt-4o")] = 1000.0
             cb.should_allow("openai", "gpt-4o")  # Transition to HALF_OPEN
 
-        with caplog.at_level("WARNING", logger="src.domains.intelligence.reasoning.llm.circuit_breaker"):
+        with caplog.at_level(
+            "WARNING", logger="src.domains.intelligence.reasoning.llm.circuit_breaker"
+        ):
             cb.record_success("openai", "gpt-4o")
         assert "closed" in caplog.text
 
@@ -237,12 +263,16 @@ class TestCircuitBreakerRollingWindow:
         """Failures older than the rolling window are evicted and don't trigger OPEN."""
         cb = CircuitBreaker(failure_threshold=3, cooldown_seconds=10.0, rolling_window_seconds=5.0)
         # Record 2 failures at time 100.0
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=100.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=100.0
+        ):
             cb.record_failure("openai", "gpt-4o")
             cb.record_failure("openai", "gpt-4o")
 
         # Record 1 failure at time 106.0 (first 2 are now outside the 5s window)
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=106.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=106.0
+        ):
             cb.record_failure("openai", "gpt-4o")
             # Only 1 failure in window — should still be CLOSED
             assert cb.get_state("openai", "gpt-4o") == CircuitState.CLOSED
@@ -251,11 +281,17 @@ class TestCircuitBreakerRollingWindow:
         """Failures within the rolling window count toward the threshold."""
         cb = CircuitBreaker(failure_threshold=3, cooldown_seconds=10.0, rolling_window_seconds=10.0)
         # Record 3 failures within the window
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=100.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=100.0
+        ):
             cb.record_failure("openai", "gpt-4o")
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=105.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=105.0
+        ):
             cb.record_failure("openai", "gpt-4o")
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=109.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=109.0
+        ):
             cb.record_failure("openai", "gpt-4o")
             # All 3 within 10s window — should be OPEN
             assert cb.get_state("openai", "gpt-4o") == CircuitState.OPEN
@@ -264,25 +300,35 @@ class TestCircuitBreakerRollingWindow:
         """Only failures within the window count; older ones are evicted."""
         cb = CircuitBreaker(failure_threshold=3, cooldown_seconds=10.0, rolling_window_seconds=5.0)
         # Record failures at different times
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=100.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=100.0
+        ):
             cb.record_failure("openai", "gpt-4o")  # Will expire after 105.0
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=101.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=101.0
+        ):
             cb.record_failure("openai", "gpt-4o")  # Will expire after 106.0
         # At time 106.0: cutoff = 101.0, so failure at 100.0 (< 101.0) is evicted,
         # failure at 101.0 (>= 101.0) stays. Plus new one at 106.0 = 2 in window.
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=106.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=106.0
+        ):
             cb.record_failure("openai", "gpt-4o")
             # 2 failures in window (101.0 and 106.0) — not enough for threshold of 3
             assert cb.get_state("openai", "gpt-4o") == CircuitState.CLOSED
 
         # At time 107.0: cutoff = 102.0, so failure at 101.0 (< 102.0) is evicted.
         # Remaining: 106.0, plus new one at 107.0 = 2 in window — still not enough
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=107.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=107.0
+        ):
             cb.record_failure("openai", "gpt-4o")
             assert cb.get_state("openai", "gpt-4o") == CircuitState.CLOSED
 
         # At time 108.0: cutoff = 103.0. Remaining: 106.0, 107.0, plus new 108.0 = 3 → OPEN
-        with patch("src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=108.0):
+        with patch(
+            "src.domains.intelligence.reasoning.llm.circuit_breaker.time.time", return_value=108.0
+        ):
             cb.record_failure("openai", "gpt-4o")
             assert cb.get_state("openai", "gpt-4o") == CircuitState.OPEN
 

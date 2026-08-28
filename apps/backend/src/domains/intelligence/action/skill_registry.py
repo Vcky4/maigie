@@ -1,4 +1,4 @@
-﻿"""
+"""
 Skill Registry â€” registers and dispatches AI skills (tools).
 
 Skills are actions that Intelligence can take to modify the learning

@@ -166,9 +166,7 @@ async def merge_notes(user: User, *, note_ids: list[str]) -> Any:
         # it over would be worse than absorbing one generation.
         logger.warning("Note merge for user %s was completed but could not be billed", user.id)
 
-    logger.info(
-        "Merged %d notes into %s for user %s", len(notes), merged.id, user.id
-    )
+    logger.info("Merged %d notes into %s for user %s", len(notes), merged.id, user.id)
     return merged
 
 

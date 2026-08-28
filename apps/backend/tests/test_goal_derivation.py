@@ -282,7 +282,8 @@ class TestScopingToOnePieceOfIntent:
 class TestProseIntentAloneDoesNotMakeAGoal:
     async def test_a_learner_with_no_course_or_preparation_gets_nothing(self):
         """`purpose` and `goalsText` are prose. A goal built on them could only be `manual`, and
-        nothing measures a manual goal — it would sit at its birth number while the learner worked."""
+        nothing measures a manual goal — it would sit at its birth number while the learner worked.
+        """
         assert await _plan() == []
 
     def test_the_learning_profile_is_not_read_at_all(self):

@@ -273,9 +273,9 @@ class PersonalLearningRepository:
         the most decayed card is the one that sets the urgency.
         """
         async with self._read_session(session) as s:
-            local_day = func.date(
-                func.timezone(timezone_name, Flashcard.next_review_at)
-            ).label("localDay")
+            local_day = func.date(func.timezone(timezone_name, Flashcard.next_review_at)).label(
+                "localDay"
+            )
             rows = await s.execute(
                 select(
                     Flashcard.deck_id,
@@ -1215,11 +1215,15 @@ class PersonalLearningRepository:
                     select(
                         func.count(),
                         func.count().filter(Flashcard.next_review_at <= now),
-                        func.count().filter(Flashcard.next_review_at < _zone_midnight(today, timezone_name)),
+                        func.count().filter(
+                            Flashcard.next_review_at < _zone_midnight(today, timezone_name)
+                        ),
                         func.count().filter(Flashcard.interval_days >= MASTERED_INTERVAL_DAYS),
                         func.count().filter(Flashcard.last_reviewed_at.is_(None)),
                         func.avg(Flashcard.ease_factor),
-                        func.avg(Flashcard.last_quality).filter(Flashcard.last_reviewed_at.is_not(None)),
+                        func.avg(Flashcard.last_quality).filter(
+                            Flashcard.last_reviewed_at.is_not(None)
+                        ),
                         func.count().filter(Flashcard.last_reviewed_at.is_not(None)),
                     )
                     .select_from(Flashcard)
@@ -3876,9 +3880,7 @@ class PersonalLearningRepository:
             if status:
                 conditions.append(StudyPlan.status == status)
             if search:
-                conditions.append(
-                    ilike_any(search, StudyPlan.title, StudyPlan.goal_description)
-                )
+                conditions.append(ilike_any(search, StudyPlan.title, StudyPlan.goal_description))
 
             total = (
                 await s.execute(select(func.count()).select_from(StudyPlan).where(*conditions))
@@ -5190,9 +5192,7 @@ class PersonalLearningRepository:
                 .group_by(ActivityFeedEntry.activity_type)
                 .order_by(func.count(ActivityFeedEntry.id).desc())
             )
-            return [
-                (row[0], int(row[1] or 0)) for row in (await s.execute(stmt)).all() if row[0]
-            ]
+            return [(row[0], int(row[1] or 0)) for row in (await s.execute(stmt)).all() if row[0]]
 
     async def list_feed_activity_types(
         self, user_id: str, *, session: AsyncSession | None = None
@@ -5635,8 +5635,8 @@ class PersonalLearningRepository:
                 .group_by(CollectionItem.collection_id, CollectionItem.entity_type)
             )
             for collection_id, entity_type, count in grouped.all():
-                counts_by_collection[collection_id] = (
-                    counts_by_collection.get(collection_id, 0) + (count or 0)
+                counts_by_collection[collection_id] = counts_by_collection.get(collection_id, 0) + (
+                    count or 0
                 )
                 if entity_type is not None:
                     types_by_collection.setdefault(collection_id, []).append(entity_type)

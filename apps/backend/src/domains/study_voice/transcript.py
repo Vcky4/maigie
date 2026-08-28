@@ -96,7 +96,9 @@ class SessionTranscript:
         when the same speaker continues. Sharing them would leave a copy that a still-running relay could
         still change underneath its reader.
         """
-        return SessionTranscript(turns=[Turn(role=turn.role, text=turn.text) for turn in self.turns])
+        return SessionTranscript(
+            turns=[Turn(role=turn.role, text=turn.text) for turn in self.turns]
+        )
 
     def _trim(self) -> None:
         if len(self.turns) > MAX_TURNS:

@@ -88,9 +88,7 @@ async def main() -> None:
         ).all()
         print(f"--- {len(outcomes)} PrepOutcome row(s) in the whole database ---")
         for row in outcomes:
-            print(
-                f"  {row.attended:<10} answered={row.answeredAt:%Y-%m-%d %H:%M}  {row.subject!r}"
-            )
+            print(f"  {row.attended:<10} answered={row.answeredAt:%Y-%m-%d %H:%M}  {row.subject!r}")
 
     await engine.dispose()
 

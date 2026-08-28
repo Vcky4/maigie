@@ -175,9 +175,7 @@ async def record_outcome(*, user_id: str, prep_id: str, data: dict[str, Any]) ->
         **await _readiness_at_answer(prep_id),
     }
 
-    outcome = await repo.upsert_prep_outcome(
-        prep_id=prep_id, exam_date=sitting, values=values
-    )
+    outcome = await repo.upsert_prep_outcome(prep_id=prep_id, exam_date=sitting, values=values)
 
     if attended == "postponed":
         await repo.update_exam_prep(

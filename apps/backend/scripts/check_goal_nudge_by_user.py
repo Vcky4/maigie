@@ -66,7 +66,7 @@ async def main() -> None:
                 await conn.execute(
                     text(
                         'SELECT id, title, "targetDate", "prepId", "metricKind" FROM "Goal" '
-                        "WHERE \"userId\" = :u AND status = 'ACTIVE' ORDER BY \"targetDate\" ASC NULLS LAST"
+                        'WHERE "userId" = :u AND status = \'ACTIVE\' ORDER BY "targetDate" ASC NULLS LAST'
                     ),
                     {"u": user_id},
                 )
@@ -126,9 +126,7 @@ async def main() -> None:
                         # about them now would be asking about exams sat months ago.
                         note = "already COMPLETED — never asked about, by design (no backfill)"
                     else:
-                        note = (
-                            f"status={status} — the preparations sweep would move this to AWAITING_REVIEW"
-                        )
+                        note = f"status={status} — the preparations sweep would move this to AWAITING_REVIEW"
                     print(f"    {subject!r} exam {exam_date:%Y-%m-%d}: {note}")
 
     await engine.dispose()

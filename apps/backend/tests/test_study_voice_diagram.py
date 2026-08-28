@@ -23,7 +23,11 @@ from src.shared.exceptions import ValidationError
 @pytest.fixture
 def world(monkeypatch):
     world = SimpleNamespace(
-        response={"mermaid": "flowchart TD\n  A-->B", "display_math": "", "caption": "How it flows"},
+        response={
+            "mermaid": "flowchart TD\n  A-->B",
+            "display_math": "",
+            "caption": "How it flows",
+        },
         raises=None,
         max_tokens=None,
         fallback="<unset>",
@@ -162,10 +166,10 @@ async def test_a_diagram_cut_off_mid_label_is_refused(world):
     """The exact reported payload, unclosed quote and unclosed subgraph."""
     world.response = {
         "mermaid": (
-            'flowchart TD\n'
+            "flowchart TD\n"
             '    subgraph RawData["Raw Churn Data (Messy)"]\n'
             '        A1["ID 101 | Plan: basic | Churn: Yes"]\n'
-            '    end\n'
+            "    end\n"
             '    subgraph CleanData["Cleaned Data"]\n'
             '        C1["ID 101 | Plan: Basic'
         ),
@@ -196,15 +200,15 @@ async def test_the_reported_diagram_passes_once_it_is_complete(world):
     """
     world.response = {
         "mermaid": (
-            'flowchart TD\n'
+            "flowchart TD\n"
             '    subgraph RawData["Raw Churn Data (Messy)"]\n'
             '        A1["ID 101 | Plan: basic | Churn: Yes"]\n'
             '        A2["ID 101 | Plan: Basic | Churn: Yes (Duplicate)"]\n'
-            '    end\n'
+            "    end\n"
             '    subgraph Prep["Phase 2: Data Preparation"]\n'
             '        B2["Standardize Case (basic -> Basic)"]\n'
-            '    end\n'
-            '    RawData --> Prep'
+            "    end\n"
+            "    RawData --> Prep"
         ),
         "display_math": "",
         "caption": "Cleaning the churn data",

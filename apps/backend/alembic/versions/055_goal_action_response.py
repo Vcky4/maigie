@@ -65,7 +65,7 @@ def upgrade() -> None:
     op.create_check_constraint(
         RESPONSE_CHECK,
         TABLE,
-        "\"learnerResponse\" IS NULL OR \"learnerResponse\" IN "
+        '"learnerResponse" IS NULL OR "learnerResponse" IN '
         "('keep_going', 'set_aside', 'already_done')",
     )
     # Neither half of an answer is meaningful without the other.

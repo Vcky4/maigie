@@ -154,7 +154,8 @@ class TestTheLadder:
     @pytest.mark.asyncio
     async def test_a_finished_goal_is_left_alone(self, rec):
         """Progress at 100 with the deadline passed is not a goal in trouble, it is a goal nobody has
-        marked complete. Chasing it would be telling the learner to do what they have already done."""
+        marked complete. Chasing it would be telling the learner to do what they have already done.
+        """
         recorder = rec()
         assert await _act(_goal(target_date=NOW - timedelta(days=2)), progress=100.0) is None
         assert recorder.actions == []
@@ -284,9 +285,7 @@ class TestSizingIsMeasured:
             # Twice extended and still overdue, which is exactly when the third one is considered.
             target_date=NOW - timedelta(days=1),
         )
-        history = _history(
-            extended=2, system_extended=2, original=NOW - timedelta(days=10)
-        )
+        history = _history(extended=2, system_extended=2, original=NOW - timedelta(days=10))
 
         await _act(goal, progress=0.5, history=history)
 
@@ -361,7 +360,8 @@ class TestRecording:
         """A notification that reaches nobody must not reopen the cooldown. Quiet hours hold a message until
         morning, the learner's daily allowance can defer it, and one held too long expires — and before
         phase 5 the allowance destroyed it outright, returning `None`, which is what this fake reproduces as
-        the strictest case. Counting messages that landed would re-escalate the same goal every night."""
+        the strictest case. Counting messages that landed would re-escalate the same goal every night.
+        """
         recorder = rec(suppress_notification=True)
 
         assert await _act(_goal(), progress=30.0) == "extended"
@@ -379,7 +379,8 @@ class TestRecording:
     async def test_a_failing_action_row_fails_the_whole_action(self, rec):
         """The opposite call from the audit log, which swallows its failures so a missing row cannot
         reject a learner's edit. Here the row *is* the cooldown, so an action taken without one repeats
-        tomorrow and every night after. Better to lose one night's escalation than to start a loop."""
+        tomorrow and every night after. Better to lose one night's escalation than to start a loop.
+        """
         recorder = rec()
         recorder.action_raises = True
 
@@ -599,9 +600,7 @@ class TestTheAnswer:
         async def _update(goal_id, data):
             updates.append((goal_id, data))
             if "status" in data:
-                state["goal"] = SimpleNamespace(
-                    **{**vars(state["goal"]), "status": data["status"]}
-                )
+                state["goal"] = SimpleNamespace(**{**vars(state["goal"]), "status": data["status"]})
             return state["goal"]
 
         monkeypatch.setattr(svc.progress_repo, "find_goal", _find_goal)
@@ -629,7 +628,8 @@ class TestTheAnswer:
     async def test_setting_it_aside_archives_the_goal(self, monkeypatch):
         """`ARCHIVED` rather than a new paused state: it is the only existing value meaning "concluded
         without being achieved", it is what `prep_outcome_service` already does for an unmet preparation
-        goal, and it takes the goal out of the at-risk counts — which is what "stop chasing me" means."""
+        goal, and it takes the goal out of the at-risk counts — which is what "stop chasing me" means.
+        """
         goal = _goal(status="ACTIVE")
         action = SimpleNamespace(id="a1", action="asked_to_confirm")
         recorded, updates = self._wire(monkeypatch, goal=goal, action=action)

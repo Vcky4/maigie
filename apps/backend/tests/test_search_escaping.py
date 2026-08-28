@@ -130,9 +130,7 @@ async def test_saved_resource_search_does_not_treat_percent_as_a_wildcard(pl_rep
 
 async def test_saved_resource_search_does_not_treat_underscore_as_a_wildcard(pl_repo):
     repo, _ = pl_repo
-    await repo.create_resource(
-        {"userId": USER, "title": "axb notation", "sourceType": "manual"}
-    )
+    await repo.create_resource({"userId": USER, "title": "axb notation", "sourceType": "manual"})
 
     _, total = await repo.list_resources(USER, search="a_b")
 
@@ -160,9 +158,7 @@ async def test_a_bare_percent_matches_only_rows_containing_one(pl_repo):
     """The clearest statement of the bug: `%` alone used to match the whole table."""
     repo, _ = pl_repo
     for title in ("Scoring 100% on finals", "Baking sourdough", "Half off: 50% today"):
-        await repo.create_resource(
-            {"userId": USER, "title": title, "sourceType": "manual"}
-        )
+        await repo.create_resource({"userId": USER, "title": title, "sourceType": "manual"})
 
     matched, total = await repo.list_resources(USER, search="%")
 

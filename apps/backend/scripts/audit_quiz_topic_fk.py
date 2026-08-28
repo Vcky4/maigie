@@ -49,7 +49,8 @@ async def audit_orphaned_topic_ids():
             .outerjoin(PrepTopic, QuizSession.topic_id == PrepTopic.id)
             .where(
                 and_(
-                    QuizSession.topic_id.isnot(None), PrepTopic.id.is_(None)  # Topic doesn't exist
+                    QuizSession.topic_id.isnot(None),
+                    PrepTopic.id.is_(None),  # Topic doesn't exist
                 )
             )
         )

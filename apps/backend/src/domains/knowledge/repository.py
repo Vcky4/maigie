@@ -106,9 +106,7 @@ class KnowledgeRepository:
             stmt = (
                 select(Course)
                 .options(
-                    selectinload(Course.modules)
-                    .selectinload(Module.topics)
-                    .noload(Topic.sections)
+                    selectinload(Course.modules).selectinload(Module.topics).noload(Topic.sections)
                 )
                 .where(Course.id == course_id, Course.user_id == user_id)
             )

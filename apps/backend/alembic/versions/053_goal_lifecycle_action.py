@@ -103,7 +103,7 @@ def downgrade() -> None:
     # learner. Deleting them would lose deadline moves that really happened and make `extendedCount`
     # under-report, which is the failure this table exists to prevent.
     op.execute(
-        f'UPDATE "{CHANGES}" SET reason = \'plan_regenerated\' WHERE reason = \'system_extended\''
+        f"UPDATE \"{CHANGES}\" SET reason = 'plan_regenerated' WHERE reason = 'system_extended'"
     )
     op.drop_constraint(REASON_CHECK, CHANGES, type_="check")
     op.create_check_constraint(

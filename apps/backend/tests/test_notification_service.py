@@ -98,7 +98,9 @@ class FakeRepo:
         self.list_limit = limit
         return list(self.due)
 
-    async def update_status(self, notification_id, status, delivered_at=None, pushed_at=None, **_kw):
+    async def update_status(
+        self, notification_id, status, delivered_at=None, pushed_at=None, **_kw
+    ):
         if notification_id in self.fail_status_for:
             raise RuntimeError("write failed")
         self.status_updates.append(
@@ -348,7 +350,7 @@ class TestDelivery:
 
     @pytest.mark.asyncio
     async def test_a_message_too_stale_to_help_is_expired_not_delivered(self, wire):
-        """"Your exam is in two days" arriving after the exam is worse than silence, because the learner
+        """ "Your exam is in two days" arriving after the exam is worse than silence, because the learner
         acts on it."""
         stale = _row(scheduled_at=_ago(days=svc.MAX_DEFERRAL_DAYS + 1))
         repo = FakeRepo(due=[stale])
@@ -502,31 +504,37 @@ class TestPushConsent:
             async def __aexit__(self, *_exc):
                 return False
 
-        monkeypatch.setattr(
-            "src.shared.database.get_session_factory", lambda: lambda: _Session()
-        )
+        monkeypatch.setattr("src.shared.database.get_session_factory", lambda: lambda: _Session())
         return await svc._push_allowed("user-1", notification_type)
 
     @pytest.mark.asyncio
     async def test_the_master_switch_governs_everything(self, monkeypatch):
-        prefs = SimpleNamespace(notifications=False, push_schedule_reminder=True, push_study_tips=True)
+        prefs = SimpleNamespace(
+            notifications=False, push_schedule_reminder=True, push_study_tips=True
+        )
         assert await self._allowed(monkeypatch, prefs, "goal_at_risk") is False
 
     @pytest.mark.asyncio
     async def test_a_type_the_learner_muted_is_not_pushed(self, monkeypatch):
-        prefs = SimpleNamespace(notifications=True, push_schedule_reminder=False, push_study_tips=True)
+        prefs = SimpleNamespace(
+            notifications=True, push_schedule_reminder=False, push_study_tips=True
+        )
         assert await self._allowed(monkeypatch, prefs, "study_plan_check_in") is False
 
     @pytest.mark.asyncio
     async def test_a_type_that_toggle_allows_is_pushed(self, monkeypatch):
-        prefs = SimpleNamespace(notifications=True, push_schedule_reminder=True, push_study_tips=False)
+        prefs = SimpleNamespace(
+            notifications=True, push_schedule_reminder=True, push_study_tips=False
+        )
         assert await self._allowed(monkeypatch, prefs, "study_plan_check_in") is True
 
     @pytest.mark.asyncio
     async def test_a_type_no_toggle_describes_is_allowed(self, monkeypatch):
         """Mapping `goal_at_risk` onto "study tips" would be reading consent into an answer the learner
         never gave about it."""
-        prefs = SimpleNamespace(notifications=True, push_schedule_reminder=False, push_study_tips=False)
+        prefs = SimpleNamespace(
+            notifications=True, push_schedule_reminder=False, push_study_tips=False
+        )
         assert await self._allowed(monkeypatch, prefs, "goal_at_risk") is True
 
     @pytest.mark.asyncio

@@ -117,9 +117,7 @@ class TestPlanListing:
         assert "items" not in body["items"][0]
         assert "strategy" in body["items"][0]
 
-    async def test_status_filter_reaches_non_active_plans(
-        self, client: AsyncClient, auth_headers
-    ):
+    async def test_status_filter_reaches_non_active_plans(self, client: AsyncClient, auth_headers):
         """The old listing hard-filtered ACTIVE, so these tabs could never match."""
         user_id = await _user_id_for(auth_headers, client)
         await _seed_plan(user_id, title="Paused plan", status="PAUSED")
@@ -147,9 +145,7 @@ class TestPlanListing:
         response = await client.get(f"{BASE}/study-plans", headers=auth_headers)
         assert all(item["title"] != "Theirs" for item in response.json()["items"])
 
-    async def test_detail_carries_items_with_their_phase(
-        self, client: AsyncClient, auth_headers
-    ):
+    async def test_detail_carries_items_with_their_phase(self, client: AsyncClient, auth_headers):
         user_id = await _user_id_for(auth_headers, client)
         plan_id, _ = await _seed_plan(user_id)
 
@@ -192,9 +188,7 @@ class TestItemCompletionOwnership:
         assert response.status_code == 404
 
         # Their item is untouched, and the caller's progress did not move.
-        victim_view = await client.get(
-            f"{BASE}/study-plans/{victim_plan_id}", headers=intruder
-        )
+        victim_view = await client.get(f"{BASE}/study-plans/{victim_plan_id}", headers=intruder)
         assert all(item["status"] == "PENDING" for item in victim_view.json()["items"])
 
         own_view = await client.get(f"{BASE}/study-plans/{own_plan_id}", headers=auth_headers)
@@ -246,9 +240,7 @@ class TestProgressAccounting:
         assert body["completedItems"] == 1
         assert body["completedItems"] <= body["totalItems"]
 
-    async def test_uncomplete_returns_an_item_to_pending(
-        self, client: AsyncClient, auth_headers
-    ):
+    async def test_uncomplete_returns_an_item_to_pending(self, client: AsyncClient, auth_headers):
         user_id = await _user_id_for(auth_headers, client)
         plan_id, item_ids = await _seed_plan(user_id)
 
@@ -318,9 +310,7 @@ class TestPlanEditing:
         )
         assert resumed.json()["status"] == "ACTIVE"
 
-    async def test_rejects_a_status_a_learner_may_not_set(
-        self, client: AsyncClient, auth_headers
-    ):
+    async def test_rejects_a_status_a_learner_may_not_set(self, client: AsyncClient, auth_headers):
         """`SUPERSEDED` is written by regeneration, never chosen."""
         user_id = await _user_id_for(auth_headers, client)
         plan_id, _ = await _seed_plan(user_id)
@@ -347,9 +337,7 @@ class TestPlanEditing:
         body = response.json()
         assert body["deadline"].startswith(new_deadline.strftime("%Y-%m-%d"))
         for item in body["items"]:
-            assert datetime.fromisoformat(item["scheduledDate"]) <= new_deadline + timedelta(
-                days=1
-            )
+            assert datetime.fromisoformat(item["scheduledDate"]) <= new_deadline + timedelta(days=1)
 
     async def test_adds_and_removes_an_item(self, client: AsyncClient, auth_headers):
         user_id = await _user_id_for(auth_headers, client)
@@ -367,9 +355,7 @@ class TestPlanEditing:
         )
         assert added.status_code == 201, added.text
         assert added.json()["totalItems"] == 3
-        new_item = next(
-            row for row in added.json()["items"] if row["title"] == "Extra session"
-        )
+        new_item = next(row for row in added.json()["items"] if row["title"] == "Extra session")
         assert new_item["phase"] == "Practice"
         assert new_item["estimatedMinutes"] == 45
 
@@ -414,9 +400,7 @@ class TestPlanMetrics:
         await client.post(
             f"{BASE}/study-plans/{plan_id}/items/{item_ids[0]}/complete", headers=auth_headers
         )
-        response = await client.get(
-            f"{BASE}/study-plans/{plan_id}/metrics", headers=auth_headers
-        )
+        response = await client.get(f"{BASE}/study-plans/{plan_id}/metrics", headers=auth_headers)
         assert response.status_code == 200, response.text
         body = response.json()
         # 30 minutes per seeded item; one completed.
@@ -444,9 +428,7 @@ class TestPlanMetrics:
         user_id = await _user_id_for(auth_headers, client)
         plan_id, _ = await _seed_plan(user_id)
         intruder = await _login(client)
-        response = await client.get(
-            f"{BASE}/study-plans/{plan_id}/metrics", headers=intruder
-        )
+        response = await client.get(f"{BASE}/study-plans/{plan_id}/metrics", headers=intruder)
         assert response.status_code == 404
 
 
@@ -521,9 +503,7 @@ class TestConnectedLearning:
             assert response.status_code == 200, response.text
         assert len(response.json()["linkedCourses"]) == 1
 
-    async def test_cannot_link_another_learners_course(
-        self, client: AsyncClient, auth_headers
-    ):
+    async def test_cannot_link_another_learners_course(self, client: AsyncClient, auth_headers):
         """Rejected, not skipped — a selection that cannot be honoured is reported."""
         user_id = await _user_id_for(auth_headers, client)
         plan_id, _ = await _seed_plan(user_id)
@@ -565,9 +545,7 @@ class TestConnectedLearning:
         )
         assert still_there.status_code == 200
 
-    async def test_uploads_a_reference_file_and_lists_it(
-        self, client: AsyncClient, auth_headers
-    ):
+    async def test_uploads_a_reference_file_and_lists_it(self, client: AsyncClient, auth_headers):
         """The wizard's file drop, persisted. It used to keep names in browser memory."""
         user_id = await _user_id_for(auth_headers, client)
         plan_id, _ = await _seed_plan(user_id)
@@ -614,9 +592,7 @@ class TestConnectedLearning:
         plan_id, _ = await _seed_plan(user_id)
 
         # Default off: a seeded plan was never asked.
-        detail = (
-            await client.get(f"{BASE}/study-plans/{plan_id}", headers=auth_headers)
-        ).json()
+        detail = (await client.get(f"{BASE}/study-plans/{plan_id}", headers=auth_headers)).json()
         assert detail["generateReviewCards"] is False
         assert detail["weeklyCheckIn"] is False
 

@@ -60,9 +60,7 @@ async def main() -> None:
 
     print("\n--- parsed, with a fallback ---")
     try:
-        parsed = await generate_content_json(
-            _PROMPT, max_tokens=2048, temperature=0.4, fallback={}
-        )
+        parsed = await generate_content_json(_PROMPT, max_tokens=2048, temperature=0.4, fallback={})
         print(f"type: {type(parsed).__name__}")
         if isinstance(parsed, dict):
             print(f"keys: {sorted(parsed)}")

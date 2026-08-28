@@ -133,15 +133,15 @@ async def main() -> None:
             )
 
         if not rows:
-            print("Nothing to repair: no preparation is completed, unanswered and previously asked.")
+            print(
+                "Nothing to repair: no preparation is completed, unanswered and previously asked."
+            )
             await engine.dispose()
             return
 
         print(f"--- {len(rows)} preparation(s) to restore to AWAITING_REVIEW ---")
         for row in rows:
-            asked = (
-                f"{row.reviewAskedAt:%Y-%m-%d %H:%M}" if row.reviewAskedAt else "never"
-            )
+            asked = f"{row.reviewAskedAt:%Y-%m-%d %H:%M}" if row.reviewAskedAt else "never"
             print(
                 f"  exam={row.examDate:%Y-%m-%d}"
                 f"  asked={asked:<16}"

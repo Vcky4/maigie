@@ -913,7 +913,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     # and it is a named function because an id that changes what enrichment fetches but
                     # is missing from the key serves one learner's topic as another's for the TTL.
                     # `None` means there is no id to look up, so there is nothing to cache.
-                    key_parts = ask_service.context_cache_key_parts(user_id=user.id, context=context)
+                    key_parts = ask_service.context_cache_key_parts(
+                        user_id=user.id, context=context
+                    )
                     cache_key = cache.make_key(key_parts) if key_parts else None
                     if cache_key:
                         cached_context = await cache.get(cache_key)
@@ -1075,7 +1077,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         # — but it was the same unfiltered `where(Note.id == ...)`
                                         # shape as the hole that was, which is what made that one look
                                         # normal. One read, one rule.
-                                        note = await personal_learning_repo.find_note(ln.id, user.id)
+                                        note = await personal_learning_repo.find_note(
+                                            ln.id, user.id
+                                        )
                                         async with factory() as sa_session:
                                             # Re-load relationships for the found note
                                             note_topic = None

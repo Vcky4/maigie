@@ -1,4 +1,4 @@
-﻿"""
+"""
 Classroom lifecycle — create, update, delete, list.
 """
 

@@ -127,7 +127,9 @@ async def test_counts_are_not_mixed_between_collections(repo):
         items=[("note", "n2"), ("note", "n3"), ("document", "d1")],
     )
 
-    by_id = {row["id"]: row for row in await personal_learning_repo.list_dashboard_collections(USER)}
+    by_id = {
+        row["id"]: row for row in await personal_learning_repo.list_dashboard_collections(USER)
+    }
 
     assert by_id["col-a"]["item_count"] == 1
     assert by_id["col-a"]["entity_types"] == ["note"]
@@ -138,9 +140,7 @@ async def test_counts_are_not_mixed_between_collections(repo):
 async def test_another_learners_collections_are_not_returned(repo):
     personal_learning_repo, factory = repo
     await _collection(factory, id="mine", title="Mine", items=[("note", "n1")])
-    await _collection(
-        factory, id="theirs", title="Theirs", user_id=OTHER, items=[("note", "n2")]
-    )
+    await _collection(factory, id="theirs", title="Theirs", user_id=OTHER, items=[("note", "n2")])
 
     results = await personal_learning_repo.list_dashboard_collections(USER)
 
