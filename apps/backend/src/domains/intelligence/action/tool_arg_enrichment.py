@@ -8,42 +8,65 @@ reviewItemId, …), which ``chat_ws`` merges into ``enriched_context`` and passe
 This module handles cases the model still gets wrong: ``$course_id``-style placeholders after
 another tool created an entity in the same request, bogus IDs (titles as IDs), and
 topic/note ID mix-ups — without requiring extra frontend payloads beyond the usual context.
+
+**The two lookups here are owner-scoped, and it matters more than it looks.** They existed as
+unfiltered ``where(Thing.id == ...)`` reads on ids that arrive from the client's chat context or from
+the model's own tool arguments. That is the exact shape of the two disclosures found in context
+enrichment (Ask Maigie plan §5.5.11 and §5.5.14), in the same surface, and the reason this one was not
+a third is luck rather than design: both results were used only to decide *which id to pass on*, never
+to read a title or a body. A future edit reading ``note.content`` off one of them would have been a
+hole, and nothing said so. They are scoped now, so that edit is safe.
 """
 
 from __future__ import annotations
 
 import copy
+import logging
 from typing import Any
 
-from sqlalchemy import select
-
 from src.domains.intelligence.conversation import note_service
-from src.shared.database import get_session_factory
+
+logger = logging.getLogger(__name__)
 
 
-async def _find_topic(topic_id: str):
-    """A topic by id, or None.
+async def _find_topic(topic_id: str, user_id: str | None):
+    """A topic this learner owns, by id, or `None`.
 
-    Replaces a Prisma `find_unique` call. Prisma was removed with the datastore migration, so
-    `_enrich_note_tool_args` is the only part of this module that needed rewriting; everything else
-    here is pure and is ported unchanged.
+    Authorised through the course, because that is where ownership lives: `Topic` and `Module` have no
+    `user_id` and `Course` does. `check_topic_ownership` is the knowledge domain's own helper and is
+    what its topic routes use.
+
+    **Returns `None` without a `user_id` rather than falling back to an unfiltered read.** The caller's
+    `user_id` is optional in this module's signature, and an unauthenticated repair that silently
+    widened to every learner's topics would be the hole this is closing.
     """
-    from src.domains.knowledge.db_models import Topic
+    if not topic_id or not user_id:
+        return None
 
-    factory = get_session_factory()
-    async with factory() as session:
-        return (
-            await session.execute(select(Topic).where(Topic.id == topic_id))
-        ).scalar_one_or_none()
+    from src.domains.knowledge.services import course_service
+
+    try:
+        topic, _module, _course = await course_service.check_topic_ownership(topic_id, user_id)
+    except Exception as error:  # noqa: BLE001 — not found and forbidden mean the same thing here
+        logger.debug(
+            "Topic %s unavailable to user %s for tool-arg repair: %s", topic_id, user_id, error
+        )
+        return None
+    return topic
 
 
-async def _find_note(note_id: str):
-    """A note by id, or None. Replaces a Prisma `find_unique` call."""
-    from src.domains.personal_learning.db_models import Note
+async def _find_note(note_id: str, user_id: str | None):
+    """A note this learner owns, by id, or `None`.
 
-    factory = get_session_factory()
-    async with factory() as session:
-        return (await session.execute(select(Note).where(Note.id == note_id))).scalar_one_or_none()
+    `find_note(note_id, user_id)` is the repository's canonical by-id read and carries the owner filter.
+    This is the same call the §5.5.11 fix routed context enrichment through — one read, one rule.
+    """
+    if not note_id or not user_id:
+        return None
+
+    from src.domains.personal_learning.repository import personal_learning_repo
+
+    return await personal_learning_repo.find_note(note_id, user_id)
 
 
 _ID_ALIASES: tuple[tuple[str, str], ...] = (
@@ -180,7 +203,7 @@ async def _enrich_note_tool_args(out: dict, ctx: dict, user_id: str | None) -> N
         else:
             note_id = note_id or ctx_note
     elif not note_id and ctx.get("topicId"):
-        topic = await _find_topic(ctx["topicId"])
+        topic = await _find_topic(ctx["topicId"], user_id)
         if topic:
             ln = await note_service.latest_note_for_topic(None, topic.id, user_id)
             if ln:
@@ -189,9 +212,9 @@ async def _enrich_note_tool_args(out: dict, ctx: dict, user_id: str | None) -> N
         note_id = ctx["noteId"]
 
     if note_id:
-        note = await _find_note(note_id)
+        note = await _find_note(note_id, user_id)
         if not note:
-            topic = await _find_topic(note_id)
+            topic = await _find_topic(note_id, user_id)
             if topic:
                 ln = await note_service.latest_note_for_topic(None, topic.id, user_id)
                 if ln:

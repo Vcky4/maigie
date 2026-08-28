@@ -210,11 +210,22 @@ async def generate_winback_offer(user_id: str) -> WinbackOffer | None:
     )
 
 
-async def record_intervention_outcome(intervention_id: str, outcome: str) -> None:
+async def record_intervention_outcome(intervention_id: str, outcome: str, user_id: str) -> None:
     """
     Record the outcome of a retention intervention.
 
     Outcomes: "retained", "churned", "paused"
+
+    **`user_id` is required, and it was added before this function had a caller.** It had none — found
+    by a sweep for unfiltered reads of learner-owned rows — and it wrote to a `RetentionIntervention`
+    found by `where(id == intervention_id)` alone. Unreachable, so not a live defect, but a mutator that
+    takes an id off a request and needs no proof of ownership is a hole waiting for its first caller,
+    and the caller would look correct. Scoping it now costs nothing precisely because nothing calls it;
+    scoping it later means changing a signature in use.
+
+    The filter is in the `where`, not a check after the read, so a mismatched pair simply matches no row
+    and the function is a no-op. That is the right outcome: there is nothing to tell the caller apart
+    from an intervention that was already recorded.
     """
     factory = get_session_factory()
     async with factory() as session:
@@ -222,7 +233,10 @@ async def record_intervention_outcome(intervention_id: str, outcome: str) -> Non
 
         from src.domains.personal_learning.db_models import RetentionIntervention
 
-        stmt = select(RetentionIntervention).where(RetentionIntervention.id == intervention_id)
+        stmt = select(RetentionIntervention).where(
+            RetentionIntervention.id == intervention_id,
+            RetentionIntervention.user_id == user_id,
+        )
         result = await session.execute(stmt)
         record = result.scalar_one_or_none()
         if record:
