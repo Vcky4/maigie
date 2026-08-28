@@ -92,9 +92,9 @@ def test_every_source_file_was_readable():
     Coverage that can silently shrink is not coverage, so an unparseable file now fails here by name instead
     of quietly leaving the checked set.
     """
-    assert not _UNPARSEABLE, (
-        f"{len(_UNPARSEABLE)} file(s) could not be parsed and so were not checked: {_UNPARSEABLE}"
-    )
+    assert (
+        not _UNPARSEABLE
+    ), f"{len(_UNPARSEABLE)} file(s) could not be parsed and so were not checked: {_UNPARSEABLE}"
 
 
 def _provides(module: object, target_module: str, name: str) -> bool:
