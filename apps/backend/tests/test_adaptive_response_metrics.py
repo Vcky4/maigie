@@ -129,9 +129,7 @@ class TestReviewFunnel:
         That is the outcome we wanted; the earlier decline is not a separate learner. Counting it in both
         buckets would make the two rates sum past the number of people asked.
         """
-        funnel = review_funnel(
-            [_review(declined_at=NOW - timedelta(days=1), answered_at=NOW)]
-        )
+        funnel = review_funnel([_review(declined_at=NOW - timedelta(days=1), answered_at=NOW)])
 
         assert funnel.answered == 1
         assert funnel.declined == 0

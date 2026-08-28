@@ -728,9 +728,7 @@ class TestTheAnswer:
         from src.shared.exceptions import ValidationError
 
         goal = _goal()
-        recorded, _ = self._wire(
-            monkeypatch, goal=goal, action=self._action(action="warned")
-        )
+        recorded, _ = self._wire(monkeypatch, goal=goal, action=self._action(action="warned"))
 
         with pytest.raises(ValidationError):
             await svc.record_answer(user_id="user-1", goal_id="goal-1", response="maybe")

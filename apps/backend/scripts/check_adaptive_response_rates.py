@@ -27,7 +27,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.domains.progress.services import adaptive_response_metrics as arm  # noqa: E402

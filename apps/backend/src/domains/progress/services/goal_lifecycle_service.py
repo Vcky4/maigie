@@ -63,6 +63,7 @@ def _log_answer(event: str, **fields: Any) -> None:
     except Exception:  # pragma: no cover - defensive
         logger.warning("Could not log %s", event, exc_info=True)
 
+
 #: How long a goal is left alone after the ladder acts on it, in days.
 #:
 #: Seven, matching `retention_service.INTERVENTION_COOLDOWN_DAYS`. A goal extended last night is not

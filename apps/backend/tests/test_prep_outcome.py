@@ -163,7 +163,6 @@ class TestAwaitingReview:
         """
         assert prep_outcome_service.is_awaiting_review(_prep(review_declined_at=NOW)) is True
 
-
     def test_reads_a_naive_exam_date_without_raising(self):
         """`ExamPrep.examDate` is stored **without** an offset while the ORM declares it as having one, so
         asyncpg hands it back naive. Comparing that against an aware `now` raises `TypeError` — the exact
