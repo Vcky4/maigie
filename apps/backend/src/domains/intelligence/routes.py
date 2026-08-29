@@ -384,6 +384,17 @@ async def _answer_over_http(*, body: models.AskRequest, user, session) -> models
         suggestion_text=turn.suggestion_text,
         components=turn.outcomes.components,
         skills_used=[models.AskSkillBadge(**badge) for badge in turn.skills_used],
+        scope=models.AskScope(sources=turn.scope.sources, library_recall=turn.scope.library_recall),
+        # Decision I: only what the model actually did. The `suggestedAction` this replaces was keyword
+        # matching over the learner's own words, presented as the model's recommendation.
+        actions=[
+            models.AskAction(
+                type=row["actionType"],
+                status=row["status"],
+                course_id=(row.get("actionData") or {}).get("courseId"),
+            )
+            for row in turn.outcomes.action_logs
+        ],
     )
 
 

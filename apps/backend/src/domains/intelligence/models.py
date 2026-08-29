@@ -50,6 +50,8 @@ __all__ = [
     "AskRequest",
     "AskResponse",
     "AskSkillBadge",
+    "AskScope",
+    "AskAction",
 ]
 
 
@@ -93,6 +95,41 @@ class AskSkillBadge(CamelModel):
     icon: str
 
 
+class AskScope(CamelModel):
+    """What the answer was allowed to draw on — Decision G's honesty requirement.
+
+    **`library_recall` is the load-bearing field and it is `False` today.** Retrieval v1 is budgeted
+    excerpting over what the client put in scope, not a search of everything the learner has written. An
+    answer from one topic's notes and an answer from a whole library are different claims, and a client
+    that renders them identically is asserting the stronger one — so "I could not find anything about
+    that" must not be shown as a statement about the library while this is false.
+
+    `sources` is a list of names rather than a score, because the only claim that can be made without
+    inventing a measurement is "these are the things I looked at".
+    """
+
+    sources: list[str] = Field(default_factory=list)
+    library_recall: bool = False
+
+
+class AskAction(CamelModel):
+    """Something Maigie actually did on this turn.
+
+    **Only from the model's own tool output** (Decision I). The surface previously published a
+    `suggestedAction` produced by keyword-matching the learner's own words and presented as the model's
+    recommendation — which §1's second clause forbids outright, because it is a claim that is false. These
+    are the executed actions, so a client offering a follow-up is offering one tied to something real.
+
+    `status` is carried rather than filtered so a failed action is visible. The event frames and the
+    components are both success-shaped, so a turn whose tool failed otherwise looks like a turn that used
+    no tools.
+    """
+
+    type: str
+    status: str
+    course_id: str | None = None
+
+
 class AskResponse(CamelModel):
     """What one turn produced.
 
@@ -112,6 +149,8 @@ class AskResponse(CamelModel):
     suggestion_text: str | None = None
     components: list[dict] = Field(default_factory=list)
     skills_used: list[AskSkillBadge] = Field(default_factory=list)
+    scope: AskScope = Field(default_factory=AskScope)
+    actions: list[AskAction] = Field(default_factory=list)
     model_config = ConfigDict(protected_namespaces=())
 
 

@@ -480,6 +480,79 @@ def resolve_usage(
 
 
 # ===========================================================================
+# Scope honesty — what the answer was allowed to draw on
+# ===========================================================================
+#
+# Decision G's honesty requirement. Retrieval v1 is budgeted excerpting over what the client put in
+# scope; it is **not** library-wide recall, and `rag_service.available` is `False` until a vector backend
+# exists. So Ask Maigie must not imply it searched everything the learner has ever written.
+#
+# **This is §1's first clause, not a nice-to-have.** An answer drawn from one topic's notes and an answer
+# drawn from the whole library are different claims, and a surface that renders them identically is
+# asserting the stronger one. The learner then trusts "I could not find anything about X" as a statement
+# about their library, when it is a statement about the three things on the page.
+#
+# Reported as data rather than prose so each client can phrase it, and so the phrasing is not duplicated
+# in two renderers.
+
+#: Context keys that mean a particular kind of material reached the prompt, mapped to what to call it.
+#:
+#: Ordered from most specific to least, because that is the order a learner reads their own context in —
+#: the note they are looking at before the course it belongs to.
+_SCOPE_SOURCES: tuple[tuple[str, str], ...] = (
+    ("reviewItemId", "review"),
+    ("noteTitle", "note"),
+    ("topicUserNotes", "your notes on this topic"),
+    ("topicTitle", "topic"),
+    ("moduleTitle", "module"),
+    ("courseTitle", "course"),
+    ("content", "the text you pasted"),
+    ("noteContent", "the note text you sent"),
+    ("topicResources", "resources saved to this topic"),
+    ("knowledgeBaseContext", "space knowledge base"),
+    ("retrieved_items", "a search of your material"),
+    ("memory_context", "what Maigie remembers about you"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerScope:
+    """What one answer was allowed to draw on, and what it was not.
+
+    `library_recall` is the load-bearing field and it is `False` today. It says whether Maigie can search
+    everything the learner has written, as opposed to what was in scope on the page. A client that renders
+    "I could not find anything about that" without checking it turns a statement about three items into a
+    statement about a library.
+    """
+
+    sources: list[str] = field(default_factory=list)
+    library_recall: bool = False
+
+    @property
+    def grounded(self) -> bool:
+        """Whether the answer drew on any of the learner's own material at all."""
+        return bool(self.sources)
+
+
+def describe_scope(*, context: dict[str, Any] | None, library_recall: bool = False) -> AnswerScope:
+    """Name the material this answer could see.
+
+    Derived from the enriched context — what enrichment actually put in front of the model — rather than
+    from what the client asked for. Those differ whenever a read was refused or a row was missing, and
+    the honest answer is the former: the learner should be told what the answer *used*, not what was
+    requested on its behalf.
+
+    Deliberately not a token count or a confidence score. It is a list of names, because the only claim
+    that can be made without inventing a measurement is "these are the things I looked at".
+    """
+    context = context or {}
+    return AnswerScope(
+        sources=[label for key, label in _SCOPE_SOURCES if context.get(key)],
+        library_recall=library_recall,
+    )
+
+
+# ===========================================================================
 # Input validation
 # ===========================================================================
 
@@ -1595,6 +1668,10 @@ class AskEffects:
     purchase_deep_link: str
     """Where a refused learner is sent to buy credits. A value, not a callable."""
 
+    library_recall: bool = False
+    """Whether Maigie can search everything the learner has written, as opposed to what the client put in
+    scope. `rag_service.available`, and `False` until a vector backend exists — see Decision G."""
+
 
 @dataclass(frozen=True, slots=True)
 class AskTurn:
@@ -1609,6 +1686,7 @@ class AskTurn:
     credit_result: Any = None
     enriched_context: dict[str, Any] | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
+    scope: AnswerScope = field(default_factory=AnswerScope)
 
 
 async def answer(
@@ -1777,6 +1855,10 @@ async def answer(
         credit_result=credit_result,
         enriched_context=enriched,
         history=history,
+        # Decision G's honesty requirement. Derived from the *enriched* context — what the model actually
+        # saw — rather than from what the client asked for, because a refused read means the two differ
+        # and the learner should be told what the answer used.
+        scope=describe_scope(context=enriched, library_recall=effects.library_recall),
     )
 
 
@@ -1799,6 +1881,7 @@ def production_effects() -> AskEffects:
         get_llm_router,
     )
     from src.domains.intelligence.reasoning.llm.registry import LlmTask, default_model_for
+    from src.domains.intelligence.reasoning.rag_service import rag_service
     from src.domains.intelligence.repository import intelligence_repo
 
     from .chat_helpers import _extract_suggestion
@@ -1861,4 +1944,7 @@ def production_effects() -> AskEffects:
         query_badge=query_type_skill_badge,
         extract_suggestion=_extract_suggestion,
         purchase_deep_link=PURCHASE_DEEP_LINK,
+        # Read from the retrieval service rather than hard-coded, so the day a vector backend lands this
+        # starts reporting `True` without anyone remembering to come back here.
+        library_recall=bool(getattr(rag_service, "available", False)),
     )
