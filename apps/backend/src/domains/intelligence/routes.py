@@ -14,8 +14,9 @@ from fastapi import APIRouter, HTTPException, Query, status
 from src.shared.auth import CurrentUser, PremiumUser
 
 from . import models
-from .conversation import conversation_service
+from .conversation import ask_service, context_enrichment, conversation_service
 from .memory import memory_service
+from .repository import intelligence_repo
 
 logger = logging.getLogger(__name__)
 
@@ -269,3 +270,145 @@ def register_websocket(app):
     ws_router = APIRouter(prefix="/api/v1/intelligence", tags=["intelligence"])
     register_chat_websocket_routes(ws_router, None)
     app.include_router(ws_router)
+
+
+# ===========================================================================
+# Ask — one turn over HTTP
+# ===========================================================================
+
+
+@router.post("/ask", response_model=models.AskResponse)
+async def ask(body: models.AskRequest, current_user: CurrentUser):
+    """Ask Maigie one question and get the whole answer.
+
+    **The same pipeline the socket runs, with `on_chunk=None`** (Decision C). Nothing about the turn is
+    decided here: this route resolves a session, saves the learner's message, calls
+    `ask_service.answer()` and maps its refusals onto status codes. If a rule ever appears in this
+    function that is not in `answer()`, the two transports have started to drift — which is what §5.4
+    documents a year of.
+
+    Refusals, and why each is the status code it is:
+
+    - `400` for an unusable message. Not `422`: the request is well-formed, the *message* is not, and the
+      body says which so a client can show it rather than guess.
+    - `429` when the learner is sending turns faster than the limit. Carries `Retry-After`.
+    - `402` when credits are exhausted. Not `403` — nothing is forbidden, something is owed, and the body
+      carries the same words the socket's `credit_limit_error` frame does.
+    - `503` when generation failed. **No assistant row is written and no credits are consumed**, which is
+      `answer()`'s guarantee rather than this route's: a failed turn is never stored as an answer (§1).
+    """
+    from src.shared.infrastructure.rate_limit import check_rate_limit
+
+    # Screened before anything is written: a refused turn must not leave a message row behind, or the
+    # thread holds a question the learner will never see an answer to.
+    rejection = await ask_service.screen_turn(
+        message=body.message, user_id=current_user.id, check_rate_limit=check_rate_limit
+    )
+    if rejection:
+        if rejection.code == ask_service.MESSAGE_REJECTED_RATE_LIMITED:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=rejection.message,
+                headers={"Retry-After": str(ask_service.RATE_LIMIT_WINDOW_SECONDS)},
+            )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message)
+
+    session = await _resolve_ask_session(
+        session_id=body.session_id, user_id=current_user.id, repo=intelligence_repo
+    )
+
+    # One turn at a time per conversation (§4.5.13). Acquired before the learner's message is written,
+    # and `409` because that is what a conflicting concurrent request is — not a rate limit, which the
+    # learner fixes by waiting a minute, and not a bad request, which they fix by changing it.
+    try:
+        async with ask_service.turn_in_flight(session.id):
+            return await _answer_over_http(body=body, user=current_user, session=session)
+    except ask_service.TurnAlreadyInFlight as busy:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=busy.rejection.message
+        ) from busy
+
+
+async def _answer_over_http(*, body: models.AskRequest, user, session) -> models.AskResponse:
+    """The turn itself, once the session is resolved and the slot held."""
+    current_user = user
+    user_message = await intelligence_repo.create_message(
+        data={
+            "sessionId": session.id,
+            "userId": current_user.id,
+            "role": "USER",
+            "content": body.message,
+            **({"imageUrls": body.image_urls} if body.image_urls else {}),
+            **(
+                {"reviewItemId": (body.context or {}).get("reviewItemId")}
+                if (body.context or {}).get("reviewItemId")
+                else {}
+            ),
+        }
+    )
+
+    try:
+        turn = await ask_service.answer(
+            message=body.message,
+            user=current_user,
+            user_obj=current_user,
+            session=session,
+            user_message=user_message,
+            context=body.context,
+            # The other half of migration 049's reason for existing: per-surface metering only works if
+            # both surfaces write the column. The socket writes `ws`.
+            ask_mode=ask_service.ASK_MODE_HTTP,
+            readers=context_enrichment.production_readers(),
+            effects=ask_service.production_effects(),
+            cache=context_enrichment.production_cache(),
+            image_url=body.image_urls[0] if body.image_urls else None,
+            # No `on_chunk`: this transport has nowhere to stream to. Same code, one argument different.
+            on_chunk=None,
+        )
+    except ask_service.TurnRefused as refused:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=refused.refusal.message,
+        ) from refused
+    except Exception as error:
+        logger.error("Ask turn failed for user %s: %s", current_user.id, error, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Maigie could not answer that just now. Please try again.",
+        ) from error
+
+    return models.AskResponse(
+        id=turn.assistant_message.id,
+        session_id=session.id,
+        content=turn.content,
+        suggestion_text=turn.suggestion_text,
+        components=turn.outcomes.components,
+        skills_used=[models.AskSkillBadge(**badge) for badge in turn.skills_used],
+    )
+
+
+async def _resolve_ask_session(*, session_id: str | None, user_id: str, repo):
+    """The session an HTTP turn belongs to: the one asked for, or a new one.
+
+    **Authorised, not trusted.** A `sessionId` in a request body is a claim; `resolve_session_for_turn`
+    is what turns it into a permission, and it is the same function the socket uses so the two cannot
+    disagree about who owns a conversation.
+
+    A refusal here is a `404` rather than a `403`, deliberately: telling a caller "that conversation
+    exists but is not yours" confirms the id, which makes conversation ids probeable. The socket answers
+    differently — it has an established connection and an `error` frame rather than a status code — and
+    that asymmetry is recorded rather than resolved, because §14.2's "always 404" and the twelve shipped
+    topic routes that answer `403` are a domain-wide inconsistency this route should not settle alone.
+    """
+    if not session_id:
+        return await repo.create_chat_session(ask_service.new_session_row(user_id))
+
+    resolution = await ask_service.resolve_session_for_turn(
+        requested_session_id=session_id,
+        current_session=None,
+        user_id=user_id,
+        find_session=repo.find_chat_session,
+    )
+    if not resolution.allowed or resolution.session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+    return resolution.session

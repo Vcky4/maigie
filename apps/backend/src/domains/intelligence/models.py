@@ -47,7 +47,72 @@ __all__ = [
     "MemoryContextResponse",
     "ModelPreferenceUpdate",
     "ModelPreferenceResponse",
+    "AskRequest",
+    "AskResponse",
+    "AskSkillBadge",
 ]
+
+
+# ===========================================================================
+# Ask — one turn over HTTP
+# ===========================================================================
+
+
+class AskRequest(CamelModel):
+    """One turn.
+
+    `session_id` is optional: absent starts a new conversation, present appends to that one. The server
+    resolves and authorises it either way — an id here is a claim, not a permission (see
+    `ask_service.resolve_session_for_turn`).
+
+    `context` is the page scope the socket already sends under the same name: `courseId`, `topicId`,
+    `noteId`, `reviewItemId` and the pasted `content` / `noteContent`. Deliberately a free-form dict
+    rather than a modelled shape, and that is a compromise worth naming: enrichment reads keys that
+    accumulated over time, so modelling it now would either be wrong or would freeze a shape that is
+    still moving. `ask_service.AskContext.from_client` is where it is read, and the four ids that matter
+    are named there.
+
+    `message` carries no `max_length` here on purpose. The limit is
+    `ask_service.MESSAGE_MAX_LENGTH` and it is enforced by `screen_turn`, so that both transports refuse
+    the same message with the same words — a pydantic `422` on this route and a friendlier refusal on the
+    socket would be two different contracts for one rule. `min_length=1` is kept because it costs
+    nothing and rejects the most obvious case at the edge.
+    """
+
+    message: str = Field(..., min_length=1)
+    session_id: str | None = None
+    context: dict | None = None
+    image_urls: list[str] = Field(default_factory=list)
+
+
+class AskSkillBadge(CamelModel):
+    """A capability Maigie used on this turn, for the "what did it just do" affordance."""
+
+    id: str
+    name: str
+    icon: str
+
+
+class AskResponse(CamelModel):
+    """What one turn produced.
+
+    The same values the socket sends across several frames, collapsed into one body — which is what makes
+    the two transports comparable rather than merely coexistent. `content` is the answer,
+    `suggestion_text` the trailing suggestion when there was one, `components` the rich blocks, and
+    `skills_used` the badges.
+
+    **`session_id` is always returned, including when the request did not send one.** A client starting a
+    conversation needs the id back to continue it, and making them read it out of the message row would
+    be a second contract for the same fact.
+    """
+
+    id: str
+    session_id: str
+    content: str
+    suggestion_text: str | None = None
+    components: list[dict] = Field(default_factory=list)
+    skills_used: list[AskSkillBadge] = Field(default_factory=list)
+    model_config = ConfigDict(protected_namespaces=())
 
 
 # ===========================================================================
