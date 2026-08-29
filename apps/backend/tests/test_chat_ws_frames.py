@@ -57,6 +57,18 @@ from src.shared.infrastructure.socket_manager import manager as real_manager
 REAL_MANAGER_ATTRS = {name for name in dir(real_manager) if not name.startswith("_")}
 
 
+#: Script sentinel meaning "the learner waited for the answer before sending the next message".
+AWAIT_TURN = object()
+
+#: Script sentinel meaning "the answer has started arriving".
+#:
+#: A learner cannot press Stop before they know there is something to stop — the client learns the
+#: `requestId` from `message_saved` and sees the answer begin from `stream`. Without this, a scripted
+#: cancel races the turn it means to cancel and usually loses, which would make the test pass or fail on
+#: scheduling rather than on behaviour.
+AWAIT_GENERATING = object()
+
+
 class InputExhausted(Exception):
     """Raised by the fake socket when the handler asks for more input than the test scripted.
 
@@ -155,14 +167,55 @@ class FakeUser:
 
 
 class FakeWebSocket:
-    def __init__(self, script: list[str]) -> None:
+    def __init__(self, script: list[str], on_idle=None) -> None:
         self.script = list(script)
         self.closed = False
+        #: Called once when the script empties, before outstanding turns are drained. A test whose model
+        #: call blocks needs somewhere to release it, or the drain waits forever.
+        self.on_idle = on_idle
 
     async def receive_text(self) -> str:
+        if self.script and self.script[0] is AWAIT_GENERATING:
+            self.script.pop(0)
+            from src.domains.intelligence.conversation import ask_service as _ask
+
+            for _ in range(1000):
+                if _ask.cancellable_turns():
+                    break
+                await asyncio.sleep(0)
+        if self.script and self.script[0] is AWAIT_TURN:
+            # "The learner waited for the answer before sending again." Needed because turns now run
+            # concurrently with the receive loop, so two scripted messages back to back model a second
+            # tab rather than a conversation — and get refused by the one-turn-at-a-time guard, which is
+            # correct. A real client disables its composer, which is what this sentinel stands for.
+            self.script.pop(0)
+            if self.on_idle is not None:
+                self.on_idle()
+                self.on_idle = None
+            await self._drain()
         if not self.script:
+            # **Let any spawned turn finish before declaring the connection over.** The endpoint runs
+            # turns concurrently now — that is what makes a `cancel` frame receivable at all — so a
+            # fixture that raised here immediately would measure an empty connection and every frame
+            # assertion in this file would pass vacuously. Modelling it this way is also faithful: a real
+            # socket stays open while the answer streams.
+            if self.on_idle is not None:
+                self.on_idle()
+                self.on_idle = None
+            await self._drain()
             raise InputExhausted
         return self.script.pop(0)
+
+    @staticmethod
+    async def _drain() -> None:
+        """Let every turn currently running finish."""
+        pending = [
+            task
+            for task in asyncio.all_tasks()
+            if task is not asyncio.current_task() and not task.done()
+        ]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def send_json(self, data):
         return None
@@ -190,6 +243,7 @@ async def drive(
     query_results: list | None = None,
     credits_available: tuple[bool, str | None] = (True, None),
     route_request=None,
+    on_idle=None,
 ) -> dict:
     """Run one connection through the handler and report what left it.
 
@@ -297,7 +351,7 @@ async def drive(
             AsyncMock(return_value=FakeUser()),
         ),
     ):
-        socket = FakeWebSocket(script)
+        socket = FakeWebSocket(script, on_idle=on_idle)
         error: BaseException | None = None
         try:
             await ws_endpoint()(socket, FakeUser())
@@ -843,9 +897,24 @@ class TestOneTurnAtATimePerConversation:
 
     def test_the_slot_is_released_so_the_next_turn_works(self):
         """Two turns in sequence on one connection. If the slot leaked, the second would be refused —
-        which would make the guard a self-inflicted outage rather than a protection."""
-        result = run(["What is entropy?", "And enthalpy?"])
+        which would make the guard a self-inflicted outage rather than a protection.
+
+        `AWAIT_TURN` is what makes this *sequential*: turns run concurrently with the receive loop now,
+        so two messages sent back to back are a second tab, not a conversation.
+        """
+        result = run(["What is entropy?", AWAIT_TURN, "And enthalpy?"])
         assert result["prompts"] == ["What is entropy?", "And enthalpy?"]
+
+    def test_back_to_back_sends_on_one_socket_are_refused(self):
+        """The other side of the same coin, and new behaviour worth pinning: without waiting for the
+        answer, the second message collides with the turn still running. A real client disables its
+        composer; a second tab or a script does not, and this is what it gets."""
+        result = run(["What is entropy?", "And enthalpy?"])
+        assert result["prompts"] == ["What is entropy?"]
+        errors = result["manager"].bodies_of("error")
+        assert any(
+            e["payload"].get("code") == ask_service.MESSAGE_REJECTED_TURN_IN_FLIGHT for e in errors
+        )
 
     def test_a_failed_turn_releases_the_slot(self):
         result = run(
@@ -854,3 +923,133 @@ class TestOneTurnAtATimePerConversation:
         )
         assert ask_service.turns_in_flight() == frozenset()
         assert len(result["manager"].bodies_of("error")) == 2
+
+
+class TestStoppingATurn:
+    """Plan §4.5.1. This was a billing defect, not a missing feature: both composers had a Stop button,
+    neither stopped anything, and the server generated to completion, persisted the answer and charged
+    for it. **A learner who stopped a turn was charged for the answer they cancelled.**
+
+    It stayed hidden because the screen did what the button promised and the bill did not.
+    """
+
+    @staticmethod
+    def slow_router(*, hang: asyncio.Event):
+        """A model call that starts streaming and then waits, so a cancel has something to interrupt."""
+
+        async def route(**kwargs):
+            callback = kwargs.get("stream_callback")
+            if callback:
+                await callback("Entropy ", False)
+            await hang.wait()
+            return ("Entropy measures disorder.", {"input_tokens": 1, "output_tokens": 1}, [], [])
+
+        return route
+
+    def test_a_cancel_frame_is_acknowledged(self):
+        """Whether or not there was a turn to stop. A Stop that answers nothing is the defect."""
+        result = run([json.dumps({"type": "cancel", "requestId": "nope"})])
+        events = result["manager"].bodies_of("event")
+        assert events and events[0]["payload"]["action"] == "cancel"
+
+    def test_cancelling_a_finished_turn_reports_that_it_had_already_completed(self):
+        """The ordinary case for pressing Stop as the last chunk lands. `stopped: false` is not an error
+        — it says the answer arrived before the request to stop it did."""
+        result = run([json.dumps({"type": "cancel", "requestId": "nope"})])
+        payload = result["manager"].bodies_of("event")[0]["payload"]
+        assert payload["stopped"] is False
+        assert payload["status"] == "complete"
+
+    def test_a_cancel_frame_is_read_while_a_turn_is_running(self):
+        """**The whole point, and what the plan mis-sized.** The loop used to await the turn inside one
+        iteration, so this frame could not be read until the turn it wanted to stop had finished. Adding
+        the frame without restructuring the endpoint would have shipped a Stop that looks handled.
+        """
+        hang = asyncio.Event()
+
+        async def scenario():
+            manager = None
+            # Drive the endpoint with a turn that hangs, then cancel it by request id.
+            result = await drive(
+                [
+                    "What is entropy?",
+                    AWAIT_GENERATING,
+                    json.dumps({"type": "cancel", "requestId": "msg_0"}),
+                ],
+                route_request=self.slow_router(hang=hang),
+                on_idle=lambda: hang.set(),
+            )
+            return result
+
+        result = asyncio.run(scenario())
+        cancels = [
+            body
+            for body in result["manager"].bodies_of("event")
+            if body["payload"].get("action") == "cancel"
+        ]
+        assert cancels, "the cancel frame was never processed while the turn was running"
+
+    def test_a_cancelled_turn_writes_no_assistant_row(self):
+        """No row and no charge, the rule the failed-generation branches already follow. The partial text
+        is discarded — see `ask_service`'s note on why keeping it would need a column that can tell "you
+        stopped this" from "the model ran out"."""
+        hang = asyncio.Event()
+        result = asyncio.run(
+            drive(
+                [
+                    "What is entropy?",
+                    AWAIT_GENERATING,
+                    json.dumps({"type": "cancel", "requestId": "msg_0"}),
+                ],
+                route_request=self.slow_router(hang=hang),
+                on_idle=lambda: hang.set(),
+            )
+        )
+        assert [row["role"] for row in result["rows"]] == ["USER"]
+
+    def test_a_cancelled_turn_is_not_charged(self):
+        hang = asyncio.Event()
+        result = asyncio.run(
+            drive(
+                [
+                    "What is entropy?",
+                    AWAIT_GENERATING,
+                    json.dumps({"type": "cancel", "requestId": "msg_0"}),
+                ],
+                route_request=self.slow_router(hang=hang),
+                on_idle=lambda: hang.set(),
+            )
+        )
+        result["consume"].assert_not_awaited()
+
+    def test_a_cancelled_turn_sends_no_assistant_final(self):
+        hang = asyncio.Event()
+        result = asyncio.run(
+            drive(
+                [
+                    "What is entropy?",
+                    AWAIT_GENERATING,
+                    json.dumps({"type": "cancel", "requestId": "msg_0"}),
+                ],
+                route_request=self.slow_router(hang=hang),
+                on_idle=lambda: hang.set(),
+            )
+        )
+        assert "assistant_final" not in result["manager"].frame_types
+
+    def test_cancelling_frees_the_turn_slot(self):
+        """Otherwise stopping one turn would lock the learner out of the conversation they stopped it in."""
+        hang = asyncio.Event()
+        asyncio.run(
+            drive(
+                [
+                    "What is entropy?",
+                    AWAIT_GENERATING,
+                    json.dumps({"type": "cancel", "requestId": "msg_0"}),
+                ],
+                route_request=self.slow_router(hang=hang),
+                on_idle=lambda: hang.set(),
+            )
+        )
+        assert ask_service.turns_in_flight() == frozenset()
+        assert ask_service.cancellable_turns() == frozenset()

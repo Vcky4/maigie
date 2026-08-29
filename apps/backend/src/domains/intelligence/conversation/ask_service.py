@@ -586,6 +586,81 @@ async def screen_turn(
 
 
 # ===========================================================================
+# Stopping a turn
+# ===========================================================================
+#
+# Plan §4.5.1, and it was a billing defect rather than a missing feature. Both composers had a Stop
+# button; neither stopped anything. The inbound demux accepted `ping`, `subscribe` and `unsubscribe` and
+# no cancel of any kind, so "stop" was local: the client froze the bubble and dropped later chunks while
+# the server generated to completion, ran the tool loop, persisted the answer and consumed credits. **A
+# learner who stopped a turn was charged for the answer they cancelled**, and the text they stopped to
+# avoid reading was in their history on reload. It stayed hidden because the screen did what the button
+# promised and the bill did not.
+#
+# **The frame was never the hard part.** The socket's receive loop used to await the whole turn inside one
+# iteration, so a `cancel` frame could not be *read* until the turn it wanted to stop had finished. Adding
+# a handler for it without changing that would have shipped a Stop that looks handled and is not — which
+# is precisely how the original defect survived. The endpoint now spawns each turn and returns to
+# `receive_text()`, which is what makes this reachable at all.
+#
+# **What a cancelled turn leaves behind.** No assistant row and no credits — the rule the
+# failed-generation branches already follow. The partial text is **discarded**: persisting it would need a
+# marker, because a truncated-by-choice answer is otherwise indistinguishable on reload from a complete
+# short one, and `ChatMessage.truncated` already means "hit the token limit" — one column carrying both
+# would answer neither. Discarding leaves the learner's own message with no answer, which *looks* like the
+# defect the validation refusals avoid, except **the learner is the one who stopped it, so they know why**.
+# A silent failure and a deliberate stop are identical in the data and completely different to the person
+# who caused them.
+#
+# **Cancellation is honoured until generation returns, and not after.** Once the provider has produced the
+# whole answer the money is already spent, so discarding it would mean paying for something deliberately
+# thrown away *and* losing an answer the learner may have finished reading.
+
+#: Turns that can still be stopped: `request_id` → a one-key dict holding the generating task.
+#:
+#: Keyed on the request rather than the session, so a client that has lost track of its own state cannot
+#: cancel a turn it did not start — `requestId` is the id the server gave it for exactly this turn. Same
+#: in-memory, per-worker limit as `_TURNS_IN_FLIGHT`.
+_CANCELLABLE: dict[str, dict[str, Any]] = {}
+
+
+@asynccontextmanager
+async def cancellable_turn(request_id: str, task_holder: dict[str, Any]):
+    """Register a turn as stoppable for as long as it is generating.
+
+    `task_holder` is a one-key dict the caller writes its task into, rather than the task itself: the
+    task does not exist until the coroutine is scheduled, so there is nothing to register at entry.
+    Awkward, and the alternative is worse — building the task before the guard leaves a window where a
+    turn is running and cannot be stopped.
+    """
+    _CANCELLABLE[request_id] = task_holder
+    try:
+        yield
+    finally:
+        _CANCELLABLE.pop(request_id, None)
+
+
+def cancel_turn(request_id: str) -> bool:
+    """Stop the turn with this request id. Returns whether there was one to stop.
+
+    `False` is an ordinary outcome rather than an error: a learner pressing Stop as the last chunk lands
+    is cancelling a turn that has already finished. The caller acknowledges either way, because a Stop
+    that silently does nothing is the defect this closes.
+    """
+    holder = _CANCELLABLE.get(request_id)
+    task = (holder or {}).get("task")
+    if task is None or task.done():
+        return False
+    task.cancel()
+    return True
+
+
+def cancellable_turns() -> frozenset[str]:
+    """Request ids currently stoppable. For tests and diagnostics."""
+    return frozenset(_CANCELLABLE)
+
+
+# ===========================================================================
 # One turn at a time, per conversation
 # ===========================================================================
 #
