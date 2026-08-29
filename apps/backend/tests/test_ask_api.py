@@ -453,3 +453,77 @@ class TestOneTurnAtATimePerConversation:
         with Harness(effects=effects) as h:
             assert h.ask().status_code == 503
         assert ask_service.turns_in_flight() == frozenset()
+
+
+class TestScopeHonesty:
+    """Decision G. The response says what the answer drew on, and whether Maigie can search the learner's
+    whole library — which it cannot, until a vector backend exists."""
+
+    def test_the_response_reports_no_library_recall(self):
+        with Harness() as h:
+            scope = h.ask().json()["scope"]
+        assert scope["libraryRecall"] is False
+
+    def test_a_turn_with_no_context_names_no_sources(self):
+        with Harness() as h:
+            assert h.ask().json()["scope"]["sources"] == []
+
+    def test_the_flag_comes_from_the_retrieval_service_not_a_literal(self):
+        """So the day a vector backend lands this starts reporting `True` without anyone remembering to
+        come back and change it."""
+        with Harness(effects=fake_effects(library_recall=True)) as h:
+            assert h.ask().json()["scope"]["libraryRecall"] is True
+
+
+class TestActionsComeFromTheModelOnly:
+    """Decision I. The `suggestedAction` this replaces was keyword matching over the learner's own words,
+    published as the model's recommendation — §1's second clause violated outright, because it is a claim
+    that is false."""
+
+    def test_a_turn_with_no_tool_calls_reports_no_actions(self):
+        with Harness() as h:
+            assert h.ask().json()["actions"] == []
+
+    def test_an_executed_action_is_reported(self):
+        effects = fake_effects(
+            generate=AsyncMock(
+                return_value=(
+                    "Made you a course.",
+                    {"input_tokens": 1, "output_tokens": 1},
+                    [
+                        {
+                            "type": "create_course",
+                            "data": {"courseId": "c1"},
+                            "result": {"status": "success"},
+                        }
+                    ],
+                    [],
+                )
+            )
+        )
+        with Harness(effects=effects) as h:
+            actions = h.ask().json()["actions"]
+        assert actions == [{"type": "create_course", "status": "SUCCESS", "courseId": "c1"}]
+
+    def test_a_failed_action_is_still_reported(self):
+        """Carried rather than filtered. The event frames and the components are both success-shaped, so a
+        turn whose tool failed would otherwise look like a turn that used no tools."""
+        effects = fake_effects(
+            generate=AsyncMock(
+                return_value=(
+                    "I could not.",
+                    {"input_tokens": 1, "output_tokens": 1},
+                    [
+                        {
+                            "type": "create_course",
+                            "data": {},
+                            "result": {"status": "error", "message": "Topic limit reached"},
+                        }
+                    ],
+                    [],
+                )
+            )
+        )
+        with Harness(effects=effects) as h:
+            actions = h.ask().json()["actions"]
+        assert actions[0]["status"] == "FAILED"

@@ -1570,3 +1570,73 @@ class TestTurnInFlight:
 
         await asyncio.gather(turn("a"), turn("b"))
         assert sorted(started) in (["a", "b:refused"], ["a:refused", "b"])
+
+
+# ---------------------------------------------------------------------------
+# Scope honesty
+# ---------------------------------------------------------------------------
+#
+# Decision G. Retrieval v1 is budgeted excerpting over what the client put in scope, not library-wide
+# recall, and `rag_service.available` is False until a vector backend exists. An answer from one topic's
+# notes and an answer from a whole library are different claims; rendering them identically asserts the
+# stronger one.
+
+
+class TestDescribeScope:
+    def test_an_answer_with_no_context_names_nothing(self):
+        scope = ask_service.describe_scope(context=None)
+        assert scope.sources == []
+        assert not scope.grounded
+
+    def test_the_material_that_reached_the_prompt_is_named(self):
+        scope = ask_service.describe_scope(
+            context={"topicTitle": "Entropy", "courseTitle": "Physics"}
+        )
+        assert scope.sources == ["topic", "course"]
+
+    def test_sources_run_most_specific_first(self):
+        """The order a learner reads their own context in — the note they are looking at before the
+        course it belongs to."""
+        scope = ask_service.describe_scope(
+            context={"courseTitle": "Physics", "noteTitle": "My note", "topicTitle": "Entropy"}
+        )
+        assert scope.sources == ["note", "topic", "course"]
+
+    def test_library_recall_is_false_by_default(self):
+        """**The load-bearing field.** While this is false, a client must not render "I could not find
+        anything about that" as a statement about the learner's library."""
+        assert ask_service.describe_scope(context={"topicTitle": "T"}).library_recall is False
+
+    def test_library_recall_is_reported_when_the_backend_exists(self):
+        scope = ask_service.describe_scope(context={"topicTitle": "T"}, library_recall=True)
+        assert scope.library_recall is True
+
+    def test_retrieval_and_memory_are_named_as_sources(self):
+        scope = ask_service.describe_scope(
+            context={"retrieved_items": ["- NOTE: x"], "memory_context": "They revise at night."}
+        )
+        assert "a search of your material" in scope.sources
+        assert "what Maigie remembers about you" in scope.sources
+
+    def test_pasted_text_is_named_as_pasted(self):
+        """Distinguishable from a note that was fetched, because the learner can tell whether Maigie read
+        their note or only the paragraph they sent."""
+        assert (
+            "the text you pasted"
+            in ask_service.describe_scope(context={"content": "a paragraph"}).sources
+        )
+
+    def test_an_empty_value_is_not_a_source(self):
+        """Enrichment writes `""` for a note with no body. Naming that would claim Maigie read something
+        it did not."""
+        scope = ask_service.describe_scope(context={"topicUserNotes": "", "topicTitle": "Entropy"})
+        assert scope.sources == ["topic"]
+
+    def test_grounded_means_it_drew_on_the_learners_material(self):
+        assert ask_service.describe_scope(context={"noteTitle": "n"}).grounded
+        assert not ask_service.describe_scope(context={"sessionId": "s"}).grounded
+
+    def test_an_id_alone_is_not_a_source(self):
+        """`topicId` on the context means the client asked; `topicTitle` means enrichment succeeded. If a
+        read was refused the two differ, and the honest answer is what the model actually saw."""
+        assert ask_service.describe_scope(context={"topicId": "topic_1"}).sources == []
