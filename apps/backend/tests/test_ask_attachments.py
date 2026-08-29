@@ -3,9 +3,8 @@
 Plan §6.1 and §5.2.2. These cover the validation rules as decisions rather than as plumbing, because what
 is accepted here is learner-supplied input that reaches a model and gets served back under our domain.
 
-The three route tests hold the parts a caller can observe and depend on: a rejection is a 400 and not a
-500, another learner's upload is a 404 and not a 403, and a missing transcription provider says so rather
-than returning an empty transcript.
+The route tests hold the parts a caller can observe and depend on: a rejection is a 400 and not a 500, a
+storage outage is a 503 and writes no row, and another learner's upload is a 404 and not a 403.
 """
 
 from __future__ import annotations
@@ -27,8 +26,6 @@ from src.domains.intelligence.conversation import attachments  # noqa: E402
 from src.shared.auth import get_current_user  # noqa: E402
 
 USER = SimpleNamespace(id="user_1", email="learner@example.com")
-
-WEBM = "audio/webm"
 
 
 # ---------------------------------------------------------------------------
@@ -113,17 +110,22 @@ class TestWhatIsWorthStoring:
             is None
         )
 
-    def test_image_and_audio_do_not_share_an_allowlist(self):
-        """An image posted to transcribe, or audio posted as an image, is refused.
+    def test_the_allowlist_is_a_parameter_not_baked_in(self):
+        """The rule is decoupled from the list it enforces.
 
-        The two routes share the validator and must not share the list, or `/ask/transcribe` would accept
-        a PNG and fail later at the provider — after the upload appeared to succeed.
+        Only the image list is live today — an audio/transcription path was drafted and pulled for want of
+        a provider — but the validator still takes the allowlist as an argument. This pins that seam: a
+        type on one list is refused against a different, empty-of-it list, which is what makes re-adding a
+        second file kind a caller change rather than a fork of the rules.
         """
-        assert attachments.validate_attachment(
-            content_type="image/png", size=1024, allowed=attachments.ALLOWED_AUDIO_TYPES
+        assert (
+            attachments.validate_attachment(
+                content_type="image/png", size=1024, allowed=attachments.ALLOWED_IMAGE_TYPES
+            )
+            is None
         )
         assert attachments.validate_attachment(
-            content_type=WEBM, size=1024, allowed=attachments.ALLOWED_IMAGE_TYPES
+            content_type="image/png", size=1024, allowed=frozenset({"audio/webm"})
         )
 
 
@@ -235,12 +237,6 @@ class Harness:
             files={"file": ("x.png", io.BytesIO(content), content_type)},
         )
 
-    def transcribe(self, *, content=b"fake audio", content_type=WEBM):
-        return self.client.post(
-            "/api/v1/intelligence/ask/transcribe",
-            files={"file": ("clip.webm", io.BytesIO(content), content_type)},
-        )
-
 
 class TestUploadingAnImage:
     def test_an_accepted_image_is_stored_and_returned_with_its_id(self):
@@ -315,65 +311,3 @@ class TestRemovingAnAttachment:
                 response = h.client.delete("/api/v1/intelligence/ask/attachments/up_1")
         assert response.status_code == 204
         assert h.deleted == [("up_1", "user_1")]
-
-
-class TestTranscribing:
-    def test_audio_becomes_text_the_learner_can_edit(self):
-        """Returns the text and does not send it as a turn.
-
-        A transcript posted straight through would have Maigie answer a misheard question, and the learner
-        could not tell whose mistake it was.
-        """
-        from src.domains.intelligence.reasoning.llm.llm_service import llm_service
-
-        with Harness() as h:
-            with patch.object(
-                llm_service,
-                "transcribe_audio",
-                AsyncMock(return_value="what is entropy"),
-                create=True,
-            ):
-                response = h.transcribe()
-        assert response.status_code == 200
-        assert response.json()["text"] == "what is entropy"
-
-    def test_a_transcript_is_not_persisted_as_a_message(self):
-        """A transcript is an input to a message, not a message."""
-        from src.domains.intelligence.reasoning.llm.llm_service import llm_service
-
-        with Harness() as h:
-            with patch.object(
-                llm_service, "transcribe_audio", AsyncMock(return_value="hello"), create=True
-            ):
-                h.transcribe()
-            assert h.created == []
-
-    def test_a_non_audio_file_is_a_400(self):
-        with Harness() as h:
-            response = h.transcribe(content_type="image/png")
-        assert response.status_code == 400
-
-    def test_no_provider_says_so_rather_than_returning_an_empty_transcript(self):
-        """`""` would read to the learner as "you said nothing" — a claim about them, not about us."""
-        from src.domains.intelligence.reasoning.llm.llm_service import llm_service
-
-        with Harness() as h:
-            if hasattr(llm_service, "transcribe_audio"):
-                with patch.object(llm_service, "transcribe_audio", None):
-                    response = h.transcribe()
-            else:
-                response = h.transcribe()
-        assert response.status_code == 501
-
-    def test_a_provider_failure_is_a_503_not_a_wrong_transcript(self):
-        from src.domains.intelligence.reasoning.llm.llm_service import llm_service
-
-        with Harness() as h:
-            with patch.object(
-                llm_service,
-                "transcribe_audio",
-                AsyncMock(side_effect=RuntimeError("whisper down")),
-                create=True,
-            ):
-                response = h.transcribe()
-        assert response.status_code == 503

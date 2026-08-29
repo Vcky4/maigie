@@ -513,6 +513,230 @@
         "title": "AnswerSubmitRequest",
         "type": "object"
       },
+      "AskAction": {
+        "description": "Something Maigie actually did on this turn.\n\n**Only from the model's own tool output** (Decision I). The surface previously published a\n`suggestedAction` produced by keyword-matching the learner's own words and presented as the model's\nrecommendation — which §1's second clause forbids outright, because it is a claim that is false. These\nare the executed actions, so a client offering a follow-up is offering one tied to something real.\n\n`status` is carried rather than filtered so a failed action is visible. The event frames and the\ncomponents are both success-shaped, so a turn whose tool failed otherwise looks like a turn that used\nno tools.",
+        "properties": {
+          "courseId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courseid"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "status"
+        ],
+        "title": "AskAction",
+        "type": "object"
+      },
+      "AskAttachmentResponse": {
+        "description": "A stored attachment, ready to be sent with a turn.\n\n`url` is what goes into `AskRequest.image_urls` and `ChatMessage.image_urls`. `id` is what a\n`DELETE` addresses — returned because without it an attachment the learner removes from the composer\ncan only be orphaned, which is §6.1's reason for wanting a delete route at all.",
+        "properties": {
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mimeType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mimetype"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "filename"
+        ],
+        "title": "AskAttachmentResponse",
+        "type": "object"
+      },
+      "AskRequest": {
+        "description": "One turn.\n\n`session_id` is optional: absent starts a new conversation, present appends to that one. The server\nresolves and authorises it either way — an id here is a claim, not a permission (see\n`ask_service.resolve_session_for_turn`).\n\n`context` is the page scope the socket already sends under the same name: `courseId`, `topicId`,\n`noteId`, `reviewItemId` and the pasted `content` / `noteContent`. Deliberately a free-form dict\nrather than a modelled shape, and that is a compromise worth naming: enrichment reads keys that\naccumulated over time, so modelling it now would either be wrong or would freeze a shape that is\nstill moving. `ask_service.AskContext.from_client` is where it is read, and the four ids that matter\nare named there.\n\n`message` carries no `max_length` here on purpose. The limit is\n`ask_service.MESSAGE_MAX_LENGTH` and it is enforced by `screen_turn`, so that both transports refuse\nthe same message with the same words — a pydantic `422` on this route and a friendlier refusal on the\nsocket would be two different contracts for one rule. `min_length=1` is kept because it costs\nnothing and rejects the most obvious case at the edge.",
+        "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context"
+          },
+          "imageUrls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Imageurls",
+            "type": "array"
+          },
+          "message": {
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "sessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionid"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "AskRequest",
+        "type": "object"
+      },
+      "AskResponse": {
+        "description": "What one turn produced.\n\nThe same values the socket sends across several frames, collapsed into one body — which is what makes\nthe two transports comparable rather than merely coexistent. `content` is the answer,\n`suggestion_text` the trailing suggestion when there was one, `components` the rich blocks, and\n`skills_used` the badges.\n\n**`session_id` is always returned, including when the request did not send one.** A client starting a\nconversation needs the id back to continue it, and making them read it out of the message row would\nbe a second contract for the same fact.",
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/AskAction"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "components": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Components",
+            "type": "array"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/AskScope"
+          },
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "skillsUsed": {
+            "items": {
+              "$ref": "#/components/schemas/AskSkillBadge"
+            },
+            "title": "Skillsused",
+            "type": "array"
+          },
+          "suggestionText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggestiontext"
+          }
+        },
+        "required": [
+          "id",
+          "sessionId",
+          "content"
+        ],
+        "title": "AskResponse",
+        "type": "object"
+      },
+      "AskScope": {
+        "description": "What the answer was allowed to draw on — Decision G's honesty requirement.\n\n**`library_recall` is the load-bearing field and it is `False` today.** Retrieval v1 is budgeted\nexcerpting over what the client put in scope, not a search of everything the learner has written. An\nanswer from one topic's notes and an answer from a whole library are different claims, and a client\nthat renders them identically is asserting the stronger one — so \"I could not find anything about\nthat\" must not be shown as a statement about the library while this is false.\n\n`sources` is a list of names rather than a score, because the only claim that can be made without\ninventing a measurement is \"these are the things I looked at\".",
+        "properties": {
+          "libraryRecall": {
+            "default": false,
+            "title": "Libraryrecall",
+            "type": "boolean"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "title": "AskScope",
+        "type": "object"
+      },
+      "AskSkillBadge": {
+        "description": "A capability Maigie used on this turn, for the \"what did it just do\" affordance.",
+        "properties": {
+          "icon": {
+            "title": "Icon",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "icon"
+        ],
+        "title": "AskSkillBadge",
+        "type": "object"
+      },
       "BehaviourProfileResponse": {
         "properties": {
           "avgSessionMinutes": {
@@ -661,6 +885,20 @@
           "password"
         ],
         "title": "Body_login_form_api_v1_auth_login_post",
+        "type": "object"
+      },
+      "Body_upload_ask_attachment_api_v1_intelligence_ask_attachments_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_ask_attachment_api_v1_intelligence_ask_attachments_post",
         "type": "object"
       },
       "Body_upload_attachment_api_v1_learning_notes__note_id__attachments_upload_post": {
@@ -20030,6 +20268,144 @@
         "tags": [
           "study-voice",
           "study-voice"
+        ]
+      }
+    },
+    "/api/v1/intelligence/ask": {
+      "post": {
+        "description": "Ask Maigie one question and get the whole answer.\n\n**The same pipeline the socket runs, with `on_chunk=None`** (Decision C). Nothing about the turn is\ndecided here: this route resolves a session, saves the learner's message, calls\n`ask_service.answer()` and maps its refusals onto status codes. If a rule ever appears in this\nfunction that is not in `answer()`, the two transports have started to drift — which is what §5.4\ndocuments a year of.\n\nRefusals, and why each is the status code it is:\n\n- `400` for an unusable message. Not `422`: the request is well-formed, the *message* is not, and the\n  body says which so a client can show it rather than guess.\n- `429` when the learner is sending turns faster than the limit. Carries `Retry-After`.\n- `402` when credits are exhausted. Not `403` — nothing is forbidden, something is owed, and the body\n  carries the same words the socket's `credit_limit_error` frame does.\n- `503` when generation failed. **No assistant row is written and no credits are consumed**, which is\n  `answer()`'s guarantee rather than this route's: a failed turn is never stored as an answer (§1).",
+        "operationId": "ask_api_v1_intelligence_ask_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ask",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      }
+    },
+    "/api/v1/intelligence/ask/attachments": {
+      "post": {
+        "description": "Store an image to send with a turn.\n\n**This closes §5.2.2, where the affordance existed and the capability did not.** Web's composer\ncollected images and silently dropped them — no endpoint existed — and mobile's hook targeted a prefix\nthat has never existed. A button that asserts a capability the product lacks is §1's territory.\n\nValidated before it is stored, on rules shared with the audio path so the two cannot drift. Type\nchecking reads the declared content type, which is a real limitation and is documented at\n`attachments.validate_attachment`: it stops honest clients sending what the model cannot read and is\nnot a defence against a hostile one.",
+        "operationId": "upload_ask_attachment_api_v1_intelligence_ask_attachments_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_ask_attachment_api_v1_intelligence_ask_attachments_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskAttachmentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Upload Ask Attachment",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      }
+    },
+    "/api/v1/intelligence/ask/attachments/{upload_id}": {
+      "delete": {
+        "description": "Remove an attachment the learner took back out of the composer.\n\n**Without this every attached-then-removed image is orphaned** — stored, billed and never referenced\n— which is §6.1's reason for asking for the route. Mobile already declares `chat.imageDelete` against\na prefix that does not exist.\n\n`404` for another learner's upload rather than `403`, matching `/ask`: \"exists but is not yours\"\nconfirms the id. The row is deleted whether or not storage cooperates, and the reason is which failure\nis worse — a row pointing at a file that is gone renders as a broken image in a thread, where a file\nwith no row is invisible and merely costs storage. Prefer the invisible one, and log it.",
+        "operationId": "delete_ask_attachment_api_v1_intelligence_ask_attachments__upload_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "title": "Upload Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Ask Attachment",
+        "tags": [
+          "intelligence",
+          "intelligence"
         ]
       }
     },
