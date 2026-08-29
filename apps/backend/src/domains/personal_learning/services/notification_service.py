@@ -107,10 +107,15 @@ DELIVERY_BATCH = 200
 #: The master `UserPreferences.notifications` switch still applies to everything.
 _PUSH_TOGGLE_BY_TYPE = {
     "DAILY_PLAN": "push_schedule_reminder",
+    "learning.morning_schedule": "push_schedule_reminder",
     "study_plan_check_in": "push_schedule_reminder",
+    "learning.study_plan_checkin_reminder": "push_schedule_reminder",
     "study_plan_redistributed": "push_schedule_reminder",
+    "learning.plan_redistributed": "push_schedule_reminder",
     "ENGAGEMENT_NUDGE": "push_study_tips",
+    "learning.momentum_support": "push_study_tips",
     "suggestion": "push_study_tips",
+    "learning.resource_recommended": "push_study_tips",
 }
 
 
@@ -123,18 +128,34 @@ async def create_notification(
     priority: int = 5,
     action_data: dict | None = None,
     scheduled_at: datetime | None = None,
+    canonical_type: str | None = None,
+    action: dict[str, object] | None = None,
+    idempotency_key: str | None = None,
+    source_domain: str | None = None,
+    source_entity_type: str | None = None,
+    source_entity_id: str | None = None,
+    group_key: str | None = None,
 ) -> Any:
-    """Write a notification, and decide when the learner should see it.
+    """Compatibility facade; canonical writes are owned by notifications."""
+    if action is not None and idempotency_key is not None:
+        from src.domains.notifications.service import create_notification as create_canonical
 
-    Always returns the row. The two things that used to suppress a notification now **defer** it, which is
-    the whole point: a message the learner does not need at 3am is still a message they need.
+        return await create_canonical(
+            user_id=user_id,
+            type=canonical_type or type,
+            title=title,
+            body=body,
+            priority=priority,
+            action_data=action_data,
+            scheduled_at=scheduled_at,
+            action=action,
+            idempotency_key=idempotency_key,
+            source_domain=source_domain,
+            source_entity_type=source_entity_type,
+            source_entity_id=source_entity_id,
+            group_key=group_key,
+        )
 
-    - **Quiet hours** hold it until they end, in the learner's own timezone. This applies to every priority,
-      including `PRIORITY_TIME_CRITICAL` — a deadline a few hours away does not justify waking someone, and
-      nothing here is urgent on the scale that would.
-    - **The daily allowance** holds it until the start of their next day, unless it is time-critical, in
-      which case it goes now. The allowance protects attention; it should not silence a date.
-    """
     timezone_ = await _timezone_or_unknown(user_id)
     profile = await repo.get_profile_by_user(user_id)
     moment = ensure_utc(scheduled_at) if scheduled_at else datetime.now(UTC)
@@ -176,16 +197,22 @@ async def create_notification(
 
 
 async def get_unread(*, user_id: str) -> list[Any]:
-    """Unread notifications, most urgent first."""
-    return await repo.list_unread(user_id)
+    """Legacy unread shape/order backed by the canonical repository."""
+    from src.domains.notifications.service import legacy_unread
+
+    return await legacy_unread(user_id=user_id)
 
 
 async def mark_read(*, user_id: str, notification_id: str) -> None:
-    await repo.mark_read(notification_id, user_id)
+    from src.domains.notifications.service import mark_read as canonical_mark_read
+
+    await canonical_mark_read(user_id=user_id, notification_id=notification_id)
 
 
 async def dismiss(*, user_id: str, notification_id: str) -> None:
-    await repo.mark_dismissed(notification_id, user_id)
+    from src.domains.notifications.service import dismiss as canonical_dismiss
+
+    await canonical_dismiss(user_id=user_id, notification_id=notification_id)
 
 
 async def deliver_pending() -> int:

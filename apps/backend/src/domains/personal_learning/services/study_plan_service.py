@@ -1064,16 +1064,23 @@ async def run_weekly_check_ins(*, before: datetime | None = None, limit: int = 5
         remaining = max(0, total - completed)
         days_left = max(0, (plan.deadline - datetime.now(UTC)).days)
 
+        week = datetime.now(UTC).strftime("%G-W%V")
         notification = await notification_service.create_notification(
             user_id=plan.user_id,
             type="study_plan_check_in",
+            canonical_type="learning.study_plan_checkin_reminder",
             title=f"Weekly check-in: {plan.title}",
             body=(
                 f"{completed} of {total} tasks done, {remaining} to go, "
                 f"{days_left} days until your deadline."
             ),
             priority=4,
+            action={"version": 1, "kind": "OPEN_STUDY_PLAN", "entityId": plan.id},
             action_data={"planId": plan.id, "route": "study_plan"},
+            idempotency_key=f"study-plan-checkin:{plan.id}:{week}",
+            source_domain="personal_learning",
+            source_entity_type="study_plan",
+            source_entity_id=plan.id,
         )
         # Recorded even when the notification was suppressed by quiet hours or the daily
         # limit. Otherwise the plan stays "due" and retries every run, turning a
@@ -1138,7 +1145,7 @@ async def redistribute_drifted_plans(*, now: datetime | None = None, limit: int 
     redistributed = 0
     for plan in plans:
         try:
-            moved = await _redistribute_plan(plan.id, plan.user_id)
+            moved = await _redistribute_plan(plan.id, plan.user_id, now=moment)
             # Stamped before the notification, and regardless of what it returned. A plan whose items
             # are all pinned to accepted calendar blocks moves nothing, and it must still go on
             # cooldown rather than being reconsidered every night forever.
@@ -1159,13 +1166,19 @@ async def redistribute_drifted_plans(*, now: datetime | None = None, limit: int 
             await notification_service.create_notification(
                 user_id=plan.user_id,
                 type="study_plan_redistributed",
+                canonical_type="learning.plan_redistributed",
                 title=f"Rescheduled: {plan.title}",
                 body=(
                     f"{moved} task{'s' if moved != 1 else ''} moved to fit the "
                     f"{days_left} days left before your deadline."
                 ),
                 priority=4,
+                action={"version": 1, "kind": "OPEN_STUDY_PLAN", "entityId": plan.id},
                 action_data={"planId": plan.id, "route": "study_plan"},
+                idempotency_key=f"study-plan-redistributed:{plan.id}:{moment.date().isoformat()}",
+                source_domain="personal_learning",
+                source_entity_type="study_plan",
+                source_entity_id=plan.id,
             )
         except Exception:
             logger.exception(
@@ -1176,7 +1189,7 @@ async def redistribute_drifted_plans(*, now: datetime | None = None, limit: int 
     return redistributed
 
 
-async def _redistribute_plan(plan_id: str, user_id: str) -> int:
+async def _redistribute_plan(plan_id: str, user_id: str, *, now: datetime | None = None) -> int:
     """
     Redistribute remaining plan items when learner is behind schedule.
 
@@ -1199,9 +1212,9 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> int:
     if not plan:
         return 0
 
-    now = datetime.now(UTC)
+    moment = _as_utc(now) or datetime.now(UTC)
     deadline = plan.deadline
-    days_remaining = max(1, (deadline - now).days)
+    days_remaining = max(1, (deadline - moment).days)
 
     # The learner's own stated session length is the daily budget when they gave one;
     # otherwise fall back to what they have been observed to sustain. Same order of
@@ -1226,7 +1239,7 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> int:
     # progress would put it behind before the learner saw it.
     day_index = 0
     daily_minutes_used = 0.0
-    candidates = _available_dates(now + timedelta(days=1), days_remaining, plan.preferred_days)
+    candidates = _available_dates(moment + timedelta(days=1), days_remaining, plan.preferred_days)
     moved = 0
 
     for item in pending_items:

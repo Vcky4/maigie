@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.domains.notifications.db_models import NotificationPolicy
 from src.shared.database import get_session_factory
 
 from .db_models import DeviceToken, User, UserPreferences
@@ -93,6 +94,7 @@ class IdentityRepository:
                 notifications=True,
             )
             session.add(prefs)
+            session.add(NotificationPolicy(user_id=user.id, engagement_enabled=True))
             await session.commit()
             await session.refresh(user)
             return user
@@ -116,6 +118,8 @@ class IdentityRepository:
                 is_onboarded=False,
             )
             session.add(user)
+            await session.flush()
+            session.add(NotificationPolicy(user_id=user.id, engagement_enabled=False))
             await session.commit()
             await session.refresh(user)
             return user

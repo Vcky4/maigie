@@ -27,6 +27,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from src.domains.notifications.db_models import Notification
 from src.shared.database.base import Base, TimestampMixin
 
 # ---------------------------------------------------------------------------
@@ -723,107 +724,11 @@ class LearningProfile(Base, TimestampMixin):
 
 
 # ---------------------------------------------------------------------------
-# Notification
+# Notification compatibility export
 # ---------------------------------------------------------------------------
 
-
-class Notification(Base, TimestampMixin):
-    __tablename__ = "Notification"
-
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
-    )
-    user_id: Mapped[str] = mapped_column(
-        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
-    )
-    type: Mapped[str] = mapped_column(String, nullable=False)
-    title: Mapped[str] = mapped_column(String, nullable=False)
-    body: Mapped[str] = mapped_column(Text, nullable=False)
-    priority: Mapped[int] = mapped_column(Integer, default=5)
-    action_data: Mapped[dict | None] = mapped_column("actionData", JSON, nullable=True)
-    scheduled_at: Mapped[datetime] = mapped_column(
-        "scheduledAt", DateTime(timezone=True), nullable=False
-    )
-    delivered_at: Mapped[datetime | None] = mapped_column(
-        "deliveredAt", DateTime(timezone=True), nullable=True
-    )
-    read_at: Mapped[datetime | None] = mapped_column(
-        "readAt", DateTime(timezone=True), nullable=True
-    )
-    dismissed_at: Mapped[datetime | None] = mapped_column(
-        "dismissedAt", DateTime(timezone=True), nullable=True
-    )
-    # When a push actually reached at least one device, and null when it did not.
-    #
-    # **Distinct from `deliveredAt`, which it would be tempting to conflate.** `deliveredAt` means the row
-    # was released into the learner's in-app list, which is a real channel and always succeeds. A push is a
-    # second, best-effort channel that can be skipped for a dozen honest reasons: Firebase unconfigured, the
-    # learner opted out, no `DeviceToken` row for them, or a token this sender cannot address. Registration
-    # now exists (`PUT /users/me/device-tokens`), so `no_tokens` has stopped being universal — but every
-    # token stored so far is an Expo token and this sender speaks FCM, so it is still skipped rather than
-    # sent. `send_push_notification` reports each of those cases by name, and recording any of them as a
-    # delivery would put a claim in the data that nothing sent anything to.
-    #
-    # It is also the idempotency marker. `status` moving off `PENDING` is what stops a row being selected
-    # again, so without this a crash between the send and the status write would push twice.
-    pushed_at: Mapped[datetime | None] = mapped_column(
-        "pushedAt", DateTime(timezone=True), nullable=True
-    )
-    #: `PENDING` | `QUEUED` | `DELIVERED` | `READ` | `DISMISSED` | `EXPIRED`.
-    #:
-    #: `QUEUED` means written but held back — quiet hours, or the learner's daily allowance already spent.
-    #: It used to be a black hole: `list_pending_for_delivery` selected `PENDING` only, so every
-    #: quiet-hours notification ever written was stored and then never delivered by anything.
-    #:
-    #: `EXPIRED` is for a held-back notification whose moment has passed. A deferred message that finally
-    #: arrives four days late is worse than one that never arrives, because the learner acts on it.
-    status: Mapped[str] = mapped_column(String, default="PENDING")
-
-    # Additive notification-platform foundation. Legacy writers continue to use
-    # `type`, `actionData`, and `scheduledAt`; the orchestrator will populate these
-    # fields when producers migrate to the canonical contract.
-    schema_version: Mapped[int] = mapped_column(
-        "schemaVersion", Integer, nullable=False, default=1, server_default="1"
-    )
-    category: Mapped[str | None] = mapped_column(String, nullable=True)
-    urgency: Mapped[str | None] = mapped_column(String, nullable=True)
-    action: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    source_domain: Mapped[str | None] = mapped_column("sourceDomain", String, nullable=True)
-    source_entity_type: Mapped[str | None] = mapped_column(
-        "sourceEntityType", String, nullable=True
-    )
-    source_entity_id: Mapped[str | None] = mapped_column("sourceEntityId", String, nullable=True)
-    idempotency_key: Mapped[str | None] = mapped_column("idempotencyKey", String, nullable=True)
-    group_key: Mapped[str | None] = mapped_column("groupKey", String, nullable=True)
-    eligible_at: Mapped[datetime | None] = mapped_column(
-        "eligibleAt", DateTime(timezone=True), nullable=True
-    )
-    expires_at: Mapped[datetime | None] = mapped_column(
-        "expiresAt", DateTime(timezone=True), nullable=True
-    )
-    archived_at: Mapped[datetime | None] = mapped_column(
-        "archivedAt", DateTime(timezone=True), nullable=True
-    )
-    intelligence_decision_id: Mapped[str | None] = mapped_column(
-        "intelligenceDecisionId",
-        String,
-        ForeignKey("NotificationDecision.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-
-    __table_args__ = (
-        Index("Notification_userId_status_idx", "userId", "status"),
-        Index("Notification_scheduledAt_idx", "scheduledAt"),
-        UniqueConstraint(
-            "userId",
-            "idempotencyKey",
-            name="Notification_userId_idempotencyKey_key",
-        ),
-        Index("Notification_userId_groupKey_idx", "userId", "groupKey"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<Notification id={self.id} type={self.type}>"
+# Runtime ownership moved to the notifications domain. The module-level import
+# above remains the compatibility re-export so old callers resolve one mapper.
 
 
 # ---------------------------------------------------------------------------

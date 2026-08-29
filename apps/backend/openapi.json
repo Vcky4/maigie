@@ -737,6 +737,20 @@
         "title": "AskSkillBadge",
         "type": "object"
       },
+      "AskTranscriptResponse": {
+        "description": "Speech turned into text, for a composer that cannot dictate locally.\n\nReturns the text and does not send it. **The learner edits before asking** — a transcript posted\nstraight as a turn would have Maigie answer a misheard question, and the learner would have no way to\ntell whether the mistake was theirs or the transcriber's.",
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "AskTranscriptResponse",
+        "type": "object"
+      },
       "BehaviourProfileResponse": {
         "properties": {
           "avgSessionMinutes": {
@@ -885,6 +899,20 @@
           "password"
         ],
         "title": "Body_login_form_api_v1_auth_login_post",
+        "type": "object"
+      },
+      "Body_transcribe_for_ask_api_v1_intelligence_ask_transcribe_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_transcribe_for_ask_api_v1_intelligence_ask_transcribe_post",
         "type": "object"
       },
       "Body_upload_ask_attachment_api_v1_intelligence_ask_attachments_post": {
@@ -7768,6 +7796,24 @@
         "title": "LoginRequest",
         "type": "object"
       },
+      "MarkAllReadResponse": {
+        "properties": {
+          "unreadCount": {
+            "title": "Unreadcount",
+            "type": "integer"
+          },
+          "updatedCount": {
+            "title": "Updatedcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updatedCount",
+          "unreadCount"
+        ],
+        "title": "MarkAllReadResponse",
+        "type": "object"
+      },
       "MemoryContextResponse": {
         "description": "What Intelligence remembers about a learner, for transparency and debugging.\n\nPreviously declared `learningGoals`, `strengths` and `weaknesses` alongside these two, all\ndefaulting to `[]`. Nothing in the repository produces them, so the endpoint would have published\nthree empty lists as though the learner had no goals and no weaknesses rather than as though\nnothing had been measured. That is the absent-as-zero mistake, so the fields are gone rather than\ndefaulted. They return when something computes them.",
         "properties": {
@@ -8576,6 +8622,440 @@
           "createdAt"
         ],
         "title": "NoteVersionResponse",
+        "type": "object"
+      },
+      "NotificationHistoryPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          },
+          "unreadCount": {
+            "title": "Unreadcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "unreadCount"
+        ],
+        "title": "NotificationHistoryPage",
+        "type": "object"
+      },
+      "NotificationInteractionCreate": {
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "deliveryId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deliveryid"
+          },
+          "event": {
+            "enum": [
+              "SEEN",
+              "OPENED",
+              "CLICKED",
+              "READ",
+              "DISMISSED",
+              "ACTIONED",
+              "SNOOZED",
+              "DECLINED",
+              "UNSUBSCRIBED"
+            ],
+            "title": "Event",
+            "type": "string"
+          },
+          "idempotencyId": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotencyid",
+            "type": "string"
+          },
+          "occurredAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurredat"
+          },
+          "sourceMetadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcemetadata"
+          },
+          "surface": {
+            "enum": [
+              "WEB",
+              "IOS",
+              "ANDROID",
+              "EMAIL"
+            ],
+            "title": "Surface",
+            "type": "string"
+          }
+        },
+        "required": [
+          "idempotencyId",
+          "event",
+          "surface"
+        ],
+        "title": "NotificationInteractionCreate",
+        "type": "object"
+      },
+      "NotificationInteractionResponse": {
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "deliveryId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deliveryid"
+          },
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "idempotencyId": {
+            "title": "Idempotencyid",
+            "type": "string"
+          },
+          "notificationId": {
+            "title": "Notificationid",
+            "type": "string"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "title": "Occurredat",
+            "type": "string"
+          },
+          "sourceMetadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcemetadata"
+          },
+          "surface": {
+            "title": "Surface",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "notificationId",
+          "userId",
+          "idempotencyId",
+          "event",
+          "surface",
+          "occurredAt",
+          "createdAt"
+        ],
+        "title": "NotificationInteractionResponse",
+        "type": "object"
+      },
+      "NotificationItem": {
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "actionData": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actiondata"
+          },
+          "archivedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archivedat"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "deliveredAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deliveredat"
+          },
+          "dismissedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dismissedat"
+          },
+          "eligibleAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eligibleat"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "groupKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Groupkey"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "integer"
+          },
+          "readAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readat"
+          },
+          "scheduledAt": {
+            "format": "date-time",
+            "title": "Scheduledat",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "title": "Schemaversion",
+            "type": "integer"
+          },
+          "sourceDomain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcedomain"
+          },
+          "sourceEntityId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourceentityid"
+          },
+          "sourceEntityType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourceentitytype"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "urgency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Urgency"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "type",
+          "title",
+          "body",
+          "priority",
+          "schemaVersion",
+          "scheduledAt",
+          "status",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "NotificationItem",
         "type": "object"
       },
       "NotificationResponse": {
@@ -18932,6 +19412,19 @@
         "title": "TrialSummaryResponse",
         "type": "object"
       },
+      "UnreadCountResponse": {
+        "properties": {
+          "unreadCount": {
+            "title": "Unreadcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unreadCount"
+        ],
+        "title": "UnreadCountResponse",
+        "type": "object"
+      },
       "UpgradeRequiredDetail": {
         "description": "Body of a `403` raised by a tier gate.\n\nPreviously an ad-hoc dict, so the client had nothing to render an upgrade\npath from. Built from `feature_tier_service.CapabilityDenied`.",
         "properties": {
@@ -20403,6 +20896,54 @@
           }
         ],
         "summary": "Delete Ask Attachment",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      }
+    },
+    "/api/v1/intelligence/ask/transcribe": {
+      "post": {
+        "description": "Turn spoken audio into text for the composer.\n\n**For mobile, and deliberately not for web** (§4.5.3). Web dictates through the browser's Web Speech\nAPI, which costs nothing and needs no round trip; React Native has no equivalent and no polyfill is\ninstalled, so without this mobile cannot dictate at all. Routing web through here too would add a\nnetwork hop and a bill to something that already works locally.\n\n**Returns text and does not send it.** The learner edits before asking — a transcript posted straight\nas a turn would have Maigie answer a misheard question, and the learner could not tell whether the\nmistake was theirs or the transcriber's. Nothing is persisted either: a transcript is an input to a\nmessage, not a message, so it has no reason to outlive the composer.",
+        "operationId": "transcribe_for_ask_api_v1_intelligence_ask_transcribe_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_transcribe_for_ask_api_v1_intelligence_ask_transcribe_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskTranscriptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Transcribe For Ask",
         "tags": [
           "intelligence",
           "intelligence"
@@ -32097,6 +32638,294 @@
         ]
       }
     },
+    "/api/v1/notifications": {
+      "get": {
+        "operationId": "history_api_v1_notifications_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "unread",
+                "read",
+                "dismissed",
+                "archived"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationHistoryPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "History",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/notifications/read-all": {
+      "post": {
+        "operationId": "read_all_api_v1_notifications_read_all_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkAllReadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read All",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/notifications/unread-count": {
+      "get": {
+        "operationId": "get_unread_count_api_v1_notifications_unread_count_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadCountResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Unread Count",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/notifications/{notification_id}/dismiss": {
+      "post": {
+        "operationId": "dismiss_api_v1_notifications__notification_id__dismiss_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "title": "Notification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Dismiss",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/notifications/{notification_id}/interactions": {
+      "post": {
+        "operationId": "create_interaction_api_v1_notifications__notification_id__interactions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "title": "Notification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationInteractionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationInteractionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Interaction",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/notifications/{notification_id}/read": {
+      "post": {
+        "operationId": "mark_read_api_v1_notifications__notification_id__read_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "title": "Notification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mark Read",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
     "/api/v1/progress/achievements": {
       "get": {
         "description": "Get all unlocked achievements.",
@@ -34487,6 +35316,10 @@
     {
       "description": "**Personal Learning Domain** — The learner's private environment: notes, exam preparation, document generation, study mode.",
       "name": "personal-learning"
+    },
+    {
+      "description": "**Notifications Domain** — Canonical in-app history, unread state, interactions, and best-effort realtime hints.",
+      "name": "notifications"
     },
     {
       "description": "**Learning Spaces Domain** — Collaborative learning environments. Membership, roles (Owner, Admin, Educator, Learner), and space settings.",

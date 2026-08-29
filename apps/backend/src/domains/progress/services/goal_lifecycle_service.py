@@ -306,7 +306,7 @@ async def _extend_or_ask(
     await _record(goal, action="extended", trigger=trigger)
     await _notify(
         goal,
-        type="goal_deadline_extended",
+        type="learning.goal_deadline_changed",
         title=f"More time: {goal.title}",
         body=(
             f"You're {progress:.0f}% of the way there. I've moved the deadline to "
@@ -328,7 +328,7 @@ async def _ask_to_confirm(
     await _record(goal, action="asked_to_confirm", trigger=trigger)
     await _notify(
         goal,
-        type="goal_needs_decision",
+        type="progress.goal_decision_required",
         title=f"Still going for this? {goal.title}",
         body=(
             f"You're at {progress:.0f}% and this deadline has moved {moved} time"
@@ -354,7 +354,7 @@ async def _warn(goal: Any, *, progress: float, now: datetime) -> str:
         # here loses nothing by waiting for tomorrow, so it takes its turn behind the learner's daily
         # allowance; a warning that an immovable date is days away does not get that luxury.
         time_critical=True,
-        type="goal_at_risk",
+        type="progress.goal_at_risk",
         title=f"{days_left} day{'s' if days_left != 1 else ''} left: {goal.title}",
         body=(
             f"You're at {progress:.0f}% with {days_left} day"
@@ -402,13 +402,26 @@ async def _notify(
     from src.domains.personal_learning.services import notification_service
 
     try:
+        target = ensure_utc_optional(goal.target_date)
+        target_key = target.date().isoformat() if target else "none"
+        legacy_type = {
+            "learning.goal_deadline_changed": "goal_deadline_extended",
+            "progress.goal_decision_required": "goal_needs_decision",
+            "progress.goal_at_risk": "goal_at_risk",
+        }[type]
         await notification_service.create_notification(
             user_id=goal.user_id,
-            type=type,
+            type=legacy_type,
+            canonical_type=type,
             title=title,
             body=body,
             priority=(notification_service.PRIORITY_TIME_CRITICAL if time_critical else 3),
+            action={"version": 1, "kind": "OPEN_GOAL", "entityId": goal.id},
             action_data={"goalId": goal.id, "route": "goal"},
+            idempotency_key=f"goal-lifecycle:{goal.id}:{type}:{target_key}",
+            source_domain="progress",
+            source_entity_type="goal",
+            source_entity_id=goal.id,
         )
     except Exception:
         logger.exception(
