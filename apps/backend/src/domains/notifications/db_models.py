@@ -332,3 +332,143 @@ class NotificationInteraction(Base, TimestampMixin):
             "occurredAt",
         ),
     )
+
+
+class NotificationPolicy(Base, TimestampMixin):
+    """One shadow global policy snapshot per user.
+
+    Legacy fields remain the runtime source of truth until the preference API and
+    orchestrator cut over. A missing legacy preference row becomes fail-closed
+    here rather than inventing consent for an external channel.
+    """
+
+    __tablename__ = "NotificationPolicy"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False
+    )
+    engagement_enabled: Mapped[bool] = mapped_column(
+        "engagementEnabled", Boolean, nullable=False, default=False, server_default="false"
+    )
+    timezone: Mapped[str] = mapped_column(
+        String, nullable=False, default="UTC", server_default="UTC"
+    )
+    timezone_source: Mapped[str | None] = mapped_column("timezoneSource", String(16), nullable=True)
+    timezone_captured_at: Mapped[datetime | None] = mapped_column(
+        "timezoneCapturedAt", DateTime(timezone=True), nullable=True
+    )
+    language: Mapped[str] = mapped_column(String, nullable=False, default="en", server_default="en")
+    quiet_hours_start: Mapped[str | None] = mapped_column(
+        "quietHoursStart", String(5), nullable=True
+    )
+    quiet_hours_end: Mapped[str | None] = mapped_column("quietHoursEnd", String(5), nullable=True)
+    max_daily_notifications: Mapped[int] = mapped_column(
+        "maxDailyNotifications", Integer, nullable=False, default=5, server_default="5"
+    )
+    digest_local_time: Mapped[str | None] = mapped_column(
+        "digestLocalTime", String(5), nullable=True
+    )
+    digest_day_of_week: Mapped[int | None] = mapped_column(
+        "digestDayOfWeek", Integer, nullable=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint("userId", name="NotificationPolicy_userId_key"),
+        CheckConstraint(
+            "\"timezoneSource\" IS NULL OR \"timezoneSource\" IN ('DEVICE', 'MANUAL')",
+            name="NotificationPolicy_timezoneSource_check",
+        ),
+        CheckConstraint(
+            '("quietHoursStart" IS NULL) = ("quietHoursEnd" IS NULL)',
+            name="NotificationPolicy_quietHours_pair_check",
+        ),
+        CheckConstraint(
+            '"maxDailyNotifications" >= 1',
+            name="NotificationPolicy_maxDailyNotifications_check",
+        ),
+        CheckConstraint(
+            '"digestDayOfWeek" IS NULL OR "digestDayOfWeek" BETWEEN 0 AND 6',
+            name="NotificationPolicy_digestDayOfWeek_check",
+        ),
+        CheckConstraint(
+            '"digestDayOfWeek" IS NULL OR "digestLocalTime" IS NOT NULL',
+            name="NotificationPolicy_digest_schedule_check",
+        ),
+    )
+
+
+class NotificationPreference(Base, TimestampMixin):
+    """Sparse type/category by channel preference override."""
+
+    __tablename__ = "NotificationPreference"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False
+    )
+    category: Mapped[str] = mapped_column(String(16), nullable=False)
+    notification_type: Mapped[str | None] = mapped_column("notificationType", String, nullable=True)
+    channel: Mapped[str] = mapped_column(String(16), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    frequency: Mapped[str] = mapped_column(String(16), nullable=False)
+    digest_period: Mapped[str | None] = mapped_column("digestPeriod", String(16), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "category IN ('SECURITY', 'ACCOUNT', 'BILLING', 'MEMBERSHIP', "
+            "'SOCIAL', 'CLASSROOM', 'LEARNING', 'PROGRESS', 'SUPPORT', 'OPERATIONS')",
+            name="NotificationPreference_category_check",
+        ),
+        CheckConstraint(
+            "channel IN ('IN_APP', 'MOBILE_PUSH', 'WEB_PUSH', 'EMAIL')",
+            name="NotificationPreference_channel_check",
+        ),
+        CheckConstraint(
+            "frequency IN ('IMMEDIATE', 'DIGEST', 'OFF')",
+            name="NotificationPreference_frequency_check",
+        ),
+        CheckConstraint(
+            "enabled = (frequency <> 'OFF')",
+            name="NotificationPreference_enabled_frequency_check",
+        ),
+        CheckConstraint(
+            "(frequency = 'DIGEST' AND \"digestPeriod\" IS NOT NULL) OR "
+            "(frequency <> 'DIGEST' AND \"digestPeriod\" IS NULL)",
+            name="NotificationPreference_digest_check",
+        ),
+        CheckConstraint(
+            "\"digestPeriod\" IS NULL OR \"digestPeriod\" IN ('DAILY', 'WEEKLY')",
+            name="NotificationPreference_digestPeriod_check",
+        ),
+        CheckConstraint(
+            '"notificationType" IS NULL OR length("notificationType") > 0',
+            name="NotificationPreference_notificationType_check",
+        ),
+        Index(
+            "NotificationPreference_user_category_channel_key",
+            "userId",
+            "category",
+            "channel",
+            unique=True,
+            postgresql_where=text('"notificationType" IS NULL'),
+        ),
+        Index(
+            "NotificationPreference_user_type_channel_key",
+            "userId",
+            "notificationType",
+            "channel",
+            unique=True,
+            postgresql_where=text('"notificationType" IS NOT NULL'),
+        ),
+        Index(
+            "NotificationPreference_userId_channel_category_idx",
+            "userId",
+            "channel",
+            "category",
+        ),
+    )

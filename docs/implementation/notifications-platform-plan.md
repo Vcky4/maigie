@@ -883,7 +883,7 @@ Backend:
 - [x] Establish taxonomy, action union, category, urgency, TTL, and dedupe policy — **foundation added 2026-08-29; producers still use legacy types until migrated.**
 - [x] Add `NotificationDelivery`, `NotificationDeliveryAttempt`, `NotificationInteraction`, `NotificationDecision`, and `PushInstallation` migrations — **added in revision 058 on 2026-08-29; no writers enabled yet.**
 - [x] Add idempotency/grouping fields to `Notification` without breaking current clients — **additive nullable fields added 2026-08-29; legacy API shape unchanged.**
-- [ ] Add normalized preferences and migrate legacy values conservatively.
+- [x] Add normalized preferences and migrate legacy values conservatively — **shadow-only `NotificationPolicy` and exact type/channel `NotificationPreference` rows added and applied in revision 059 on 2026-08-29; legacy APIs/readers and delivery behavior remain unchanged.**
 - [ ] Add feature flags and kill switches per external channel and intelligence.
 - [ ] Define metrics, structured logs, and lifecycle inspection tooling.
 
