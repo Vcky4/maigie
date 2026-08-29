@@ -29,6 +29,7 @@ fact in the code rather than a claim in a document.
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -492,6 +493,21 @@ MESSAGE_MAX_LENGTH = 16_000
 
 MESSAGE_REJECTED_EMPTY = "message_empty"
 MESSAGE_REJECTED_TOO_LONG = "message_too_long"
+MESSAGE_REJECTED_RATE_LIMITED = "rate_limited"
+
+#: Turns one learner may start per window.
+#:
+#: **The limit is on the turn, not the transport**, which is the whole point of putting it here. Both
+#: clients send turns over the socket, so a limit declared on `/ask` alone would sit on the path nobody
+#: uses (plan §4.5.9). Ask Maigie is the most expensive endpoint in the product per request — a turn is a
+#: model call with tools — so this is a spend control as much as an abuse control.
+#:
+#: Thirty a minute is far above a person typing and far below a script. It is deliberately not tight
+#: enough to notice: the credit system is what limits legitimate heavy use, and a rate limit that fires
+#: on real conversation would be the wrong tool doing billing's job.
+RATE_LIMIT_MAX_TURNS = 30
+RATE_LIMIT_WINDOW_SECONDS = 60
+RATE_LIMIT_KEY = "intelligence.ask"
 
 
 @dataclass(frozen=True, slots=True)
@@ -531,6 +547,108 @@ def validate_message(message: str | None) -> MessageRejection | None:
             ),
         )
     return None
+
+
+async def screen_turn(
+    *, message: str | None, user_id: str, check_rate_limit: Any
+) -> MessageRejection | None:
+    """Everything that can refuse a turn before anything is written. One call, so neither transport can
+    apply half of it.
+
+    **Validation runs before the rate limit, and the order is deliberate.** An empty or over-long
+    message must not spend the learner's rate-limit budget: it was never a turn, so counting it would
+    let a client with a bug lock its own user out of the surface.
+
+    `check_rate_limit(key, max_requests, window_seconds) -> (allowed, remaining)` is injected — the
+    non-raising primitive, not `enforce_rate_limit`, which raises `HTTPException`. That distinction is
+    the reason this lives here at all: an `HTTPException` on a socket turn would fall through to the
+    handler's generic catch and reach the learner as "Maigie could not answer that just now", which is
+    both wrong and retryable-looking. A rejection is a value; each transport renders it as its own kind
+    of refusal.
+
+    **A failing rate-limit backend allows the turn.** `check_rate_limit` already swallows its own errors
+    and returns `True`; stated here because that is a deliberate fail-open. Redis being down must not
+    take Ask Maigie down with it, and the credit system still caps spend.
+    """
+    rejection = validate_message(message)
+    if rejection:
+        return rejection
+
+    allowed, _remaining = await check_rate_limit(
+        f"{RATE_LIMIT_KEY}:{user_id}", RATE_LIMIT_MAX_TURNS, RATE_LIMIT_WINDOW_SECONDS
+    )
+    if not allowed:
+        return MessageRejection(
+            code=MESSAGE_REJECTED_RATE_LIMITED,
+            message=("That is a lot of questions at once. Give Maigie a moment and try again."),
+        )
+    return None
+
+
+# ===========================================================================
+# One turn at a time, per conversation
+# ===========================================================================
+#
+# Plan §4.5.13. Both clients disable the composer while a turn is in flight, so a second concurrent turn
+# needs a client bug, a second tab, or a script — but the server had nothing stopping it, and the
+# consequences are all silent. Two turns on one session interleave their history reads, so the second
+# builds its prompt from a thread that is missing the first's question; both write assistant rows whose
+# order depends on which provider answered faster; and both charge.
+#
+# **Rejected rather than queued, and that is the decision.** A queued turn answers a question whose
+# context has moved — the learner has since asked something else, or navigated away from the page the
+# context described — so it produces a correct answer to a question nobody is still asking. Refusing is
+# legible; queueing is a wrong answer with a plausible shape.
+
+MESSAGE_REJECTED_TURN_IN_FLIGHT = "turn_in_flight"
+
+#: Sessions with a turn currently being answered.
+#:
+#: **In-memory, so this is per-worker.** With more than one worker two turns on one session can still
+#: overlap if they land on different processes. Stated rather than hidden: the same limit applies to the
+#: socket connection registry (`core/websocket.py`), so this does not make the deployment story worse
+#: than it already is — but it does mean this guard is a correctness aid rather than a hard invariant, and
+#: anything that must be exclusive across workers needs the database or Redis. The honest fix is a row
+#: lock on `ChatSession`, which is a bigger change than this item.
+_TURNS_IN_FLIGHT: set[str] = set()
+
+
+class TurnAlreadyInFlight(Exception):  # noqa: N818 — named for what happened
+    """This conversation is already answering something."""
+
+    def __init__(self, session_id: str) -> None:
+        super().__init__(f"A turn is already in flight for session {session_id}")
+        self.session_id = session_id
+        self.rejection = MessageRejection(
+            code=MESSAGE_REJECTED_TURN_IN_FLIGHT,
+            message="Maigie is still answering your last question. One moment.",
+        )
+
+
+@asynccontextmanager
+async def turn_in_flight(session_id: str):
+    """Hold the turn slot for one conversation, or refuse.
+
+    Raises `TurnAlreadyInFlight` if this session is already answering. Releases in a `finally`, so a
+    failed or cancelled turn frees the slot — otherwise one provider timeout would lock a learner out of
+    their own conversation until the process restarted, which is a worse failure than the one this
+    prevents.
+
+    **Acquire before writing the learner's message.** Same rule as the other refusals: a rejected turn
+    must not leave a row behind.
+    """
+    if session_id in _TURNS_IN_FLIGHT:
+        raise TurnAlreadyInFlight(session_id)
+    _TURNS_IN_FLIGHT.add(session_id)
+    try:
+        yield
+    finally:
+        _TURNS_IN_FLIGHT.discard(session_id)
+
+
+def turns_in_flight() -> frozenset[str]:
+    """The sessions currently answering. For tests and diagnostics; not part of the turn path."""
+    return frozenset(_TURNS_IN_FLIGHT)
 
 
 # ===========================================================================

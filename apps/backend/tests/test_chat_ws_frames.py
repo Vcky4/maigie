@@ -811,3 +811,46 @@ class TestAnUnusableMessageIsRefusedBeforeAnythingIsWritten:
         result = run([json.dumps({"message": "   "}), "What is entropy?"])
         assert result["prompts"] == ["What is entropy?"]
         assert "assistant_final" in result["manager"].frame_types
+
+
+class TestOneTurnAtATimePerConversation:
+    """§4.5.13, on the socket. The composer is disabled client-side while a turn runs, so reaching this
+    needs a second tab or a bug — and every consequence was silent: interleaved history reads, assistant
+    rows ordered by which provider answered first, and both turns charged."""
+
+    def test_a_turn_on_a_busy_session_is_refused(self):
+        with patch.object(ask_service, "_TURNS_IN_FLIGHT", {"sess_1"}):
+            result = run(["What is entropy?"])
+        assert "error" in result["manager"].frame_types
+
+    def test_a_refused_turn_leaves_no_row(self):
+        with patch.object(ask_service, "_TURNS_IN_FLIGHT", {"sess_1"}):
+            result = run(["What is entropy?"])
+        assert result["rows"] == []
+
+    def test_a_refused_turn_never_reaches_the_model(self):
+        with patch.object(ask_service, "_TURNS_IN_FLIGHT", {"sess_1"}):
+            result = run(["What is entropy?"])
+        assert result["prompts"] == []
+
+    def test_the_refusal_is_retryable(self):
+        """Unlike a validation refusal: the same message works once the turn in flight finishes."""
+        with patch.object(ask_service, "_TURNS_IN_FLIGHT", {"sess_1"}):
+            result = run(["What is entropy?"])
+        errors = result["manager"].bodies_of("error")
+        assert errors[0]["payload"]["retryable"] is True
+        assert errors[0]["payload"]["code"] == ask_service.MESSAGE_REJECTED_TURN_IN_FLIGHT
+
+    def test_the_slot_is_released_so_the_next_turn_works(self):
+        """Two turns in sequence on one connection. If the slot leaked, the second would be refused —
+        which would make the guard a self-inflicted outage rather than a protection."""
+        result = run(["What is entropy?", "And enthalpy?"])
+        assert result["prompts"] == ["What is entropy?", "And enthalpy?"]
+
+    def test_a_failed_turn_releases_the_slot(self):
+        result = run(
+            ["What is entropy?", "And enthalpy?"],
+            route_request=TestAFailedGenerationIsNotAnAnswer.failing_router(RuntimeError("boom")),
+        )
+        assert ask_service.turns_in_flight() == frozenset()
+        assert len(result["manager"].bodies_of("error")) == 2

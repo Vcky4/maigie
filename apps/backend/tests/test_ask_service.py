@@ -14,6 +14,7 @@ inventory stays honest.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -1481,3 +1482,91 @@ class TestValidateMessage:
         This pins intent: if the limit is ever tightened to a few hundred characters, that is a product
         change and this test should be the thing that argues with it."""
         assert ask_service.MESSAGE_MAX_LENGTH >= 8_000
+
+
+# ---------------------------------------------------------------------------
+# One turn at a time, per conversation
+# ---------------------------------------------------------------------------
+#
+# Plan §4.5.13. Both clients disable the composer while a turn is in flight, so a second concurrent turn
+# needs a client bug, a second tab or a script — and every consequence is silent. Two turns on one
+# session interleave their history reads, so the second builds its prompt from a thread missing the
+# first's question; both write assistant rows in provider-response order; and both charge.
+
+
+class TestTurnInFlight:
+    @pytest.mark.asyncio
+    async def test_a_session_can_answer(self):
+        async with ask_service.turn_in_flight("sess_1"):
+            assert "sess_1" in ask_service.turns_in_flight()
+
+    @pytest.mark.asyncio
+    async def test_the_slot_is_released_afterwards(self):
+        async with ask_service.turn_in_flight("sess_1"):
+            pass
+        assert "sess_1" not in ask_service.turns_in_flight()
+
+    @pytest.mark.asyncio
+    async def test_a_second_turn_on_the_same_session_is_refused(self):
+        async with ask_service.turn_in_flight("sess_1"):
+            with pytest.raises(ask_service.TurnAlreadyInFlight):
+                async with ask_service.turn_in_flight("sess_1"):
+                    raise AssertionError("the second turn should not have started")
+
+    @pytest.mark.asyncio
+    async def test_a_different_session_is_unaffected(self):
+        """The guard is per conversation, not per learner. A learner with two conversations open is
+        doing something reasonable."""
+        async with ask_service.turn_in_flight("sess_1"), ask_service.turn_in_flight("sess_2"):
+            assert ask_service.turns_in_flight() == frozenset({"sess_1", "sess_2"})
+
+    @pytest.mark.asyncio
+    async def test_a_failed_turn_frees_the_slot(self):
+        """Released in a `finally`. Otherwise one provider timeout locks the learner out of their own
+        conversation until the process restarts — a worse failure than the one this prevents."""
+        with pytest.raises(RuntimeError):
+            async with ask_service.turn_in_flight("sess_1"):
+                raise RuntimeError("provider down")
+        assert "sess_1" not in ask_service.turns_in_flight()
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_turn_frees_the_slot(self):
+        with pytest.raises(asyncio.CancelledError):
+            async with ask_service.turn_in_flight("sess_1"):
+                raise asyncio.CancelledError
+        assert "sess_1" not in ask_service.turns_in_flight()
+
+    @pytest.mark.asyncio
+    async def test_a_refused_second_turn_does_not_release_the_first(self):
+        """The refusal must not free a slot it never held, or the guard would let the *third* turn in
+        while the first is still running."""
+        async with ask_service.turn_in_flight("sess_1"):
+            with pytest.raises(ask_service.TurnAlreadyInFlight):
+                async with ask_service.turn_in_flight("sess_1"):
+                    pass
+            assert "sess_1" in ask_service.turns_in_flight()
+
+    @pytest.mark.asyncio
+    async def test_the_refusal_is_retryable(self):
+        """Unlike a validation refusal, the same message works once the turn in flight finishes."""
+        busy = ask_service.TurnAlreadyInFlight("sess_1")
+        assert busy.rejection.code == ask_service.MESSAGE_REJECTED_TURN_IN_FLIGHT
+        assert "still answering" in busy.rejection.message
+
+    @pytest.mark.asyncio
+    async def test_concurrent_turns_are_serialised_by_refusal_not_by_queueing(self):
+        """**Refused, not queued**, and this is the decision. A queued turn answers a question whose
+        context has moved — the learner has since asked something else or navigated away from the page
+        the context described — so it is a correct answer to a question nobody is still asking."""
+        started: list[str] = []
+
+        async def turn(name: str):
+            try:
+                async with ask_service.turn_in_flight("sess_1"):
+                    started.append(name)
+                    await asyncio.sleep(0.01)
+            except ask_service.TurnAlreadyInFlight:
+                started.append(f"{name}:refused")
+
+        await asyncio.gather(turn("a"), turn("b"))
+        assert sorted(started) in (["a", "b:refused"], ["a:refused", "b"])
