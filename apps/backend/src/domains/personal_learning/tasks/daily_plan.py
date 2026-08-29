@@ -7,6 +7,7 @@ Uses paginated batch processing to avoid loading all users into memory.
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 
 from src.core.celery_app import celery_app
 
@@ -76,13 +77,20 @@ async def _prepare_daily_plan_async():
                 else:
                     body = "No pending reviews today. Great time to explore something new!"
 
+                today = datetime.now(UTC).date().isoformat()
                 await notification_service.create_notification(
                     user_id=user_id,
                     type="DAILY_PLAN",
+                    canonical_type="learning.morning_schedule",
                     title="Your Daily Learning Plan",
                     body=body,
                     priority=3,
+                    action={"version": 1, "kind": "OPEN_HOME"},
                     action_data={"type": "navigate", "target": "/home"},
+                    idempotency_key=f"daily-plan:{today}",
+                    source_domain="personal_learning",
+                    source_entity_type="learning_profile",
+                    source_entity_id=str(profile.id),
                 )
                 total_processed += 1
             except Exception:

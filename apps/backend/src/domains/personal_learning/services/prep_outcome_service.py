@@ -376,6 +376,7 @@ async def remind_about_missing_results(*, now: datetime | None = None) -> int:
             await notification_service.create_notification(
                 user_id=outcome.user_id,
                 type="preparation_result",
+                canonical_type="learning.reflection_opportunity",
                 title=f"Did you get your {prep.subject} result?",
                 body=(
                     "Adding your mark lets us check whether our readiness estimate was any good — which is "
@@ -385,6 +386,7 @@ async def remind_about_missing_results(*, now: datetime | None = None) -> int:
                 # of the exam fades; this one is a nice-to-have about a number the learner either has or does
                 # not, so it must never outrank the daily plan.
                 priority=4,
+                action={"version": 1, "kind": "OPEN_PREPARATION", "entityId": prep.id},
                 action_data={
                     "type": "navigate",
                     "target": "exam-prep",
@@ -392,6 +394,10 @@ async def remind_about_missing_results(*, now: datetime | None = None) -> int:
                     # The review surface is where the field lives, on both clients.
                     "tab": "review",
                 },
+                idempotency_key=f"preparation-result:{outcome.id}:{reminder}",
+                source_domain="personal_learning",
+                source_entity_type="preparation",
+                source_entity_id=prep.id,
             )
             # Stamped whether or not the notification was delivered. The budget bounds how often we *ask*;
             # treating a suppressed message as "not asked" would let a learner in permanent quiet hours be

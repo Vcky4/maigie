@@ -23,6 +23,93 @@ from sqlalchemy.orm import Mapped, mapped_column
 from src.shared.database.base import Base, TimestampMixin
 
 
+class Notification(Base, TimestampMixin):
+    """Canonical durable in-app notification."""
+
+    __tablename__ = "Notification"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    type: Mapped[str] = mapped_column(String, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=5)
+    action_data: Mapped[dict | None] = mapped_column("actionData", JSON, nullable=True)
+    scheduled_at: Mapped[datetime] = mapped_column(
+        "scheduledAt", DateTime(timezone=True), nullable=False
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        "deliveredAt", DateTime(timezone=True), nullable=True
+    )
+    read_at: Mapped[datetime | None] = mapped_column(
+        "readAt", DateTime(timezone=True), nullable=True
+    )
+    dismissed_at: Mapped[datetime | None] = mapped_column(
+        "dismissedAt", DateTime(timezone=True), nullable=True
+    )
+    pushed_at: Mapped[datetime | None] = mapped_column(
+        "pushedAt", DateTime(timezone=True), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String, default="PENDING")
+    schema_version: Mapped[int] = mapped_column(
+        "schemaVersion", Integer, nullable=False, default=1, server_default="1"
+    )
+    category: Mapped[str | None] = mapped_column(String, nullable=True)
+    urgency: Mapped[str | None] = mapped_column(String, nullable=True)
+    action: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    source_domain: Mapped[str | None] = mapped_column("sourceDomain", String, nullable=True)
+    source_entity_type: Mapped[str | None] = mapped_column(
+        "sourceEntityType", String, nullable=True
+    )
+    source_entity_id: Mapped[str | None] = mapped_column("sourceEntityId", String, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column("idempotencyKey", String, nullable=True)
+    group_key: Mapped[str | None] = mapped_column("groupKey", String, nullable=True)
+    eligible_at: Mapped[datetime | None] = mapped_column(
+        "eligibleAt", DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        "expiresAt", DateTime(timezone=True), nullable=True
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(
+        "archivedAt", DateTime(timezone=True), nullable=True
+    )
+    intelligence_decision_id: Mapped[str | None] = mapped_column(
+        "intelligenceDecisionId",
+        String,
+        ForeignKey("NotificationDecision.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        Index("Notification_userId_status_idx", "userId", "status"),
+        Index("Notification_scheduledAt_idx", "scheduledAt"),
+        UniqueConstraint("userId", "idempotencyKey", name="Notification_userId_idempotencyKey_key"),
+        Index("Notification_userId_groupKey_idx", "userId", "groupKey"),
+        Index(
+            "Notification_userId_createdAt_id_idx",
+            "userId",
+            text('"createdAt" DESC'),
+            text("id DESC"),
+        ),
+        Index(
+            "Notification_active_unread_idx",
+            "userId",
+            "eligibleAt",
+            "expiresAt",
+            postgresql_where=text(
+                '"readAt" IS NULL AND "dismissedAt" IS NULL AND "archivedAt" IS NULL'
+            ),
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Notification id={self.id} type={self.type}>"
+
+
 class NotificationDecision(Base, TimestampMixin):
     """Auditable recommendation made before hard policy validates a plan."""
 

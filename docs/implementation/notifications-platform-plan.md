@@ -2,7 +2,7 @@
 
 A single notification system for Maigie across in-app, mobile push, web push, and email — governed by learner consent, attention limits, delivery evidence, and an intelligence layer that improves timing and relevance without becoming the source of truth.
 
-> Status: **Planning — 2026-08-29.** The repository survey is complete. Phase 0 is next.
+> Status: **Implemented through Phase 1 — 2026-08-29.** Phase 0 data/contract foundations and the canonical in-app platform are deployed; Phase 0 external-channel feature flags and lifecycle observability remain open, and external delivery work begins in Phase 2.
 >
 > Owners: Backend, web, mobile, product, design, data/ML, and operations.
 >
@@ -889,21 +889,21 @@ Backend:
 
 Clients:
 
-- [ ] Adopt the canonical action contract while retaining old `actionData` compatibility.
-- [ ] Add interaction idempotency ids.
+- [x] Adopt the canonical action contract while retaining old `actionData` compatibility — **web and mobile resolve allowlisted canonical actions first, fall back to legacy `actionData`, and route unknown actions to the notification centre (2026-08-29).**
+- [x] Add interaction idempotency ids — **web and mobile interaction mutations send stable client-generated event ids to the canonical interaction endpoint (2026-08-29).**
 
 Exit criteria: old behavior still works; new writes produce auditable delivery plans in shadow mode; no external sending behavior changes.
 
 ### Phase 1 — canonical in-app platform
 
-- [ ] Move notification ownership out of `personal_learning` into the notification domain.
-- [ ] Add pagination, history, unread count, mark-all-read, and interaction endpoints.
-- [ ] Add idempotency and grouping to existing producers.
-- [ ] Implement WebSocket events with polling fallback.
-- [ ] Migrate web and mobile centres to the shared contract.
-- [ ] Add bell/badges and badge reconciliation.
+- [x] Move notification ownership out of `personal_learning` into the notification domain — **the sole ORM mapping now lives in `domains.notifications`, with a compatibility re-export preserving legacy imports (revision 060, 2026-08-29).**
+- [x] Add pagination, history, unread count, mark-all-read, and interaction endpoints — **the canonical API provides opaque descending `(createdAt, id)` cursor history, status filters, an independent active-unread count, lifecycle mutations, and idempotent interactions (2026-08-29).**
+- [x] Add idempotency and grouping to existing producers — **learning and progress producers now emit canonical taxonomy types and deterministic per-user keys; grouped replacement archives prior unread evidence before appending (revision 060, 2026-08-29).**
+- [x] Implement WebSocket events with polling fallback — **authenticated compact invalidation hints trigger refetches, while polling plus focus/reconnect recovery remains authoritative; socket fanout is currently process-local and best-effort (2026-08-29).**
+- [x] Migrate web and mobile centres to the shared contract — **both clients use canonical history, status/lifecycle actions, interactions, and the same canonical-first/legacy-compatible action semantics (2026-08-29).**
+- [x] Add bell/badges and badge reconciliation — **the web shell exposes a global unread bell and browser app badge; mobile exposes the count in `TopNav` and reconciles the native badge (2026-08-29).**
 
-Exit criteria: web and mobile show the same notification lifecycle and action semantics; reconnect/refetch recovers from missed realtime events.
+Exit criteria: web and mobile show the same notification lifecycle and action semantics; reconnect/refetch recovers from missed realtime events. **Verified 2026-08-29 through web/mobile integration and HTTP poll, focus, and reconnect recovery; realtime hints do not carry authoritative state.**
 
 ### Phase 2 — mobile push made real
 

@@ -7,6 +7,7 @@ Uses paginated batch processing to avoid loading all users into memory.
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 
 from src.core.celery_app import celery_app
 
@@ -56,13 +57,20 @@ async def _check_engagement_async():
         for profile in profiles:
             user_id = profile.user_id
             try:
+                today = datetime.now(UTC).date().isoformat()
                 await notification_service.create_notification(
                     user_id=user_id,
                     type="ENGAGEMENT_NUDGE",
+                    canonical_type="learning.momentum_support",
                     title="Quick review?",
                     body="A 2-minute flashcard session can keep your momentum going.",
                     priority=2,
+                    action={"version": 1, "kind": "OPEN_HOME"},
                     action_data={"type": "navigate", "target": "/flashcards/due"},
+                    idempotency_key=f"engagement-nudge:{today}",
+                    source_domain="personal_learning",
+                    source_entity_type="learning_profile",
+                    source_entity_id=str(profile.id),
                 )
                 nudge_count += 1
             except Exception:

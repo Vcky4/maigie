@@ -856,6 +856,7 @@ async def mark_preparations_awaiting_review() -> int:
             await notification_service.create_notification(
                 user_id=prep.user_id,
                 type="preparation_review",
+                canonical_type="learning.reflection_opportunity",
                 title=f"How did {prep.subject} go?",
                 body=(
                     "Tell us how it went and how well the preparation served you. "
@@ -864,11 +865,16 @@ async def mark_preparations_awaiting_review() -> int:
                 # Above the engagement nudge (2) and the plan check-in (4): this is a question only the
                 # learner can answer, and it expires in usefulness as memory of the exam fades.
                 priority=3,
+                action={"version": 1, "kind": "OPEN_PREPARATION", "entityId": prep.id},
                 action_data={
                     "type": "navigate",
                     "prepId": prep.id,
                     "route": "preparation_review",
                 },
+                idempotency_key=f"preparation-review:{prep.id}:{reminders}",
+                source_domain="personal_learning",
+                source_entity_type="preparation",
+                source_entity_id=prep.id,
             )
             # Recorded whether or not the notification reaches them: quiet hours hold it until morning,
             # the learner's daily allowance can defer it to tomorrow, and one held too long expires

@@ -214,6 +214,13 @@ def _openapi_tags() -> list[dict]:
             ),
         },
         {
+            "name": "notifications",
+            "description": (
+                "**Notifications Domain** — Canonical in-app history, unread state, "
+                "interactions, and best-effort realtime hints."
+            ),
+        },
+        {
             "name": "learning-spaces",
             "description": (
                 "**Learning Spaces Domain** — Collaborative learning environments. "
@@ -297,6 +304,13 @@ def _register_domains(app: FastAPI) -> None:
     from src.domains.personal_learning.routes import router as learning_router
 
     app.include_router(learning_router, prefix=f"{prefix}/learning", tags=["personal-learning"])
+
+    # --- Notifications (canonical in-app platform) ---
+    from src.domains.notifications.routes import router as notifications_router
+
+    app.include_router(
+        notifications_router, prefix=f"{prefix}/notifications", tags=["notifications"]
+    )
 
     # --- Knowledge (migrated to SQLAlchemy) ---
     from src.domains.knowledge.routes import router as knowledge_router

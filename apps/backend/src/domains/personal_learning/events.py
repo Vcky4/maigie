@@ -168,9 +168,17 @@ async def handle_streak_updated(data: dict) -> None:
         await notification_service.create_notification(
             user_id=user_id,
             type="celebration",
+            canonical_type="progress.activity_milestone",
             title=f"\U0001f525 {streak_count}-day streak!",
             body=f"You've studied for {streak_count} days straight. Incredible consistency!",
             priority=2,
+            action={"version": 1, "kind": "OPEN_PROGRESS"},
+            action_data=None,
+            idempotency_key=f"streak-milestone:{streak_count}",
+            source_domain="progress",
+            source_entity_type="streak",
+            source_entity_id=str(streak_count),
+            group_key="progress:activity-milestones",
         )
         await emit_milestone_reached(user_id, "streak", streak_count)
 
@@ -186,12 +194,20 @@ async def handle_achievement_unlocked(data: dict) -> None:
     if not user_id:
         return
 
+    achievement_id = str(data.get("achievement_id") or title)
     await notification_service.create_notification(
         user_id=user_id,
         type="celebration",
+        canonical_type="progress.achievement_earned",
         title=f"\U0001f3c6 {title}",
         body="You've unlocked a new achievement!",
         priority=3,
+        action={"version": 1, "kind": "OPEN_PROGRESS"},
+        idempotency_key=f"achievement:{achievement_id}",
+        source_domain="progress",
+        source_entity_type="achievement",
+        source_entity_id=achievement_id,
+        group_key="progress:achievements",
     )
 
 
@@ -232,8 +248,19 @@ async def handle_knowledge_topic_completed(data: dict) -> None:
     await notification_service.create_notification(
         user_id=user_id,
         type="suggestion",
+        canonical_type="learning.resource_recommended",
         title="Create flashcards?",
         body="You just completed a topic. Create flashcards to retain it long-term?",
         priority=4,
+        action={
+            "version": 1,
+            "kind": "OPEN_RESOURCE",
+            "entityId": str(topic_id),
+            "resourceType": "TOPIC",
+        },
         action_data={"action": "generate_flashcards", "topic_id": topic_id},
+        idempotency_key=f"topic-flashcards:{topic_id}",
+        source_domain="knowledge",
+        source_entity_type="topic",
+        source_entity_id=str(topic_id),
     )
