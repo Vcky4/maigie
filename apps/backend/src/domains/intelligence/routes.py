@@ -9,7 +9,7 @@ Mounted at: /api/v1/intelligence
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
 from src.shared.auth import CurrentUser, PremiumUser
 
@@ -423,3 +423,141 @@ async def _resolve_ask_session(*, session_id: str | None, user_id: str, repo):
     if not resolution.allowed or resolution.session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
     return resolution.session
+
+
+# ===========================================================================
+# Attachments and transcription
+# ===========================================================================
+
+
+@router.post("/ask/attachments", response_model=models.AskAttachmentResponse, status_code=201)
+async def upload_ask_attachment(current_user: CurrentUser, file: UploadFile = File(...)):
+    """Store an image to send with a turn.
+
+    **This closes §5.2.2, where the affordance existed and the capability did not.** Web's composer
+    collected images and silently dropped them — no endpoint existed — and mobile's hook targeted a prefix
+    that has never existed. A button that asserts a capability the product lacks is §1's territory.
+
+    Validated before it is stored, on rules shared with the audio path so the two cannot drift. Type
+    checking reads the declared content type, which is a real limitation and is documented at
+    `attachments.validate_attachment`: it stops honest clients sending what the model cannot read and is
+    not a defence against a hostile one.
+    """
+    from .conversation import attachments
+
+    content = await file.read()
+    rejection = attachments.validate_attachment(
+        content_type=file.content_type,
+        size=len(content),
+        allowed=attachments.ALLOWED_IMAGE_TYPES,
+    )
+    if rejection:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message)
+
+    from src.shared.infrastructure.storage import StorageError, storage_service
+
+    await file.seek(0)
+    try:
+        stored = await storage_service.upload_upload_file(
+            file, path_prefix=attachments.upload_path(user_id=current_user.id, kind="images")
+        )
+    except StorageError as error:
+        logger.error("Attachment upload failed for user %s: %s", current_user.id, error)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="That upload did not go through. Please try again.",
+        ) from error
+
+    # The row is what makes the attachment attributable: without it an image in storage has no owner and
+    # no turn. `chatMessageId` stays absent until a turn carries it — see `build_upload_row`.
+    upload = await intelligence_repo.create_upload(
+        attachments.build_upload_row(
+            user_id=current_user.id,
+            url=stored["url"],
+            filename=stored["filename"],
+            mime_type=file.content_type,
+            size=stored.get("size") or len(content),
+        )
+    )
+    return models.AskAttachmentResponse(
+        id=upload.id,
+        url=upload.url,
+        filename=upload.filename,
+        mime_type=upload.mime_type,
+        size=upload.size,
+    )
+
+
+@router.delete("/ask/attachments/{upload_id}", status_code=204)
+async def delete_ask_attachment(upload_id: str, current_user: CurrentUser):
+    """Remove an attachment the learner took back out of the composer.
+
+    **Without this every attached-then-removed image is orphaned** — stored, billed and never referenced
+    — which is §6.1's reason for asking for the route. Mobile already declares `chat.imageDelete` against
+    a prefix that does not exist.
+
+    `404` for another learner's upload rather than `403`, matching `/ask`: "exists but is not yours"
+    confirms the id. The row is deleted whether or not storage cooperates, and the reason is which failure
+    is worse — a row pointing at a file that is gone renders as a broken image in a thread, where a file
+    with no row is invisible and merely costs storage. Prefer the invisible one, and log it.
+    """
+    upload = await intelligence_repo.find_upload(upload_id, current_user.id)
+    if upload is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+
+    from src.shared.infrastructure.storage import storage_service
+
+    try:
+        await storage_service.delete(upload.url)
+    except Exception as error:  # noqa: BLE001 — the row goes either way; see the docstring
+        logger.warning("Attachment %s left behind in storage: %s", upload_id, error)
+
+    await intelligence_repo.delete_upload(upload_id, current_user.id)
+
+
+@router.post("/ask/transcribe", response_model=models.AskTranscriptResponse)
+async def transcribe_for_ask(current_user: CurrentUser, file: UploadFile = File(...)):
+    """Turn spoken audio into text for the composer.
+
+    **For mobile, and deliberately not for web** (§4.5.3). Web dictates through the browser's Web Speech
+    API, which costs nothing and needs no round trip; React Native has no equivalent and no polyfill is
+    installed, so without this mobile cannot dictate at all. Routing web through here too would add a
+    network hop and a bill to something that already works locally.
+
+    **Returns text and does not send it.** The learner edits before asking — a transcript posted straight
+    as a turn would have Maigie answer a misheard question, and the learner could not tell whether the
+    mistake was theirs or the transcriber's. Nothing is persisted either: a transcript is an input to a
+    message, not a message, so it has no reason to outlive the composer.
+    """
+    from .conversation import attachments
+
+    content = await file.read()
+    rejection = attachments.validate_attachment(
+        content_type=file.content_type,
+        size=len(content),
+        allowed=attachments.ALLOWED_AUDIO_TYPES,
+    )
+    if rejection:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message)
+
+    from .reasoning.llm.llm_service import llm_service
+
+    transcribe = getattr(llm_service, "transcribe_audio", None)
+    if transcribe is None:
+        # Declared honestly rather than returning `""`. An empty transcript would read to the learner as
+        # "you said nothing", which is a claim about them rather than about the missing capability.
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Voice input is not available yet.",
+        )
+
+    try:
+        text = await transcribe(content, content_type=file.content_type)
+    except Exception as error:
+        logger.error("Transcription failed for user %s: %s", current_user.id, error)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Maigie could not make out that recording. Please try again.",
+        ) from error
+
+    return models.AskTranscriptResponse(text=text or "")

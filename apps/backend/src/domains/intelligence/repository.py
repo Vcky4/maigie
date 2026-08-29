@@ -113,6 +113,36 @@ class IntelligenceRepository:
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
+    async def find_upload(self, upload_id: str, user_id: str) -> Any:
+        """One attachment, **as its owner's**.
+
+        Owner-scoped in the `where`, not checked after the read: an upload id in a `DELETE` path is a
+        client-supplied id, and this is the only thing standing between it and someone else's file.
+        """
+        from .db_models import UserUpload
+
+        async with await self._session() as session:
+            stmt = select(UserUpload).where(
+                UserUpload.id == upload_id, UserUpload.user_id == user_id
+            )
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+
+    async def delete_upload(self, upload_id: str, user_id: str) -> bool:
+        """Remove an attachment row. Owner-scoped for the same reason as the read."""
+        from .db_models import UserUpload
+
+        async with await self._session() as session:
+            stmt = select(UserUpload).where(
+                UserUpload.id == upload_id, UserUpload.user_id == user_id
+            )
+            upload = (await session.execute(stmt)).scalar_one_or_none()
+            if upload is None:
+                return False
+            await session.delete(upload)
+            await session.commit()
+            return True
+
     async def create_message(self, data: dict[str, Any]) -> ChatMessage:
         async with await self._session() as session:
             msg = ChatMessage(**self._map_message(data))
