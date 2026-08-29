@@ -53,7 +53,6 @@ __all__ = [
     "AskScope",
     "AskAction",
     "AskAttachmentResponse",
-    "AskTranscriptResponse",
 ]
 
 
@@ -70,17 +69,6 @@ class AskAttachmentResponse(CamelModel):
     filename: str
     mime_type: str | None = None
     size: int | None = None
-
-
-class AskTranscriptResponse(CamelModel):
-    """Speech turned into text, for a composer that cannot dictate locally.
-
-    Returns the text and does not send it. **The learner edits before asking** — a transcript posted
-    straight as a turn would have Maigie answer a misheard question, and the learner would have no way to
-    tell whether the mistake was theirs or the transcriber's.
-    """
-
-    text: str
 
 
 # ===========================================================================

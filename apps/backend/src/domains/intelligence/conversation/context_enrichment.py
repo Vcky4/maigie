@@ -126,7 +126,9 @@ async def resolve_owned_topic(
 
     try:
         topic, module, course = await check_topic_ownership(topic_id, user_id)
-    except Exception as error:  # noqa: BLE001 — NotFoundError and ForbiddenError alike mean "omit it"
+    except (
+        Exception
+    ) as error:  # noqa: BLE001 — NotFoundError and ForbiddenError alike mean "omit it"
         logger.warning(
             "Topic %s not available to user %s for context enrichment: %s",
             topic_id,
@@ -247,7 +249,6 @@ async def _list_topic_notes(topic_id: str, user_id: str) -> list[Any]:
         return list((await session.execute(stmt)).scalars().all())
 
 
-@cache
 async def _read_history(
     *, session_id: str, user_id: str | None, review_item_id: str | None, limit: int
 ) -> list[Any]:

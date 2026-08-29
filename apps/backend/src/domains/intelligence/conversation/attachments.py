@@ -7,8 +7,11 @@ button asserted a capability the product did not have.
 
 **Why validation is a pure function here.** These files are learner-supplied and reach a model, so what
 is accepted is a security decision and not a detail of the route. Kept separate from the upload so it can
-be tested without storage, and so both the image and audio paths refuse on the same rules rather than
-drifting into two policies.
+be tested without storage. `validate_attachment` takes the allowlist as an argument rather than hard-coding
+the image one, because that is what let the rule be tested in isolation and leaves room for a second file
+kind without a second policy — an audio/transcription path was drafted and pulled (no provider behind it,
+so the route only ever returned `501`), and this signature is what will make re-adding it a one-line caller
+rather than a fork of the rules.
 
 `UserUpload` already had every column this needs — url, filename, mimeType, size, chatMessageId — so
 nothing here is a new table. The row is what makes an attachment attributable: without it an image in
@@ -42,12 +45,6 @@ MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 #: as an image — accepting it would store an XSS payload under a URL this product serves.
 ALLOWED_IMAGE_TYPES = frozenset(
     {"image/png", "image/jpeg", "image/webp", "image/gif", "image/heic", "image/heif"}
-)
-
-#: Audio types accepted for transcription. Narrow on purpose: this is what the transcription provider
-#: takes, and widening it means a file that uploads and then cannot be transcribed.
-ALLOWED_AUDIO_TYPES = frozenset(
-    {"audio/webm", "audio/ogg", "audio/mpeg", "audio/mp4", "audio/wav", "audio/x-m4a"}
 )
 
 ATTACHMENT_REJECTED_EMPTY = "attachment_empty"
