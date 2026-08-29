@@ -21,6 +21,7 @@ async def init():
     import src.domains.intelligence.db_models  # noqa: F401
     import src.domains.knowledge.db_models  # noqa: F401
     import src.domains.learning_spaces.db_models  # noqa: F401
+    import src.domains.notifications.db_models  # noqa: F401
     import src.domains.personal_learning.db_models  # noqa: F401
     from src.shared.database.base import Base
     from src.shared.database.session import connect_db, get_session_factory

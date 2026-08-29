@@ -26,6 +26,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import all domain models so Alembic can see them for autogenerate
+import src.domains.notifications.db_models  # noqa: E402, F401
+import src.domains.personal_learning.db_models  # noqa: E402, F401
 from src.domains.identity.db_models import (  # noqa: F401
     DeviceToken,
     LimitReachedEmailLog,

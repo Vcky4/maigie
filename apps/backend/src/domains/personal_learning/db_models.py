@@ -779,9 +779,47 @@ class Notification(Base, TimestampMixin):
     #: arrives four days late is worse than one that never arrives, because the learner acts on it.
     status: Mapped[str] = mapped_column(String, default="PENDING")
 
+    # Additive notification-platform foundation. Legacy writers continue to use
+    # `type`, `actionData`, and `scheduledAt`; the orchestrator will populate these
+    # fields when producers migrate to the canonical contract.
+    schema_version: Mapped[int] = mapped_column(
+        "schemaVersion", Integer, nullable=False, default=1, server_default="1"
+    )
+    category: Mapped[str | None] = mapped_column(String, nullable=True)
+    urgency: Mapped[str | None] = mapped_column(String, nullable=True)
+    action: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    source_domain: Mapped[str | None] = mapped_column("sourceDomain", String, nullable=True)
+    source_entity_type: Mapped[str | None] = mapped_column(
+        "sourceEntityType", String, nullable=True
+    )
+    source_entity_id: Mapped[str | None] = mapped_column("sourceEntityId", String, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column("idempotencyKey", String, nullable=True)
+    group_key: Mapped[str | None] = mapped_column("groupKey", String, nullable=True)
+    eligible_at: Mapped[datetime | None] = mapped_column(
+        "eligibleAt", DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        "expiresAt", DateTime(timezone=True), nullable=True
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(
+        "archivedAt", DateTime(timezone=True), nullable=True
+    )
+    intelligence_decision_id: Mapped[str | None] = mapped_column(
+        "intelligenceDecisionId",
+        String,
+        ForeignKey("NotificationDecision.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     __table_args__ = (
         Index("Notification_userId_status_idx", "userId", "status"),
         Index("Notification_scheduledAt_idx", "scheduledAt"),
+        UniqueConstraint(
+            "userId",
+            "idempotencyKey",
+            name="Notification_userId_idempotencyKey_key",
+        ),
+        Index("Notification_userId_groupKey_idx", "userId", "groupKey"),
     )
 
     def __repr__(self) -> str:

@@ -1,0 +1,334 @@
+"""Additive persistence for notification planning, delivery, and outcomes."""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
+from sqlalchemy.orm import Mapped, mapped_column
+
+from src.shared.database.base import Base, TimestampMixin
+
+
+class NotificationDecision(Base, TimestampMixin):
+    """Auditable recommendation made before hard policy validates a plan."""
+
+    __tablename__ = "NotificationDecision"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False
+    )
+    notification_type: Mapped[str] = mapped_column("notificationType", String, nullable=False)
+    policy_version: Mapped[str] = mapped_column("policyVersion", String, nullable=False)
+    model_version: Mapped[str | None] = mapped_column("modelVersion", String, nullable=True)
+    input_snapshot: Mapped[dict] = mapped_column("inputSnapshot", JSON, nullable=False)
+    candidates: Mapped[list | dict | None] = mapped_column(JSON, nullable=True)
+    decision: Mapped[dict] = mapped_column(JSON, nullable=False)
+    reason_codes: Mapped[list | None] = mapped_column("reasonCodes", JSON, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    used_fallback: Mapped[bool] = mapped_column(
+        "usedFallback", Boolean, nullable=False, default=False, server_default="false"
+    )
+    experiment_id: Mapped[str | None] = mapped_column("experimentId", String, nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column("costUsd", Float, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column("latencyMs", Integer, nullable=True)
+
+    __table_args__ = (
+        Index("NotificationDecision_userId_createdAt_idx", "userId", "createdAt"),
+        Index(
+            "NotificationDecision_type_createdAt_idx",
+            "notificationType",
+            "createdAt",
+        ),
+    )
+
+
+class PushInstallation(Base, TimestampMixin):
+    """One addressable app/browser installation, alongside legacy DeviceToken."""
+
+    __tablename__ = "PushInstallation"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False
+    )
+    installation_id: Mapped[str] = mapped_column("installationId", String, nullable=False)
+    platform: Mapped[str] = mapped_column(String(16), nullable=False)
+    transport: Mapped[str] = mapped_column(String(16), nullable=False)
+    token: Mapped[str | None] = mapped_column(String, nullable=True)
+    endpoint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    p256dh_encrypted: Mapped[str | None] = mapped_column("p256dhEncrypted", Text, nullable=True)
+    auth_encrypted: Mapped[str | None] = mapped_column("authEncrypted", Text, nullable=True)
+    app_version: Mapped[str | None] = mapped_column("appVersion", String, nullable=True)
+    device_locale: Mapped[str | None] = mapped_column("deviceLocale", String, nullable=True)
+    timezone: Mapped[str | None] = mapped_column(String, nullable=True)
+    permission_state: Mapped[str | None] = mapped_column(
+        "permissionState", String(16), nullable=True
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        "lastSeenAt", DateTime(timezone=True), nullable=True
+    )
+    last_registered_at: Mapped[datetime | None] = mapped_column(
+        "lastRegisteredAt", DateTime(timezone=True), nullable=True
+    )
+    disabled_at: Mapped[datetime | None] = mapped_column(
+        "disabledAt", DateTime(timezone=True), nullable=True
+    )
+    failure_count: Mapped[int] = mapped_column(
+        "failureCount", Integer, nullable=False, default=0, server_default="0"
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "userId",
+            "installationId",
+            "transport",
+            name="PushInstallation_userId_installationId_transport_key",
+        ),
+        CheckConstraint(
+            "platform IN ('IOS', 'ANDROID', 'WEB')",
+            name="PushInstallation_platform_check",
+        ),
+        CheckConstraint(
+            "transport IN ('EXPO', 'FCM', 'APNS', 'WEB_PUSH')",
+            name="PushInstallation_transport_check",
+        ),
+        CheckConstraint(
+            '"permissionState" IS NULL OR "permissionState" IN ' "('DEFAULT', 'GRANTED', 'DENIED')",
+            name="PushInstallation_permissionState_check",
+        ),
+        Index("PushInstallation_userId_disabledAt_idx", "userId", "disabledAt"),
+        Index(
+            "PushInstallation_token_key",
+            "token",
+            unique=True,
+            postgresql_where=text("token IS NOT NULL"),
+        ),
+        Index(
+            "PushInstallation_endpoint_key",
+            "endpoint",
+            unique=True,
+            postgresql_where=text("endpoint IS NOT NULL"),
+        ),
+    )
+
+
+class NotificationDelivery(Base, TimestampMixin):
+    """One planned channel delivery for a durable notification."""
+
+    __tablename__ = "NotificationDelivery"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    notification_id: Mapped[str] = mapped_column(
+        "notificationId",
+        String,
+        ForeignKey("Notification.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False
+    )
+    destination_id: Mapped[str | None] = mapped_column(
+        "destinationId",
+        String,
+        ForeignKey("PushInstallation.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    channel: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="PLANNED", server_default="PLANNED"
+    )
+    eligible_at: Mapped[datetime] = mapped_column(
+        "eligibleAt", DateTime(timezone=True), nullable=False
+    )
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        "nextAttemptAt", DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        "expiresAt", DateTime(timezone=True), nullable=True
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        "attemptCount", Integer, nullable=False, default=0, server_default="0"
+    )
+    max_attempts: Mapped[int] = mapped_column(
+        "maxAttempts", Integer, nullable=False, default=3, server_default="3"
+    )
+    provider_message_id: Mapped[str | None] = mapped_column(
+        "providerMessageId", String, nullable=True
+    )
+    suppression_reason: Mapped[str | None] = mapped_column(
+        "suppressionReason", String, nullable=True
+    )
+    failure_code: Mapped[str | None] = mapped_column("failureCode", String, nullable=True)
+    failure_detail: Mapped[str | None] = mapped_column("failureDetail", Text, nullable=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        "acceptedAt", DateTime(timezone=True), nullable=True
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        "deliveredAt", DateTime(timezone=True), nullable=True
+    )
+    failed_at: Mapped[datetime | None] = mapped_column(
+        "failedAt", DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "channel IN ('IN_APP', 'MOBILE_PUSH', 'WEB_PUSH', 'EMAIL')",
+            name="NotificationDelivery_channel_check",
+        ),
+        CheckConstraint(
+            "status IN ('PLANNED', 'SUPPRESSED', 'QUEUED', 'SENDING', "
+            "'ACCEPTED', 'DELIVERED', 'FAILED', 'EXPIRED', 'CANCELLED')",
+            name="NotificationDelivery_status_check",
+        ),
+        CheckConstraint(
+            '"attemptCount" >= 0 AND "maxAttempts" >= 1',
+            name="NotificationDelivery_attempts_check",
+        ),
+        Index(
+            "NotificationDelivery_notificationId_channel_idx",
+            "notificationId",
+            "channel",
+        ),
+        Index(
+            "NotificationDelivery_status_nextAttemptAt_idx",
+            "status",
+            "nextAttemptAt",
+        ),
+        Index(
+            "NotificationDelivery_userId_createdAt_idx",
+            "userId",
+            "createdAt",
+        ),
+    )
+
+
+class NotificationDeliveryAttempt(Base, TimestampMixin):
+    """Append-only evidence for one provider request."""
+
+    __tablename__ = "NotificationDeliveryAttempt"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    delivery_id: Mapped[str] = mapped_column(
+        "deliveryId",
+        String,
+        ForeignKey("NotificationDelivery.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    attempt_number: Mapped[int] = mapped_column("attemptNumber", Integer, nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(
+        "requestedAt", DateTime(timezone=True), nullable=False
+    )
+    duration_ms: Mapped[int | None] = mapped_column("durationMs", Integer, nullable=True)
+    retryable: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    provider_message_id: Mapped[str | None] = mapped_column(
+        "providerMessageId", String, nullable=True
+    )
+    provider_receipt_id: Mapped[str | None] = mapped_column(
+        "providerReceiptId", String, nullable=True
+    )
+    response_metadata: Mapped[dict | None] = mapped_column("responseMetadata", JSON, nullable=True)
+    error_code: Mapped[str | None] = mapped_column("errorCode", String, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column("errorDetail", Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "deliveryId",
+            "attemptNumber",
+            name="NotificationDeliveryAttempt_deliveryId_attemptNumber_key",
+        ),
+        CheckConstraint(
+            '"attemptNumber" >= 1',
+            name="NotificationDeliveryAttempt_attemptNumber_check",
+        ),
+        Index(
+            "NotificationDeliveryAttempt_deliveryId_requestedAt_idx",
+            "deliveryId",
+            "requestedAt",
+        ),
+    )
+
+
+class NotificationInteraction(Base, TimestampMixin):
+    """Idempotent evidence of a user response to a notification."""
+
+    __tablename__ = "NotificationInteraction"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    notification_id: Mapped[str] = mapped_column(
+        "notificationId",
+        String,
+        ForeignKey("Notification.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    delivery_id: Mapped[str | None] = mapped_column(
+        "deliveryId",
+        String,
+        ForeignKey("NotificationDelivery.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False
+    )
+    idempotency_id: Mapped[str] = mapped_column("idempotencyId", String, nullable=False)
+    event: Mapped[str] = mapped_column(String(16), nullable=False)
+    surface: Mapped[str] = mapped_column(String(16), nullable=False)
+    action: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    source_metadata: Mapped[dict | None] = mapped_column("sourceMetadata", JSON, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        "occurredAt", DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "userId",
+            "idempotencyId",
+            name="NotificationInteraction_userId_idempotencyId_key",
+        ),
+        CheckConstraint(
+            "event IN ('SEEN', 'OPENED', 'CLICKED', 'READ', 'DISMISSED', "
+            "'ACTIONED', 'SNOOZED', 'DECLINED', 'UNSUBSCRIBED')",
+            name="NotificationInteraction_event_check",
+        ),
+        CheckConstraint(
+            "surface IN ('WEB', 'IOS', 'ANDROID', 'EMAIL')",
+            name="NotificationInteraction_surface_check",
+        ),
+        Index(
+            "NotificationInteraction_notificationId_occurredAt_idx",
+            "notificationId",
+            "occurredAt",
+        ),
+        Index(
+            "NotificationInteraction_userId_occurredAt_idx",
+            "userId",
+            "occurredAt",
+        ),
+    )
