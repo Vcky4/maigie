@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.domains.intelligence.conversation import ask_service, context_enrichment
+from src.domains.intelligence.conversation import ask_service, context_enrichment, tool_outcomes
 
 
 class TestAskContext:
@@ -410,6 +410,15 @@ class TestTheExtractionInventoryIsHonest:
             ),
             "history isolation rules": (context_enrichment, "build_history"),
             "retrieval and memory recall": (context_enrichment, "attach_recall"),
+            "tool outcomes (logs, events, components, refusals, background work)": (
+                tool_outcomes,
+                "collect_tool_outcomes",
+            ),
+            "credit refusal (which cap, and what the learner is told)": "credit_refusal",
+            "generation, and the order of the turn": "AskEffects",
+            "the persistence write": "production_effects",
+            "the credit check and consumption": "TurnRefused",
+            "the whole turn — answer() (Decision C)": "answer",
         }
         assert set(ask_service.MOVED_SO_FAR) == set(expected)
         for stage, target in expected.items():
@@ -421,14 +430,37 @@ class TestTheExtractionInventoryIsHonest:
     def test_the_two_inventories_do_not_overlap(self):
         assert not set(ask_service.MOVED_SO_FAR) & set(ask_service.STILL_IN_THE_HANDLER)
 
-    def test_answer_is_not_yet_published(self):
-        """`answer()` is the destination (Decision C). Until the impure stages move it would be a
-        facade over a pipeline that still lives elsewhere, and a facade is how two pipelines start.
+    def test_answer_exists_and_the_handler_goes_through_it(self):
+        """`answer()` is the destination (Decision C), and it landed 2026-08-28.
+
+        This replaces `test_answer_is_not_yet_published`, which guarded against `answer()` becoming a
+        facade over a pipeline still living in the handler. The guard now points the other way: the
+        handler must reach the model *only* through `answer()`. A second `route_request` call from the
+        transport is how the two-pipeline drift Decision C exists to prevent would come back.
         """
-        assert not hasattr(ask_service, "answer"), (
-            "ask_service.answer now exists. Remove this test, and make sure "
-            "STILL_IN_THE_HANDLER reflects what genuinely moved."
+        import inspect
+        from pathlib import Path
+
+        import src.domains.intelligence.conversation.websocket_handler as handler
+
+        assert hasattr(ask_service, "answer")
+        source = Path(inspect.getsourcefile(handler)).read_text(encoding="utf-8")
+        assert "route_request" not in source, (
+            "websocket_handler calls the model directly again. Everything above the transport belongs "
+            "in `ask_service.answer()` — see Decision C and plan §5.4 for what two pipelines drift into."
         )
+        assert "ask_service.answer(" in source, "the handler no longer goes through answer()"
+
+    def test_streaming_is_a_callback_rather_than_a_second_path(self):
+        """Decision C in one assertion: `on_chunk` is optional, so HTTP passing `None` runs the same
+        code as the socket passing a function. If it becomes required, or a second answer-shaped entry
+        point appears, that has been abandoned."""
+        import inspect
+
+        assert inspect.signature(ask_service.answer).parameters["on_chunk"].default is None
+        assert not [
+            name for name in dir(ask_service) if name.startswith("answer") and name != "answer"
+        ], "a second answer-shaped entry point exists; Decision C says there is one"
 
 
 # ---------------------------------------------------------------------------
@@ -1292,3 +1324,160 @@ class TestSessionTitleGate:
             is_review_thread=kwargs["is_review_thread"],
         )
         assert not ask_service.should_retitle_session(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Credit refusal
+# ---------------------------------------------------------------------------
+#
+# A billing statement shown to a learner about their own account, built inline between the availability
+# check and the frame carrying it — so reaching it needed a live socket and a learner genuinely out of
+# credits. It had never been tested.
+
+
+def usage(**overrides):
+    base = {
+        "daily_limit": 5_000,
+        "credits_used_today": 4_900,
+        "credits_used": 40_000,
+        "hard_cap": 100_000,
+        "period_end": "2026-09-01",
+        "next_daily_reset": "midnight",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestCreditRefusal:
+    def test_a_free_learner_over_their_daily_cap_is_told_it_resets(self):
+        """A daily cap resets tonight, so the learner waits. Naming the reset is the actionable part."""
+        refusal = ask_service.credit_refusal(
+            tier="FREE", estimated_tokens=500, credit_usage=usage()
+        )
+        assert refusal.is_daily_limit
+        assert "Daily credit limit" in refusal.message
+        assert "midnight" in refusal.message
+
+    def test_a_monthly_cap_names_the_period_end_instead(self):
+        """A monthly cap needs an upgrade, not patience. Telling someone to wait until midnight for a
+        monthly cap is wrong advice about their own money."""
+        refusal = ask_service.credit_refusal(
+            tier="FREE",
+            estimated_tokens=10,
+            credit_usage=usage(credits_used_today=0),
+        )
+        assert not refusal.is_daily_limit
+        assert "Monthly credit limit" in refusal.message
+        assert "2026-09-01" in refusal.message
+
+    def test_a_paid_learner_never_gets_the_daily_message(self):
+        """Only the free tier has a daily cap. A paid learner whose daily numbers happen to look
+        exceeded is over their monthly allowance, not their daily one."""
+        refusal = ask_service.credit_refusal(
+            tier="PLUS_MONTHLY", estimated_tokens=500, credit_usage=usage()
+        )
+        assert not refusal.is_daily_limit
+
+    def test_no_configured_daily_cap_is_not_a_cap_of_zero(self):
+        """`daily_limit == 0` means no daily cap exists. Read as a cap, every free learner would be
+        refused on their first turn."""
+        refusal = ask_service.credit_refusal(
+            tier="FREE",
+            estimated_tokens=1,
+            credit_usage=usage(daily_limit=0, credits_used_today=0),
+        )
+        assert not refusal.is_daily_limit
+
+    def test_this_turns_estimate_counts_towards_the_daily_cap(self):
+        """The question is whether *this* turn fits, not whether the learner has already exceeded. A
+        learner just under their cap must not be allowed to start a turn that blows through it."""
+        under = usage(daily_limit=5_000, credits_used_today=4_000)
+        assert not ask_service.credit_refusal(
+            tier="FREE", estimated_tokens=500, credit_usage=under
+        ).is_daily_limit
+        assert ask_service.credit_refusal(
+            tier="FREE", estimated_tokens=1_500, credit_usage=under
+        ).is_daily_limit
+
+    def test_exactly_on_the_daily_cap_is_allowed_through(self):
+        """`>` not `>=`: a turn that exactly fills the remaining allowance is affordable."""
+        refusal = ask_service.credit_refusal(
+            tier="FREE",
+            estimated_tokens=1_000,
+            credit_usage=usage(daily_limit=5_000, credits_used_today=4_000),
+        )
+        assert not refusal.is_daily_limit
+
+    def test_the_numbers_are_thousands_separated(self):
+        """Six-figure credit counts are unreadable without it, and this is a number the learner is being
+        asked to reason about."""
+        refusal = ask_service.credit_refusal(
+            tier="FREE",
+            estimated_tokens=10,
+            credit_usage=usage(credits_used_today=0, credits_used=40_000),
+        )
+        assert "40,000" in refusal.message
+
+    def test_a_missing_daily_reset_still_produces_a_sentence(self):
+        """The reset time comes from the billing service and is not guaranteed. Absent, the message says
+        "midnight" rather than "None"."""
+        credit_usage = usage()
+        del credit_usage["next_daily_reset"]
+        refusal = ask_service.credit_refusal(
+            tier="FREE", estimated_tokens=500, credit_usage=credit_usage
+        )
+        assert "None" not in refusal.message
+        assert "midnight" in refusal.message
+
+    def test_the_tier_is_carried_through_for_the_client(self):
+        refusal = ask_service.credit_refusal(
+            tier="FREE", estimated_tokens=500, credit_usage=usage()
+        )
+        assert refusal.tier == "FREE"
+
+
+# ---------------------------------------------------------------------------
+# Input validation
+# ---------------------------------------------------------------------------
+
+
+class TestValidateMessage:
+    def test_a_real_question_is_accepted(self):
+        assert ask_service.validate_message("What is entropy?") is None
+
+    def test_an_empty_message_is_refused(self):
+        rejection = ask_service.validate_message("")
+        assert rejection.code == ask_service.MESSAGE_REJECTED_EMPTY
+
+    @pytest.mark.parametrize("blank", ["   ", "\n\n", "\t", " \r\n "])
+    def test_whitespace_only_is_empty(self, blank):
+        """A message of spaces reaches the model as nothing and produces an answer to nothing, which is
+        worse than a refusal."""
+        assert ask_service.validate_message(blank).code == ask_service.MESSAGE_REJECTED_EMPTY
+
+    def test_none_is_refused_rather_than_raising(self):
+        assert ask_service.validate_message(None) is not None
+
+    def test_a_message_on_the_limit_is_accepted(self):
+        assert ask_service.validate_message("e" * ask_service.MESSAGE_MAX_LENGTH) is None
+
+    def test_a_message_over_the_limit_is_refused(self):
+        rejection = ask_service.validate_message("e" * (ask_service.MESSAGE_MAX_LENGTH + 1))
+        assert rejection.code == ask_service.MESSAGE_REJECTED_TOO_LONG
+
+    def test_the_refusal_says_both_numbers(self):
+        """A limit the learner cannot see is a limit they cannot work around."""
+        rejection = ask_service.validate_message("e" * (ask_service.MESSAGE_MAX_LENGTH + 500))
+        assert f"{ask_service.MESSAGE_MAX_LENGTH:,}" in rejection.message
+        assert f"{ask_service.MESSAGE_MAX_LENGTH + 500:,}" in rejection.message
+
+    def test_length_is_measured_on_the_raw_message_not_the_stripped_one(self):
+        """Whitespace still costs prompt budget, so padding is not a way past the limit."""
+        padded = "e" * (ask_service.MESSAGE_MAX_LENGTH - 10) + " " * 100
+        assert ask_service.validate_message(padded).code == ask_service.MESSAGE_REJECTED_TOO_LONG
+
+    def test_the_limit_is_generous_enough_for_a_pasted_essay(self):
+        """A learner pasting something long to ask about is the point of the surface, not abuse of it.
+        This pins intent: if the limit is ever tightened to a few hundred characters, that is a product
+        change and this test should be the thing that argues with it."""
+        assert ask_service.MESSAGE_MAX_LENGTH >= 8_000

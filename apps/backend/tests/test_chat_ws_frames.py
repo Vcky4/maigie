@@ -50,6 +50,7 @@ from fastapi import APIRouter
 
 import src.domains.intelligence.conversation.context_enrichment as ce
 import src.domains.intelligence.conversation.websocket_handler as wh
+from src.domains.intelligence.conversation import ask_service
 from src.shared.infrastructure.socket_manager import manager as real_manager
 
 #: The attribute surface of the real manager. Anything outside it is a defect, not a test-double gap.
@@ -75,12 +76,22 @@ class StrictFakeManager:
     def __init__(self) -> None:
         self.frames: list[tuple[str, str]] = []
         self.rooms: list[tuple[str, str]] = []
+        #: Full frame bodies, for the assertions that are about a payload's *contents* rather than its
+        #: presence — a `retryable` flag, an error code. `frames` keeps only `(how, type)`, which is the
+        #: right shape for "was this frame sent, and in what order" and the wrong one for "what did it
+        #: say".
+        self.bodies: list[dict] = []
 
     def _record(self, kind: str, payload: object) -> None:
         if isinstance(payload, dict):
             self.frames.append((kind, str(payload.get("type", "<untyped>"))))
+            self.bodies.append(payload)
         else:
             self.frames.append((kind, "<raw>"))
+
+    def bodies_of(self, frame_type: str) -> list[dict]:
+        """Every frame of one type, in order sent."""
+        return [body for body in self.bodies if body.get("type") == frame_type]
 
     def __getattr__(self, name: str):
         if name not in REAL_MANAGER_ATTRS:
@@ -217,9 +228,6 @@ async def drive(
             query_results or [],
         )
 
-    flags = MagicMock()
-    flags.effective_tier_for_request = AsyncMock(return_value="free")
-
     credit_result = MagicMock(warning=None, notice=None, purchased_balance_remaining=0)
 
     # The thread read is injected rather than reached through a patched session factory. It used to be
@@ -232,48 +240,63 @@ async def drive(
 
     test_readers = replace(ce.production_readers(), read_history=no_history)
 
+    # The whole pipeline's dependencies are one `AskEffects`, so the test builds a fake bundle rather
+    # than patching eight names on the handler module. `create_message` and `create_action_log` are the
+    # only writes; everything else is a value or a callable that returns one.
+    action_logs: list[dict] = []
+
+    async def fake_create_action_log(data):
+        action_logs.append(data)
+
+    credit_check = AsyncMock(return_value=credits_available)
+    consume = AsyncMock(return_value=credit_result)
+
+    effects = ask_service.AskEffects(
+        create_message=AsyncMock(side_effect=lambda data: make_row(data)),
+        create_action_log=fake_create_action_log,
+        generate=route_request or fake_route_request,
+        resolve_tier=AsyncMock(return_value="free"),
+        model_preference=AsyncMock(return_value=None),
+        fallback_model_name=lambda: "gemini-2.0-flash",
+        check_credits=credit_check,
+        # Only read on the refusal path, to compose the message. Faked rather than modelled on
+        # `FakeUser` because the shape of a credit-usage report is billing's business, not this test's.
+        credit_usage=AsyncMock(
+            return_value={
+                "daily_limit": 5_000,
+                "credits_used_today": 5_000,
+                "credits_used": 5_000,
+                "hard_cap": 5_000,
+                "period_end": "2026-09-01",
+                "next_daily_reset": "midnight",
+            }
+        ),
+        consume_credits=consume,
+        cost_calculator=lambda **_: 0.001,
+        revenue_calculator=lambda **_: 0.002,
+        queue_task=lambda name, kwargs: None,
+        format_list=lambda **_: {},
+        format_action=lambda **_: {},
+        tool_badge=ask_service.tool_skill_badge,
+        query_badge=ask_service.query_type_skill_badge,
+        extract_suggestion=lambda text: (text, None),
+        purchase_deep_link="maigie://purchase",
+    )
+
     with (
         patch.object(wh, "manager", manager),
         patch.object(ce, "production_readers", lambda: test_readers),
+        patch.object(ask_service, "production_effects", lambda: effects),
         patch.object(wh, "get_session_factory", lambda: FakeDbSession),
-        patch.object(wh, "get_feature_flag_service", lambda: flags),
-        patch.object(wh, "_get_user_model_preference", AsyncMock(return_value=None)),
-        patch.object(
-            wh, "check_credit_availability", AsyncMock(return_value=credits_available)
-        ) as credit_check,
-        patch.object(wh, "consume_credits", AsyncMock(return_value=credit_result)) as consume,
-        # Only read on the refusal path, to compose the message. Patched rather than modelled on
-        # `FakeUser` because the shape of a credit-usage report is billing's business, not this test's.
-        patch.object(
-            wh,
-            "get_credit_usage",
-            AsyncMock(
-                return_value={
-                    "daily_limit": 5_000,
-                    "credits_used_today": 5_000,
-                    "credits_used": 5_000,
-                    "hard_cap": 5_000,
-                    "period_end": "2026-09-01",
-                    "next_daily_reset": "midnight",
-                }
-            ),
-        ),
         patch.object(wh.intelligence_repo, "create_chat_session", AsyncMock(return_value=session)),
         patch.object(wh.intelligence_repo, "find_chat_session", AsyncMock(return_value=session)),
         patch.object(wh.intelligence_repo, "update_chat_session", AsyncMock()),
-        patch.object(wh.intelligence_repo, "create_action_log", AsyncMock()),
-        patch.object(
-            wh.intelligence_repo,
-            "create_message",
-            AsyncMock(side_effect=lambda data: make_row(data)),
-        ),
-        patch.object(wh, "get_llm_router") as get_router,
+        patch.object(wh.intelligence_repo, "create_message", AsyncMock(side_effect=make_row)),
         patch(
             "src.domains.identity.repository.IdentityRepository.find_by_id",
             AsyncMock(return_value=FakeUser()),
         ),
     ):
-        get_router.return_value.route_request = route_request or fake_route_request
         socket = FakeWebSocket(script)
         error: BaseException | None = None
         try:
@@ -290,6 +313,7 @@ async def drive(
         "error": error,
         "credit_check": credit_check,
         "consume": consume,
+        "action_logs": action_logs,
     }
 
 
@@ -418,12 +442,22 @@ class TestNoAwaitMismatches:
         calls = [n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.Call)]
         assert calls, "the detector's own parsing assumption is wrong"
 
-        target = getattr(handler, "_get_user_model_preference", None)
-        assert target is not None, "the detector resolves names off the handler module; that broke"
-        assert inspect.iscoroutinefunction(target), (
-            "_get_user_model_preference stopped being async; the detector's notion of an async "
-            "target needs re-checking"
-        )
+        # Plant an async attribute on the module and confirm the detector's resolution step finds it
+        # and classifies it. Deliberately not anchored on a real symbol: this test used to name
+        # `_is_circle_member`, then `_get_user_model_preference`, and both moved or were deleted — so
+        # each time it failed for a reason that had nothing to do with the detector.
+        async def planted():
+            pass
+
+        handler._planted_async_target = planted
+        try:
+            resolved = getattr(handler, "_planted_async_target", None)
+            assert resolved is not None, "getattr on the handler module stopped working"
+            assert inspect.iscoroutinefunction(
+                resolved
+            ), "the detector's notion of an async target is wrong"
+        finally:
+            del handler._planted_async_target
 
 
 class TestStubsAreHonestRatherThanHarmful:
@@ -729,3 +763,51 @@ class TestCreditsAreCheckedBeforeTheModelRuns:
     def test_the_check_happens_on_every_turn(self):
         result = run(["What is entropy?"])
         result["credit_check"].assert_awaited()
+
+
+class TestAnUnusableMessageIsRefusedBeforeAnythingIsWritten:
+    """Plan §4.5.11. The rule that matters is not "reject" but **"reject before the write"**.
+
+    A rejection after the learner's row is saved leaves the thread holding a question with no reply and
+    no explanation — which on reload is indistinguishable from a turn Maigie silently failed to answer.
+    So these assert the absence of rows and of a model call, not just the presence of an error frame.
+    """
+
+    def test_an_empty_message_is_refused(self):
+        result = run([json.dumps({"message": "   "})])
+        assert "error" in result["manager"].frame_types
+
+    def test_an_empty_message_leaves_no_row(self):
+        result = run([json.dumps({"message": "   "})])
+        assert result["rows"] == []
+
+    def test_an_empty_message_never_reaches_the_model(self):
+        result = run([json.dumps({"message": "   "})])
+        assert result["prompts"] == []
+
+    def test_an_empty_message_is_not_acknowledged_as_saved(self):
+        """`message_saved` tells the client its optimistic bubble is now a real row. Sending it for a
+        refused message would have the client keep a bubble the server never stored."""
+        result = run([json.dumps({"message": ""})])
+        assert "message_saved" not in result["manager"].frame_types
+
+    def test_an_over_long_message_is_refused_and_leaves_no_row(self):
+        result = run([json.dumps({"message": "e" * 20_000})])
+        assert "error" in result["manager"].frame_types
+        assert result["rows"] == []
+        assert result["prompts"] == []
+
+    def test_a_refusal_is_not_offered_as_retryable(self):
+        """The same message will be refused again. `retryable: True` would have the client offer a
+        button that cannot work — the learner has to change the message, which the text tells them.
+        """
+        result = run([json.dumps({"message": "   "})])
+        errors = result["manager"].bodies_of("error")
+        assert errors and errors[0]["payload"]["retryable"] is False
+        assert errors[0]["payload"]["code"] == ask_service.MESSAGE_REJECTED_EMPTY
+
+    def test_the_connection_survives_a_refusal(self):
+        """A bad message is not a bad connection. The next turn must work."""
+        result = run([json.dumps({"message": "   "}), "What is entropy?"])
+        assert result["prompts"] == ["What is entropy?"]
+        assert "assistant_final" in result["manager"].frame_types

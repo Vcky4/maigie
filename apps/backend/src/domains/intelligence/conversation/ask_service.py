@@ -32,6 +32,11 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from sqlalchemy import select
+
+from src.domains.identity.db_models import ModelPreference
+from src.shared.database import get_session_factory
+
 logger = logging.getLogger(__name__)
 
 #: An honest inventory of the extraction, kept here because a half-moved pipeline is easy to
@@ -53,19 +58,28 @@ MOVED_SO_FAR = (
     "context enrichment (branches, reads and cache)",
     "history isolation rules",
     "retrieval and memory recall",
-    # These four live in the sibling `context_enrichment` module rather than here. Named in this
-    # inventory anyway, because the inventory's job is to say what left the handler — not what landed
-    # in this file. Everything the prompt is built from is a coherent unit with one rule running through
-    # it (owner scoping) and it earned its own module; the shaping of what its reads return stays here.
+    "tool outcomes (logs, events, components, refusals, background work)",
+    "credit refusal (which cap, and what the learner is told)",
+    "generation, and the order of the turn",
+    "the persistence write",
+    "the credit check and consumption",
+    "the whole turn — answer() (Decision C)",
+    # The stages above live in sibling modules rather than here — `context_enrichment` for everything
+    # the prompt is built from, `tool_outcomes` for everything a tool call produced. Named in this
+    # inventory anyway, because its job is to say what left the handler, not what landed in this file.
+    # Each sibling is a coherent unit with one rule running through it: owner scoping for the reads,
+    # "return the effect, do not perform it" for the outcomes.
     "owner-scoped context reads",
 )
+#: What is genuinely the transport's, and stays there. Not a to-do list: `answer()` exists, so this is
+#: the boundary rather than the remainder.
 STILL_IN_THE_HANDLER = (
+    "accepting the socket and authenticating the upgrade",
+    "the inbound frame demux (ping, plain text, JSON envelope)",
     "the connection's default session query",
+    "saving and acknowledging the learner's own message",
     "the reply context block",
-    "generation",
-    "tool/action loop",
-    "the persistence write itself",
-    "credit check and consumption",
+    "rendering every outbound frame",
 )
 
 
@@ -462,6 +476,120 @@ def resolve_usage(
             user_tier=user_tier,
         ),
     )
+
+
+# ===========================================================================
+# Input validation
+# ===========================================================================
+
+#: The longest message Ask Maigie will accept, in characters.
+#:
+#: Generous on purpose — a learner pasting an essay to ask about is the point of the surface, not abuse
+#: of it. What this stops is the case with no legitimate shape: a payload large enough to blow the
+#: prompt budget on its own, which then either fails at the provider or silently displaces every piece
+#: of context that made the answer personal.
+MESSAGE_MAX_LENGTH = 16_000
+
+MESSAGE_REJECTED_EMPTY = "message_empty"
+MESSAGE_REJECTED_TOO_LONG = "message_too_long"
+
+
+@dataclass(frozen=True, slots=True)
+class MessageRejection:
+    """Why a message was not accepted as a turn at all."""
+
+    code: str
+    message: str
+
+
+def validate_message(message: str | None) -> MessageRejection | None:
+    """Check a message is worth starting a turn for, or say why not.
+
+    **This must run before the learner's message row is written**, which is why it is its own function
+    and not part of `answer()`: `answer()` receives an already-persisted user message, so a rejection
+    inside it would leave the thread holding a row for a turn that never happened. On reload the learner
+    would see their question with no reply and no explanation.
+
+    Whitespace-only counts as empty. A message of spaces reaches the model as nothing and produces an
+    answer to nothing, which is worse than a refusal.
+
+    Length is measured on the raw message, not the assembled prompt. The prompt also carries history and
+    page context, so this is not a token budget — it is the one part of the budget the learner controls
+    directly, and the only part it is meaningful to refuse them on.
+    """
+    if not (message or "").strip():
+        return MessageRejection(
+            code=MESSAGE_REJECTED_EMPTY,
+            message="Ask Maigie something and it will answer.",
+        )
+    if len(message or "") > MESSAGE_MAX_LENGTH:
+        return MessageRejection(
+            code=MESSAGE_REJECTED_TOO_LONG,
+            message=(
+                f"That message is too long — {len(message):,} characters, and the limit is "
+                f"{MESSAGE_MAX_LENGTH:,}. Try asking about a shorter section."
+            ),
+        )
+    return None
+
+
+# ===========================================================================
+# Credit refusal
+# ===========================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class CreditRefusal:
+    """Why a turn was refused before it reached the model, and what to tell the learner.
+
+    A value rather than a frame, so the HTTP path can turn it into a typed `403` body and the socket
+    path into a `credit_limit_error` frame without either inventing wording the other does not use.
+    """
+
+    message: str
+    tier: str
+    is_daily_limit: bool
+
+
+def credit_refusal(
+    *, tier: str, estimated_tokens: int, credit_usage: dict[str, Any]
+) -> CreditRefusal:
+    """Decide which cap the learner hit and compose the refusal.
+
+    **This text is a billing statement shown to a learner about their own account, and it had never
+    been tested.** It was built inline between the availability check and the frame that carries it, so
+    reaching it needed a live socket and a learner genuinely out of credits.
+
+    **Daily and monthly are different refusals and must not be confused.** A daily cap resets tonight,
+    so the message names the reset time and the learner waits. A monthly cap resets at period end, so
+    the message names that date and the learner upgrades. Telling someone to wait until midnight for a
+    monthly cap is wrong advice about their own money.
+
+    The daily rule has three conditions and each excludes a real case: only the free tier has a daily
+    cap at all; a `daily_limit` of zero means no daily cap is configured, not a cap of nothing; and the
+    comparison includes this turn's estimate, because the question is whether *this* turn fits rather
+    than whether the learner has already exceeded.
+    """
+    daily_limit = credit_usage.get("daily_limit", 0) or 0
+    used_today = credit_usage.get("credits_used_today", 0) or 0
+    is_daily = tier == "FREE" and daily_limit > 0 and (used_today + estimated_tokens > daily_limit)
+
+    if is_daily:
+        message = (
+            f"Daily credit limit exceeded. You've used {used_today:,} "
+            f"of {daily_limit:,} daily credits. "
+            f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}. "
+            f"Start a free trial for more credits, or refer friends to earn bonus credits!"
+        )
+    else:
+        message = (
+            f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
+            f"of {credit_usage['hard_cap']:,} credits. "
+            f"Period resets: {credit_usage['period_end']}. "
+            f"Start a free trial for unlimited usage, or refer friends to earn bonus credits!"
+        )
+
+    return CreditRefusal(message=message, tier=tier, is_daily_limit=is_daily)
 
 
 # ===========================================================================
@@ -1084,3 +1212,460 @@ def should_retitle_session(
     ):
         return False
     return user_message_count == 1
+
+
+# ===========================================================================
+# Skill badges — the maps
+# ===========================================================================
+#
+# Lifted out of the handler when generation moved. They were injected into
+# `build_skill_badges` so that this module stayed importable without a cycle while the maps still
+# lived beside `route_request`; now that the whole turn is here, the injection has nothing left to
+# decouple. `build_skill_badges` still takes them as arguments, because that keeps it pure and its
+# tests independent of what the product currently calls a skill.
+
+TOOL_SKILL_MAP: dict[str, dict[str, str]] = {
+    # Course Management
+    "get_user_courses": {"id": "courses", "name": "Course Management", "icon": "book-open"},
+    "create_course": {"id": "courses", "name": "Course Management", "icon": "book-open"},
+    "update_course_outline": {"id": "courses", "name": "Course Management", "icon": "book-open"},
+    "delete_course": {"id": "courses", "name": "Course Management", "icon": "book-open"},
+    # Note Taking
+    "get_user_notes": {"id": "notes", "name": "Note Taking", "icon": "file-text"},
+    "create_note": {"id": "notes", "name": "Note Taking", "icon": "file-text"},
+    "retake_note": {"id": "notes", "name": "Note Taking", "icon": "file-text"},
+    "add_summary_to_note": {"id": "notes", "name": "Note Taking", "icon": "file-text"},
+    "add_tags_to_note": {"id": "notes", "name": "Note Taking", "icon": "file-text"},
+    # Goal Management
+    "get_user_goals": {"id": "goals", "name": "Goal Management", "icon": "target"},
+    "create_goal": {"id": "goals", "name": "Goal Management", "icon": "target"},
+    # Scheduling
+    "get_user_schedule": {"id": "scheduling", "name": "Scheduling", "icon": "calendar"},
+    "check_schedule_conflicts": {"id": "scheduling", "name": "Scheduling", "icon": "calendar"},
+    "create_schedule": {"id": "scheduling", "name": "Scheduling", "icon": "calendar"},
+    # Resources
+    "get_user_resources": {"id": "resources", "name": "Resource Finder", "icon": "search"},
+    "recommend_resources": {"id": "resources", "name": "Resource Finder", "icon": "search"},
+    # Memory & Profile
+    "get_my_profile": {"id": "memory", "name": "Memory", "icon": "user"},
+    "save_user_fact": {"id": "memory", "name": "Memory", "icon": "user"},
+    "complete_review": {"id": "memory", "name": "Spaced Repetition", "icon": "refresh-cw"},
+    "email_user": {"id": "email", "name": "Email", "icon": "mail"},
+    # Planning
+    "create_study_plan": {"id": "planning", "name": "Study Planning", "icon": "map"},
+    "get_learning_insights": {"id": "planning", "name": "Learning Insights", "icon": "bar-chart"},
+    "get_pending_nudges": {"id": "planning", "name": "Smart Nudges", "icon": "bell"},
+    # Document Generation
+    "generate_document": {
+        "id": "documents",
+        "name": "Document Generation",
+        "icon": "file-arrow-down",
+    },
+}
+
+QUERY_TYPE_SKILL_MAP: dict[str, dict[str, str]] = {
+    "courses": {"id": "courses", "name": "Course Management", "icon": "book-open"},
+    "goals": {"id": "goals", "name": "Goal Management", "icon": "target"},
+    "schedule": {"id": "scheduling", "name": "Scheduling", "icon": "calendar"},
+    "notes": {"id": "notes", "name": "Note Taking", "icon": "file-text"},
+    "resources": {"id": "resources", "name": "Resource Finder", "icon": "search"},
+}
+
+
+def tool_skill_badge(tool_name: str) -> dict[str, str] | None:
+    """Map a tool/action name to a skill badge for the frontend."""
+    return TOOL_SKILL_MAP.get(tool_name)
+
+
+def query_type_skill_badge(query_type: str) -> dict[str, str] | None:
+    """Map a query result type to a skill badge."""
+    return QUERY_TYPE_SKILL_MAP.get(query_type)
+
+
+# ===========================================================================
+# Model preference
+# ===========================================================================
+
+
+async def read_model_preference(user_id: str, capability: str = "chat") -> tuple[str, str] | None:
+    """Fetch the user's model preference for a given capability from the DB.
+
+    Returns a (provider, model_id) tuple if a preference is set, else None.
+    """
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            stmt = select(ModelPreference).where(
+                ModelPreference.user_id == user_id,
+                ModelPreference.capability == capability,
+            )
+            result = await session.execute(stmt)
+            pref = result.scalar_one_or_none()
+        if pref and pref.provider and pref.model_id:
+            return (pref.provider, pref.model_id)
+    except Exception as e:
+        logger.debug("Failed to fetch model preference for user %s: %s", user_id, e)
+    return None
+
+
+# ===========================================================================
+# One turn, end to end
+# ===========================================================================
+#
+# Decision C, finally. Everything above the transport is one function, and streaming is a callback
+# rather than a second code path — because the alternative is an HTTP path that quietly drifts from the
+# streaming one, which is what §5.4 documents after a year of it.
+
+
+class TurnRefused(Exception):  # noqa: N818 — named for what happened, not for being an error
+    """The turn was refused before the model ran.
+
+    Nothing was generated, nothing is charged, and **no assistant row is written**. Carries the refusal
+    so the socket can render a `credit_limit_error` frame and Phase 3's `/ask` a typed `403` from the
+    same words.
+    """
+
+    def __init__(self, refusal: CreditRefusal) -> None:
+        super().__init__(refusal.message)
+        self.refusal = refusal
+
+
+class TurnFailed(Exception):  # noqa: N818 — same reason
+    """Generation failed, so there is no answer.
+
+    **This exists so that a failure cannot be mistaken for an answer** (plan §1). Raising rather than
+    returning is the point: there is no path from here to the persistence write, so a provider outage
+    cannot end up in the learner's history as something Maigie said. No credits are consumed either,
+    because consumption happens after the write this skips.
+    """
+
+    def __init__(self, *, message: str, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.message = message
+        self.retryable = retryable
+
+
+@dataclass(frozen=True, slots=True)
+class AskEffects:
+    """Everything a turn does to the world, injected.
+
+    Sixteen of them, which is not a design smell but a measurement: this is what one Ask Maigie turn
+    touches. Bundled for the same reason as `ContextReaders` — the alternative is a call site that is
+    mostly plumbing and a test that must name every effect to override one.
+
+    **Every entry is something that writes, charges, queues or calls a provider.** The decisions are all
+    above, in this module and its two siblings, which is what makes `answer()` testable without a
+    database, a socket or a model.
+    """
+
+    create_message: Any
+    """(data) -> row. Writes a `ChatMessage`."""
+
+    create_action_log: Any
+    """(data) -> None. Writes an `AIActionLog`."""
+
+    generate: Any
+    """(**kwargs) -> (text, usage, actions, query_rows). The model call."""
+
+    resolve_tier: Any
+    """(user_id, personal_tier) -> str. Effective tier for the request."""
+
+    model_preference: Any
+    """(user_id, capability) -> (provider, model) | None."""
+
+    fallback_model_name: Any
+    """() -> str. The model name to record when the provider does not report one."""
+
+    check_credits: Any
+    """(user_obj, tokens) -> (available, warning). Raises `SubscriptionLimitError` on a hard cap."""
+
+    credit_usage: Any
+    """(user_obj) -> dict. Read only on the refusal path, to compose the message."""
+
+    consume_credits: Any
+    """(user_obj, tokens, operation) -> result. After generation, on real counts."""
+
+    cost_calculator: Any
+    revenue_calculator: Any
+
+    queue_task: Any
+    """(name, kwargs) -> None. Background work a tool asked for."""
+
+    format_list: Any
+    format_action: Any
+    tool_badge: Any
+    query_badge: Any
+
+    extract_suggestion: Any
+    """(text) -> (content, suggestion | None). Splits a trailing suggestion off an answer."""
+
+    purchase_deep_link: str
+    """Where a refused learner is sent to buy credits. A value, not a callable."""
+
+
+@dataclass(frozen=True, slots=True)
+class AskTurn:
+    """What one completed turn produced. Only built when there is an answer."""
+
+    assistant_message: Any
+    content: str
+    usage: AskUsage
+    outcomes: Any
+    suggestion_text: str | None = None
+    skills_used: list[dict[str, str]] = field(default_factory=list)
+    credit_result: Any = None
+    enriched_context: dict[str, Any] | None = None
+    history: list[dict[str, Any]] = field(default_factory=list)
+
+
+async def answer(
+    *,
+    message: str,
+    user: Any,
+    user_obj: Any,
+    session: Any,
+    user_message: Any,
+    context: dict[str, Any] | None,
+    ask_mode: str,
+    readers: Any,
+    effects: AskEffects,
+    cache: Any = None,
+    image_url: str | None = None,
+    on_chunk: Any = None,
+    on_progress: Any = None,
+) -> AskTurn:
+    """Answer one turn, over any transport.
+
+    `on_chunk(chunk, is_final)` is how a transport streams. **Passing `None` must produce the same
+    answer as passing a callback** — that is the whole of Decision C, and it is why the callback is an
+    argument rather than a branch. HTTP passes `None`; the socket passes a function that writes `stream`
+    frames.
+
+    The order is not arbitrary and two parts of it are load-bearing:
+
+    - **Credits are checked before generation and consumed after.** Before, because the alternative
+      charged a live model call to a learner over their cap, streamed them the whole answer, and only
+      then refused — money spent, nothing recorded. After, because only then are the real token counts
+      known.
+    - **The assistant row is written after the tool outcomes are collected but before anything is sent.**
+      The row is what the learner sees on reload, so it has to exist before the frames that claim it
+      does.
+
+    `user_message` is saved by the caller, not here, and that is deliberate: the socket acknowledges the
+    learner's message with `message_saved` for id correlation *before* enrichment runs, so the bubble
+    stops being optimistic as early as possible. `answer()` needs its id for the action log and the
+    reply preview.
+
+    Raises `TurnRefused` when the learner has no credits and `TurnFailed` when generation fails. Both
+    leave no assistant row and consume nothing.
+    """
+    from . import context_enrichment, tool_outcomes
+
+    review_item_id = (context or {}).get("reviewItemId")
+
+    history = await context_enrichment.build_history(
+        session_id=session.id,
+        user_id=user.id,
+        review_item_id=review_item_id,
+        readers=readers,
+    )
+    enriched = await context_enrichment.enrich_context(
+        context=context, user_id=user.id, readers=readers, cache=cache
+    )
+    enriched = await context_enrichment.attach_recall(
+        context=enriched, message=message, user_id=user.id, readers=readers
+    )
+
+    # --- credits, before the model runs -----------------------------------
+    estimated = estimate_turn_tokens(message=message, context=enriched, history=history)
+    available, _warning = await effects.check_credits(user_obj, estimated)
+    if not available:
+        raise TurnRefused(
+            credit_refusal(
+                tier=str(user_obj.tier) if user_obj.tier else "FREE",
+                estimated_tokens=estimated,
+                credit_usage=await effects.credit_usage(user_obj),
+            )
+        )
+
+    # --- generation --------------------------------------------------------
+    tier = await effects.resolve_tier(
+        user.id, str(user.tier) if getattr(user, "tier", None) else None
+    )
+    preference = await effects.model_preference(user.id, "chat")
+
+    response_text, usage_info, executed_actions, query_results = await effects.generate(
+        user_id=user.id,
+        user_tier=tier,
+        model_preference=preference,
+        history=history,
+        user_message=message,
+        context=enriched,
+        user_name=getattr(user, "name", None),
+        image_url=image_url,
+        progress_callback=on_progress,
+        stream_callback=on_chunk,
+    )
+
+    # --- what the tools produced ------------------------------------------
+    outcomes = tool_outcomes.collect_tool_outcomes(
+        message=message,
+        user_id=user.id,
+        user_message_id=user_message.id,
+        executed_actions=executed_actions,
+        query_results=query_results,
+        format_list=effects.format_list,
+        format_action=effects.format_action,
+        purchase_deep_link=effects.purchase_deep_link,
+    )
+    for row in outcomes.action_logs:
+        await effects.create_action_log(data=row)
+    for task_name, task_kwargs in outcomes.background_tasks:
+        effects.queue_task(task_name, task_kwargs)
+
+    # --- price it, charge it ----------------------------------------------
+    clean = (response_text or "").strip()
+    usage = resolve_usage(
+        usage_info=usage_info,
+        message=message,
+        response=clean,
+        context=enriched,
+        history=history,
+        model_name=(usage_info or {}).get("model_name") or effects.fallback_model_name(),
+        user_tier=str(user_obj.tier) if user_obj.tier else "FREE",
+        cost_calculator=effects.cost_calculator,
+        revenue_calculator=effects.revenue_calculator,
+    )
+
+    credit_result = None
+    try:
+        credit_result = await effects.consume_credits(user_obj, usage.total_tokens, "chat_message")
+    except Exception as error:  # noqa: BLE001 — the turn succeeded; the charge is not the answer
+        # Deliberately not fatal. The learner has their answer and the row is about to be written; a
+        # failure to *record* the charge must not retract it, and it is already logged as a real
+        # accounting gap rather than swallowed.
+        logger.warning("Credit consumption failed after a completed turn: %s", error)
+
+    # --- persist -----------------------------------------------------------
+    main_content, suggestion_text = clean, None
+    if outcomes.components and clean:
+        # Only split when there are components to display the suggestion *after*. With no components
+        # the suggestion is just the answer's last sentence and splitting it would reorder prose.
+        main_content, suggestion_text = effects.extract_suggestion(clean)
+
+    skills_used = build_skill_badges(
+        executed_actions=executed_actions,
+        query_results=query_results,
+        tool_badge=effects.tool_badge,
+        query_badge=effects.query_badge,
+    )
+
+    assistant_message = await effects.create_message(
+        data=build_assistant_row(
+            session_id=session.id,
+            user_id=user.id,
+            content=main_content,
+            usage=usage,
+            ask_mode=ask_mode,
+            review_item_id=(enriched or {}).get("reviewItemId") or review_item_id,
+            reply_to_message_id=user_message.id,
+            components=outcomes.components,
+            suggestion_text=suggestion_text,
+        )
+    )
+
+    return AskTurn(
+        assistant_message=assistant_message,
+        content=main_content,
+        usage=usage,
+        outcomes=outcomes,
+        suggestion_text=suggestion_text,
+        skills_used=skills_used,
+        credit_result=credit_result,
+        enriched_context=enriched,
+        history=history,
+    )
+
+
+def production_effects() -> AskEffects:
+    """The real effects. Imported lazily because they cross domains and this module is imported early.
+
+    Not memoized, unlike `context_enrichment.production_readers`: `generate` closes over the router
+    instance, and `get_llm_router()` is the thing whose availability changes when the LLM layer is
+    reconfigured. Building the bundle per connection keeps that resolution honest.
+    """
+    from src.domains.billing.services.cost_calculator import calculate_ai_cost, calculate_revenue
+    from src.domains.billing.services.credit_consumption_service import (
+        PURCHASE_DEEP_LINK,
+        check_credit_availability,
+        consume_credits,
+        get_credit_usage,
+    )
+    from src.domains.intelligence.reasoning.llm.adapter_registry import (
+        get_feature_flag_service,
+        get_llm_router,
+    )
+    from src.domains.intelligence.reasoning.llm.registry import LlmTask, default_model_for
+    from src.domains.intelligence.repository import intelligence_repo
+
+    from .chat_helpers import _extract_suggestion
+    from .component_response import (
+        format_action_component_response,
+        format_list_component_response,
+    )
+
+    async def generate(**kwargs: Any):
+        # `usage_scope` and `space_id` are pinned to personal here rather than threaded through
+        # `answer()`, because space-room chat was removed and personal is the only scope this surface
+        # has. A future shared scope adds a parameter; it does not resurrect a branch.
+        from src.domains.intelligence.reasoning.llm.feature_flags import PERSONAL_SCOPE
+
+        return await get_llm_router().route_request(
+            task=LlmTask.CHAT_TOOLS_SESSION,
+            usage_scope=PERSONAL_SCOPE,
+            space_id=None,
+            **kwargs,
+        )
+
+    async def resolve_tier(user_id: str, personal_tier: str | None) -> str:
+        from src.domains.intelligence.reasoning.llm.feature_flags import PERSONAL_SCOPE
+
+        return await get_feature_flag_service().effective_tier_for_request(
+            user_id=user_id, scope=PERSONAL_SCOPE, personal_tier=personal_tier
+        )
+
+    async def check_credits(user_obj: Any, tokens: int):
+        return await check_credit_availability(user_obj, tokens, db_client=None, space_id=None)
+
+    async def charge(user_obj: Any, tokens: int, operation: str):
+        return await consume_credits(
+            user_obj, tokens, operation=operation, db_client=None, space_id=None
+        )
+
+    def queue_task(name: str, kwargs: dict[str, Any]) -> None:
+        from src.core.celery_app import celery_app
+
+        celery_app.send_task(name, kwargs=kwargs, ignore_result=True)
+
+    return AskEffects(
+        create_message=intelligence_repo.create_message,
+        create_action_log=intelligence_repo.create_action_log,
+        generate=generate,
+        resolve_tier=resolve_tier,
+        model_preference=lambda user_id, capability: read_model_preference(
+            user_id, capability=capability
+        ),
+        fallback_model_name=lambda: default_model_for(LlmTask.CHAT_TOOLS_USAGE_FALLBACK),
+        check_credits=check_credits,
+        credit_usage=get_credit_usage,
+        consume_credits=charge,
+        cost_calculator=calculate_ai_cost,
+        revenue_calculator=calculate_revenue,
+        queue_task=queue_task,
+        format_list=format_list_component_response,
+        format_action=format_action_component_response,
+        tool_badge=tool_skill_badge,
+        query_badge=query_type_skill_badge,
+        extract_suggestion=_extract_suggestion,
+        purchase_deep_link=PURCHASE_DEEP_LINK,
+    )

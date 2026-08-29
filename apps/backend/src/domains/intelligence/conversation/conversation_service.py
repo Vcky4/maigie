@@ -8,8 +8,7 @@ Messages flow through the reasoning layer for AI responses.
 import logging
 from typing import Any
 
-from sqlalchemy import and_, delete, func, or_, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import and_, delete, func, or_, select
 
 from src.domains.intelligence.db_models import ChatMessage, ChatSession
 from src.domains.intelligence.repository import intelligence_repo
