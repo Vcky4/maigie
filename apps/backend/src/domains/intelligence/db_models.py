@@ -126,7 +126,9 @@ class ChatMessage(Base):
     duration: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Component data
-    component_data: Mapped[dict | None] = mapped_column("componentData", JSON, nullable=True)
+    component_data: Mapped[dict | list[dict] | None] = mapped_column(
+        "componentData", JSON, nullable=True
+    )
 
     # Provenance — how this answer was produced. See migration 049_chat_msg_grounding.
     #

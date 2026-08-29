@@ -255,7 +255,7 @@ class ChatMessageResponse(CamelModel):
     suggestion_text: str | None = None
     audio_url: str | None = None
     image_urls: list[str] | None = None
-    component_data: dict | None = None
+    component_data: dict | list[dict] | None = None
     token_count: int
     model_name: str | None = None
     reply_to_message_id: str | None = None
