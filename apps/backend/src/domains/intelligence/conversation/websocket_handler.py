@@ -762,9 +762,18 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 user.id,
                             )
 
-                        # 14. Send component responses (query results first, then what changed)
+                        # 14. Send correlated component responses as a fallback for clients that
+                        # consume the standalone channel rather than assistant_final.components.
                         for component_response in outcomes.components:
-                            await manager.send_json(component_response, user.id)
+                            await manager.send_json(
+                                {
+                                    **component_response,
+                                    "sessionId": session.id,
+                                    "requestId": ai_request_id,
+                                    "messageId": assistant_message.id,
+                                },
+                                user.id,
+                            )
 
                         # 14b. Send credit info (warning/notice) if applicable
                         if credit_result:
