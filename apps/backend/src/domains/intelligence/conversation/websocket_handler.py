@@ -535,7 +535,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         async def stream_text(chunk: str, is_final: bool):
                             """Stream text chunks to the client.
 
-                            **`is_final` stays snake_case on the wire. This is a decision, not an oversight.**
+                            **`isFinal` is camelCase on the wire, matching every other public frame key.**
                             Every other key here is camelCase, so the inconsistency is real. All four consumers
                             across the two clients read it as `payload.is_final ?? payload.isFinal ?? false`, so
                             snake_case is the spelling that works everywhere today. The failure mode if one
@@ -550,7 +550,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                     "type": "stream",
                                     "payload": {
                                         "chunk": chunk,
-                                        "is_final": is_final,
+                                        "isFinal": is_final,
                                         "sessionId": session.id,
                                         "requestId": ai_request_id,
                                         "replyToMessageId": ai_reply_target_id,
