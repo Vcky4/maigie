@@ -90,6 +90,27 @@ ALLOWED: dict[str, str] = {
     "domains/progress/repository.py::update_review": (
         "`spaced_repetition_impl` resolves the review for the learner before updating it."
     ),
+    "domains/notifications/repository.py::claim_due_deliveries": (
+        "No id enters this at all: the batch is selected by channel, status, and time, and the `.id ==` "
+        "the scan matches is the delivery→notification→installation join, not a lookup. Its only caller "
+        "is `dispatcher.dispatch_due`, reached solely from the argument-less Celery beat task "
+        "`notifications.dispatch_mobile_push`. Rows go to the push provider addressed to the row's own "
+        "owner, never into a response, so there is no learner to disclose to."
+    ),
+    "domains/notifications/repository.py::record_ticket_result": (
+        "The `delivery_id` is one this process claimed moments earlier in `dispatcher.dispatch_due`, not "
+        "one off a request — the only caller is that dispatch loop, under the beat task "
+        "`notifications.dispatch_mobile_push`. It writes the provider outcome and returns nothing, so "
+        "the read cannot disclose a row: an owner filter would need an owner the worker does not have "
+        "and does not act on behalf of."
+    ),
+    "domains/notifications/repository.py::record_receipt": (
+        "Same shape as `record_ticket_result`, one stage later: the `delivery_id` comes from "
+        "`accepted_for_receipts` inside `dispatcher.reconcile_receipts`, whose only entry point is the "
+        "argument-less beat task `notifications.reconcile_expo_receipts`. It records the Expo receipt "
+        "against the delivery and its attempt row and returns nothing to any caller that could relay it "
+        "to a learner."
+    ),
 }
 
 
