@@ -7835,6 +7835,84 @@
         "title": "MemoryContextResponse",
         "type": "object"
       },
+      "MobilePushInstallationUpsert": {
+        "properties": {
+          "appVersion": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Appversion"
+          },
+          "deviceLocale": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Devicelocale"
+          },
+          "installationId": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Installationid",
+            "type": "string"
+          },
+          "permissionState": {
+            "default": "DEFAULT",
+            "enum": [
+              "DEFAULT",
+              "GRANTED",
+              "DENIED"
+            ],
+            "title": "Permissionstate",
+            "type": "string"
+          },
+          "platform": {
+            "enum": [
+              "IOS",
+              "ANDROID"
+            ],
+            "title": "Platform",
+            "type": "string"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "token": {
+            "maxLength": 512,
+            "minLength": 20,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "installationId",
+          "platform",
+          "token"
+        ],
+        "title": "MobilePushInstallationUpsert",
+        "type": "object"
+      },
       "ModelPreferenceResponse": {
         "description": "User's AI model preference.",
         "properties": {
@@ -12766,6 +12844,175 @@
           "purpose"
         ],
         "title": "PurposeSetRequest",
+        "type": "object"
+      },
+      "PushInstallationList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PushInstallationResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "PushInstallationList",
+        "type": "object"
+      },
+      "PushInstallationResponse": {
+        "properties": {
+          "appVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Appversion"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "deviceLocale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Devicelocale"
+          },
+          "disabledAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disabledat"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "installationId": {
+            "title": "Installationid",
+            "type": "string"
+          },
+          "lastRegisteredAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastregisteredat"
+          },
+          "lastSeenAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastseenat"
+          },
+          "permissionState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permissionstate"
+          },
+          "platform": {
+            "title": "Platform",
+            "type": "string"
+          },
+          "revocationSecret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revocationsecret"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "transport": {
+            "title": "Transport",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "installationId",
+          "platform",
+          "transport",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "PushInstallationResponse",
+        "type": "object"
+      },
+      "PushInstallationRevoke": {
+        "properties": {
+          "installationId": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Installationid",
+            "type": "string"
+          },
+          "revocationSecret": {
+            "maxLength": 200,
+            "minLength": 32,
+            "title": "Revocationsecret",
+            "type": "string"
+          }
+        },
+        "required": [
+          "installationId",
+          "revocationSecret"
+        ],
+        "title": "PushInstallationRevoke",
         "type": "object"
       },
       "QuizCompleteRequest": {
@@ -34739,6 +34986,152 @@
         ]
       }
     },
+    "/api/v1/push-installations": {
+      "get": {
+        "operationId": "list_push_installations_api_v1_push_installations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushInstallationList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Push Installations",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/push-installations/mobile": {
+      "post": {
+        "operationId": "upsert_mobile_push_installation_api_v1_push_installations_mobile_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MobilePushInstallationUpsert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushInstallationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Upsert Mobile Push Installation",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/push-installations/revoke": {
+      "post": {
+        "operationId": "revoke_push_installation_api_v1_push_installations_revoke_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushInstallationRevoke"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Push Installation",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/push-installations/{installation_id}": {
+      "delete": {
+        "operationId": "disable_push_installation_api_v1_push_installations__installation_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installation_id",
+            "required": true,
+            "schema": {
+              "title": "Installation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Disable Push Installation",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
     "/api/v1/spaces": {
       "get": {
         "description": "List spaces the authenticated user belongs to.",
@@ -35318,7 +35711,7 @@
       "name": "personal-learning"
     },
     {
-      "description": "**Notifications Domain** — Canonical in-app history, unread state, interactions, and best-effort realtime hints.",
+      "description": "**Notifications Domain** — Canonical history, mobile push installations, delivery evidence, interactions, and best-effort realtime hints.",
       "name": "notifications"
     },
     {

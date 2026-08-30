@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from src.shared.schemas import CamelModel
 
@@ -88,3 +88,52 @@ class NotificationInteractionResponse(CamelModel):
     source_metadata: dict | None = None
     occurred_at: datetime
     created_at: datetime
+
+
+MobilePlatform = Literal["IOS", "ANDROID"]
+PermissionState = Literal["DEFAULT", "GRANTED", "DENIED"]
+
+
+class MobilePushInstallationUpsert(CamelModel):
+    installation_id: str = Field(min_length=1, max_length=200)
+    platform: MobilePlatform
+    token: str = Field(min_length=20, max_length=512)
+    app_version: str | None = Field(default=None, max_length=100)
+    device_locale: str | None = Field(default=None, max_length=64)
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    permission_state: PermissionState = "DEFAULT"
+
+    @field_validator("token")
+    @classmethod
+    def validate_expo_token(cls, value: str) -> str:
+        import re
+
+        if not re.fullmatch(r"(?:ExponentPushToken|ExpoPushToken)\[[^\[\]]{1,400}\]", value):
+            raise ValueError("token must be a valid Expo push token")
+        return value
+
+
+class PushInstallationResponse(CamelModel):
+    id: str
+    installation_id: str
+    platform: str
+    transport: str
+    app_version: str | None = None
+    device_locale: str | None = None
+    timezone: str | None = None
+    permission_state: str | None = None
+    last_seen_at: datetime | None = None
+    last_registered_at: datetime | None = None
+    disabled_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    revocation_secret: str | None = None
+
+
+class PushInstallationList(CamelModel):
+    items: list[PushInstallationResponse]
+
+
+class PushInstallationRevoke(CamelModel):
+    installation_id: str = Field(min_length=1, max_length=200)
+    revocation_secret: str = Field(min_length=32, max_length=200)

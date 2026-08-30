@@ -23,7 +23,7 @@ from src.shared.time import (
 )
 
 from .db_models import Notification, NotificationInteraction
-from .models import NotificationInteractionCreate
+from .models import MobilePushInstallationUpsert, NotificationInteractionCreate
 from .repository import notification_repo
 from .taxonomy import (
     canonical_action_payload,
@@ -106,6 +106,7 @@ async def create_notification(
             "expires_at": eligible_at + spec.ttl if spec.ttl else None,
         },
         group_window=spec.dedupe_window if spec.groupable else None,
+        plan_mobile_push="MOBILE_PUSH" in spec.default_channels,
     )
     if mutation:
         if replaced_id is not None:
@@ -113,6 +114,22 @@ async def create_notification(
         await _emit_hint(f"notification.{mutation}", user_id, row.id)
         await _emit_unread_count(user_id)
     return row
+
+
+async def list_push_installations(*, user_id: str):
+    return await notification_repo.list_installations(user_id)
+
+
+async def upsert_mobile_push_installation(*, user_id: str, request: MobilePushInstallationUpsert):
+    return await notification_repo.upsert_mobile_installation(user_id, request.model_dump())
+
+
+async def revoke_push_installation(*, installation_id: str, revocation_secret: str) -> None:
+    await notification_repo.revoke_installation(installation_id, revocation_secret)
+
+
+async def disable_push_installation(*, user_id: str, installation_id: str) -> bool:
+    return await notification_repo.disable_installation(user_id, installation_id)
 
 
 async def list_history(

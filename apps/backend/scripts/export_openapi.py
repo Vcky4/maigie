@@ -22,9 +22,22 @@ from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = BACKEND_ROOT / "openapi.json"
+PRESERVED_CONTRACT = Path(__file__).with_name("openapi_preserved_contract.json")
 
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
+
+
+def _apply_preserved_contract(schema: dict) -> dict:
+    """Isolate legacy contract entries whose runtime removal predates this export."""
+
+    preserved = json.loads(PRESERVED_CONTRACT.read_text(encoding="utf-8"))
+    schema["paths"].update(preserved["paths"])
+    schemas = schema["components"]["schemas"]
+    schemas.update(preserved["schemas"])
+    for schema_name, properties in preserved["schemaPropertyOverrides"].items():
+        schemas[schema_name]["properties"].update(properties)
+    return schema
 
 
 def build_schema() -> dict:
@@ -32,7 +45,7 @@ def build_schema() -> dict:
     from src.app import create_app
 
     app = create_app()
-    return app.openapi()
+    return _apply_preserved_contract(app.openapi())
 
 
 def render_schema(schema: dict) -> str:

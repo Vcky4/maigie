@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
 
-from pydantic import BeforeValidator
+from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -333,6 +333,18 @@ class Settings(BaseSettings):
     FIREBASE_SERVICE_ACCOUNT_PATH: str = ""
     # Alternatively, provide the JSON content directly (useful for Docker/env-based deploys)
     FIREBASE_SERVICE_ACCOUNT_JSON: str = ""
+
+    # --- Expo mobile push (default-off staged rollout) ---
+    EXPO_PUSH_URL: str = "https://exp.host/--/api/v2/push"
+    EXPO_ACCESS_TOKEN: str = ""
+    MOBILE_PUSH_ENABLED: bool = False
+    MOBILE_PUSH_DENYLIST: ListStr = []
+    MOBILE_PUSH_ALLOWLIST: ListStr = []
+    MOBILE_PUSH_INTERNAL_ALLOWLIST: ListStr = []
+    MOBILE_PUSH_ROLLOUT_PERCENT: int = Field(default=0, ge=0, le=100)
+    MOBILE_PUSH_MAX_ATTEMPTS: int = Field(default=5, ge=1, le=10)
+    MOBILE_PUSH_RECEIPT_DELAY_SECONDS: int = Field(default=900, ge=60, le=86400)
+    MOBILE_PUSH_STALE_SENDING_SECONDS: int = Field(default=600, ge=60, le=86400)
 
     # --- Background tasks (schedule AI batching) ---
     AI_SCHEDULE_REVIEW_MAX_USERS: int = 500

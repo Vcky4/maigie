@@ -907,13 +907,13 @@ Exit criteria: web and mobile show the same notification lifecycle and action se
 
 ### Phase 2 — mobile push made real
 
-- [ ] Implement Expo sender, tickets, receipts, dead-token handling, and retries.
-- [ ] Migrate `DeviceToken` rows into `PushInstallation`.
-- [ ] Fix stable installation identity, cold-start taps, pending auth actions, and route unification.
-- [ ] Run staged physical-device delivery tests on iOS and Android.
-- [ ] Enable for internal users, then 5%, 25%, 100%.
+- [x] Implement Expo sender, tickets, receipts, dead-token handling, and retries — **canonical EXPO deliveries now retain ticket/receipt attempts, distinguish provider acceptance from delivery, retry bounded transient failures, and disable `DeviceNotRegistered` destinations; semantic re-review and 56 targeted backend tests passed (2026-08-30).**
+- [x] Migrate `DeviceToken` rows into `PushInstallation` — **revision 061 was applied to the configured PostgreSQL and reconciled at head: all 5 retained Android `DeviceToken` rows are represented by 5 EXPO installations, with 0 uncovered mobile tokens, 0 WEB migrations, 0 duplicate delivery destinations, and both Phase 2 indexes present (2026-08-30).**
+- [x] Fix stable installation identity, cold-start taps, pending auth actions, and route unification — **mobile now persists installation identity and revocation retries, requests permission only explicitly, and routes foreground/warm/background/cold/auth-delayed taps through the canonical resolver after server ownership proof; 42 suites/1,151 tests, typecheck, lint, and Android export passed (2026-08-30).**
+- [ ] Run staged physical-device delivery tests on iOS and Android — **still required: local/export validation is not evidence of Expo tickets, receipts, OS display, permission transitions, tap routing, or offline logout recovery on real devices.**
+- [ ] Enable for internal users, then 5%, 25%, 100% — **not enabled: `MOBILE_PUSH_ENABLED=false` and the deterministic rollout percentage remains `0`; do not advance cohorts until physical-device evidence is recorded.**
 
-Exit criteria: provider acceptance and receipt evidence exist; invalid tokens are disabled; no preference, quiet-hour, or duplicate-send violations occur.
+Exit criteria: provider acceptance and receipt evidence exist; invalid tokens are disabled; no preference, quiet-hour, or duplicate-send violations occur. **Implementation and database reconciliation are complete at revision 061, but Phase 2 release remains gated: real provider acceptance/receipt and end-to-end iOS/Android evidence have not yet been collected, so production rollout remains disabled (2026-08-30).**
 
 ### Phase 3 — preferences and email unification
 

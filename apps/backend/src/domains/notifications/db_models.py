@@ -182,6 +182,9 @@ class PushInstallation(Base, TimestampMixin):
     failure_count: Mapped[int] = mapped_column(
         "failureCount", Integer, nullable=False, default=0, server_default="0"
     )
+    revocation_secret_hash: Mapped[str | None] = mapped_column(
+        "revocationSecretHash", String(64), nullable=True
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -203,6 +206,12 @@ class PushInstallation(Base, TimestampMixin):
             name="PushInstallation_permissionState_check",
         ),
         Index("PushInstallation_userId_disabledAt_idx", "userId", "disabledAt"),
+        Index(
+            "PushInstallation_installationId_revocationSecretHash_idx",
+            "installationId",
+            "revocationSecretHash",
+            postgresql_where=text('"revocationSecretHash" IS NOT NULL'),
+        ),
         Index(
             "PushInstallation_token_key",
             "token",
@@ -297,6 +306,14 @@ class NotificationDelivery(Base, TimestampMixin):
             "NotificationDelivery_notificationId_channel_idx",
             "notificationId",
             "channel",
+        ),
+        Index(
+            "NotificationDelivery_notification_channel_destination_key",
+            "notificationId",
+            "channel",
+            "destinationId",
+            unique=True,
+            postgresql_where=text('"destinationId" IS NOT NULL'),
         ),
         Index(
             "NotificationDelivery_status_nextAttemptAt_idx",

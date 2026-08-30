@@ -1,11 +1,13 @@
 """Canonical notification HTTP and realtime API."""
 
+import hashlib
 from typing import Any
 
 from fastapi import (
     APIRouter,
     HTTPException,
     Query,
+    Request,
     Response,
     WebSocket,
     WebSocketDisconnect,
@@ -17,19 +19,73 @@ from src.core.websocket import manager
 from src.domains.identity.repository import IdentityRepository
 from src.shared.auth import CurrentUser
 from src.shared.auth.jwt import decode_access_token
+from src.shared.infrastructure.rate_limit import enforce_rate_limit
 
 from . import service
 from .models import (
     MarkAllReadResponse,
+    MobilePushInstallationUpsert,
     NotificationHistoryPage,
     NotificationHistoryStatus,
     NotificationInteractionCreate,
     NotificationInteractionResponse,
     NotificationItem,
+    PushInstallationList,
+    PushInstallationResponse,
+    PushInstallationRevoke,
     UnreadCountResponse,
 )
 
 router = APIRouter()
+push_installations_router = APIRouter()
+
+
+@push_installations_router.get("", response_model=PushInstallationList)
+async def list_push_installations(current_user: CurrentUser) -> PushInstallationList:
+    rows = await service.list_push_installations(user_id=current_user.id)
+    return PushInstallationList(
+        items=[PushInstallationResponse.model_validate(row) for row in rows]
+    )
+
+
+@push_installations_router.post(
+    "/mobile", response_model=PushInstallationResponse, response_model_exclude_none=True
+)
+async def upsert_mobile_push_installation(
+    body: MobilePushInstallationUpsert, current_user: CurrentUser
+) -> PushInstallationResponse:
+    row, revocation_secret = await service.upsert_mobile_push_installation(
+        user_id=current_user.id, request=body
+    )
+    return PushInstallationResponse.model_validate(row).model_copy(
+        update={"revocation_secret": revocation_secret}
+    )
+
+
+@push_installations_router.post("/revoke", status_code=204)
+async def revoke_push_installation(body: PushInstallationRevoke, request: Request) -> Response:
+    client_host = request.client.host if request.client is not None else "unknown"
+    limiter_identity = hashlib.sha256(f"{client_host}:{body.installation_id}".encode()).hexdigest()
+    await enforce_rate_limit(
+        user_id=limiter_identity,
+        endpoint="push_installation_revoke",
+        max_requests=10,
+        window_seconds=60,
+    )
+    await service.revoke_push_installation(
+        installation_id=body.installation_id,
+        revocation_secret=body.revocation_secret,
+    )
+    return Response(status_code=204)
+
+
+@push_installations_router.delete("/{installation_id}", status_code=204)
+async def disable_push_installation(installation_id: str, current_user: CurrentUser) -> Response:
+    if not await service.disable_push_installation(
+        user_id=current_user.id, installation_id=installation_id
+    ):
+        raise HTTPException(status_code=404, detail="Push installation not found")
+    return Response(status_code=204)
 
 
 @router.get("", response_model=NotificationHistoryPage)

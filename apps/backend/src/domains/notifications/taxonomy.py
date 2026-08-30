@@ -899,3 +899,23 @@ def _validate_registry() -> None:
 
 
 _validate_registry()
+
+
+_ANDROID_CHANNEL_BY_CATEGORY: dict[NotificationCategory, str] = {
+    "SECURITY": "security",
+    "ACCOUNT": "account",
+    "BILLING": "billing",
+    "MEMBERSHIP": "membership",
+    "SOCIAL": "social",
+    "CLASSROOM": "classroom",
+    "LEARNING": "learning",
+    "PROGRESS": "progress",
+    "SUPPORT": "support",
+    "OPERATIONS": "operations",
+}
+
+
+def android_channel_id(notification_type: str) -> str:
+    """Return the stable client-configured Android channel for a canonical type."""
+
+    return _ANDROID_CHANNEL_BY_CATEGORY[notification_spec(notification_type).category]

@@ -216,8 +216,8 @@ def _openapi_tags() -> list[dict]:
         {
             "name": "notifications",
             "description": (
-                "**Notifications Domain** — Canonical in-app history, unread state, "
-                "interactions, and best-effort realtime hints."
+                "**Notifications Domain** — Canonical history, mobile push installations, "
+                "delivery evidence, interactions, and best-effort realtime hints."
             ),
         },
         {
@@ -306,10 +306,20 @@ def _register_domains(app: FastAPI) -> None:
     app.include_router(learning_router, prefix=f"{prefix}/learning", tags=["personal-learning"])
 
     # --- Notifications (canonical in-app platform) ---
-    from src.domains.notifications.routes import router as notifications_router
+    from src.domains.notifications.routes import (
+        push_installations_router,
+    )
+    from src.domains.notifications.routes import (
+        router as notifications_router,
+    )
 
     app.include_router(
         notifications_router, prefix=f"{prefix}/notifications", tags=["notifications"]
+    )
+    app.include_router(
+        push_installations_router,
+        prefix=f"{prefix}/push-installations",
+        tags=["notifications"],
     )
 
     # --- Knowledge (migrated to SQLAlchemy) ---
