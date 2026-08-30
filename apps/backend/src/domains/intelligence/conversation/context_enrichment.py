@@ -126,9 +126,7 @@ async def resolve_owned_topic(
 
     try:
         topic, module, course = await check_topic_ownership(topic_id, user_id)
-    except (
-        Exception
-    ) as error:  # noqa: BLE001 — NotFoundError and ForbiddenError alike mean "omit it"
+    except Exception as error:  # noqa: BLE001 — NotFoundError and ForbiddenError alike mean "omit it"
         logger.warning(
             "Topic %s not available to user %s for context enrichment: %s",
             topic_id,
