@@ -76,7 +76,8 @@ async def handle_tool_call(
 
     handler = handlers.get(tool_name)
     if not handler:
-        return {"error": f"Unknown tool: {tool_name}"}
+        message = f"Unknown tool: {tool_name}"
+        return {"status": "error", "message": message, "error": message}
 
     # Enrich args with context (IDs normally come from the client on the WebSocket message)
     if context:
@@ -100,8 +101,11 @@ async def handle_tool_call(
         return result
     except Exception as e:
         logger.error(f"Tool execution error for {tool_name}: {e}", exc_info=True)
+        message = str(e)
         return {
-            "error": str(e),
+            "status": "error",
+            "message": message,
+            "error": message,
             "error_type": type(e).__name__,
         }
 
@@ -425,19 +429,32 @@ async def handle_create_note(
     user_id: str,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Handle create_note tool call."""
-    # Map tool args to action_service format
-    action_data = {
+    """Handle create_note tool call through the same durable service as the REST endpoint."""
+    from src.domains.personal_learning.services import note_service
+
+    note_data = {
         "title": args["title"],
         "content": args["content"],
         "topicId": args.get("topic_id"),
         "courseId": args.get("course_id"),
+        "spaceId": args.get("space_id"),
         "summary": args.get("summary"),
     }
-
-    # Call existing action service
-    result = await action_service.create_note(action_data, user_id)
-    return result
+    # Do not send null foreign keys through the mapper. More importantly, `create_note` returns only
+    # after its repository transaction commits; the ownership-scoped read-back is the success boundary
+    # exposed to the model, so requested arguments alone can never be mistaken for a completed write.
+    note = await note_service.create_note(
+        user_id=user_id,
+        data={key: value for key, value in note_data.items() if value is not None},
+    )
+    persisted = await note_service.get_note(user_id=user_id, note_id=note.id)
+    return {
+        "status": "success",
+        "message": f'Created note "{persisted.title}".',
+        "note_id": persisted.id,
+        "noteId": persisted.id,
+        "title": persisted.title,
+    }
 
 
 async def handle_create_goal(

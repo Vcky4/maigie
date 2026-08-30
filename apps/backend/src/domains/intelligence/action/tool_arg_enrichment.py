@@ -227,6 +227,8 @@ async def _enrich_create_note_args(out: dict, ctx: dict) -> None:
     tid = out.get("topic_id")
     if _is_bad_id(tid) and ctx.get("topicId"):
         out["topic_id"] = ctx["topicId"]
+    elif _is_bad_id(tid):
+        out.pop("topic_id", None)
     cid = out.get("course_id")
     if _is_bad_id(cid) and ctx.get("courseId"):
         out["course_id"] = ctx["courseId"]

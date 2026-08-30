@@ -143,7 +143,7 @@ def build_action_log_row(
         "actionType": action_type,
         "actionData": action_data if action_data else {},
         "status": "SUCCESS" if succeeded else "FAILED",
-        "error": None if succeeded else action_result.get("message"),
+        "error": None if succeeded else action_result.get("message") or action_result.get("error"),
     }
 
 

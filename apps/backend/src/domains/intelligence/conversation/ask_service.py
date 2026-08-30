@@ -1778,6 +1778,17 @@ async def answer(
         stream_callback=on_chunk,
     )
 
+    # Provider prose is not proof that a mutation happened. A create-note result is successful only
+    # after the handler's committed, ownership-scoped read-back. If every attempt failed, replace any
+    # premature success claim before the assistant row and final frame are produced.
+    note_attempts = [action for action in executed_actions if action.get("type") == "create_note"]
+    if note_attempts and not any(
+        action.get("result", {}).get("status") == "success" for action in note_attempts
+    ):
+        response_text = (
+            "I couldn't create that note, so nothing was saved. " "Please try again in a moment."
+        )
+
     # --- what the tools produced ------------------------------------------
     outcomes = tool_outcomes.collect_tool_outcomes(
         message=message,

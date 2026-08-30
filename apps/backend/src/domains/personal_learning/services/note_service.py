@@ -27,17 +27,21 @@ async def create_note(*, user_id: str, data: dict[str, Any]) -> Any:
         await repo.create_note_tags(note.id, tags)
         note = await repo.find_note(note.id, user_id)
 
-    # Record in activity feed
+    # Activity-feed recording is secondary to the durable note write. A feed outage must not make the
+    # caller report failure after the note transaction has already committed.
     from . import activity_feed_service
 
-    await activity_feed_service.record(
-        user_id=user_id,
-        activity_type="note_created",
-        title=f"Created note: {data.get('title', 'Untitled')}",
-        entity_type="note",
-        entity_id=note.id,
-        context={"source": "personal", "noteId": note.id},
-    )
+    try:
+        await activity_feed_service.record(
+            user_id=user_id,
+            activity_type="note_created",
+            title=f"Created note: {data.get('title', 'Untitled')}",
+            entity_type="note",
+            entity_id=note.id,
+            context={"source": "personal", "noteId": note.id},
+        )
+    except Exception as error:  # noqa: BLE001 — the note itself is already durable
+        logger.warning("Failed to record note-created activity for %s: %s", note.id, error)
 
     return note
 
