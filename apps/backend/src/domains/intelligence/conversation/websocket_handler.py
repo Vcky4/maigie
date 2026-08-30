@@ -361,13 +361,22 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             data=user_message_data
                         )
 
-                        # Track activity (streak + lastSeenAt)
-                        try:
-                            from src.domains.intelligence.observation.tracker import record_activity
+                        # Track activity without holding up message acknowledgement, title maintenance,
+                        # context enrichment, or the provider's first streamed token. This write is
+                        # best-effort and was already non-fatal when awaited inline.
+                        async def record_activity_best_effort() -> None:
+                            try:
+                                from src.domains.intelligence.observation.tracker import (
+                                    record_activity,
+                                )
 
-                            await record_activity(user.id)
-                        except Exception:
-                            pass  # Non-blocking
+                                await record_activity(user.id)
+                            except Exception as activity_error:
+                                logger.debug("Failed to record chat activity: %s", activity_error)
+
+                        activity_task = asyncio.create_task(record_activity_best_effort())
+                        open_turns.add(activity_task)
+                        activity_task.add_done_callback(open_turns.discard)
 
                         # 4.1a Send confirmation to client for ID correlation
                         await manager.send_connection_json(
@@ -442,8 +451,6 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         session.id,
                                         {"title": ask_service.derive_session_title(user_text)},
                                     )
-                                    # Refresh session object with new title
-                                    session = await intelligence_repo.find_chat_session(session.id)
                         except Exception as e:
                             logger.warning("Failed to update session title: %s", e)
 
