@@ -6,6 +6,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -358,10 +359,12 @@ class Settings(BaseSettings):
 
 
 def _get_redis_url_with_db(redis_url: str, db_number: int) -> str:
-    if "/" in redis_url:
-        base_url = redis_url.rsplit("/", 1)[0]
-        return f"{base_url}/{db_number}"
-    return f"{redis_url}/{db_number}"
+    """Return a Redis URL targeting one logical DB without corrupting its authority."""
+
+    parsed = urlsplit(redis_url)
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, f"/{db_number}", parsed.query, parsed.fragment)
+    )
 
 
 @lru_cache
