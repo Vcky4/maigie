@@ -7,6 +7,22 @@ TypeScript types; no Node tooling is required here.
 The FastAPI application is only constructed, never served: the lifespan
 never runs, so no database or cache connection is opened.
 
+**The export is `app.openapi()` and nothing else, and that is load-bearing.**
+This script used to merge `openapi_preserved_contract.json` over the generated
+schema, adding a `/api/v1/intelligence/ask/transcribe` path and two schemas for
+a route that does not exist in `src/`, and narrowing
+`ChatMessageResponse.componentData` to `object | null` when the model declares
+`dict | list[dict] | None`. Both propagated exactly as far as real entries do:
+into this file, into the web client's generated types, and into the mobile
+client's vendored path list, where the mounted-path guard read the phantom
+route as mounted. `--check` could never notice, because the same merge ran on
+both sides of the comparison.
+
+So: nothing may be added to the exported schema here. If a path should be in
+the contract, write the route. If a published type is wrong, fix the model. A
+post-processing step in this file is indistinguishable to every downstream
+consumer from an API that exists.
+
 Usage:
     poetry run python scripts/export_openapi.py
     poetry run python scripts/export_openapi.py --output openapi.json
@@ -22,30 +38,21 @@ from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = BACKEND_ROOT / "openapi.json"
-PRESERVED_CONTRACT = Path(__file__).with_name("openapi_preserved_contract.json")
 
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 
-def _apply_preserved_contract(schema: dict) -> dict:
-    """Isolate legacy contract entries whose runtime removal predates this export."""
-
-    preserved = json.loads(PRESERVED_CONTRACT.read_text(encoding="utf-8"))
-    schema["paths"].update(preserved["paths"])
-    schemas = schema["components"]["schemas"]
-    schemas.update(preserved["schemas"])
-    for schema_name, properties in preserved["schemaPropertyOverrides"].items():
-        schemas[schema_name]["properties"].update(properties)
-    return schema
-
-
 def build_schema() -> dict:
-    """Build the OpenAPI schema without starting the server."""
+    """Build the OpenAPI schema without starting the server.
+
+    The mounted application is the only source. See the module docstring for why
+    there is no post-processing step here and why one must not be reintroduced.
+    """
     from src.app import create_app
 
     app = create_app()
-    return _apply_preserved_contract(app.openapi())
+    return app.openapi()
 
 
 def render_schema(schema: dict) -> str:

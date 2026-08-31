@@ -748,20 +748,6 @@
         "title": "AskSkillBadge",
         "type": "object"
       },
-      "AskTranscriptResponse": {
-        "description": "Speech turned into text, for a composer that cannot dictate locally.\n\nReturns the text and does not send it. **The learner edits before asking** — a transcript posted\nstraight as a turn would have Maigie answer a misheard question, and the learner would have no way to\ntell whether the mistake was theirs or the transcriber's.",
-        "properties": {
-          "text": {
-            "title": "Text",
-            "type": "string"
-          }
-        },
-        "required": [
-          "text"
-        ],
-        "title": "AskTranscriptResponse",
-        "type": "object"
-      },
       "BehaviourProfileResponse": {
         "properties": {
           "avgSessionMinutes": {
@@ -910,20 +896,6 @@
           "password"
         ],
         "title": "Body_login_form_api_v1_auth_login_post",
-        "type": "object"
-      },
-      "Body_transcribe_for_ask_api_v1_intelligence_ask_transcribe_post": {
-        "properties": {
-          "file": {
-            "format": "binary",
-            "title": "File",
-            "type": "string"
-          }
-        },
-        "required": [
-          "file"
-        ],
-        "title": "Body_transcribe_for_ask_api_v1_intelligence_ask_transcribe_post",
         "type": "object"
       },
       "Body_upload_ask_attachment_api_v1_intelligence_ask_attachments_post": {
@@ -1144,6 +1116,13 @@
               {
                 "additionalProperties": true,
                 "type": "object"
+              },
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
@@ -21209,54 +21188,6 @@
           }
         ],
         "summary": "Delete Ask Attachment",
-        "tags": [
-          "intelligence",
-          "intelligence"
-        ]
-      }
-    },
-    "/api/v1/intelligence/ask/transcribe": {
-      "post": {
-        "description": "Turn spoken audio into text for the composer.\n\n**For mobile, and deliberately not for web** (§4.5.3). Web dictates through the browser's Web Speech\nAPI, which costs nothing and needs no round trip; React Native has no equivalent and no polyfill is\ninstalled, so without this mobile cannot dictate at all. Routing web through here too would add a\nnetwork hop and a bill to something that already works locally.\n\n**Returns text and does not send it.** The learner edits before asking — a transcript posted straight\nas a turn would have Maigie answer a misheard question, and the learner could not tell whether the\nmistake was theirs or the transcriber's. Nothing is persisted either: a transcript is an input to a\nmessage, not a message, so it has no reason to outlive the composer.",
-        "operationId": "transcribe_for_ask_api_v1_intelligence_ask_transcribe_post",
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_transcribe_for_ask_api_v1_intelligence_ask_transcribe_post"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AskTranscriptResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Transcribe For Ask",
         "tags": [
           "intelligence",
           "intelligence"
