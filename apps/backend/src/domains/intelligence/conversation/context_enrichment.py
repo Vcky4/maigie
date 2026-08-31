@@ -808,8 +808,18 @@ async def enrich_context(
                 "spaceId",
             ):
                 enriched.pop(unverified_key, None)
+            # `%s` on the exception alone is not enough, and the 2026-08-31 logs are the proof:
+            # this line printed "continuing without it:" followed by nothing, because several
+            # exception types (a bare `KeyError()`, anything raised with no args) have an empty
+            # `str()`. A swallowed failure that also declines to say what it was is untraceable, and
+            # this branch is deliberately broad, so it is the one place that most needs the type and
+            # the traceback. `exc_info` keeps the stack; the class name survives even when the
+            # message is empty.
             logger.warning(
-                "Learner context enrichment failed, continuing without it: %s", error
+                "Learner context enrichment failed, continuing without it: %s: %s",
+                type(error).__name__,
+                error,
+                exc_info=True,
             )
 
     return enriched or None

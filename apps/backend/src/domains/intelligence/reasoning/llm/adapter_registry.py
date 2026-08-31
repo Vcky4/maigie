@@ -117,7 +117,11 @@ def _build_adapter_registry() -> dict[str, BaseProviderAdapter]:
     Returns a dict keyed by "provider:model" → adapter instance.
     """
     settings = get_settings()
-    enabled = {p.strip().lower() for p in settings.LLM_ENABLED_PROVIDERS.split(",") if p.strip()}
+    enabled = {
+        p.strip().lower()
+        for p in settings.LLM_ENABLED_PROVIDERS.split(",")
+        if p.strip()
+    }
 
     registry: dict[str, BaseProviderAdapter] = {}
 
@@ -134,7 +138,9 @@ def _build_adapter_registry() -> dict[str, BaseProviderAdapter]:
                 "gemini-3.1-flash-lite",
             ]
             for model_id in gemini_models:
-                adapter = GeminiChatToolsAdapter(safety_settings=safety_settings, model_id=model_id)
+                adapter = GeminiChatToolsAdapter(
+                    safety_settings=safety_settings, model_id=model_id
+                )
                 registry[f"gemini:{model_id}"] = adapter
             logger.info("Registered %d Gemini adapter(s)", len(gemini_models))
         except Exception as e:
@@ -312,8 +318,67 @@ def get_llm_router() -> LLMRouter:
         settings.LLM_ENABLED_PROVIDERS,
     )
 
+    _log_unroutable_tasks(adapter_registry, fallback_chains, feature_flags)
+
     _llm_router_instance = router
     return router
+
+
+def _log_unroutable_tasks(
+    adapter_registry: dict[str, BaseProviderAdapter],
+    fallback_chains: dict[LlmTask, list[tuple[str, str]]],
+    feature_flags: FeatureFlagService,
+) -> None:
+    """Log, at startup, any task whose whole fallback chain is unroutable.
+
+    **This exists because the failure it catches is invisible until a learner hits it, and then
+    lies about itself.** The fallback chains and tier allowlists are configurable
+    (``FALLBACK_CHAT_*``, ``LLM_TIER_ALLOWLIST_*``) while the adapter registry above hardcodes its
+    model ids, so the two drift. When they do, ``_select_candidates`` filters every pair out and the
+    router raises ``LLMProviderError(category="overloaded")`` — which reaches the learner as *"All AI
+    services are currently busy, please try again"*. Retrying never helps, because nothing is busy:
+    the chain names a model no adapter was registered for.
+
+    That is exactly what happened on 2026-08-31. The registry had ``gemini-3.5-flash`` and
+    ``gemini-3.1-flash-lite``; a stale ``.env`` pinned the chains and allowlists to
+    ``gemini-2.5-flash`` and ``gemini-2.0-flash-lite`` (the latter no longer exists upstream at all),
+    and OpenAI/Anthropic had no API keys, so there was nothing left to route to. Every Ask Maigie
+    turn failed and reported overload.
+
+    So this walks the same filters the router does and says which pairs are unusable and why, once,
+    at build time. It only logs — a missing provider is a deployment condition, not a reason to
+    refuse to boot, and raising here would take down surfaces that never call the LLM.
+    """
+    for task, chain in fallback_chains.items():
+        reasons: list[str] = []
+        routable = False
+
+        for provider, model in chain:
+            pair = f"{provider}:{model}"
+            if adapter_registry.get(pair) is None:
+                reasons.append(f"{pair}: no adapter registered")
+                continue
+            # Checked against the most restrictive tier: a pair allowed for no tier at all is a
+            # configuration error, while one allowed only for `plus` is a deliberate paid gate.
+            if not feature_flags.is_model_allowed(
+                provider=provider,
+                model=model,
+                user_tier="plus",
+                user_id="__startup_check__",
+            ):
+                reasons.append(f"{pair}: not in any tier allowlist")
+                continue
+            routable = True
+
+        if not routable:
+            logger.error(
+                "LLM task %s is unroutable — every pair in its fallback chain was rejected (%s). "
+                "Turns for this task will fail as 'overloaded' even though no provider is busy. "
+                "Check FALLBACK_* and LLM_TIER_ALLOWLIST_* against the registered adapters: %s",
+                getattr(task, "value", task),
+                "; ".join(reasons) or "chain is empty",
+                sorted(adapter_registry) or "none",
+            )
 
 
 def invalidate_llm_router() -> None:
@@ -326,4 +391,6 @@ def invalidate_llm_router() -> None:
     global _llm_router_instance, _feature_flag_service_instance
     _llm_router_instance = None
     _feature_flag_service_instance = None
-    logger.info("LLM router and feature flag singletons invalidated (will rebuild on next use)")
+    logger.info(
+        "LLM router and feature flag singletons invalidated (will rebuild on next use)"
+    )
