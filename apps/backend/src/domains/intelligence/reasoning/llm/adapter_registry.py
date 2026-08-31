@@ -45,7 +45,7 @@ from src.domains.intelligence.reasoning.llm.circuit_breaker import CircuitBreake
 from src.domains.intelligence.reasoning.llm.cost_tracker import CostTracker
 from src.domains.intelligence.reasoning.llm.feature_flags import FeatureFlagService
 from src.domains.intelligence.reasoning.llm.registry import LlmTask
-from src.domains.intelligence.reasoning.llm.router import LLMRouter
+from src.domains.intelligence.reasoning.llm.router import TIER_EXEMPT_TASKS, LLMRouter
 
 logger = logging.getLogger(__name__)
 
@@ -352,9 +352,16 @@ def _log_unroutable_tasks(
             if adapter_registry.get(pair) is None:
                 reasons.append(f"{pair}: no adapter registered")
                 continue
-            # Checked against the most restrictive tier: a pair allowed for no tier at all is a
+            # Mirrors the router's own filter, including the exemption. Checking embeddings against
+            # the allowlist here is what made this guard report the embedding task as broken when it
+            # was not; any divergence between these two rules makes the guard lie in one direction.
+            if task in TIER_EXEMPT_TASKS:
+                if not feature_flags.is_provider_enabled(provider):
+                    reasons.append(f"{pair}: provider not in LLM_ENABLED_PROVIDERS")
+                    continue
+            # Checked against the most permissive tier: a pair allowed for no tier at all is a
             # configuration error, while one allowed only for `plus` is a deliberate paid gate.
-            if not feature_flags.is_model_allowed(
+            elif not feature_flags.is_model_allowed(
                 provider=provider,
                 model=model,
                 user_tier="plus",
