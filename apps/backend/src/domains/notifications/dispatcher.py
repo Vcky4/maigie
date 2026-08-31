@@ -16,6 +16,7 @@ from src.shared.time import (
     parse_hhmm,
 )
 
+from .feature_flags import capability_enabled_for
 from .metrics import (
     MOBILE_PUSH_CLAIMED,
     MOBILE_PUSH_LAST_BATCH,
@@ -31,20 +32,9 @@ RECEIPT_BATCH = 100
 
 
 def mobile_push_enabled_for(user_id: str) -> bool:
-    """Stable rollout order: global switch, deny, explicit/internal allow, cohort."""
+    """Compatibility wrapper around the shared notification capability gate."""
 
-    settings = get_settings()
-    if not settings.MOBILE_PUSH_ENABLED:
-        return False
-    if user_id in settings.MOBILE_PUSH_DENYLIST:
-        return False
-    if user_id in settings.MOBILE_PUSH_ALLOWLIST:
-        return True
-    if user_id in settings.MOBILE_PUSH_INTERNAL_ALLOWLIST:
-        return True
-    percent = max(0, min(100, settings.MOBILE_PUSH_ROLLOUT_PERCENT))
-    cohort = int.from_bytes(hashlib.sha256(user_id.encode()).digest()[:8], "big") % 100
-    return cohort < percent
+    return capability_enabled_for("MOBILE_PUSH", user_id)
 
 
 def _retry_at(delivery_id: str, attempt: int, now: datetime) -> datetime:

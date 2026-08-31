@@ -17,7 +17,7 @@ from jose import JWTError
 
 from src.core.websocket import manager
 from src.domains.identity.repository import IdentityRepository
-from src.shared.auth import CurrentUser
+from src.shared.auth import CurrentUser, StaffUser
 from src.shared.auth.jwt import decode_access_token
 from src.shared.infrastructure.rate_limit import enforce_rate_limit
 
@@ -38,6 +38,13 @@ from .models import (
 
 router = APIRouter()
 push_installations_router = APIRouter()
+
+
+@router.get("/operations/metrics", include_in_schema=False)
+async def operational_metrics(_staff_user: StaffUser) -> dict[str, Any]:
+    """Database-backed aggregate lifecycle metrics for authenticated staff."""
+
+    return await service.lifecycle_metrics()
 
 
 @push_installations_router.get("", response_model=PushInstallationList)

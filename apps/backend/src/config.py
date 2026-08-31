@@ -335,7 +335,33 @@ class Settings(BaseSettings):
     # Alternatively, provide the JSON content directly (useful for Docker/env-based deploys)
     FIREBASE_SERVICE_ACCOUNT_JSON: str = ""
 
-    # --- Expo mobile push (default-off staged rollout) ---
+    # --- Notification channel and intelligence rollouts ---
+    # Every optional external channel and intelligence path has an independent,
+    # deterministic user gate. Denylists win; explicit/internal allowlists bypass
+    # percentage cohorts. Keep not-yet-implemented channels default-off.
+    NOTIFICATION_EMAIL_ENABLED: bool = False
+    NOTIFICATION_EMAIL_DENYLIST: ListStr = []
+    NOTIFICATION_EMAIL_ALLOWLIST: ListStr = []
+    NOTIFICATION_EMAIL_INTERNAL_ALLOWLIST: ListStr = []
+    NOTIFICATION_EMAIL_ROLLOUT_PERCENT: int = Field(default=0, ge=0, le=100)
+
+    WEB_PUSH_ENABLED: bool = False
+    WEB_PUSH_DENYLIST: ListStr = []
+    WEB_PUSH_ALLOWLIST: ListStr = []
+    WEB_PUSH_INTERNAL_ALLOWLIST: ListStr = []
+    WEB_PUSH_ROLLOUT_PERCENT: int = Field(default=0, ge=0, le=100)
+
+    NOTIFICATION_INTELLIGENCE_ENABLED: bool = False
+    NOTIFICATION_INTELLIGENCE_DENYLIST: ListStr = []
+    NOTIFICATION_INTELLIGENCE_ALLOWLIST: ListStr = []
+    NOTIFICATION_INTELLIGENCE_INTERNAL_ALLOWLIST: ListStr = []
+    NOTIFICATION_INTELLIGENCE_ROLLOUT_PERCENT: int = Field(default=0, ge=0, le=100)
+    NOTIFICATION_INTELLIGENCE_SHADOW_ONLY: bool = True
+
+    # --- Expo mobile push (staged rollout) ---
+    # The code fallback is fail-closed when no environment is loaded. The deployment
+    # template intentionally enables the sender at a 0% cohort, which still makes no
+    # user eligible until an allowlist or percentage rollout is approved.
     EXPO_PUSH_URL: str = "https://exp.host/--/api/v2/push"
     EXPO_ACCESS_TOKEN: str = ""
     MOBILE_PUSH_ENABLED: bool = False

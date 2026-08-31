@@ -79,3 +79,19 @@ source ./load-all-secrets.sh .env.example
 - GitHub secrets override defaults when available
 - No need to maintain separate lists of variables
 
+
+## Notification lifecycle inspection
+
+`inspect_notification_lifecycle.py` is a read-only operator tool. It omits user identifiers, addresses, tokens, notification bodies, action values, provider correlation/response data, and error details. Its remaining notification types, reason codes, timestamps, and internal IDs are still operational data; keep output within authorized staff channels.
+
+```bash
+# Actionable backlog and failures from the last 24 hours
+python scripts/db_direct.py python scripts/inspect_notification_lifecycle.py --summary
+
+# Limit the summary to one external channel
+python scripts/db_direct.py python scripts/inspect_notification_lifecycle.py --summary --channel MOBILE_PUSH
+
+# Trace one canonical notification through deliveries, attempts, and interactions
+python scripts/db_direct.py python scripts/inspect_notification_lifecycle.py \
+  --notification-id <notification-id>
+```

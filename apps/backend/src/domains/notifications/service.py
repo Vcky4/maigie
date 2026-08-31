@@ -116,6 +116,21 @@ async def create_notification(
     return row
 
 
+async def lifecycle_metrics() -> dict[str, Any]:
+    """Return redacted database-backed operational metrics for staff."""
+
+    data = await notification_repo.lifecycle_metrics(now=datetime.now(UTC))
+    logger.info(
+        "Notification lifecycle metrics inspected",
+        extra={
+            "actionable_groups": len(data["actionableDeliveries"]),
+            "failure_groups_24h": len(data["failuresLast24Hours"]),
+            "interaction_groups_24h": len(data["interactionsLast24Hours"]),
+        },
+    )
+    return data
+
+
 async def list_push_installations(*, user_id: str):
     return await notification_repo.list_installations(user_id)
 

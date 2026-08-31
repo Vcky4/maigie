@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -871,6 +871,123 @@ class NotificationRepository:
                         )
                     )
             return len(rows)
+
+    async def lifecycle_metrics(self, *, now: datetime) -> dict[str, Any]:
+        """Return database-backed, low-cardinality operational lifecycle metrics."""
+
+        stale_before = now - timedelta(seconds=get_settings().MOBILE_PUSH_STALE_SENDING_SECONDS)
+        actionable_at = case(
+            (
+                NotificationDelivery.status == "SENDING",
+                NotificationDelivery.updated_at,
+            ),
+            (
+                NotificationDelivery.status == "ACCEPTED",
+                func.coalesce(
+                    NotificationDelivery.next_attempt_at,
+                    NotificationDelivery.accepted_at,
+                    NotificationDelivery.eligible_at,
+                ),
+            ),
+            else_=func.coalesce(
+                NotificationDelivery.next_attempt_at,
+                NotificationDelivery.eligible_at,
+            ),
+        )
+        actionable = or_(
+            and_(
+                NotificationDelivery.status.in_(["PLANNED", "QUEUED"]),
+                NotificationDelivery.eligible_at <= now,
+                or_(
+                    NotificationDelivery.next_attempt_at.is_(None),
+                    NotificationDelivery.next_attempt_at <= now,
+                ),
+            ),
+            and_(
+                NotificationDelivery.status == "ACCEPTED",
+                or_(
+                    NotificationDelivery.next_attempt_at.is_(None),
+                    NotificationDelivery.next_attempt_at <= now,
+                ),
+            ),
+            and_(
+                NotificationDelivery.status == "SENDING",
+                NotificationDelivery.updated_at <= stale_before,
+            ),
+        )
+
+        factory = get_session_factory()
+        async with factory() as session:
+            actionable_rows = (
+                await session.execute(
+                    select(
+                        NotificationDelivery.channel,
+                        NotificationDelivery.status,
+                        func.count(NotificationDelivery.id),
+                        func.min(actionable_at),
+                    )
+                    .where(
+                        actionable,
+                        or_(
+                            NotificationDelivery.expires_at.is_(None),
+                            NotificationDelivery.expires_at > now,
+                        ),
+                    )
+                    .group_by(NotificationDelivery.channel, NotificationDelivery.status)
+                    .order_by(NotificationDelivery.channel, NotificationDelivery.status)
+                )
+            ).all()
+            failure_rows = (
+                await session.execute(
+                    select(
+                        NotificationDelivery.channel,
+                        NotificationDelivery.failure_code,
+                        func.count(NotificationDelivery.id),
+                    )
+                    .where(
+                        NotificationDelivery.status == "FAILED",
+                        NotificationDelivery.updated_at >= now - timedelta(hours=24),
+                    )
+                    .group_by(
+                        NotificationDelivery.channel,
+                        NotificationDelivery.failure_code,
+                    )
+                    .order_by(NotificationDelivery.channel, func.count().desc())
+                )
+            ).all()
+            interaction_rows = (
+                await session.execute(
+                    select(
+                        NotificationInteraction.surface,
+                        NotificationInteraction.event,
+                        func.count(NotificationInteraction.id),
+                    )
+                    .where(NotificationInteraction.occurred_at >= now - timedelta(hours=24))
+                    .group_by(NotificationInteraction.surface, NotificationInteraction.event)
+                    .order_by(NotificationInteraction.surface, NotificationInteraction.event)
+                )
+            ).all()
+
+        return {
+            "generatedAt": now,
+            "actionableDeliveries": [
+                {
+                    "channel": channel,
+                    "status": status,
+                    "count": count,
+                    "oldestActionableAt": oldest_actionable_at,
+                }
+                for channel, status, count, oldest_actionable_at in actionable_rows
+            ],
+            "failuresLast24Hours": [
+                {"channel": channel, "failureCode": failure_code, "count": count}
+                for channel, failure_code, count in failure_rows
+            ],
+            "interactionsLast24Hours": [
+                {"surface": surface, "event": event, "count": count}
+                for surface, event, count in interaction_rows
+            ],
+        }
 
     async def dispatch_policy(
         self, user_id: str, notification_type: str, category: str
