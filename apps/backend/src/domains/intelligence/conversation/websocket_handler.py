@@ -68,7 +68,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
         identity_repo = IdentityRepository()
 
         try:
-            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            payload = jwt.decode(
+                token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+            )
             email: str = payload.get("sub")
             if not email:
                 raise HTTPException(status_code=403, detail="Invalid token")
@@ -79,10 +81,14 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
 
             return user
         except JWTError:
-            raise HTTPException(status_code=403, detail="Could not validate credentials")
+            raise HTTPException(
+                status_code=403, detail="Could not validate credentials"
+            )
 
     @router.websocket("/ws")
-    async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_current_user_ws)):
+    async def websocket_endpoint(
+        websocket: WebSocket, user: dict = Depends(get_current_user_ws)
+    ):
         """
         Main WebSocket endpoint for AI Chat.
         """
@@ -159,7 +165,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     if isinstance(message_data, dict):
                         message_type = message_data.get("type")
                         if message_type == "ping":
-                            await manager.send_connection_json({"type": "pong"}, connection_id)
+                            await manager.send_connection_json(
+                                {"type": "pong"}, connection_id
+                            )
                             continue
                         if message_type == "cancel":
                             # Reachable because the loop no longer awaits the turn. Acknowledged whether
@@ -176,7 +184,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 {
                                     "type": "event",
                                     "payload": {
-                                        "status": ("cancelled" if stopped else "complete"),
+                                        "status": (
+                                            "cancelled" if stopped else "complete"
+                                        ),
                                         "action": "cancel",
                                         "requestId": cancel_request_id,
                                         "stopped": stopped,
@@ -214,7 +224,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         {
                             "type": "error",
                             "payload": {
-                                "message": ask_service.SESSION_DENIAL_MESSAGES[resolution.denial],
+                                "message": ask_service.SESSION_DENIAL_MESSAGES[
+                                    resolution.denial
+                                ],
                                 "retryable": resolution.retryable,
                             },
                         },
@@ -320,7 +332,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                     file_urls_list = [raw_file_urls]
 
                         # 4.1 Save User Message to DB (with imageUrl + imageUrls)
-                        reply_to_message_id = context.get("replyToMessageId") if context else None
+                        reply_to_message_id = (
+                            context.get("replyToMessageId") if context else None
+                        )
                         reply_target_message = None
                         if reply_to_message_id:
                             factory = get_session_factory()
@@ -333,8 +347,10 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 reply_target_message = result.scalar_one_or_none()
                             # Fetch the user for the reply target if needed
                             if reply_target_message:
-                                reply_target_user = await IdentityRepository().find_by_id(
-                                    reply_target_message.user_id
+                                reply_target_user = (
+                                    await IdentityRepository().find_by_id(
+                                        reply_target_message.user_id
+                                    )
                                 )
                                 # Attach user as attribute for downstream access
                                 reply_target_message.user = reply_target_user
@@ -360,13 +376,17 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         if context and context.get("reviewItemId"):
                             user_message_data["reviewItemId"] = context["reviewItemId"]
                         if file_urls_list:
-                            user_message_data["imageUrl"] = file_urls_list[0]  # backward compat
+                            user_message_data["imageUrl"] = file_urls_list[
+                                0
+                            ]  # backward compat
                             user_message_data["imageUrls"] = file_urls_list
                             print(
                                 f"🖼️ Message includes {len(file_urls_list)} image(s): {file_urls_list}"
                             )
                         if reply_target_message:
-                            user_message_data["replyToMessageId"] = reply_target_message.id
+                            user_message_data["replyToMessageId"] = (
+                                reply_target_message.id
+                            )
 
                         user_message = await intelligence_repo.create_message(
                             data=user_message_data
@@ -383,9 +403,13 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
 
                                 await record_activity(user.id)
                             except Exception as activity_error:
-                                logger.debug("Failed to record chat activity: %s", activity_error)
+                                logger.debug(
+                                    "Failed to record chat activity: %s", activity_error
+                                )
 
-                        activity_task = asyncio.create_task(record_activity_best_effort())
+                        activity_task = asyncio.create_task(
+                            record_activity_best_effort()
+                        )
                         open_turns.add(activity_task)
                         activity_task.add_done_callback(open_turns.discard)
 
@@ -431,7 +455,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         # stays here because it is a query, and it runs only when the cheap checks pass — a
                         # conversation that already has a name does not pay for a count on every turn.
                         try:
-                            is_review_thread = bool(context and context.get("reviewItemId"))
+                            is_review_thread = bool(
+                                context and context.get("reviewItemId")
+                            )
                             if ask_service.session_needs_a_title(
                                 current_title=getattr(session, "title", None),
                                 message=user_text,
@@ -460,7 +486,11 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 ):
                                     await intelligence_repo.update_chat_session(
                                         session.id,
-                                        {"title": ask_service.derive_session_title(user_text)},
+                                        {
+                                            "title": ask_service.derive_session_title(
+                                                user_text
+                                            )
+                                        },
                                     )
                         except Exception as e:
                             logger.warning("Failed to update session title: %s", e)
@@ -503,17 +533,12 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             )
 
                         async def stream_text(chunk: str, is_final: bool):
-                            """Stream text chunks to the client.
+                            """Stream a text chunk using the coordinated camelCase wire contract.
 
-                            **`isFinal` is camelCase on the wire, matching every other public frame key.**
-                            Every other key here is camelCase, so the inconsistency is real. All four consumers
-                            across the two clients read it as `payload.is_final ?? payload.isFinal ?? false`, so
-                            snake_case is the spelling that works everywhere today. The failure mode if one
-                            consumer were missed on a rename is why not to do it casually: `?? false` reads a
-                            missing flag as *not final*, so the streaming buffer never commits and the answer
-                            hangs half-rendered rather than erroring. A silent hang is worse than an
-                            inconsistent key. Normalise when all three repositories can drop the fallbacks in
-                            one release — Phase 8 is the moment, and it is recorded there.
+                            ``isFinal`` is camelCase on the wire, matching the other public frame
+                            keys and the web and mobile consumers. Keep this spelling coordinated
+                            across all three repositories: a missing final flag leaves the client
+                            streaming buffer uncommitted rather than producing a protocol error.
                             """
                             await manager.send_json(
                                 {
@@ -544,7 +569,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         # acknowledge the stop and release the turn slot normally.
                         answer_holder: dict[str, object] = {}
                         try:
-                            async with ask_service.cancellable_turn(ai_request_id, answer_holder):
+                            async with ask_service.cancellable_turn(
+                                ai_request_id, answer_holder
+                            ):
                                 answer_task = asyncio.create_task(
                                     ask_service.answer(
                                         message=user_text,
@@ -557,7 +584,11 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         readers=readers,
                                         effects=effects,
                                         cache=context_enrichment.production_cache(),
-                                        image_url=(file_urls_list[0] if file_urls_list else None),
+                                        image_url=(
+                                            file_urls_list[0]
+                                            if file_urls_list
+                                            else None
+                                        ),
                                         on_chunk=stream_text,
                                         on_progress=send_progress,
                                     )
@@ -591,7 +622,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         f"{e.message} Start a free trial for more credits, or refer "
                                         f"friends to earn bonus credits!"
                                     ),
-                                    "tier": (str(user_obj.tier) if user_obj.tier else "FREE"),
+                                    "tier": (
+                                        str(user_obj.tier) if user_obj.tier else "FREE"
+                                    ),
                                     "is_daily_limit": False,
                                     "show_referral_option": True,
                                     "blocked": True,
@@ -695,7 +728,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         "id": assistant_message.id,
                                         "content": main_content,
                                         "components": outcomes.components or None,
-                                        "skillsUsed": (skills_used if skills_used else None),
+                                        "skillsUsed": (
+                                            skills_used if skills_used else None
+                                        ),
                                         "sessionId": session.id,
                                         "requestId": ai_request_id,
                                         "replyToMessageId": ai_reply_target_id,
@@ -710,7 +745,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                     "payload": {
                                         "id": assistant_message.id,
                                         "role": "assistant",
-                                        "skillsUsed": (skills_used if skills_used else None),
+                                        "skillsUsed": (
+                                            skills_used if skills_used else None
+                                        ),
                                         "sessionId": session.id,
                                         "requestId": ai_request_id,
                                         "replyToMessageId": ai_reply_target_id,
@@ -755,13 +792,17 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         # 16. Background fact extraction from conversation (non-blocking)
                         # Only run every 5+ user messages to avoid excessive LLM calls
                         try:
-                            user_msg_count = sum(1 for m in turn.history if m.get("role") == "user")
+                            user_msg_count = sum(
+                                1 for m in turn.history if m.get("role") == "user"
+                            )
                             if user_msg_count >= 5 and user_msg_count % 5 == 0:
                                 conversation_for_extraction = [
                                     {
                                         "role": m.get("role", "user"),
                                         "content": (
-                                            m.get("parts", [""])[0] if m.get("parts") else ""
+                                            m.get("parts", [""])[0]
+                                            if m.get("parts")
+                                            else ""
                                         ),
                                     }
                                     for m in turn.history
@@ -787,7 +828,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         # interrupted. The partial text is discarded — see `ask_service`'s note on why
                         # keeping it would need a column that can tell 'you stopped this' from 'the
                         # model ran out'.
-                        logger.info("Turn cancelled by the learner on session %s", session.id)
+                        logger.info(
+                            "Turn cancelled by the learner on session %s", session.id
+                        )
                     except Exception:
                         # The turn is its own task now, so an unhandled error here would surface as a
                         # bare "Task exception was never retrieved" and nothing would reach the
