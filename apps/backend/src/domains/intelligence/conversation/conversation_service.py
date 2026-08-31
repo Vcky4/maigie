@@ -241,8 +241,6 @@ async def delete_conversation(*, session_id: str, user_id: str) -> None:
     await get_conversation(session_id=session_id, user_id=user_id)
     factory = get_session_factory()
     async with factory() as session:
-        await session.execute(
-            delete(ChatMessage).where(ChatMessage.session_id == session_id)
-        )
+        await session.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
         await session.execute(delete(ChatSession).where(ChatSession.id == session_id))
         await session.commit()

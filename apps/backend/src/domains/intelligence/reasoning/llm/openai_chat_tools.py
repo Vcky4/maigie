@@ -273,9 +273,7 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
 
             # Convert to OpenAI format
             openai_tools = (
-                self._tool_normalizer.to_openai(tool_definitions)
-                if tool_definitions
-                else None
+                self._tool_normalizer.to_openai(tool_definitions) if tool_definitions else None
             )
 
             # Tool call loop
@@ -290,20 +288,16 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
                 try:
                     if stream_callback:
                         # Streaming mode
-                        streamed_text, tool_calls_raw, usage = (
-                            await self._stream_response(
-                                messages=messages,
-                                tools=openai_tools,
-                                stream_callback=stream_callback,
-                            )
+                        streamed_text, tool_calls_raw, usage = await self._stream_response(
+                            messages=messages,
+                            tools=openai_tools,
+                            stream_callback=stream_callback,
                         )
                     else:
                         # Non-streaming mode
-                        streamed_text, tool_calls_raw, usage = (
-                            await self._non_stream_response(
-                                messages=messages,
-                                tools=openai_tools,
-                            )
+                        streamed_text, tool_calls_raw, usage = await self._non_stream_response(
+                            messages=messages,
+                            tools=openai_tools,
                         )
                 except StreamConsumerDisconnected as disc:
                     total_llm_time += time.perf_counter() - llm_start
@@ -346,9 +340,7 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
                     break
 
                 # Normalize tool calls
-                normalized_calls = self._tool_normalizer.normalize_tool_calls_openai(
-                    tool_calls_raw
-                )
+                normalized_calls = self._tool_normalizer.normalize_tool_calls_openai(tool_calls_raw)
 
                 if not normalized_calls:
                     break
@@ -573,9 +565,7 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
                             if tc_delta.function.name:
                                 entry["function"]["name"] += tc_delta.function.name
                             if tc_delta.function.arguments:
-                                entry["function"][
-                                    "arguments"
-                                ] += tc_delta.function.arguments
+                                entry["function"]["arguments"] += tc_delta.function.arguments
 
                 # Check for finish
                 if choice.finish_reason:
@@ -600,9 +590,7 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
             raise
 
         # Collect tool calls in order
-        tool_calls_list = [
-            tool_calls_by_index[i] for i in sorted(tool_calls_by_index.keys())
-        ]
+        tool_calls_list = [tool_calls_by_index[i] for i in sorted(tool_calls_by_index.keys())]
 
         return "".join(streamed_text_parts), tool_calls_list, usage
 

@@ -130,9 +130,9 @@ class TestConversationResponse:
         `assert_reads_every_field` already covers them, but it covers them by iteration, and an
         iteration that walks an empty set also passes. These are the ones the outage was about.
         """
-        published = models.ConversationResponse.model_validate(
-            make_session()
-        ).model_dump(by_alias=True)
+        published = models.ConversationResponse.model_validate(make_session()).model_dump(
+            by_alias=True
+        )
         assert published["courseId"] == "course_1"
         assert published["topicId"] == "topic_1"
         assert published["examPrepId"] == "prep_1"
@@ -144,9 +144,9 @@ class TestConversationResponse:
 
     def test_publishes_camel_case_on_the_wire(self):
         """The contract the clients already implement. Fields are snake_case in Python only."""
-        published = models.ConversationResponse.model_validate(
-            make_session()
-        ).model_dump(by_alias=True)
+        published = models.ConversationResponse.model_validate(make_session()).model_dump(
+            by_alias=True
+        )
         assert "userId" in published and "user_id" not in published
         assert "createdAt" in published and "created_at" not in published
         assert "isSpaceRoom" in published and "is_space_room" not in published
@@ -166,9 +166,7 @@ class TestConversationResponse:
             note_id=None,
             space_id=None,
         )
-        published = models.ConversationResponse.model_validate(row).model_dump(
-            by_alias=True
-        )
+        published = models.ConversationResponse.model_validate(row).model_dump(by_alias=True)
         assert published["courseId"] is None
         assert published["spaceId"] is None
 
@@ -189,9 +187,7 @@ class TestMessageResponse:
             retryable=True,
             failure_code="PROVIDER_OVERLOADED",
         )
-        published = models.ChatMessageResponse.model_validate(row).model_dump(
-            by_alias=True
-        )
+        published = models.ChatMessageResponse.model_validate(row).model_dump(by_alias=True)
         assert published["generation"] == {
             "latestAttemptId": "attempt_1",
             "status": "FAILED",
@@ -215,16 +211,12 @@ class TestMessageResponse:
 
         Declared as `list[str] = []` this raised outright — the plain absence of an image was a `500`.
         """
-        validated = models.ChatMessageResponse.model_validate(
-            make_message(image_urls=None)
-        )
+        validated = models.ChatMessageResponse.model_validate(make_message(image_urls=None))
         assert validated.image_urls is None
 
     def test_a_message_with_images_keeps_them(self):
         validated = models.ChatMessageResponse.model_validate(
-            make_message(
-                image_urls=["https://cdn.example/a.png", "https://cdn.example/b.png"]
-            )
+            make_message(image_urls=["https://cdn.example/a.png", "https://cdn.example/b.png"])
         )
         assert validated.image_urls == [
             "https://cdn.example/a.png",
@@ -236,9 +228,9 @@ class TestMessageResponse:
         assert validated.component_data == {"type": "mermaid", "source": "graph TD;"}
 
     def test_answer_scope_is_published_in_camel_case(self):
-        published = models.ChatMessageResponse.model_validate(
-            make_message()
-        ).model_dump(by_alias=True)
+        published = models.ChatMessageResponse.model_validate(make_message()).model_dump(
+            by_alias=True
+        )
         assert published["answerScope"] == {
             "sources": ["note"],
             "libraryRecall": False,
@@ -472,9 +464,7 @@ class TestRequestModels:
 
     def test_an_omitted_field_stays_omitted(self):
         body = models.ConversationCreate.model_validate({"courseId": "course_9"})
-        assert body.model_dump(exclude_unset=True, by_alias=True) == {
-            "courseId": "course_9"
-        }
+        assert body.model_dump(exclude_unset=True, by_alias=True) == {"courseId": "course_9"}
 
     def test_message_send_rejects_empty_content(self):
         with pytest.raises(Exception):
@@ -590,9 +580,7 @@ class TestSpaceRoomsStayOutOfTheAskSurface:
 
     def test_archived_conversations_are_excluded_either_way(self):
         assert '"isActive" = true' in self.rendered(user_id="user_1")
-        assert '"isActive" = true' in self.rendered(
-            user_id="user_1", space_id="space_1"
-        )
+        assert '"isActive" = true' in self.rendered(user_id="user_1", space_id="space_1")
 
     def test_the_session_type_filter_is_applied_only_when_asked(self):
         assert '"sessionType"' not in self.rendered(user_id="user_1")

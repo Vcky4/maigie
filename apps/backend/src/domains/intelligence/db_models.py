@@ -56,21 +56,13 @@ class ChatSession(Base, TimestampMixin):
     )
 
     # Context links
-    space_id: Mapped[str | None] = mapped_column(
-        "spaceId", String, nullable=True, index=True
-    )
-    course_id: Mapped[str | None] = mapped_column(
-        "courseId", String, nullable=True, index=True
-    )
-    topic_id: Mapped[str | None] = mapped_column(
-        "topicId", String, nullable=True, index=True
-    )
+    space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
+    course_id: Mapped[str | None] = mapped_column("courseId", String, nullable=True, index=True)
+    topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True, index=True)
     exam_prep_id: Mapped[str | None] = mapped_column(
         "examPrepId", String, nullable=True, index=True
     )
-    note_id: Mapped[str | None] = mapped_column(
-        "noteId", String, nullable=True, index=True
-    )
+    note_id: Mapped[str | None] = mapped_column("noteId", String, nullable=True, index=True)
 
     # Relationships
     messages: Mapped[list["ChatMessage"]] = relationship(
@@ -83,9 +75,7 @@ class ChatSession(Base, TimestampMixin):
     __table_args__ = (
         Index("ChatSession_isSpaceRoom_idx", "isSpaceRoom"),
         Index("ChatSession_sessionType_idx", "sessionType"),
-        Index(
-            "ChatSession_userId_spaceId_courseId_idx", "userId", "spaceId", "courseId"
-        ),
+        Index("ChatSession_userId_spaceId_courseId_idx", "userId", "spaceId", "courseId"),
         Index("ChatSession_userId_spaceId_topicId_idx", "userId", "spaceId", "topicId"),
     )
 
@@ -130,16 +120,12 @@ class ChatMessage(Base):
 
     role: Mapped[str] = mapped_column(String, nullable=False)  # USER, ASSISTANT, SYSTEM
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    suggestion_text: Mapped[str | None] = mapped_column(
-        "suggestionText", String, nullable=True
-    )
+    suggestion_text: Mapped[str | None] = mapped_column("suggestionText", String, nullable=True)
 
     # Voice/media
     audio_url: Mapped[str | None] = mapped_column("audioUrl", String, nullable=True)
     image_url: Mapped[str | None] = mapped_column("imageUrl", String, nullable=True)
-    image_urls: Mapped[list | None] = mapped_column(
-        "imageUrls", ARRAY(String), nullable=True
-    )
+    image_urls: Mapped[list | None] = mapped_column("imageUrls", ARRAY(String), nullable=True)
     duration: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Component data
@@ -155,9 +141,7 @@ class ChatMessage(Base):
     citations: Mapped[list | None] = mapped_column("citations", JSONB, nullable=True)
     # Exact learner-facing scope derived for successful assistant turns. NULL means it was not recorded
     # (including historical rows), not that the answer used no scoped material.
-    answer_scope: Mapped[dict | None] = mapped_column(
-        "answerScope", JSONB, nullable=True
-    )
+    answer_scope: Mapped[dict | None] = mapped_column("answerScope", JSONB, nullable=True)
     # Whether the model stopped at the token limit. Defaulted rather than nullable because every row
     # written before this column existed genuinely was delivered whole.
     truncated: Mapped[bool] = mapped_column(
@@ -167,33 +151,21 @@ class ChatMessage(Base):
     ask_mode: Mapped[str | None] = mapped_column("askMode", String, nullable=True)
 
     # Token/cost tracking
-    token_count: Mapped[int] = mapped_column(
-        "tokenCount", Integer, default=0, server_default="0"
-    )
-    input_tokens: Mapped[int | None] = mapped_column(
-        "inputTokens", Integer, nullable=True
-    )
-    output_tokens: Mapped[int | None] = mapped_column(
-        "outputTokens", Integer, nullable=True
-    )
+    token_count: Mapped[int] = mapped_column("tokenCount", Integer, default=0, server_default="0")
+    input_tokens: Mapped[int | None] = mapped_column("inputTokens", Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column("outputTokens", Integer, nullable=True)
     model_name: Mapped[str | None] = mapped_column("modelName", String, nullable=True)
     cost_usd: Mapped[float | None] = mapped_column("costUsd", Float, nullable=True)
-    revenue_usd: Mapped[float | None] = mapped_column(
-        "revenueUsd", Float, nullable=True
-    )
+    revenue_usd: Mapped[float | None] = mapped_column("revenueUsd", Float, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
         DateTime(timezone=True),
-        default=lambda: __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
 
     # Relationships
-    session: Mapped["ChatSession"] = relationship(
-        "ChatSession", back_populates="messages"
-    )
+    session: Mapped["ChatSession"] = relationship("ChatSession", back_populates="messages")
     actions: Mapped[list["AIActionLog"]] = relationship(
         "AIActionLog", back_populates="message", lazy="noload"
     )
@@ -227,23 +199,17 @@ class AIActionLog(Base):
 
     action_type: Mapped[str] = mapped_column("actionType", String, nullable=False)
     action_data: Mapped[dict] = mapped_column("actionData", JSON, nullable=False)
-    status: Mapped[str] = mapped_column(
-        String, default="PENDING", server_default="PENDING"
-    )
+    status: Mapped[str] = mapped_column(String, default="PENDING", server_default="PENDING")
     error: Mapped[str | None] = mapped_column(String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
         DateTime(timezone=True),
-        default=lambda: __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
 
     # Relationships
-    message: Mapped["ChatMessage"] = relationship(
-        "ChatMessage", back_populates="actions"
-    )
+    message: Mapped["ChatMessage"] = relationship("ChatMessage", back_populates="actions")
 
 
 # ---------------------------------------------------------------------------
@@ -279,12 +245,8 @@ class ChatGenerationAttempt(Base):
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
     status: Mapped[str] = mapped_column(String, nullable=False)
-    retryable: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="false"
-    )
-    failure_code: Mapped[str | None] = mapped_column(
-        "failureCode", String, nullable=True
-    )
+    retryable: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    failure_code: Mapped[str | None] = mapped_column("failureCode", String, nullable=True)
     context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     ask_mode: Mapped[str] = mapped_column("askMode", String, nullable=False)
     tool_side_effects: Mapped[bool] = mapped_column(
@@ -293,19 +255,13 @@ class ChatGenerationAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
         DateTime(timezone=True),
-        default=lambda: __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
     updated_at: Mapped[datetime] = mapped_column(
         "updatedAt",
         DateTime(timezone=True),
-        default=lambda: __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ),
-        onupdate=lambda: __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+        onupdate=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
 
     __table_args__ = (
@@ -348,9 +304,7 @@ class LlmCostRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
         DateTime(timezone=True),
-        default=lambda: __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
 
     __table_args__ = (
@@ -375,9 +329,7 @@ class UserInteractionMemory(Base):
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
 
-    interaction_type: Mapped[str] = mapped_column(
-        "interactionType", String, nullable=False
-    )
+    interaction_type: Mapped[str] = mapped_column("interactionType", String, nullable=False)
     entity_type: Mapped[str] = mapped_column("entityType", String, nullable=False)
     entity_id: Mapped[str | None] = mapped_column("entityId", String, nullable=True)
 
@@ -387,9 +339,7 @@ class UserInteractionMemory(Base):
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
         DateTime(timezone=True),
-        default=lambda: __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
 
     __table_args__ = (
@@ -399,9 +349,7 @@ class UserInteractionMemory(Base):
             "interactionType",
         ),
         Index("UserInteractionMemory_userId_createdAt_idx", "userId", "createdAt"),
-        Index(
-            "UserInteractionMemory_entityType_entityId_idx", "entityType", "entityId"
-        ),
+        Index("UserInteractionMemory_entityType_entityId_idx", "entityType", "entityId"),
     )
 
 
@@ -459,22 +407,14 @@ class ConversationSummary(Base):
     )
 
     summary: Mapped[str] = mapped_column(Text, nullable=False)
-    key_topics: Mapped[list | None] = mapped_column(
-        "keyTopics", ARRAY(String), nullable=True
-    )
-    actions_taken: Mapped[list | None] = mapped_column(
-        "actionsTaken", ARRAY(String), nullable=True
-    )
-    emotional_tone: Mapped[str | None] = mapped_column(
-        "emotionalTone", String, nullable=True
-    )
+    key_topics: Mapped[list | None] = mapped_column("keyTopics", ARRAY(String), nullable=True)
+    actions_taken: Mapped[list | None] = mapped_column("actionsTaken", ARRAY(String), nullable=True)
+    emotional_tone: Mapped[str | None] = mapped_column("emotionalTone", String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
         DateTime(timezone=True),
-        default=lambda: __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
 
     # Relationships
@@ -482,9 +422,7 @@ class ConversationSummary(Base):
         "ChatSession", back_populates="conversation_summaries"
     )
 
-    __table_args__ = (
-        Index("ConversationSummary_userId_createdAt_idx", "userId", "createdAt"),
-    )
+    __table_args__ = (Index("ConversationSummary_userId_createdAt_idx", "userId", "createdAt"),)
 
 
 # ---------------------------------------------------------------------------
@@ -503,9 +441,7 @@ class AIAgentTask(Base, TimestampMixin):
     )
 
     task_type: Mapped[str] = mapped_column("taskType", String, nullable=False)
-    status: Mapped[str] = mapped_column(
-        String, default="pending", server_default="pending"
-    )
+    status: Mapped[str] = mapped_column(String, default="pending", server_default="pending")
     priority: Mapped[int] = mapped_column(Integer, default=5, server_default="5")
     title: Mapped[str] = mapped_column(String, nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
@@ -544,9 +480,7 @@ class LearningInsight(Base, TimestampMixin):
     insight_type: Mapped[str] = mapped_column("insightType", String, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, default=0.7, server_default="0.7")
-    data_points: Mapped[int] = mapped_column(
-        "dataPoints", Integer, default=1, server_default="1"
-    )
+    data_points: Mapped[int] = mapped_column("dataPoints", Integer, default=1, server_default="1")
     metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(
@@ -578,22 +512,14 @@ class UserUpload(Base):
     filename: Mapped[str] = mapped_column(String, nullable=False)
     mime_type: Mapped[str | None] = mapped_column("mimeType", String, nullable=True)
     size: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    extracted_text: Mapped[str | None] = mapped_column(
-        "extractedText", Text, nullable=True
-    )
-    embedding_id: Mapped[str | None] = mapped_column(
-        "embeddingId", String, nullable=True
-    )
-    chat_message_id: Mapped[str | None] = mapped_column(
-        "chatMessageId", String, nullable=True
-    )
+    extracted_text: Mapped[str | None] = mapped_column("extractedText", Text, nullable=True)
+    embedding_id: Mapped[str | None] = mapped_column("embeddingId", String, nullable=True)
+    chat_message_id: Mapped[str | None] = mapped_column("chatMessageId", String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
         DateTime(timezone=True),
-        default=lambda: __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
 
     __table_args__ = (Index("UserUpload_userId_createdAt_idx", "userId", "createdAt"),)

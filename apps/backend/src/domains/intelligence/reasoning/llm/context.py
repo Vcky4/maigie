@@ -47,9 +47,7 @@ def tool_has_side_effect(tool_name: str) -> bool:
     }
 
 
-async def mark_tool_side_effect_intent(
-    tool_names: list[str], progress_callback: Any
-) -> None:
+async def mark_tool_side_effect_intent(tool_names: list[str], progress_callback: Any) -> None:
     """Durably mark every mutating intent before an adapter invokes any handler."""
     if not progress_callback:
         return
@@ -82,9 +80,7 @@ def build_enhanced_chat_user_message(
         if context.get("courseTitle"):
             context_parts.append(f"Current Course: {context['courseTitle']}")
             if context.get("courseDescription"):
-                context_parts.append(
-                    f"Course Description: {context['courseDescription']}"
-                )
+                context_parts.append(f"Course Description: {context['courseDescription']}")
         elif context.get("courseId"):
             context_parts.append(f"Current Course ID: {context['courseId']}")
 
@@ -156,9 +152,7 @@ def build_enhanced_chat_user_message(
                 f"best day {rhythm.get('bestDayOfWeek', 'unknown')}."
             )
         if context.get("dueReviewCount") is not None:
-            context_parts.append(
-                f"Flashcards due for review: {int(context['dueReviewCount'])}"
-            )
+            context_parts.append(f"Flashcards due for review: {int(context['dueReviewCount'])}")
 
         for label, key in (
             ("Exam preparation", "examPrep"),

@@ -330,9 +330,7 @@ class ModelPreferenceUpdate(CamelModel):
 
     model_config = ConfigDict(protected_namespaces=())
 
-    capability: str = Field(
-        ..., description="chat, vision, structured_output, embedding"
-    )
+    capability: str = Field(..., description="chat, vision, structured_output, embedding")
     provider: str = Field(..., description="gemini, openai, anthropic")
     model_id: str = Field(..., description="e.g. gpt-4o-mini, claude-sonnet-4-20250514")
 

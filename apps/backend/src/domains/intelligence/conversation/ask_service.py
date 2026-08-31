@@ -184,9 +184,7 @@ def estimate_prompt_tokens(
     ) // _CHARS_PER_TOKEN
 
 
-def estimate_turn_tokens(
-    *, message: str, context: Any = None, history: Any = None
-) -> int:
+def estimate_turn_tokens(*, message: str, context: Any = None, history: Any = None) -> int:
     """Input estimate plus the reservation for the reply. What the credit check is given."""
     return (
         estimate_prompt_tokens(message=message, context=context, history=history)
@@ -453,9 +451,7 @@ def resolve_usage(
     reported_output = (usage_info or {}).get("output_tokens", 0) or 0
 
     if reported_input == 0 and reported_output == 0:
-        input_tokens = estimate_prompt_tokens(
-            message=message, context=context, history=history
-        )
+        input_tokens = estimate_prompt_tokens(message=message, context=context, history=history)
         output_tokens = estimate_prompt_tokens(message=response)
         logger.debug(
             "Provider reported no token counts; falling back to the pre-flight estimate "
@@ -539,9 +535,7 @@ class AnswerScope:
         return bool(self.sources)
 
 
-def describe_scope(
-    *, context: dict[str, Any] | None, library_recall: bool = False
-) -> AnswerScope:
+def describe_scope(*, context: dict[str, Any] | None, library_recall: bool = False) -> AnswerScope:
     """Name the material this answer could see.
 
     Derived from the enriched context — what enrichment actually put in front of the model — rather than
@@ -660,9 +654,7 @@ async def screen_turn(
     if not allowed:
         return MessageRejection(
             code=MESSAGE_REJECTED_RATE_LIMITED,
-            message=(
-                "That is a lot of questions at once. Give Maigie a moment and try again."
-            ),
+            message=("That is a lot of questions at once. Give Maigie a moment and try again."),
         )
     return None
 
@@ -912,11 +904,7 @@ def credit_refusal(
     """
     daily_limit = credit_usage.get("daily_limit", 0) or 0
     used_today = credit_usage.get("credits_used_today", 0) or 0
-    is_daily = (
-        tier == "FREE"
-        and daily_limit > 0
-        and (used_today + estimated_tokens > daily_limit)
-    )
+    is_daily = tier == "FREE" and daily_limit > 0 and (used_today + estimated_tokens > daily_limit)
 
     if is_daily:
         message = (
@@ -1040,9 +1028,7 @@ VOLATILE_CONTEXT_KEYS = frozenset(
 _CONTEXT_CACHE_IDS = ("noteId", "topicId", "courseId", "reviewItemId")
 
 
-def context_cache_key_parts(
-    *, user_id: str, context: dict[str, Any] | None
-) -> list[str] | None:
+def context_cache_key_parts(*, user_id: str, context: dict[str, Any] | None) -> list[str] | None:
     """The cache key parts for an enriched context, or `None` when there is nothing worth caching.
 
     Returns parts rather than a formatted key so this stays pure and the caller keeps ownership of the
@@ -1072,16 +1058,10 @@ def cacheable_context(enriched: dict[str, Any]) -> dict[str, Any]:
 
     See `VOLATILE_CONTEXT_KEYS` for why each one is excluded.
     """
-    return {
-        key: value
-        for key, value in enriched.items()
-        if key not in VOLATILE_CONTEXT_KEYS
-    }
+    return {key: value for key, value in enriched.items() if key not in VOLATILE_CONTEXT_KEYS}
 
 
-def merge_cached_context(
-    context: dict[str, Any], cached: dict[str, Any] | None
-) -> dict[str, Any]:
+def merge_cached_context(context: dict[str, Any], cached: dict[str, Any] | None) -> dict[str, Any]:
     """Overlay a cached enrichment onto the context the client just sent.
 
     **The client's context wins on conflict, and the order is deliberate.** The cached half holds
@@ -1478,9 +1458,7 @@ async def resolve_session_for_turn(
                     session = pinned
                 else:
                     return SessionResolution(denial=SESSION_DENIED_PINNED_OWNER)
-        except (
-            Exception
-        ) as error:  # noqa: BLE001 — any read failure means the same thing here
+        except Exception as error:  # noqa: BLE001 — any read failure means the same thing here
             logger.warning(
                 "Pinned session %s could not be resolved for user %s; refusing the turn rather "
                 "than writing it to session %s: %s",
@@ -1682,9 +1660,7 @@ def query_type_skill_badge(query_type: str) -> dict[str, str] | None:
 # ===========================================================================
 
 
-async def read_model_preference(
-    user_id: str, capability: str = "chat"
-) -> tuple[str, str] | None:
+async def read_model_preference(user_id: str, capability: str = "chat") -> tuple[str, str] | None:
     """Fetch the user's model preference for a given capability from the DB.
 
     Returns a (provider, model_id) tuple if a preference is set, else None.
@@ -1714,9 +1690,7 @@ async def read_model_preference(
 # streaming one, which is what §5.4 documents after a year of it.
 
 
-class TurnRefused(
-    Exception
-):  # noqa: N818 — named for what happened, not for being an error
+class TurnRefused(Exception):  # noqa: N818 — named for what happened, not for being an error
     """The turn was refused before the model ran.
 
     Nothing was generated, nothing is charged, and **no assistant row is written**. Carries the refusal
@@ -1935,38 +1909,31 @@ async def answer(
             generation_task_holder["task"] = generation_task
             if cancellation_requested(attempt_id):
                 generation_task.cancel()
-            response_text, usage_info, executed_actions, query_results = (
-                await generation_task
-            )
+            response_text, usage_info, executed_actions, query_results = await generation_task
     else:
-        response_text, usage_info, executed_actions, query_results = (
-            await effects.generate(
-                user_id=user.id,
-                user_tier=tier,
-                model_preference=preference,
-                history=history,
-                user_message=message,
-                context=enriched,
-                user_name=getattr(user, "name", None),
-                image_url=image_url,
-                progress_callback=generation_progress,
-                stream_callback=on_chunk,
-                attempt_id=attempt_id,
-            )
+        response_text, usage_info, executed_actions, query_results = await effects.generate(
+            user_id=user.id,
+            user_tier=tier,
+            model_preference=preference,
+            history=history,
+            user_message=message,
+            context=enriched,
+            user_name=getattr(user, "name", None),
+            image_url=image_url,
+            progress_callback=generation_progress,
+            stream_callback=on_chunk,
+            attempt_id=attempt_id,
         )
 
     # Provider prose is not proof that a mutation happened. A create-note result is successful only
     # after the handler's committed, ownership-scoped read-back. If every attempt failed, replace any
     # premature success claim before the assistant row and final frame are produced.
-    note_attempts = [
-        action for action in executed_actions if action.get("type") == "create_note"
-    ]
+    note_attempts = [action for action in executed_actions if action.get("type") == "create_note"]
     if note_attempts and not any(
         action.get("result", {}).get("status") == "success" for action in note_attempts
     ):
         response_text = (
-            "I couldn't create that note, so nothing was saved. "
-            "Please try again in a moment."
+            "I couldn't create that note, so nothing was saved. " "Please try again in a moment."
         )
 
     # --- what the tools produced ------------------------------------------
@@ -1993,8 +1960,7 @@ async def answer(
         response=clean,
         context=enriched,
         history=history,
-        model_name=(usage_info or {}).get("model_name")
-        or effects.fallback_model_name(),
+        model_name=(usage_info or {}).get("model_name") or effects.fallback_model_name(),
         user_tier=str(user_obj.tier) if user_obj.tier else "FREE",
         cost_calculator=effects.cost_calculator,
         revenue_calculator=effects.revenue_calculator,
@@ -2002,12 +1968,8 @@ async def answer(
 
     credit_result = None
     try:
-        credit_result = await effects.consume_credits(
-            user_obj, usage.total_tokens, "chat_message"
-        )
-    except (
-        Exception
-    ) as error:  # noqa: BLE001 — the turn succeeded; the charge is not the answer
+        credit_result = await effects.consume_credits(user_obj, usage.total_tokens, "chat_message")
+    except Exception as error:  # noqa: BLE001 — the turn succeeded; the charge is not the answer
         # Deliberately not fatal. The learner has their answer and the row is about to be written; a
         # failure to *record* the charge must not retract it, and it is already logged as a real
         # accounting gap rather than swallowed.
@@ -2028,9 +1990,7 @@ async def answer(
     )
     # Derive this once from the exact enriched context the model saw, then use the same value for
     # persistence and every transport response.
-    answer_scope = describe_scope(
-        context=enriched, library_recall=effects.library_recall
-    )
+    answer_scope = describe_scope(context=enriched, library_recall=effects.library_recall)
 
     assistant_data = build_assistant_row(
         session_id=session.id,
@@ -2118,9 +2078,7 @@ def production_effects() -> AskEffects:
         )
 
     async def check_credits(user_obj: Any, tokens: int):
-        return await check_credit_availability(
-            user_obj, tokens, db_client=None, space_id=None
-        )
+        return await check_credit_availability(user_obj, tokens, db_client=None, space_id=None)
 
     async def charge(user_obj: Any, tokens: int, operation: str):
         return await consume_credits(
@@ -2141,9 +2099,7 @@ def production_effects() -> AskEffects:
         model_preference=lambda user_id, capability: read_model_preference(
             user_id, capability=capability
         ),
-        fallback_model_name=lambda: default_model_for(
-            LlmTask.CHAT_TOOLS_USAGE_FALLBACK
-        ),
+        fallback_model_name=lambda: default_model_for(LlmTask.CHAT_TOOLS_USAGE_FALLBACK),
         check_credits=check_credits,
         credit_usage=get_credit_usage,
         consume_credits=charge,

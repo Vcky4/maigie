@@ -20,9 +20,7 @@ def upgrade() -> None:
         sa.Column("assistantMessageId", sa.String(), nullable=True),
         sa.Column("userId", sa.String(), nullable=False),
         sa.Column("status", sa.String(), nullable=False),
-        sa.Column(
-            "retryable", sa.Boolean(), server_default=sa.text("false"), nullable=False
-        ),
+        sa.Column("retryable", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column("failureCode", sa.String(), nullable=True),
         sa.Column("context", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("askMode", sa.String(), nullable=False),
@@ -44,19 +42,13 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["assistantMessageId"], ["ChatMessage.id"], ondelete="SET NULL"
-        ),
+        sa.ForeignKeyConstraint(["assistantMessageId"], ["ChatMessage.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["sessionId"], ["ChatSession.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["userId"], ["User.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(
-            ["userMessageId"], ["ChatMessage.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["userMessageId"], ["ChatMessage.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ChatGenerationAttempt_sessionId_idx", "ChatGenerationAttempt", ["sessionId"]
-    )
+    op.create_index("ChatGenerationAttempt_sessionId_idx", "ChatGenerationAttempt", ["sessionId"])
     op.create_index(
         "ChatGenerationAttempt_userMessageId_idx",
         "ChatGenerationAttempt",
@@ -97,20 +89,10 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_column("ChatMessage", "answerScope")
     op.drop_index("LlmCostRecord_attemptId_idx", table_name="LlmCostRecord")
-    op.drop_constraint(
-        "LlmCostRecord_attemptId_fkey", "LlmCostRecord", type_="foreignkey"
-    )
+    op.drop_constraint("LlmCostRecord_attemptId_fkey", "LlmCostRecord", type_="foreignkey")
     op.drop_column("LlmCostRecord", "attemptId")
-    op.execute(
-        sa.text('DROP INDEX IF EXISTS "ChatGenerationAttempt_one_active_per_session"')
-    )
-    op.drop_index(
-        "ChatGenerationAttempt_userId_createdAt_idx", table_name="ChatGenerationAttempt"
-    )
-    op.drop_index(
-        "ChatGenerationAttempt_userMessageId_idx", table_name="ChatGenerationAttempt"
-    )
-    op.drop_index(
-        "ChatGenerationAttempt_sessionId_idx", table_name="ChatGenerationAttempt"
-    )
+    op.execute(sa.text('DROP INDEX IF EXISTS "ChatGenerationAttempt_one_active_per_session"'))
+    op.drop_index("ChatGenerationAttempt_userId_createdAt_idx", table_name="ChatGenerationAttempt")
+    op.drop_index("ChatGenerationAttempt_userMessageId_idx", table_name="ChatGenerationAttempt")
+    op.drop_index("ChatGenerationAttempt_sessionId_idx", table_name="ChatGenerationAttempt")
     op.drop_table("ChatGenerationAttempt")

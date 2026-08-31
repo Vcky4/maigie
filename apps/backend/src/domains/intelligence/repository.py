@@ -88,9 +88,7 @@ class IntelligenceRepository:
     async def update_chat_session(self, session_id: str, data: dict[str, Any]) -> None:
         async with await self._session() as session:
             mapped = self._map_chat_session(data)
-            stmt = (
-                update(ChatSession).where(ChatSession.id == session_id).values(**mapped)
-            )
+            stmt = update(ChatSession).where(ChatSession.id == session_id).values(**mapped)
             await session.execute(stmt)
             await session.commit()
 
@@ -171,9 +169,7 @@ class IntelligenceRepository:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def _expire_stale_attempts(
-        self, session: AsyncSession, session_id: str
-    ) -> None:
+    async def _expire_stale_attempts(self, session: AsyncSession, session_id: str) -> None:
         """Release attempts left active by a dead worker after the bounded router timeout."""
         cutoff = datetime.now(UTC) - timedelta(seconds=ATTEMPT_LEASE_SECONDS)
         await session.execute(
@@ -256,9 +252,7 @@ class IntelligenceRepository:
             await session.execute(stmt)
             await session.commit()
 
-    async def update_running_attempt(
-        self, attempt_id: str, data: dict[str, Any]
-    ) -> None:
+    async def update_running_attempt(self, attempt_id: str, data: dict[str, Any]) -> None:
         """CAS update fenced by RUNNING status.
 
         Stale workers whose lease was expired cannot rewrite the replacement outcome.
@@ -313,9 +307,7 @@ class IntelligenceRepository:
             if status != "SUCCEEDED":
                 raise AttemptFenceLostError(attempt_id)
 
-    async def complete_attempt(
-        self, attempt_id: str, message_data: dict[str, Any]
-    ) -> ChatMessage:
+    async def complete_attempt(self, attempt_id: str, message_data: dict[str, Any]) -> ChatMessage:
         """Atomically insert the assistant and transition its owned attempt to SUCCEEDED."""
         async with await self._session() as session:
             message = ChatMessage(**self._map_message(message_data))
@@ -350,9 +342,7 @@ class IntelligenceRepository:
         async with await self._session() as session:
             stmt = (
                 select(ChatGenerationAttempt)
-                .join(
-                    ChatMessage, ChatMessage.id == ChatGenerationAttempt.user_message_id
-                )
+                .join(ChatMessage, ChatMessage.id == ChatGenerationAttempt.user_message_id)
                 .join(ChatSession, ChatSession.id == ChatGenerationAttempt.session_id)
                 .where(
                     ChatGenerationAttempt.session_id == session_id,
@@ -379,9 +369,7 @@ class IntelligenceRepository:
             )
             return bool((await session.execute(stmt)).scalar() or 0)
 
-    async def count_user_messages(
-        self, user_id: str, *, since: datetime | None = None
-    ) -> int:
+    async def count_user_messages(self, user_id: str, *, since: datetime | None = None) -> int:
         async with await self._session() as session:
             conditions = [ChatMessage.user_id == user_id]
             if since:
@@ -434,9 +422,7 @@ class IntelligenceRepository:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def list_summaries(
-        self, user_id: str, *, take: int = 5
-    ) -> list[ConversationSummary]:
+    async def list_summaries(self, user_id: str, *, take: int = 5) -> list[ConversationSummary]:
         async with await self._session() as session:
             stmt = (
                 select(ConversationSummary)
@@ -474,10 +460,7 @@ class IntelligenceRepository:
             if category:
                 conditions.append(UserFact.category == category)
             stmt = (
-                select(UserFact)
-                .where(*conditions)
-                .order_by(UserFact.updated_at.desc())
-                .limit(take)
+                select(UserFact).where(*conditions).order_by(UserFact.updated_at.desc()).limit(take)
             )
             result = await session.execute(stmt)
             return list(result.scalars().all())
@@ -512,9 +495,7 @@ class IntelligenceRepository:
 
     async def deactivate_user_fact(self, fact_id: str) -> None:
         async with await self._session() as session:
-            stmt = (
-                update(UserFact).where(UserFact.id == fact_id).values(is_active=False)
-            )
+            stmt = update(UserFact).where(UserFact.id == fact_id).values(is_active=False)
             await session.execute(stmt)
             await session.commit()
 
@@ -545,9 +526,7 @@ class IntelligenceRepository:
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
-    async def find_insight(
-        self, user_id: str, insight_type: str
-    ) -> LearningInsight | None:
+    async def find_insight(self, user_id: str, insight_type: str) -> LearningInsight | None:
         async with await self._session() as session:
             stmt = select(LearningInsight).where(
                 LearningInsight.user_id == user_id,
@@ -557,9 +536,7 @@ class IntelligenceRepository:
             result = await session.execute(stmt)
             return result.scalars().first()
 
-    async def upsert_insight(
-        self, user_id: str, insight_type: str, data: dict[str, Any]
-    ) -> None:
+    async def upsert_insight(self, user_id: str, insight_type: str, data: dict[str, Any]) -> None:
         async with await self._session() as session:
             stmt = select(LearningInsight).where(
                 LearningInsight.user_id == user_id,
@@ -606,9 +583,7 @@ class IntelligenceRepository:
         async with await self._session() as session:
             conditions = [UserInteractionMemory.user_id == user_id]
             if interaction_type:
-                conditions.append(
-                    UserInteractionMemory.interaction_type == interaction_type
-                )
+                conditions.append(UserInteractionMemory.interaction_type == interaction_type)
             if entity_type:
                 conditions.append(UserInteractionMemory.entity_type == entity_type)
             stmt = (

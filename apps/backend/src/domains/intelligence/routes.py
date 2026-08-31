@@ -34,12 +34,8 @@ router = APIRouter(tags=["intelligence"])
 # ===========================================================================
 
 
-@router.post(
-    "/conversations", response_model=models.ConversationResponse, status_code=201
-)
-async def create_conversation(
-    body: models.ConversationCreate, current_user: CurrentUser
-):
+@router.post("/conversations", response_model=models.ConversationResponse, status_code=201)
+async def create_conversation(body: models.ConversationCreate, current_user: CurrentUser):
     """Start a new conversation with Intelligence."""
     # `by_alias=True` because the request model is now a `CamelModel`, so its fields are snake_case,
     # while `conversation_service.create_conversation` reads camelCase keys on the way to the repo,
@@ -118,17 +114,13 @@ async def get_messages(
 @router.delete("/conversations/{session_id}", status_code=204)
 async def delete_conversation(session_id: str, current_user: CurrentUser):
     """Delete a conversation and its messages."""
-    await conversation_service.delete_conversation(
-        session_id=session_id, user_id=current_user.id
-    )
+    await conversation_service.delete_conversation(session_id=session_id, user_id=current_user.id)
 
 
 @router.post("/conversations/{session_id}/archive", status_code=204)
 async def archive_conversation(session_id: str, current_user: CurrentUser):
     """Archive a conversation (soft delete)."""
-    await conversation_service.archive_conversation(
-        session_id=session_id, user_id=current_user.id
-    )
+    await conversation_service.archive_conversation(session_id=session_id, user_id=current_user.id)
 
 
 # ===========================================================================
@@ -156,9 +148,7 @@ async def get_user_facts(current_user: CurrentUser):
     return await memory_service.get_user_facts(current_user.id)
 
 
-@router.get(
-    "/memory/summaries", response_model=list[models.ConversationSummaryResponse]
-)
+@router.get("/memory/summaries", response_model=list[models.ConversationSummaryResponse])
 async def get_summaries(current_user: CurrentUser, limit: int = Query(10, ge=1, le=50)):
     """Get recent conversation summaries."""
     return await memory_service.get_conversation_summaries(current_user.id, limit=limit)
@@ -220,9 +210,7 @@ async def get_model_preferences(current_user: CurrentUser):
 
 
 @router.put("/models/preferences", response_model=models.ModelPreferenceResponse)
-async def update_model_preference(
-    body: models.ModelPreferenceUpdate, current_user: CurrentUser
-):
+async def update_model_preference(body: models.ModelPreferenceUpdate, current_user: CurrentUser):
     """Update preferred AI model for a capability."""
     from sqlalchemy import select
     from sqlalchemy import update as sa_update
@@ -333,9 +321,7 @@ async def ask(body: models.AskRequest, current_user: CurrentUser):
                 detail=rejection.message,
                 headers={"Retry-After": str(ask_service.RATE_LIMIT_WINDOW_SECONDS)},
             )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message)
 
     session = await _resolve_ask_session(
         session_id=body.session_id, user_id=current_user.id, repo=intelligence_repo
@@ -346,18 +332,14 @@ async def ask(body: models.AskRequest, current_user: CurrentUser):
     # learner fixes by waiting a minute, and not a bad request, which they fix by changing it.
     try:
         async with ask_service.turn_in_flight(session.id):
-            return await _answer_over_http(
-                body=body, user=current_user, session=session
-            )
+            return await _answer_over_http(body=body, user=current_user, session=session)
     except ask_service.TurnAlreadyInFlight as busy:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=busy.rejection.message
         ) from busy
 
 
-async def _answer_over_http(
-    *, body: models.AskRequest, user, session
-) -> models.AskResponse:
+async def _answer_over_http(*, body: models.AskRequest, user, session) -> models.AskResponse:
     """Persist the USER row and active attempt atomically, then run it."""
     message_data = {
         "sessionId": session.id,
@@ -398,9 +380,7 @@ async def _answer_over_http(
     )
 
 
-async def _run_http_attempt(
-    *, user, session, user_message, attempt, context
-) -> models.AskResponse:
+async def _run_http_attempt(*, user, session, user_message, attempt, context) -> models.AskResponse:
     """Run one already-persisted attempt, recording every terminal outcome."""
     try:
         async with ask_service.maintain_attempt_lease(
@@ -496,9 +476,7 @@ async def _run_http_attempt(
         suggestion_text=turn.suggestion_text,
         components=turn.outcomes.components,
         skills_used=[models.AskSkillBadge(**badge) for badge in turn.skills_used],
-        scope=models.AskScope(
-            sources=turn.scope.sources, library_recall=turn.scope.library_recall
-        ),
+        scope=models.AskScope(sources=turn.scope.sources, library_recall=turn.scope.library_recall),
         actions=[
             models.AskAction(
                 type=row["actionType"],
@@ -544,9 +522,7 @@ async def retry_message(session_id: str, message_id: str, current_user: CurrentU
         )
     user_message = await intelligence_repo.find_message(message_id)
     if user_message is None or user_message.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Message not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
 
     from src.shared.infrastructure.rate_limit import check_rate_limit
 
@@ -562,9 +538,7 @@ async def retry_message(session_id: str, message_id: str, current_user: CurrentU
                 detail=rejection.message,
                 headers={"Retry-After": str(ask_service.RATE_LIMIT_WINDOW_SECONDS)},
             )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message)
 
     try:
         async with ask_service.turn_in_flight(session.id):
@@ -621,9 +595,7 @@ async def _resolve_ask_session(*, session_id: str | None, user_id: str, repo):
         find_session=repo.find_chat_session,
     )
     if not resolution.allowed or resolution.session is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
     return resolution.session
 
 
@@ -632,12 +604,8 @@ async def _resolve_ask_session(*, session_id: str | None, user_id: str, repo):
 # ===========================================================================
 
 
-@router.post(
-    "/ask/attachments", response_model=models.AskAttachmentResponse, status_code=201
-)
-async def upload_ask_attachment(
-    current_user: CurrentUser, file: UploadFile = File(...)
-):
+@router.post("/ask/attachments", response_model=models.AskAttachmentResponse, status_code=201)
+async def upload_ask_attachment(current_user: CurrentUser, file: UploadFile = File(...)):
     """Store an image to send with a turn.
 
     **This closes §5.2.2, where the affordance existed and the capability did not.** Web's composer
@@ -658,9 +626,7 @@ async def upload_ask_attachment(
         allowed=attachments.ALLOWED_IMAGE_TYPES,
     )
     if rejection:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message)
 
     from src.shared.infrastructure.storage import StorageError, storage_service
 
@@ -712,17 +678,13 @@ async def delete_ask_attachment(upload_id: str, current_user: CurrentUser):
     """
     upload = await intelligence_repo.find_upload(upload_id, current_user.id)
     if upload is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
 
     from src.shared.infrastructure.storage import storage_service
 
     try:
         await storage_service.delete(upload.url)
-    except (
-        Exception
-    ) as error:  # noqa: BLE001 — the row goes either way; see the docstring
+    except Exception as error:  # noqa: BLE001 — the row goes either way; see the docstring
         logger.warning("Attachment %s left behind in storage: %s", upload_id, error)
 
     await intelligence_repo.delete_upload(upload_id, current_user.id)

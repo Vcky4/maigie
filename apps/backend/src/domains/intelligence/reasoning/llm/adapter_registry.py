@@ -117,11 +117,7 @@ def _build_adapter_registry() -> dict[str, BaseProviderAdapter]:
     Returns a dict keyed by "provider:model" → adapter instance.
     """
     settings = get_settings()
-    enabled = {
-        p.strip().lower()
-        for p in settings.LLM_ENABLED_PROVIDERS.split(",")
-        if p.strip()
-    }
+    enabled = {p.strip().lower() for p in settings.LLM_ENABLED_PROVIDERS.split(",") if p.strip()}
 
     registry: dict[str, BaseProviderAdapter] = {}
 
@@ -138,9 +134,7 @@ def _build_adapter_registry() -> dict[str, BaseProviderAdapter]:
                 "gemini-3.1-flash-lite",
             ]
             for model_id in gemini_models:
-                adapter = GeminiChatToolsAdapter(
-                    safety_settings=safety_settings, model_id=model_id
-                )
+                adapter = GeminiChatToolsAdapter(safety_settings=safety_settings, model_id=model_id)
                 registry[f"gemini:{model_id}"] = adapter
             logger.info("Registered %d Gemini adapter(s)", len(gemini_models))
         except Exception as e:
@@ -391,6 +385,4 @@ def invalidate_llm_router() -> None:
     global _llm_router_instance, _feature_flag_service_instance
     _llm_router_instance = None
     _feature_flag_service_instance = None
-    logger.info(
-        "LLM router and feature flag singletons invalidated (will rebuild on next use)"
-    )
+    logger.info("LLM router and feature flag singletons invalidated (will rebuild on next use)")

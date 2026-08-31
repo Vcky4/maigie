@@ -62,6 +62,37 @@ logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
 
+# ---------------------------------------------------------------------------
+# Tasks the tier allowlist does not apply to
+# ---------------------------------------------------------------------------
+
+TIER_EXEMPT_TASKS: frozenset[LlmTask] = frozenset({LlmTask.EMBEDDING})
+"""Tasks that are infrastructure rather than a model the learner is entitled to.
+
+``LLM_TIER_ALLOWLIST_*`` answers "which models may this subscription tier *choose*". That is a
+product question about chat models, and it does not apply to embeddings: nothing surfaces the
+embedding model to a learner, no tier sells a better one, and a vector store cannot mix models
+anyway, since embeddings from different models are not comparable. So the allowlist has no opinion
+to express here, and requiring one is what broke it.
+
+**This exists because the omission was silent and self-inflicted.** ``gemini-embedding-001`` was
+registered as an adapter and listed as ``LlmTask.EMBEDDING``'s entire fallback chain, but was absent
+from every ``LLM_TIER_ALLOWLIST_*`` value — so the entitlement filter dropped the only candidate and
+the task had none. The router reports "no valid provider-model pair" as
+``category="overloaded"``, which reaches the learner as *"All AI services are currently busy"*, so
+the first symptom of a missing allowlist entry would have been a retry loop that could never
+succeed. Nothing routes an embedding request today (RAG is deferred, ``rag_service.available`` is
+``False``), which is the only reason this had not been hit yet.
+
+Adding embeddings to each tier's allowlist would have worked and is the wrong fix twice over: it
+states a tier entitlement that does not exist, and the allowlists are read by the model-preference
+surfaces, so it would offer an embedding model as a chat choice.
+
+**Exempt from the allowlist only.** The global provider switch (``LLM_ENABLED_PROVIDERS``) and the
+circuit breaker still apply — turning a provider off must turn it off everywhere, and an unhealthy
+provider is unhealthy for embeddings too.
+"""
+
 
 # ---------------------------------------------------------------------------
 # CostTracker protocol (decouples router from concrete implementation)
@@ -205,9 +236,7 @@ class LLMRouter:
                     model="none",
                     status_code=None,
                     category="overloaded",
-                    message=(
-                        f"Router selection exceeded {self._timeout_seconds}s timeout."
-                    ),
+                    message=(f"Router selection exceeded {self._timeout_seconds}s timeout."),
                     retriable=True,
                 )
 
@@ -228,9 +257,7 @@ class LLMRouter:
                         model="none",
                         status_code=None,
                         category="overloaded",
-                        message=(
-                            f"Router selection exceeded {self._timeout_seconds}s timeout."
-                        ),
+                        message=(f"Router selection exceeded {self._timeout_seconds}s timeout."),
                         retriable=True,
                     )
 
@@ -267,15 +294,15 @@ class LLMRouter:
                 LLM_REQUESTS_TOTAL.labels(
                     provider=provider, model=model, task=task_name, outcome="success"
                 ).inc()
-                LLM_REQUEST_DURATION.labels(
-                    provider=provider, model=model, task=task_name
-                ).observe(duration)
-                LLM_TOKENS_TOTAL.labels(
-                    provider=provider, model=model, direction="input"
-                ).inc(input_tokens)
-                LLM_TOKENS_TOTAL.labels(
-                    provider=provider, model=model, direction="output"
-                ).inc(output_tokens)
+                LLM_REQUEST_DURATION.labels(provider=provider, model=model, task=task_name).observe(
+                    duration
+                )
+                LLM_TOKENS_TOTAL.labels(provider=provider, model=model, direction="input").inc(
+                    input_tokens
+                )
+                LLM_TOKENS_TOTAL.labels(provider=provider, model=model, direction="output").inc(
+                    output_tokens
+                )
 
                 try:
                     await self._cost_tracker.record(
@@ -299,9 +326,7 @@ class LLMRouter:
                     pricing_key = f"{provider}:{model}"
                     if pricing_key in PROVIDER_PRICING:
                         input_rate, output_rate = PROVIDER_PRICING[pricing_key]
-                        cost = (input_tokens * input_rate) + (
-                            output_tokens * output_rate
-                        )
+                        cost = (input_tokens * input_rate) + (output_tokens * output_rate)
                         LLM_COST_USD.labels(
                             provider=provider, model=model, user_tier=user_tier
                         ).inc(cost)
@@ -477,8 +502,14 @@ class LLMRouter:
             if required_capability not in adapter.supported_capabilities():
                 continue
 
-            # Filter 2: Feature flags must allow this pair for the user
-            if not self._feature_flags.is_model_allowed(
+            # Filter 2: Entitlement.
+            #
+            # Infrastructure tasks skip the tier allowlist but not the global provider switch —
+            # see TIER_EXEMPT_TASKS for why, and for the failure that made it necessary.
+            if task in TIER_EXEMPT_TASKS:
+                if not self._feature_flags.is_provider_enabled(provider):
+                    continue
+            elif not self._feature_flags.is_model_allowed(
                 provider=provider,
                 model=model,
                 user_tier=user_tier,

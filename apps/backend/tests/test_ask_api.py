@@ -45,9 +45,7 @@ def fake_effects(**overrides):
     """A full `AskEffects` that answers without touching anything real."""
     defaults = {
         "create_message": AsyncMock(side_effect=lambda data: a_row("msg_assistant")),
-        "complete_attempt": AsyncMock(
-            side_effect=lambda _attempt_id, data: a_row("msg_assistant")
-        ),
+        "complete_attempt": AsyncMock(side_effect=lambda _attempt_id, data: a_row("msg_assistant")),
         "create_action_log": AsyncMock(),
         "generate": AsyncMock(
             return_value=(
@@ -127,14 +125,10 @@ def fake_readers():
 class Harness:
     """The route under test, with its effects and reads faked and its writes recorded."""
 
-    def __init__(
-        self, *, effects=None, rate_allowed=True, session=None, find_session=None
-    ):
+    def __init__(self, *, effects=None, rate_allowed=True, session=None, find_session=None):
         self.messages: list[dict] = []
         self.sessions: list[dict] = []
-        self.session = session or SimpleNamespace(
-            id="sess_1", user_id="user_1", title="New Chat"
-        )
+        self.session = session or SimpleNamespace(id="sess_1", user_id="user_1", title="New Chat")
         self.effects = effects or fake_effects()
 
         async def create_message(data):
@@ -221,23 +215,15 @@ class Harness:
             return (self.rate_allowed, 0)
 
         self._patches = [
-            patch.object(
-                routes.intelligence_repo, "create_message", self.create_message
-            ),
+            patch.object(routes.intelligence_repo, "create_message", self.create_message),
             patch.object(
                 routes.intelligence_repo,
                 "create_message_and_attempt",
                 self.create_message_and_attempt,
             ),
-            patch.object(
-                routes.intelligence_repo, "update_attempt", self.update_attempt
-            ),
-            patch.object(
-                routes.intelligence_repo, "update_running_attempt", self.update_attempt
-            ),
-            patch.object(
-                routes.intelligence_repo, "heartbeat_attempt", self.heartbeat_attempt
-            ),
+            patch.object(routes.intelligence_repo, "update_attempt", self.update_attempt),
+            patch.object(routes.intelligence_repo, "update_running_attempt", self.update_attempt),
+            patch.object(routes.intelligence_repo, "heartbeat_attempt", self.heartbeat_attempt),
             patch.object(
                 routes.intelligence_repo,
                 "find_attempt_for_retry",
@@ -249,17 +235,13 @@ class Harness:
                 "user_message_has_answer",
                 self.user_message_has_answer,
             ),
-            patch.object(
-                routes.intelligence_repo, "create_attempt", self.create_attempt
-            ),
+            patch.object(routes.intelligence_repo, "create_attempt", self.create_attempt),
             patch.object(
                 routes.intelligence_repo,
                 "create_chat_session",
                 self.create_chat_session,
             ),
-            patch.object(
-                routes.intelligence_repo, "find_chat_session", self.find_session
-            ),
+            patch.object(routes.intelligence_repo, "find_chat_session", self.find_session),
             patch.object(ask_service, "production_effects", lambda: self.effects),
             patch.object(context_enrichment, "production_readers", fake_readers),
             patch.object(context_enrichment, "production_cache", lambda: None),
@@ -415,9 +397,7 @@ class TestRateLimiting:
     def test_the_refusal_says_when_to_come_back(self):
         with Harness(rate_allowed=False) as h:
             response = h.ask()
-        assert response.headers["Retry-After"] == str(
-            ask_service.RATE_LIMIT_WINDOW_SECONDS
-        )
+        assert response.headers["Retry-After"] == str(ask_service.RATE_LIMIT_WINDOW_SECONDS)
 
     def test_a_rate_limited_turn_leaves_no_row(self):
         with Harness(rate_allowed=False) as h:
@@ -473,9 +453,7 @@ class TestAFailedGenerationIsNotAnAnswer:
 
     @staticmethod
     def broken():
-        return fake_effects(
-            generate=AsyncMock(side_effect=RuntimeError("provider down"))
-        )
+        return fake_effects(generate=AsyncMock(side_effect=RuntimeError("provider down")))
 
     def test_it_is_a_503(self):
         with Harness(effects=self.broken()) as h:
@@ -569,9 +547,7 @@ class TestOneTurnAtATimePerConversation:
 
     def test_the_slot_is_released_after_a_failed_turn(self):
         """A `503` must not leave the conversation permanently locked."""
-        effects = fake_effects(
-            generate=AsyncMock(side_effect=RuntimeError("provider down"))
-        )
+        effects = fake_effects(generate=AsyncMock(side_effect=RuntimeError("provider down")))
         with Harness(effects=effects) as h:
             assert h.ask().status_code == 503
         assert ask_service.turns_in_flight() == frozenset()
@@ -625,9 +601,7 @@ class TestActionsComeFromTheModelOnly:
         )
         with Harness(effects=effects) as h:
             actions = h.ask().json()["actions"]
-        assert actions == [
-            {"type": "create_course", "status": "SUCCESS", "courseId": "c1"}
-        ]
+        assert actions == [{"type": "create_course", "status": "SUCCESS", "courseId": "c1"}]
 
     def test_a_failed_action_is_still_reported(self):
         """Carried rather than filtered. The event frames and the components are both success-shaped, so a

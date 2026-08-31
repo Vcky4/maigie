@@ -85,11 +85,7 @@ async def resolve_topic_chain(
         return None
 
     module = await find_module(topic.module_id) if topic.module_id else None
-    course = (
-        await find_course(module.course_id, user_id)
-        if module and module.course_id
-        else None
-    )
+    course = await find_course(module.course_id, user_id) if module and module.course_id else None
     return TopicChain(topic=topic, module=module, course=course)
 
 
@@ -131,9 +127,7 @@ async def resolve_owned_topic(
 
     try:
         topic, module, course = await check_topic_ownership(topic_id, user_id)
-    except (
-        Exception
-    ) as error:  # noqa: BLE001 — NotFoundError and ForbiddenError alike mean "omit it"
+    except Exception as error:  # noqa: BLE001 — NotFoundError and ForbiddenError alike mean "omit it"
         logger.warning(
             "Topic %s not available to user %s for context enrichment: %s",
             topic_id,
@@ -361,8 +355,7 @@ async def _read_learner_context(user_id: str, raw: dict[str, Any]) -> dict[str, 
                 for key, value in {
                     "purpose": text(getattr(profile, "purpose", None), 120),
                     "subjects": [
-                        text(item, 80)
-                        for item in (getattr(profile, "subjects", None) or [])[:8]
+                        text(item, 80) for item in (getattr(profile, "subjects", None) or [])[:8]
                     ],
                     "goals": text(getattr(profile, "goals_text", None), 500),
                     "explanationStyle": text(
@@ -437,9 +430,7 @@ def production_readers() -> ContextReaders:
 
     from .chat_helpers import _attach_topic_resources_context
 
-    async def attach_topic_resources(
-        user_id: str, topic_id: str, context: dict[str, Any]
-    ) -> None:
+    async def attach_topic_resources(user_id: str, topic_id: str, context: dict[str, Any]) -> None:
         # The `None` first argument is a legacy db handle the stub ignores. **This helper is
         # unimplemented** (see `chat_helpers`), so a topic's saved resources do not reach the prompt
         # today. Wired anyway so that implementing it needs no change here.
@@ -500,9 +491,7 @@ def production_cache() -> ContextCache:
     async def set_with_ttl(key: str, value: dict[str, Any], ttl_seconds: int) -> None:
         await cache_backend.set(key, value, expire=ttl_seconds)
 
-    return ContextCache(
-        make_key=cache_backend.make_key, get=cache_backend.get, set=set_with_ttl
-    )
+    return ContextCache(make_key=cache_backend.make_key, get=cache_backend.get, set=set_with_ttl)
 
 
 # ===========================================================================
@@ -727,9 +716,7 @@ async def enrich_context(
     raw_context = context or {}
     context = raw_context
     enriched = {
-        key: value
-        for key, value in raw_context.items()
-        if key not in SERVER_DERIVED_CONTEXT_KEYS
+        key: value for key, value in raw_context.items() if key not in SERVER_DERIVED_CONTEXT_KEYS
     }
 
     cache_key = None
@@ -737,9 +724,7 @@ async def enrich_context(
         # Which ids identify a cached enrichment is `ask_service.context_cache_key_parts`. It is a named
         # function because an id that changes what enrichment fetches but is missing from the key serves
         # one learner's topic as another's for the TTL. `None` means there is no id to look up.
-        key_parts = ask_service.context_cache_key_parts(
-            user_id=user_id, context=context
-        )
+        key_parts = ask_service.context_cache_key_parts(user_id=user_id, context=context)
         cache_key = cache.make_key(key_parts) if key_parts else None
 
     cached = await cache.get(cache_key) if (cache is not None and cache_key) else None
@@ -797,9 +782,7 @@ async def enrich_context(
             for rejected_key in learner_updates.pop("rejectedContextIds", []):
                 enriched.pop(rejected_key, None)
             enriched.update(learner_updates)
-        except (
-            Exception
-        ) as error:  # noqa: BLE001 — personalization is optional, ownership is not
+        except Exception as error:  # noqa: BLE001 — personalization is optional, ownership is not
             for unverified_key in (
                 "examPrepId",
                 "studyPlanId",
@@ -868,9 +851,7 @@ async def build_history(
     )
     ordered = list(reversed(list(records)))
     if exclude_message_id:
-        ordered = [
-            row for row in ordered if getattr(row, "id", None) != exclude_message_id
-        ]
+        ordered = [row for row in ordered if getattr(row, "id", None) != exclude_message_id]
     return ask_service.format_history(ordered[-ask_service.HISTORY_LIMIT :])
 
 
@@ -915,9 +896,7 @@ async def attach_recall(
             if items:
                 context = dict(context or {})
                 context["retrieved_items"] = items
-                logger.debug(
-                    "Retrieval contributed %d items to the prompt.", len(items)
-                )
+                logger.debug("Retrieval contributed %d items to the prompt.", len(items))
         except Exception as error:  # noqa: BLE001 — an enrichment, not a precondition
             logger.warning("Retrieval failed, continuing without it: %s", error)
     else:

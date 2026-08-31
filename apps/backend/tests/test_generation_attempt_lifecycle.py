@@ -28,9 +28,7 @@ async def test_live_attempt_heartbeats_until_work_finishes():
         await renew_permits.get()
 
     with patch.object(ask_service.asyncio, "sleep", controlled_sleep):
-        async with ask_service.maintain_attempt_lease(
-            "attempt_1", heartbeat, interval_seconds=60
-        ):
+        async with ask_service.maintain_attempt_lease("attempt_1", heartbeat, interval_seconds=60):
             assert calls == 1, "lease ownership is established before work starts"
             renew_permits.put_nowait(None)
             await asyncio.wait_for(renewed.wait(), timeout=1)

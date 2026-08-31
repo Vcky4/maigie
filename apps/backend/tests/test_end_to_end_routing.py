@@ -184,9 +184,7 @@ def openai_adapter():
 
 @pytest.fixture
 def anthropic_adapter():
-    return MockChatAdapter(
-        "anthropic", "claude-sonnet-4-20250514", "Anthropic response"
-    )
+    return MockChatAdapter("anthropic", "claude-sonnet-4-20250514", "Anthropic response")
 
 
 # ---------------------------------------------------------------------------
@@ -458,9 +456,7 @@ class TestFallbackBehavior:
 
         # Not enough failures to trip (threshold=3), but failure is recorded
         assert (
-            circuit_breaker._failures_in_window(
-                circuit_breaker._key("gemini", "gemini-3.5-flash")
-            )
+            circuit_breaker._failures_in_window(circuit_breaker._key("gemini", "gemini-3.5-flash"))
             == 1
         )
 
