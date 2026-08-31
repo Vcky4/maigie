@@ -14,18 +14,24 @@ from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
 
 import pytest  # noqa: E402
 
-from src.domains.intelligence.reasoning.llm.base_adapter import BaseProviderAdapter  # noqa: E402
+from src.domains.intelligence.reasoning.llm.base_adapter import (
+    BaseProviderAdapter,
+)  # noqa: E402
 from src.domains.intelligence.reasoning.llm.capabilities import (  # noqa: E402
     ChatCapability,
     EmbeddingCapability,
 )
-from src.domains.intelligence.reasoning.llm.circuit_breaker import CircuitBreaker  # noqa: E402
+from src.domains.intelligence.reasoning.llm.circuit_breaker import (
+    CircuitBreaker,
+)  # noqa: E402
 from src.domains.intelligence.reasoning.llm.errors import (  # noqa: E402
     GeminiError,
     LLMProviderError,
     OpenAIError,
 )
-from src.domains.intelligence.reasoning.llm.feature_flags import FeatureFlagService  # noqa: E402
+from src.domains.intelligence.reasoning.llm.feature_flags import (
+    FeatureFlagService,
+)  # noqa: E402
 from src.domains.intelligence.reasoning.llm.registry import LlmTask  # noqa: E402
 from src.domains.intelligence.reasoning.llm.router import LLMRouter  # noqa: E402
 
@@ -178,7 +184,9 @@ def openai_adapter():
 
 @pytest.fixture
 def anthropic_adapter():
-    return MockChatAdapter("anthropic", "claude-sonnet-4-20250514", "Anthropic response")
+    return MockChatAdapter(
+        "anthropic", "claude-sonnet-4-20250514", "Anthropic response"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +245,7 @@ class TestSuccessfulRouting:
             model_preference=None,
             history=[],
             user_message="Hello",
+            attempt_id="attempt-ask",
         )
 
         mock_cost_tracker.record.assert_called_once_with(
@@ -246,11 +255,17 @@ class TestSuccessfulRouting:
             output_tokens=50,
             user_id="user-1",
             user_tier="free",
+            attempt_id="attempt-ask",
         )
 
     @pytest.mark.asyncio
     async def test_respects_model_preference(
-        self, feature_flags, circuit_breaker, mock_cost_tracker, gemini_adapter, openai_adapter
+        self,
+        feature_flags,
+        circuit_breaker,
+        mock_cost_tracker,
+        gemini_adapter,
+        openai_adapter,
     ):
         """Router uses model preference when the preferred pair is valid."""
         router = LLMRouter(
@@ -443,7 +458,9 @@ class TestFallbackBehavior:
 
         # Not enough failures to trip (threshold=3), but failure is recorded
         assert (
-            circuit_breaker._failures_in_window(circuit_breaker._key("gemini", "gemini-3.5-flash"))
+            circuit_breaker._failures_in_window(
+                circuit_breaker._key("gemini", "gemini-3.5-flash")
+            )
             == 1
         )
 
@@ -485,7 +502,12 @@ class TestTierAccessControl:
 
     @pytest.mark.asyncio
     async def test_preference_ignored_when_tier_disallows(
-        self, feature_flags, circuit_breaker, mock_cost_tracker, gemini_adapter, openai_adapter
+        self,
+        feature_flags,
+        circuit_breaker,
+        mock_cost_tracker,
+        gemini_adapter,
+        openai_adapter,
     ):
         """Model preference is ignored if the model isn't allowed for the tier."""
         router = LLMRouter(

@@ -109,7 +109,9 @@ class TestComputeCost:
 
     def test_unknown_model_logs_warning(self, tracker):
         """Unknown provider-model pair logs a warning."""
-        with patch("src.domains.intelligence.reasoning.llm.cost_tracker.logger") as mock_logger:
+        with patch(
+            "src.domains.intelligence.reasoning.llm.cost_tracker.logger"
+        ) as mock_logger:
             tracker.compute_cost("unknown", "nonexistent-model", 1000, 1000)
             mock_logger.warning.assert_called_once()
 
@@ -251,7 +253,9 @@ class TestRecord:
     @pytest.mark.asyncio
     async def test_record_logs_warning_for_missing_tokens(self, tracker):
         """Missing token counts trigger a warning log."""
-        with patch("src.domains.intelligence.reasoning.llm.cost_tracker.logger") as mock_logger:
+        with patch(
+            "src.domains.intelligence.reasoning.llm.cost_tracker.logger"
+        ) as mock_logger:
             await tracker.record(
                 provider="gemini",
                 model="gemini-3.5-flash",
@@ -273,7 +277,9 @@ class TestAggregate:
     async def test_aggregate_no_filters(self, session_factory, session):
         """With no filters, the totals come straight back from the query."""
         session._aggregate_row = (1.5, 10000, 5000, 3)
-        tracker = CostTracker(pricing_table=PROVIDER_PRICING, session_factory=session_factory)
+        tracker = CostTracker(
+            pricing_table=PROVIDER_PRICING, session_factory=session_factory
+        )
 
         result = await tracker.aggregate()
 
@@ -283,7 +289,9 @@ class TestAggregate:
         assert result["record_count"] == 3
 
     @pytest.mark.asyncio
-    async def test_aggregate_applies_no_where_clause_without_filters(self, tracker, session):
+    async def test_aggregate_applies_no_where_clause_without_filters(
+        self, tracker, session
+    ):
         """An unfiltered aggregate must not accidentally constrain itself."""
         session._aggregate_row = (0, 0, 0, 0)
         await tracker.aggregate()
@@ -295,7 +303,9 @@ class TestAggregate:
         session._aggregate_row = (0.5, 3000, 1000, 1)
         await tracker.aggregate(provider="openai")
 
-        rendered = str(session.executed[0].compile(compile_kwargs={"literal_binds": True}))
+        rendered = str(
+            session.executed[0].compile(compile_kwargs={"literal_binds": True})
+        )
         assert "provider = 'openai'" in rendered
         # And nothing else was constrained, so an unrelated provider's spend is not excluded twice.
         assert "model" not in rendered.split("WHERE", 1)[1]
@@ -306,13 +316,16 @@ class TestAggregate:
         session._aggregate_row = (0.25, 1000, 500, 2)
 
         result = await tracker.aggregate(
-            start=datetime(2025, 1, 1, tzinfo=UTC), end=datetime(2025, 1, 31, tzinfo=UTC)
+            start=datetime(2025, 1, 1, tzinfo=UTC),
+            end=datetime(2025, 1, 31, tzinfo=UTC),
         )
 
         assert result["total_cost_usd"] == 0.25
         assert result["record_count"] == 2
         rendered = str(session.executed[0])
-        assert rendered.count('"createdAt"') == 2, "a one-sided range would silently over-count"
+        assert (
+            rendered.count('"createdAt"') == 2
+        ), "a one-sided range would silently over-count"
 
     @pytest.mark.asyncio
     async def test_aggregate_filters_are_independent(self, tracker, session):
@@ -325,7 +338,9 @@ class TestAggregate:
         session._aggregate_row = (0, 0, 0, 0)
         await tracker.aggregate(provider="openai", model="gpt-4o", user_id="user-9")
 
-        rendered = str(session.executed[0].compile(compile_kwargs={"literal_binds": True}))
+        rendered = str(
+            session.executed[0].compile(compile_kwargs={"literal_binds": True})
+        )
         assert "'openai'" in rendered
         assert "'gpt-4o'" in rendered
         assert "'user-9'" in rendered
@@ -386,5 +401,26 @@ class TestProviderPricing:
         """Rates are per-token (very small numbers), not per-million."""
         for key, (input_rate, output_rate) in PROVIDER_PRICING.items():
             # Per-token rates should be less than 0.001 (1/1000 of a cent)
-            assert input_rate < 0.001, f"Input rate for {key} seems too large for per-token"
-            assert output_rate < 0.001, f"Output rate for {key} seems too large for per-token"
+            assert (
+                input_rate < 0.001
+            ), f"Input rate for {key} seems too large for per-token"
+            assert (
+                output_rate < 0.001
+            ), f"Output rate for {key} seems too large for per-token"
+
+
+@pytest.mark.asyncio
+async def test_ask_cost_record_is_attributed_to_the_durable_attempt(tracker, session):
+    await tracker.record(
+        provider="gemini",
+        model="gemini-3.5-flash",
+        input_tokens=120,
+        output_tokens=40,
+        user_id="user-ask",
+        user_tier="FREE",
+        attempt_id="attempt-ask",
+    )
+
+    row = session.added[0]
+    assert row.user_id == "user-ask"
+    assert row.attempt_id == "attempt-ask"

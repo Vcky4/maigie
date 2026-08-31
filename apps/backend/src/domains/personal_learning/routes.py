@@ -2325,22 +2325,6 @@ async def delete_reflection_note(note_id: str, current_user: CurrentUser):
 
 
 # ===========================================================================
-# Chat (Personal Learning Context)
-# ===========================================================================
-
-
-@router.post("/chat")
-async def send_chat_message(body: dict, current_user: CurrentUser):
-    """Send a message to Maigie with personal learning context."""
-    from .services import chat_helper
-
-    message = body.get("message", "")
-    if not message:
-        raise HTTPException(status_code=422, detail="Message is required")
-    return await chat_helper.send_message(user_id=current_user.id, message=message)
-
-
-# ===========================================================================
 # Activity Feed
 # ===========================================================================
 

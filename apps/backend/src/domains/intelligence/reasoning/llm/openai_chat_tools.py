@@ -23,7 +23,9 @@ from src.domains.intelligence.reasoning.llm.capabilities import (
     VisionCapability,
 )
 from src.domains.intelligence.reasoning.llm.errors import OpenAIError
-from src.domains.intelligence.reasoning.llm.prompts import build_personalized_system_instruction
+from src.domains.intelligence.reasoning.llm.prompts import (
+    build_personalized_system_instruction,
+)
 from src.domains.intelligence.reasoning.llm.streaming import (
     StreamConsumerDisconnected,
     is_websocket_consumer_disconnect,
@@ -212,6 +214,8 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
         from src.domains.intelligence.reasoning.llm.context import (
             build_enhanced_chat_user_message,
             map_tool_to_action_type,
+            mark_tool_side_effect_intent,
+            tool_has_side_effect,
         )
 
         request_start = time.perf_counter()
@@ -269,7 +273,9 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
 
             # Convert to OpenAI format
             openai_tools = (
-                self._tool_normalizer.to_openai(tool_definitions) if tool_definitions else None
+                self._tool_normalizer.to_openai(tool_definitions)
+                if tool_definitions
+                else None
             )
 
             # Tool call loop
@@ -284,16 +290,20 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
                 try:
                     if stream_callback:
                         # Streaming mode
-                        streamed_text, tool_calls_raw, usage = await self._stream_response(
-                            messages=messages,
-                            tools=openai_tools,
-                            stream_callback=stream_callback,
+                        streamed_text, tool_calls_raw, usage = (
+                            await self._stream_response(
+                                messages=messages,
+                                tools=openai_tools,
+                                stream_callback=stream_callback,
+                            )
                         )
                     else:
                         # Non-streaming mode
-                        streamed_text, tool_calls_raw, usage = await self._non_stream_response(
-                            messages=messages,
-                            tools=openai_tools,
+                        streamed_text, tool_calls_raw, usage = (
+                            await self._non_stream_response(
+                                messages=messages,
+                                tools=openai_tools,
+                            )
                         )
                 except StreamConsumerDisconnected as disc:
                     total_llm_time += time.perf_counter() - llm_start
@@ -328,11 +338,17 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
                 # Check for tool calls
                 if not tool_calls_raw:
                     # No tool calls — final turn
-                    logger.debug("[%s] iteration %s completed with no tools", request_id, iteration)
+                    logger.debug(
+                        "[%s] iteration %s completed with no tools",
+                        request_id,
+                        iteration,
+                    )
                     break
 
                 # Normalize tool calls
-                normalized_calls = self._tool_normalizer.normalize_tool_calls_openai(tool_calls_raw)
+                normalized_calls = self._tool_normalizer.normalize_tool_calls_openai(
+                    tool_calls_raw
+                )
 
                 if not normalized_calls:
                     break
@@ -370,6 +386,10 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
                 for call in normalized_calls:
                     tool_name = call.name
                     tool_args = call.arguments
+
+                    # Durable intent must commit before the mutating handler starts. Keep this
+                    # outside the handler catch: marker failure fails closed and executes nothing.
+                    await mark_tool_side_effect_intent([tool_name], progress_callback)
 
                     try:
                         tool_args = await enrich_tool_args_for_llm(
@@ -415,15 +435,7 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
                         )
 
                     # Track executed actions
-                    if tool_name.startswith("create_") or tool_name in [
-                        "recommend_resources",
-                        "retake_note",
-                        "add_summary_to_note",
-                        "add_tags_to_note",
-                        "complete_review",
-                        "update_course_outline",
-                        "generate_document",
-                    ]:
+                    if tool_has_side_effect(tool_name):
                         executed_actions.append(
                             {
                                 "type": map_tool_to_action_type(tool_name),
@@ -561,7 +573,9 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
                             if tc_delta.function.name:
                                 entry["function"]["name"] += tc_delta.function.name
                             if tc_delta.function.arguments:
-                                entry["function"]["arguments"] += tc_delta.function.arguments
+                                entry["function"][
+                                    "arguments"
+                                ] += tc_delta.function.arguments
 
                 # Check for finish
                 if choice.finish_reason:
@@ -586,7 +600,9 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
             raise
 
         # Collect tool calls in order
-        tool_calls_list = [tool_calls_by_index[i] for i in sorted(tool_calls_by_index.keys())]
+        tool_calls_list = [
+            tool_calls_by_index[i] for i in sorted(tool_calls_by_index.keys())
+        ]
 
         return "".join(streamed_text_parts), tool_calls_list, usage
 

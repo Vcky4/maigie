@@ -22,7 +22,9 @@ from src.domains.intelligence.reasoning.llm.capabilities import (
     VisionCapability,
 )
 from src.domains.intelligence.reasoning.llm.errors import AnthropicError
-from src.domains.intelligence.reasoning.llm.prompts import build_personalized_system_instruction
+from src.domains.intelligence.reasoning.llm.prompts import (
+    build_personalized_system_instruction,
+)
 from src.domains.intelligence.reasoning.llm.streaming import (
     StreamConsumerDisconnected,
     is_websocket_consumer_disconnect,
@@ -149,11 +151,15 @@ def _convert_history_to_anthropic(
                     elif isinstance(parts[0], dict) and "text" in parts[0]:
                         system_prompt = parts[0]["text"]
                 elif "content" in msg:
-                    system_prompt = msg["content"] if isinstance(msg["content"], str) else ""
+                    system_prompt = (
+                        msg["content"] if isinstance(msg["content"], str) else ""
+                    )
                 continue
 
             # Map role
-            anthropic_role = "assistant" if role == "model" or role == "assistant" else "user"
+            anthropic_role = (
+                "assistant" if role == "model" or role == "assistant" else "user"
+            )
 
             # Extract content
             content: str | list[dict[str, Any]] = ""
@@ -161,7 +167,11 @@ def _convert_history_to_anthropic(
                 parts = msg["parts"]
                 if len(parts) == 1 and isinstance(parts[0], str):
                     content = parts[0]
-                elif len(parts) == 1 and isinstance(parts[0], dict) and "text" in parts[0]:
+                elif (
+                    len(parts) == 1
+                    and isinstance(parts[0], dict)
+                    and "text" in parts[0]
+                ):
                     content = parts[0]["text"]
                 else:
                     # Multi-part content (text + images, function calls, etc.)
@@ -171,7 +181,9 @@ def _convert_history_to_anthropic(
                             content_blocks.append({"type": "text", "text": part})
                         elif isinstance(part, dict):
                             if "text" in part:
-                                content_blocks.append({"type": "text", "text": part["text"]})
+                                content_blocks.append(
+                                    {"type": "text", "text": part["text"]}
+                                )
                             elif "function_call" in part:
                                 # Convert function call to tool_use block
                                 fc = part["function_call"]
@@ -201,7 +213,9 @@ def _convert_history_to_anthropic(
                                         "type": "image",
                                         "source": {
                                             "type": "base64",
-                                            "media_type": img.get("mime_type", "image/jpeg"),
+                                            "media_type": img.get(
+                                                "mime_type", "image/jpeg"
+                                            ),
                                             "data": img.get("data", b""),
                                         },
                                     }
@@ -274,6 +288,8 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
         from src.domains.intelligence.reasoning.llm.context import (
             build_enhanced_chat_user_message,
             map_tool_to_action_type,
+            mark_tool_side_effect_intent,
+            tool_has_side_effect,
         )
 
         request_start = time.perf_counter()
@@ -294,7 +310,10 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
             raw_tools = skill_registry.get_all_tools_legacy_format()
             all_declarations: list[dict[str, Any]] = []
             for tool_group in raw_tools:
-                if isinstance(tool_group, dict) and "function_declarations" in tool_group:
+                if (
+                    isinstance(tool_group, dict)
+                    and "function_declarations" in tool_group
+                ):
                     all_declarations.extend(tool_group["function_declarations"])
 
             # Convert to internal ToolDefinition format, then to Anthropic format
@@ -311,11 +330,15 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                 tool_definitions.append(td)
 
             anthropic_tools = (
-                self._tool_normalizer.to_anthropic(tool_definitions) if tool_definitions else []
+                self._tool_normalizer.to_anthropic(tool_definitions)
+                if tool_definitions
+                else []
             )
 
             # Build enhanced message with context
-            enhanced_message_text = build_enhanced_chat_user_message(user_message, context)
+            enhanced_message_text = build_enhanced_chat_user_message(
+                user_message, context
+            )
 
             # Convert history to Anthropic format
             history_system, history_messages = _convert_history_to_anthropic(history)
@@ -367,8 +390,8 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                     )
                 else:
                     # Non-streaming path
-                    streamed_text, tool_use_blocks, usage = await self._non_stream_response(
-                        api_kwargs
+                    streamed_text, tool_use_blocks, usage = (
+                        await self._non_stream_response(api_kwargs)
                     )
 
                 total_llm_time += time.perf_counter() - llm_start
@@ -417,7 +440,9 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                 async def _execute_tool(block: dict[str, Any]):
                     tool_name = block["name"]
                     tool_args = dict(block["input"]) if block["input"] else {}
-                    logger.debug("Executing tool: %s with args: %s", tool_name, tool_args)
+                    logger.debug(
+                        "Executing tool: %s with args: %s", tool_name, tool_args
+                    )
                     try:
                         tool_args = await enrich_tool_args_for_llm(
                             tool_name,
@@ -449,7 +474,9 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                     if isinstance(value, str):
                         return "$" in value
                     if isinstance(value, dict):
-                        return any(_has_dependency_placeholders(v) for v in value.values())
+                        return any(
+                            _has_dependency_placeholders(v) for v in value.values()
+                        )
                     if isinstance(value, list):
                         return any(_has_dependency_placeholders(v) for v in value)
                     return False
@@ -461,6 +488,12 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                         dependent_blocks.append(block)
                     else:
                         independent_blocks.append(block)
+
+                # Commit mutating intent before any handler in the batch starts. This is
+                # deliberately outside `_execute_tool`'s catch so persistence failure fails closed.
+                await mark_tool_side_effect_intent(
+                    [block["name"] for block in tool_use_blocks], progress_callback
+                )
 
                 execution_results = []
                 if independent_blocks:
@@ -483,7 +516,9 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                 for block in dependent_blocks:
                     dep_result = await _execute_tool(block)
                     execution_results.append(dep_result)
-                    _call_id, tool_name, _tool_args, tool_result, tool_error = dep_result
+                    _call_id, tool_name, _tool_args, tool_result, tool_error = (
+                        dep_result
+                    )
                     if tool_error is None:
                         merge_successful_tool_result_into_created_ids(
                             tool_created_ids, tool_name, tool_result
@@ -505,7 +540,9 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                                 {
                                     "tool_name": tool_name,
                                     "result": tool_result,
-                                    "component_type": tool_result.get("_component_type"),
+                                    "component_type": tool_result.get(
+                                        "_component_type"
+                                    ),
                                     "query_type": tool_result.get("_query_type"),
                                     "data": (
                                         tool_result.get("courses")
@@ -517,15 +554,7 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                                 }
                             )
 
-                        if tool_name.startswith("create_") or tool_name in [
-                            "recommend_resources",
-                            "retake_note",
-                            "add_summary_to_note",
-                            "add_tags_to_note",
-                            "complete_review",
-                            "update_course_outline",
-                            "generate_document",
-                        ]:
+                        if tool_has_side_effect(tool_name):
                             executed_actions.append(
                                 {
                                     "type": map_tool_to_action_type(tool_name),
@@ -549,7 +578,8 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                 # Max iterations reached
                 if not final_text:
                     final_text = (
-                        "I encountered an issue processing your request. " "Please try again."
+                        "I encountered an issue processing your request. "
+                        "Please try again."
                     )
 
             usage_info = {
@@ -683,12 +713,16 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                         if msg:
                             msg_usage = getattr(msg, "usage", None)
                             if msg_usage:
-                                usage["input_tokens"] += getattr(msg_usage, "input_tokens", 0)
+                                usage["input_tokens"] += getattr(
+                                    msg_usage, "input_tokens", 0
+                                )
 
                     elif event_type == "message_delta":
                         delta_usage = getattr(event, "usage", None)
                         if delta_usage:
-                            usage["output_tokens"] += getattr(delta_usage, "output_tokens", 0)
+                            usage["output_tokens"] += getattr(
+                                delta_usage, "output_tokens", 0
+                            )
 
             # Send done signal
             if streamed_text_parts:

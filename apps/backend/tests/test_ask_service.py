@@ -19,7 +19,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.domains.intelligence.conversation import ask_service, context_enrichment, tool_outcomes
+from src.domains.intelligence.conversation import (
+    ask_service,
+    context_enrichment,
+    tool_outcomes,
+)
 
 
 class TestAskContext:
@@ -65,7 +69,9 @@ class TestAskContext:
         assert context.raw["sessionId"] == "sess_1"
 
     def test_a_review_thread_is_recognised(self):
-        assert ask_service.AskContext.from_client({"reviewItemId": "r1"}).is_review_thread
+        assert ask_service.AskContext.from_client(
+            {"reviewItemId": "r1"}
+        ).is_review_thread
         assert not ask_service.AskContext.from_client({}).is_review_thread
 
 
@@ -95,7 +101,11 @@ class TestTokenEstimation:
         Two copies of a billing calculation is one edit away from charging a learner against a number
         they were never checked against.
         """
-        message, context, history = "Explain the second law", {"courseId": "c1"}, [{"role": "user"}]
+        message, context, history = (
+            "Explain the second law",
+            {"courseId": "c1"},
+            [{"role": "user"}],
+        )
         assert ask_service.estimate_turn_tokens(
             message=message, context=context, history=history
         ) - 500 == ask_service.estimate_prompt_tokens(
@@ -141,7 +151,14 @@ class TestRetrievalScoreFilter:
     def test_a_low_scoring_hit_is_dropped(self):
         """Passing noise to the model invites it to answer about something else entirely."""
         items = ask_service.relevant_retrieved_items(
-            [{"similarity": 0.2, "objectType": "note", "objectId": "n1", "data": {"title": "X"}}]
+            [
+                {
+                    "similarity": 0.2,
+                    "objectType": "note",
+                    "objectId": "n1",
+                    "data": {"title": "X"},
+                }
+            ]
         )
         assert items == []
 
@@ -193,7 +210,8 @@ class TestRetrievalScoreFilter:
 
 class TestExplicitViewGate:
     @pytest.mark.parametrize(
-        "message", ["show my courses", "what are my goals", "list my notes", "SHOW MY SCHEDULE"]
+        "message",
+        ["show my courses", "what are my goals", "list my notes", "SHOW MY SCHEDULE"],
     )
     def test_asking_to_see_data_counts(self, message):
         assert ask_service.wants_to_view_data(message) is True
@@ -235,7 +253,8 @@ class TestExplicitViewGate:
     def test_a_read_only_tool_call_does_not_suppress_cards(self):
         assert (
             ask_service.should_render_query_components(
-                message="show my courses", executed_actions=[{"type": "get_user_courses"}]
+                message="show my courses",
+                executed_actions=[{"type": "get_user_courses"}],
             )
             is True
         )
@@ -244,15 +263,19 @@ class TestExplicitViewGate:
 class TestSkillBadges:
     @staticmethod
     def tool_badge(name):
-        return {"courses": {"id": "courses", "name": "Course Management", "icon": "book-open"}}.get(
-            {"get_user_courses": "courses", "create_course": "courses"}.get(name, "")
-        )
+        return {
+            "courses": {
+                "id": "courses",
+                "name": "Course Management",
+                "icon": "book-open",
+            }
+        }.get({"get_user_courses": "courses", "create_course": "courses"}.get(name, ""))
 
     @staticmethod
     def query_badge(query_type):
-        return {"goals": {"id": "goals", "name": "Goal Management", "icon": "target"}}.get(
-            query_type
-        )
+        return {
+            "goals": {"id": "goals", "name": "Goal Management", "icon": "target"}
+        }.get(query_type)
 
     def test_a_badge_is_built_from_an_executed_action(self):
         badges = ask_service.build_skill_badges(
@@ -261,7 +284,9 @@ class TestSkillBadges:
             tool_badge=self.tool_badge,
             query_badge=self.query_badge,
         )
-        assert badges == [{"id": "courses", "name": "Course Management", "icon": "book-open"}]
+        assert badges == [
+            {"id": "courses", "name": "Course Management", "icon": "book-open"}
+        ]
 
     def test_one_skill_appears_once_however_many_times_it_was_used(self):
         """Two course tools in one turn is one skill, not two badges."""
@@ -323,7 +348,9 @@ class TestHistoryFormatting:
     def test_db_roles_become_provider_roles(self):
         history = ask_service.format_history(
             [
-                message_row("USER", "What is entropy?", image_urls=None, image_url=None),
+                message_row(
+                    "USER", "What is entropy?", image_urls=None, image_url=None
+                ),
                 message_row("ASSISTANT", "Disorder.", image_urls=None, image_url=None),
             ]
         )
@@ -357,7 +384,14 @@ class TestHistoryFormatting:
         """Rows written before `imageUrls` existed only have the singular column. Ignoring it would
         drop the image out of the history of every old conversation."""
         history = ask_service.format_history(
-            [message_row("USER", "This one?", image_urls=None, image_url="https://cdn/old.png")]
+            [
+                message_row(
+                    "USER",
+                    "This one?",
+                    image_urls=None,
+                    image_url="https://cdn/old.png",
+                )
+            ]
         )
         assert history[0]["parts"] == ["This one?", "https://cdn/old.png"]
 
@@ -365,7 +399,10 @@ class TestHistoryFormatting:
         history = ask_service.format_history(
             [
                 message_row(
-                    "USER", "?", image_urls=["https://cdn/new.png"], image_url="https://cdn/old.png"
+                    "USER",
+                    "?",
+                    image_urls=["https://cdn/new.png"],
+                    image_url="https://cdn/old.png",
                 )
             ]
         )
@@ -423,7 +460,9 @@ class TestTheExtractionInventoryIsHonest:
         }
         assert set(ask_service.MOVED_SO_FAR) == set(expected)
         for stage, target in expected.items():
-            module, attribute = target if isinstance(target, tuple) else (ask_service, target)
+            module, attribute = (
+                target if isinstance(target, tuple) else (ask_service, target)
+            )
             assert hasattr(
                 module, attribute
             ), f"{stage} is claimed as moved but {module.__name__}.{attribute} is absent"
@@ -450,7 +489,9 @@ class TestTheExtractionInventoryIsHonest:
             "websocket_handler calls the model directly again. Everything above the transport belongs "
             "in `ask_service.answer()` — see Decision C and plan §5.4 for what two pipelines drift into."
         )
-        assert "ask_service.answer(" in source, "the handler no longer goes through answer()"
+        assert (
+            "ask_service.answer(" in source
+        ), "the handler no longer goes through answer()"
 
     def test_streaming_is_a_callback_rather_than_a_second_path(self):
         """Decision C in one assertion: `on_chunk` is optional, so HTTP passing `None` runs the same
@@ -458,9 +499,13 @@ class TestTheExtractionInventoryIsHonest:
         point appears, that has been abandoned."""
         import inspect
 
-        assert inspect.signature(ask_service.answer).parameters["on_chunk"].default is None
+        assert (
+            inspect.signature(ask_service.answer).parameters["on_chunk"].default is None
+        )
         assert not [
-            name for name in dir(ask_service) if name.startswith("answer") and name != "answer"
+            name
+            for name in dir(ask_service)
+            if name.startswith("answer") and name != "answer"
         ], "a second answer-shaped entry point exists; Decision C says there is one"
 
 
@@ -539,11 +584,15 @@ class TestUsageReconciliation:
 
     def test_the_tier_reaches_the_revenue_calculator(self):
         free = resolve({"input_tokens": 100, "output_tokens": 10}, user_tier="FREE")
-        paid = resolve({"input_tokens": 100, "output_tokens": 10}, user_tier="PREMIUM_MONTHLY")
+        paid = resolve(
+            {"input_tokens": 100, "output_tokens": 10}, user_tier="PREMIUM_MONTHLY"
+        )
         assert free.revenue_usd != paid.revenue_usd
 
     def test_the_model_name_is_carried_through(self):
-        usage = resolve({"input_tokens": 1, "output_tokens": 1}, model_name="openai:gpt-4o-mini")
+        usage = resolve(
+            {"input_tokens": 1, "output_tokens": 1}, model_name="openai:gpt-4o-mini"
+        )
         assert usage.model_name == "openai:gpt-4o-mini"
 
 
@@ -571,6 +620,9 @@ def a_row(**overrides):
         "content": "Entropy is a measure of disorder.",
         "usage": a_usage(),
         "ask_mode": ask_service.ASK_MODE_WEBSOCKET,
+        "answer_scope": ask_service.AnswerScope(
+            sources=("note",), library_recall=False
+        ),
     }
     kwargs.update(overrides)
     return ask_service.build_assistant_row(**kwargs)
@@ -591,9 +643,14 @@ class TestAssistantRowAssembly:
             "costUsd",
             "revenueUsd",
             "askMode",
+            "answerScope",
         ):
             assert key in row, f"{key} missing"
         assert row["role"] == "ASSISTANT"
+        assert row["answerScope"] == {
+            "sources": ["note"],
+            "libraryRecall": False,
+        }
 
     def test_token_count_is_the_sum_and_not_recomputed_from_content(self):
         row = a_row(usage=a_usage(input_tokens=7, output_tokens=11))
@@ -629,7 +686,10 @@ class TestAssistantRowAssembly:
         assert "componentData" not in a_row(components=[])
 
     def test_suggestion_text_is_included_when_present(self):
-        assert a_row(suggestion_text="Try a quiz next.")["suggestionText"] == "Try a quiz next."
+        assert (
+            a_row(suggestion_text="Try a quiz next.")["suggestionText"]
+            == "Try a quiz next."
+        )
 
     def test_reply_target_is_included_when_present(self):
         assert a_row(reply_to_message_id="msg_9")["replyToMessageId"] == "msg_9"
@@ -697,13 +757,19 @@ class TestContextCacheKeyParts:
         )
         assert parts is None
 
-    @pytest.mark.parametrize("id_name", ["noteId", "topicId", "courseId", "reviewItemId"])
+    @pytest.mark.parametrize(
+        "id_name", ["noteId", "topicId", "courseId", "reviewItemId"]
+    )
     def test_each_id_alone_produces_a_key(self, id_name):
-        parts = ask_service.context_cache_key_parts(user_id="u1", context={id_name: "x1"})
+        parts = ask_service.context_cache_key_parts(
+            user_id="u1", context={id_name: "x1"}
+        )
         assert parts is not None
         assert "x1" in parts
 
-    @pytest.mark.parametrize("id_name", ["noteId", "topicId", "courseId", "reviewItemId"])
+    @pytest.mark.parametrize(
+        "id_name", ["noteId", "topicId", "courseId", "reviewItemId"]
+    )
     def test_changing_any_single_id_changes_the_key(self, id_name):
         """The collision test. Every id in the key must move the key on its own."""
         base = {"noteId": "n", "topicId": "t", "courseId": "c", "reviewItemId": "r"}
@@ -721,12 +787,18 @@ class TestContextCacheKeyParts:
 
     def test_absent_ids_are_placeheld_so_positions_do_not_shift(self):
         """Without a placeholder, {"topicId": "x"} and {"noteId": "x"} would build the same parts."""
-        by_note = ask_service.context_cache_key_parts(user_id="u1", context={"noteId": "x"})
-        by_topic = ask_service.context_cache_key_parts(user_id="u1", context={"topicId": "x"})
+        by_note = ask_service.context_cache_key_parts(
+            user_id="u1", context={"noteId": "x"}
+        )
+        by_topic = ask_service.context_cache_key_parts(
+            user_id="u1", context={"topicId": "x"}
+        )
         assert by_note != by_topic
 
     def test_the_key_is_namespaced(self):
-        parts = ask_service.context_cache_key_parts(user_id="u1", context={"topicId": "t"})
+        parts = ask_service.context_cache_key_parts(
+            user_id="u1", context={"topicId": "t"}
+        )
         assert parts[:2] == ["chat", "context"]
 
     def test_it_is_stable_for_the_same_input(self):
@@ -738,7 +810,8 @@ class TestContextCacheKeyParts:
     def test_unread_ids_are_deliberately_absent(self):
         """`examPrepId` and `spaceId` ride on the context but enrichment does not read them, so they
         must not be in the key. This test is the reminder to add them here in the same change that
-        starts reading them — it is documenting the audit, not asserting they are unimportant."""
+        starts reading them — it is documenting the audit, not asserting they are unimportant.
+        """
         parts = ask_service.context_cache_key_parts(
             user_id="u1", context={"examPrepId": "p1", "spaceId": "s1"}
         )
@@ -761,7 +834,11 @@ class TestCacheableContext:
         assert result == {"topicId": "t1", "topicTitle": "Entropy"}
 
     def test_fetched_facts_survive(self):
-        enriched = {"courseTitle": "Thermo", "courseDescription": "d", "moduleTitle": "m"}
+        enriched = {
+            "courseTitle": "Thermo",
+            "courseDescription": "d",
+            "moduleTitle": "m",
+        }
         assert ask_service.cacheable_context(enriched) == enriched
 
     def test_the_input_is_not_mutated(self):
@@ -781,7 +858,9 @@ class TestCacheableContext:
 
 class TestMergeCachedContext:
     def test_cached_facts_are_overlaid(self):
-        merged = ask_service.merge_cached_context({"topicId": "t"}, {"topicTitle": "Entropy"})
+        merged = ask_service.merge_cached_context(
+            {"topicId": "t"}, {"topicTitle": "Entropy"}
+        )
         assert merged == {"topicId": "t", "topicTitle": "Entropy"}
 
     def test_the_cached_value_wins_on_conflict(self):
@@ -857,7 +936,9 @@ class TestReviewModePageContext:
 
 
 def a_topic(**kwargs):
-    return SimpleNamespace(**{"id": "top_1", "title": "Entropy", "content": "body", **kwargs})
+    return SimpleNamespace(
+        **{"id": "top_1", "title": "Entropy", "content": "body", **kwargs}
+    )
 
 
 def a_module(**kwargs):
@@ -884,7 +965,12 @@ def a_note(**kwargs):
 
 def a_review(**kwargs):
     return SimpleNamespace(
-        **{"id": "rev_1", "topic_id": "top_1", "next_review_at": "2026-09-01T00:00:00", **kwargs}
+        **{
+            "id": "rev_1",
+            "topic_id": "top_1",
+            "next_review_at": "2026-09-01T00:00:00",
+            **kwargs,
+        }
     )
 
 
@@ -905,7 +991,8 @@ class TestReviewContextUpdates:
         from datetime import datetime
 
         updates = ask_service.review_context_updates(
-            review=a_review(next_review_at=datetime(2026, 9, 1, 12, 30)), topic=a_topic()
+            review=a_review(next_review_at=datetime(2026, 9, 1, 12, 30)),
+            topic=a_topic(),
         )
         assert updates["nextReviewAt"] == "2026-09-01T12:30:00"
 
@@ -924,7 +1011,8 @@ class TestReviewContextUpdates:
 
     def test_a_module_without_a_course_contributes_nothing(self):
         """This branch differs from the topic chain, deliberately preserved. Pinned so that if someone
-        unifies them the change is visible as a failing test rather than a silent prompt change."""
+        unifies them the change is visible as a failing test rather than a silent prompt change.
+        """
         updates = ask_service.review_context_updates(
             review=a_review(), topic=a_topic(), module=a_module(), course=None
         )
@@ -932,7 +1020,9 @@ class TestReviewContextUpdates:
         assert "courseId" not in updates
 
     def test_a_missing_content_becomes_an_empty_string(self):
-        updates = ask_service.review_context_updates(review=a_review(), topic=a_topic(content=None))
+        updates = ask_service.review_context_updates(
+            review=a_review(), topic=a_topic(content=None)
+        )
         assert updates["topicContent"] == ""
 
 
@@ -944,7 +1034,9 @@ class TestNoteContextUpdates:
         assert updates["noteSummary"] == "a summary"
 
     def test_missing_body_and_summary_become_empty_strings(self):
-        updates = ask_service.note_context_updates(note=a_note(content=None, summary=None))
+        updates = ask_service.note_context_updates(
+            note=a_note(content=None, summary=None)
+        )
         assert updates["noteContent"] == ""
         assert updates["noteSummary"] == ""
 
@@ -972,7 +1064,8 @@ class TestNoteContextUpdates:
 
     def test_a_direct_course_is_ignored_when_there_is_a_topic(self):
         """The two routes to a course are mutually exclusive: through the topic's module, or directly.
-        A note with both must not have its topic's course overwritten by the direct one."""
+        A note with both must not have its topic's course overwritten by the direct one.
+        """
         updates = ask_service.note_context_updates(
             note=a_note(),
             topic=a_topic(),
@@ -994,13 +1087,17 @@ class TestTopicContextUpdates:
     def test_the_topic_id_can_be_withheld(self):
         """The topic branch already has the id from the client's context — it is how the topic was
         found — so writing it back is at best a no-op."""
-        updates = ask_service.topic_context_updates(topic=a_topic(), include_topic_id=False)
+        updates = ask_service.topic_context_updates(
+            topic=a_topic(), include_topic_id=False
+        )
         assert "topicId" not in updates
         assert updates["topicTitle"] == "Entropy"
 
     def test_the_course_needs_a_module(self):
         """A course is reached through a module here, so a course without one is not attached."""
-        updates = ask_service.topic_context_updates(topic=a_topic(), module=None, course=a_course())
+        updates = ask_service.topic_context_updates(
+            topic=a_topic(), module=None, course=a_course()
+        )
         assert "courseId" not in updates
 
 
@@ -1025,7 +1122,10 @@ class TestCourseContextUpdates:
 class TestFormatTopicUserNotes:
     def test_each_note_becomes_a_heading_and_body(self):
         rendered = ask_service.format_topic_user_notes(
-            [a_note(title="First", content="one"), a_note(title="Second", content="two")]
+            [
+                a_note(title="First", content="one"),
+                a_note(title="Second", content="two"),
+            ]
         )
         assert "## First\none" in rendered
         assert "## Second\ntwo" in rendered
@@ -1039,12 +1139,14 @@ class TestFormatTopicUserNotes:
         assert "\n\n---\n\n" in rendered
 
     def test_a_single_note_has_no_separator(self):
-        assert "---" not in ask_service.format_topic_user_notes([a_note(title="Only", content="x")])
+        assert "---" not in ask_service.format_topic_user_notes(
+            [a_note(title="Only", content="x")]
+        )
 
     def test_an_untitled_note_gets_a_placeholder_heading(self):
-        assert ask_service.format_topic_user_notes([a_note(title=None, content="x")]).startswith(
-            "## Note"
-        )
+        assert ask_service.format_topic_user_notes(
+            [a_note(title=None, content="x")]
+        ).startswith("## Note")
 
     def test_a_note_with_no_body_is_kept_as_a_bare_heading(self):
         """A title alone still tells the model what the learner thought worth recording."""
@@ -1059,7 +1161,9 @@ class TestFormatTopicUserNotes:
         assert ask_service.format_topic_user_notes(None) == ""
 
     def test_whitespace_is_stripped_from_titles_and_bodies(self):
-        rendered = ask_service.format_topic_user_notes([a_note(title="  T  ", content="  b  ")])
+        rendered = ask_service.format_topic_user_notes(
+            [a_note(title="  T  ", content="  b  ")]
+        )
         assert rendered == "## T\nb"
 
 
@@ -1128,7 +1232,9 @@ class TestSessionResolution:
         )
         assert not resolution.allowed
         assert resolution.denial == ask_service.SESSION_DENIED_PINNED_OWNER
-        assert resolution.session is None, "a refused turn must have nowhere to be written"
+        assert (
+            resolution.session is None
+        ), "a refused turn must have nowhere to be written"
 
     @pytest.mark.asyncio
     async def test_a_missing_pinned_session_falls_back_rather_than_refusing(self):
@@ -1142,7 +1248,9 @@ class TestSessionResolution:
         assert resolution.session is current
 
     @pytest.mark.asyncio
-    async def test_a_lookup_failure_refuses_rather_than_using_another_conversation(self):
+    async def test_a_lookup_failure_refuses_rather_than_using_another_conversation(
+        self,
+    ):
         """The §5.5.12 fix. A raising lookup used to fall back to the current session, so the turn was
         persisted, metered and charged in a conversation the learner did not pin — and the pinned thread
         showed a gap, so they would ask again and pay twice."""
@@ -1183,7 +1291,9 @@ class TestSessionResolution:
             return a_session("sess_theirs", user_id="user_2")
 
         forbidden = await ask_service.resolve_session_for_turn(
-            **resolve_kwargs(requested_session_id="sess_theirs", find_session=find_theirs)
+            **resolve_kwargs(
+                requested_session_id="sess_theirs", find_session=find_theirs
+            )
         )
         assert not forbidden.retryable
 
@@ -1197,7 +1307,8 @@ class TestSessionResolution:
 
     def test_every_denial_code_has_a_message(self):
         """The handler indexes `SESSION_DENIAL_MESSAGES` by the code, so a code without one is a
-        `KeyError` on the refusal path — the path least likely to be exercised by hand."""
+        `KeyError` on the refusal path — the path least likely to be exercised by hand.
+        """
         codes = {
             ask_service.SESSION_DENIED_PINNED_OWNER,
             ask_service.SESSION_DENIED_LOOKUP_FAILED,
@@ -1206,7 +1317,9 @@ class TestSessionResolution:
         assert all(ask_service.SESSION_DENIAL_MESSAGES[code] for code in codes)
 
     def test_only_known_codes_are_retryable(self):
-        assert ask_service.RETRYABLE_SESSION_DENIALS <= set(ask_service.SESSION_DENIAL_MESSAGES)
+        assert ask_service.RETRYABLE_SESSION_DENIALS <= set(
+            ask_service.SESSION_DENIAL_MESSAGES
+        )
 
     def test_a_permission_refusal_does_not_invite_a_retry(self):
         """Marking a permission refusal retryable would have the client offer a button that cannot
@@ -1229,7 +1342,10 @@ class TestNewSessionRow:
         assert row_has_false(ask_service.new_session_row("user_1"), "isSpaceRoom")
 
     def test_it_starts_on_the_default_title(self):
-        assert ask_service.new_session_row("user_1")["title"] == ask_service.NEW_CONVERSATION_TITLE
+        assert (
+            ask_service.new_session_row("user_1")["title"]
+            == ask_service.NEW_CONVERSATION_TITLE
+        )
 
 
 def row_has_false(row, key):
@@ -1243,12 +1359,17 @@ def row_has_false(row, key):
 
 class TestDeriveSessionTitle:
     def test_a_short_question_becomes_its_own_title(self):
-        assert ask_service.derive_session_title("What is entropy?") == "What is entropy?"
+        assert (
+            ask_service.derive_session_title("What is entropy?") == "What is entropy?"
+        )
 
     def test_whitespace_is_collapsed_before_truncating(self):
         """A pasted question arrives with newlines and runs of spaces. Truncate first and the title can
         be 50 characters of blank space."""
-        assert ask_service.derive_session_title("What   is\n\n  entropy?") == "What is entropy?"
+        assert (
+            ask_service.derive_session_title("What   is\n\n  entropy?")
+            == "What is entropy?"
+        )
 
     def test_a_long_question_is_clipped_and_marked(self):
         title = ask_service.derive_session_title("e" * 200)
@@ -1291,10 +1412,14 @@ class TestSessionTitleGate:
         assert ask_service.should_retitle_session(**retitle_kwargs(current_title=title))
 
     def test_a_later_message_does_not_rename(self):
-        assert not ask_service.should_retitle_session(**retitle_kwargs(user_message_count=4))
+        assert not ask_service.should_retitle_session(
+            **retitle_kwargs(user_message_count=4)
+        )
 
     def test_a_review_thread_is_never_titled(self):
-        assert not ask_service.should_retitle_session(**retitle_kwargs(is_review_thread=True))
+        assert not ask_service.should_retitle_session(
+            **retitle_kwargs(is_review_thread=True)
+        )
 
     def test_a_blank_message_does_not_title(self):
         """An empty title is worse than the default; the default at least says 'new'."""
@@ -1302,7 +1427,8 @@ class TestSessionTitleGate:
 
     def test_the_cheap_gate_agrees_with_the_full_one_on_everything_but_the_count(self):
         """The caller runs the cheap gate first so a named conversation does not pay for a `count(*)` on
-        every turn, forever. If the two disagree on a non-count condition, that skip is wrong."""
+        every turn, forever. If the two disagree on a non-count condition, that skip is wrong.
+        """
         for override in (
             {"current_title": "Named already"},
             {"is_review_thread": True},
@@ -1391,7 +1517,8 @@ class TestCreditRefusal:
 
     def test_this_turns_estimate_counts_towards_the_daily_cap(self):
         """The question is whether *this* turn fits, not whether the learner has already exceeded. A
-        learner just under their cap must not be allowed to start a turn that blows through it."""
+        learner just under their cap must not be allowed to start a turn that blows through it.
+        """
         under = usage(daily_limit=5_000, credits_used_today=4_000)
         assert not ask_service.credit_refusal(
             tier="FREE", estimated_tokens=500, credit_usage=under
@@ -1454,28 +1581,40 @@ class TestValidateMessage:
     def test_whitespace_only_is_empty(self, blank):
         """A message of spaces reaches the model as nothing and produces an answer to nothing, which is
         worse than a refusal."""
-        assert ask_service.validate_message(blank).code == ask_service.MESSAGE_REJECTED_EMPTY
+        assert (
+            ask_service.validate_message(blank).code
+            == ask_service.MESSAGE_REJECTED_EMPTY
+        )
 
     def test_none_is_refused_rather_than_raising(self):
         assert ask_service.validate_message(None) is not None
 
     def test_a_message_on_the_limit_is_accepted(self):
-        assert ask_service.validate_message("e" * ask_service.MESSAGE_MAX_LENGTH) is None
+        assert (
+            ask_service.validate_message("e" * ask_service.MESSAGE_MAX_LENGTH) is None
+        )
 
     def test_a_message_over_the_limit_is_refused(self):
-        rejection = ask_service.validate_message("e" * (ask_service.MESSAGE_MAX_LENGTH + 1))
+        rejection = ask_service.validate_message(
+            "e" * (ask_service.MESSAGE_MAX_LENGTH + 1)
+        )
         assert rejection.code == ask_service.MESSAGE_REJECTED_TOO_LONG
 
     def test_the_refusal_says_both_numbers(self):
         """A limit the learner cannot see is a limit they cannot work around."""
-        rejection = ask_service.validate_message("e" * (ask_service.MESSAGE_MAX_LENGTH + 500))
+        rejection = ask_service.validate_message(
+            "e" * (ask_service.MESSAGE_MAX_LENGTH + 500)
+        )
         assert f"{ask_service.MESSAGE_MAX_LENGTH:,}" in rejection.message
         assert f"{ask_service.MESSAGE_MAX_LENGTH + 500:,}" in rejection.message
 
     def test_length_is_measured_on_the_raw_message_not_the_stripped_one(self):
         """Whitespace still costs prompt budget, so padding is not a way past the limit."""
         padded = "e" * (ask_service.MESSAGE_MAX_LENGTH - 10) + " " * 100
-        assert ask_service.validate_message(padded).code == ask_service.MESSAGE_REJECTED_TOO_LONG
+        assert (
+            ask_service.validate_message(padded).code
+            == ask_service.MESSAGE_REJECTED_TOO_LONG
+        )
 
     def test_the_limit_is_generous_enough_for_a_pasted_essay(self):
         """A learner pasting something long to ask about is the point of the surface, not abuse of it.
@@ -1517,13 +1656,16 @@ class TestTurnInFlight:
     async def test_a_different_session_is_unaffected(self):
         """The guard is per conversation, not per learner. A learner with two conversations open is
         doing something reasonable."""
-        async with ask_service.turn_in_flight("sess_1"), ask_service.turn_in_flight("sess_2"):
+        async with ask_service.turn_in_flight("sess_1"), ask_service.turn_in_flight(
+            "sess_2"
+        ):
             assert ask_service.turns_in_flight() == frozenset({"sess_1", "sess_2"})
 
     @pytest.mark.asyncio
     async def test_a_failed_turn_frees_the_slot(self):
         """Released in a `finally`. Otherwise one provider timeout locks the learner out of their own
-        conversation until the process restarts — a worse failure than the one this prevents."""
+        conversation until the process restarts — a worse failure than the one this prevents.
+        """
         with pytest.raises(RuntimeError):
             async with ask_service.turn_in_flight("sess_1"):
                 raise RuntimeError("provider down")
@@ -1557,7 +1699,8 @@ class TestTurnInFlight:
     async def test_concurrent_turns_are_serialised_by_refusal_not_by_queueing(self):
         """**Refused, not queued**, and this is the decision. A queued turn answers a question whose
         context has moved — the learner has since asked something else or navigated away from the page
-        the context described — so it is a correct answer to a question nobody is still asking."""
+        the context described — so it is a correct answer to a question nobody is still asking.
+        """
         started: list[str] = []
 
         async def turn(name: str):
@@ -1598,22 +1741,34 @@ class TestDescribeScope:
         """The order a learner reads their own context in — the note they are looking at before the
         course it belongs to."""
         scope = ask_service.describe_scope(
-            context={"courseTitle": "Physics", "noteTitle": "My note", "topicTitle": "Entropy"}
+            context={
+                "courseTitle": "Physics",
+                "noteTitle": "My note",
+                "topicTitle": "Entropy",
+            }
         )
         assert scope.sources == ["note", "topic", "course"]
 
     def test_library_recall_is_false_by_default(self):
         """**The load-bearing field.** While this is false, a client must not render "I could not find
         anything about that" as a statement about the learner's library."""
-        assert ask_service.describe_scope(context={"topicTitle": "T"}).library_recall is False
+        assert (
+            ask_service.describe_scope(context={"topicTitle": "T"}).library_recall
+            is False
+        )
 
     def test_library_recall_is_reported_when_the_backend_exists(self):
-        scope = ask_service.describe_scope(context={"topicTitle": "T"}, library_recall=True)
+        scope = ask_service.describe_scope(
+            context={"topicTitle": "T"}, library_recall=True
+        )
         assert scope.library_recall is True
 
     def test_retrieval_and_memory_are_named_as_sources(self):
         scope = ask_service.describe_scope(
-            context={"retrieved_items": ["- NOTE: x"], "memory_context": "They revise at night."}
+            context={
+                "retrieved_items": ["- NOTE: x"],
+                "memory_context": "They revise at night.",
+            }
         )
         assert "a search of your material" in scope.sources
         assert "what Maigie remembers about you" in scope.sources
@@ -1629,7 +1784,9 @@ class TestDescribeScope:
     def test_an_empty_value_is_not_a_source(self):
         """Enrichment writes `""` for a note with no body. Naming that would claim Maigie read something
         it did not."""
-        scope = ask_service.describe_scope(context={"topicUserNotes": "", "topicTitle": "Entropy"})
+        scope = ask_service.describe_scope(
+            context={"topicUserNotes": "", "topicTitle": "Entropy"}
+        )
         assert scope.sources == ["topic"]
 
     def test_grounded_means_it_drew_on_the_learners_material(self):
@@ -1638,5 +1795,6 @@ class TestDescribeScope:
 
     def test_an_id_alone_is_not_a_source(self):
         """`topicId` on the context means the client asked; `topicTitle` means enrichment succeeded. If a
-        read was refused the two differ, and the honest answer is what the model actually saw."""
+        read was refused the two differ, and the honest answer is what the model actually saw.
+        """
         assert ask_service.describe_scope(context={"topicId": "topic_1"}).sources == []

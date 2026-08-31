@@ -7,6 +7,7 @@ model preferences, and recommendations.
 Mounted at: /api/v1/intelligence
 """
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
@@ -16,7 +17,12 @@ from src.shared.auth import CurrentUser
 from . import models
 from .conversation import ask_service, context_enrichment, conversation_service
 from .memory import memory_service
-from .repository import intelligence_repo
+from .reasoning.llm.errors import LLMProviderError
+from .repository import (
+    ActiveGenerationAttemptError,
+    AttemptFenceLostError,
+    intelligence_repo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +34,12 @@ router = APIRouter(tags=["intelligence"])
 # ===========================================================================
 
 
-@router.post("/conversations", response_model=models.ConversationResponse, status_code=201)
-async def create_conversation(body: models.ConversationCreate, current_user: CurrentUser):
+@router.post(
+    "/conversations", response_model=models.ConversationResponse, status_code=201
+)
+async def create_conversation(
+    body: models.ConversationCreate, current_user: CurrentUser
+):
     """Start a new conversation with Intelligence."""
     # `by_alias=True` because the request model is now a `CamelModel`, so its fields are snake_case,
     # while `conversation_service.create_conversation` reads camelCase keys on the way to the repo,
@@ -41,7 +51,10 @@ async def create_conversation(body: models.ConversationCreate, current_user: Cur
     return session
 
 
-@router.get("/conversations", response_model=models.PaginatedResponse[models.ConversationResponse])
+@router.get(
+    "/conversations",
+    response_model=models.PaginatedResponse[models.ConversationResponse],
+)
 async def list_conversations(
     current_user: CurrentUser,
     page: int = Query(1, ge=1),
@@ -84,7 +97,8 @@ async def get_messages(
     current_user: CurrentUser,
     limit: int = Query(50, ge=1, le=200),
     before: str | None = Query(
-        None, description="A message id from a previous window. Returns the window before it."
+        None,
+        description="A message id from a previous window. Returns the window before it.",
     ),
 ):
     """One window of a conversation, oldest-first.
@@ -104,13 +118,17 @@ async def get_messages(
 @router.delete("/conversations/{session_id}", status_code=204)
 async def delete_conversation(session_id: str, current_user: CurrentUser):
     """Delete a conversation and its messages."""
-    await conversation_service.delete_conversation(session_id=session_id, user_id=current_user.id)
+    await conversation_service.delete_conversation(
+        session_id=session_id, user_id=current_user.id
+    )
 
 
 @router.post("/conversations/{session_id}/archive", status_code=204)
 async def archive_conversation(session_id: str, current_user: CurrentUser):
     """Archive a conversation (soft delete)."""
-    await conversation_service.archive_conversation(session_id=session_id, user_id=current_user.id)
+    await conversation_service.archive_conversation(
+        session_id=session_id, user_id=current_user.id
+    )
 
 
 # ===========================================================================
@@ -138,7 +156,9 @@ async def get_user_facts(current_user: CurrentUser):
     return await memory_service.get_user_facts(current_user.id)
 
 
-@router.get("/memory/summaries", response_model=list[models.ConversationSummaryResponse])
+@router.get(
+    "/memory/summaries", response_model=list[models.ConversationSummaryResponse]
+)
 async def get_summaries(current_user: CurrentUser, limit: int = Query(10, ge=1, le=50)):
     """Get recent conversation summaries."""
     return await memory_service.get_conversation_summaries(current_user.id, limit=limit)
@@ -200,7 +220,9 @@ async def get_model_preferences(current_user: CurrentUser):
 
 
 @router.put("/models/preferences", response_model=models.ModelPreferenceResponse)
-async def update_model_preference(body: models.ModelPreferenceUpdate, current_user: CurrentUser):
+async def update_model_preference(
+    body: models.ModelPreferenceUpdate, current_user: CurrentUser
+):
     """Update preferred AI model for a capability."""
     from sqlalchemy import select
     from sqlalchemy import update as sa_update
@@ -311,7 +333,9 @@ async def ask(body: models.AskRequest, current_user: CurrentUser):
                 detail=rejection.message,
                 headers={"Retry-After": str(ask_service.RATE_LIMIT_WINDOW_SECONDS)},
             )
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message
+        )
 
     session = await _resolve_ask_session(
         session_id=body.session_id, user_id=current_user.id, repo=intelligence_repo
@@ -322,56 +346,143 @@ async def ask(body: models.AskRequest, current_user: CurrentUser):
     # learner fixes by waiting a minute, and not a bad request, which they fix by changing it.
     try:
         async with ask_service.turn_in_flight(session.id):
-            return await _answer_over_http(body=body, user=current_user, session=session)
+            return await _answer_over_http(
+                body=body, user=current_user, session=session
+            )
     except ask_service.TurnAlreadyInFlight as busy:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=busy.rejection.message
         ) from busy
 
 
-async def _answer_over_http(*, body: models.AskRequest, user, session) -> models.AskResponse:
-    """The turn itself, once the session is resolved and the slot held."""
-    current_user = user
-    user_message = await intelligence_repo.create_message(
-        data={
-            "sessionId": session.id,
-            "userId": current_user.id,
-            "role": "USER",
-            "content": body.message,
-            **({"imageUrls": body.image_urls} if body.image_urls else {}),
-            **(
-                {"reviewItemId": (body.context or {}).get("reviewItemId")}
-                if (body.context or {}).get("reviewItemId")
-                else {}
-            ),
-        }
+async def _answer_over_http(
+    *, body: models.AskRequest, user, session
+) -> models.AskResponse:
+    """Persist the USER row and active attempt atomically, then run it."""
+    message_data = {
+        "sessionId": session.id,
+        "userId": user.id,
+        "role": "USER",
+        "content": body.message,
+        **({"imageUrls": body.image_urls} if body.image_urls else {}),
+        **(
+            {"reviewItemId": (body.context or {}).get("reviewItemId")}
+            if (body.context or {}).get("reviewItemId")
+            else {}
+        ),
+    }
+    try:
+        user_message, attempt = await intelligence_repo.create_message_and_attempt(
+            message_data=message_data,
+            attempt_data={
+                "sessionId": session.id,
+                "userId": user.id,
+                "status": "RUNNING",
+                "retryable": False,
+                "context": body.context,
+                "askMode": ask_service.ASK_MODE_HTTP,
+            },
+        )
+    except ActiveGenerationAttemptError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Another answer is already being generated for this conversation.",
+        ) from error
+
+    return await _run_http_attempt(
+        user=user,
+        session=session,
+        user_message=user_message,
+        attempt=attempt,
+        context=body.context,
     )
 
+
+async def _run_http_attempt(
+    *, user, session, user_message, attempt, context
+) -> models.AskResponse:
+    """Run one already-persisted attempt, recording every terminal outcome."""
     try:
-        turn = await ask_service.answer(
-            message=body.message,
-            user=current_user,
-            user_obj=current_user,
-            session=session,
-            user_message=user_message,
-            context=body.context,
-            # The other half of migration 049's reason for existing: per-surface metering only works if
-            # both surfaces write the column. The socket writes `ws`.
-            ask_mode=ask_service.ASK_MODE_HTTP,
-            readers=context_enrichment.production_readers(),
-            effects=ask_service.production_effects(),
-            cache=context_enrichment.production_cache(),
-            image_url=body.image_urls[0] if body.image_urls else None,
-            # No `on_chunk`: this transport has nowhere to stream to. Same code, one argument different.
-            on_chunk=None,
-        )
+        async with ask_service.maintain_attempt_lease(
+            attempt.id, intelligence_repo.heartbeat_attempt
+        ):
+            turn = await ask_service.answer(
+                message=user_message.content,
+                user=user,
+                user_obj=user,
+                session=session,
+                user_message=user_message,
+                context=context,
+                ask_mode=ask_service.ASK_MODE_HTTP,
+                readers=context_enrichment.production_readers(),
+                effects=ask_service.production_effects(),
+                cache=context_enrichment.production_cache(),
+                image_url=(user_message.image_urls or [None])[0],
+                on_chunk=None,
+                attempt_id=attempt.id,
+                update_attempt=intelligence_repo.update_running_attempt,
+            )
     except ask_service.TurnRefused as refused:
+        await intelligence_repo.update_running_attempt(
+            attempt.id,
+            {"status": "FAILED", "retryable": False, "failureCode": "CREDIT_REFUSED"},
+        )
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail=refused.refusal.message,
         ) from refused
+    except asyncio.CancelledError:
+        try:
+            await intelligence_repo.update_running_attempt(
+                attempt.id,
+                {"status": "CANCELLED", "retryable": True, "failureCode": "CANCELLED"},
+            )
+        except AttemptFenceLostError:
+            pass
+        raise
+    except AttemptFenceLostError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This generation attempt was replaced by a newer worker.",
+        ) from error
+    except ask_service.TurnFailed as error:
+        await intelligence_repo.update_running_attempt(
+            attempt.id,
+            {
+                "status": "FAILED",
+                "retryable": bool(error.retryable),
+                "failureCode": "GENERATION_FAILED",
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Maigie could not answer that just now. Please try again.",
+        ) from error
+    except LLMProviderError as error:
+        await intelligence_repo.update_running_attempt(
+            attempt.id,
+            {
+                "status": "FAILED",
+                "retryable": bool(error.retriable),
+                "failureCode": error.category,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Maigie could not answer that just now. Please try again.",
+        ) from error
     except Exception as error:
-        logger.error("Ask turn failed for user %s: %s", current_user.id, error, exc_info=True)
+        # Unknown failures before a committed assistant are conservatively retryable. The
+        # repository's durable tool-intent marker forces this back to false when necessary.
+        await intelligence_repo.update_running_attempt(
+            attempt.id,
+            {
+                "status": "FAILED",
+                "retryable": True,
+                "failureCode": "GENERATION_FAILED",
+            },
+        )
+        logger.error("Ask turn failed for user %s: %s", user.id, error, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Maigie could not answer that just now. Please try again.",
@@ -379,14 +490,15 @@ async def _answer_over_http(*, body: models.AskRequest, user, session) -> models
 
     return models.AskResponse(
         id=turn.assistant_message.id,
+        attempt_id=attempt.id,
         session_id=session.id,
         content=turn.content,
         suggestion_text=turn.suggestion_text,
         components=turn.outcomes.components,
         skills_used=[models.AskSkillBadge(**badge) for badge in turn.skills_used],
-        scope=models.AskScope(sources=turn.scope.sources, library_recall=turn.scope.library_recall),
-        # Decision I: only what the model actually did. The `suggestedAction` this replaces was keyword
-        # matching over the learner's own words, presented as the model's recommendation.
+        scope=models.AskScope(
+            sources=turn.scope.sources, library_recall=turn.scope.library_recall
+        ),
         actions=[
             models.AskAction(
                 type=row["actionType"],
@@ -396,6 +508,94 @@ async def _answer_over_http(*, body: models.AskRequest, user, session) -> models
             for row in turn.outcomes.action_logs
         ],
     )
+
+
+@router.post(
+    "/conversations/{session_id}/messages/{message_id}/retry",
+    response_model=models.AskResponse,
+)
+async def retry_message(session_id: str, message_id: str, current_user: CurrentUser):
+    """Retry an explicitly retryable, unanswered attempt without duplicating its USER row."""
+    session = await _resolve_ask_session(
+        session_id=session_id, user_id=current_user.id, repo=intelligence_repo
+    )
+    prior = await intelligence_repo.find_attempt_for_retry(
+        session_id=session_id, message_id=message_id, user_id=current_user.id
+    )
+    if prior is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Message has no retryable attempt",
+        )
+    if prior.status not in {"FAILED", "CANCELLED"} or not prior.retryable:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This attempt cannot be retried",
+        )
+    if prior.tool_side_effects:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This attempt may have changed data and cannot be retried safely",
+        )
+    if await intelligence_repo.user_message_has_answer(message_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This message already has an answer",
+        )
+    user_message = await intelligence_repo.find_message(message_id)
+    if user_message is None or user_message.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Message not found"
+        )
+
+    from src.shared.infrastructure.rate_limit import check_rate_limit
+
+    rejection = await ask_service.screen_turn(
+        message=user_message.content,
+        user_id=current_user.id,
+        check_rate_limit=check_rate_limit,
+    )
+    if rejection:
+        if rejection.code == ask_service.MESSAGE_REJECTED_RATE_LIMITED:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=rejection.message,
+                headers={"Retry-After": str(ask_service.RATE_LIMIT_WINDOW_SECONDS)},
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message
+        )
+
+    try:
+        async with ask_service.turn_in_flight(session.id):
+            try:
+                attempt = await intelligence_repo.create_attempt(
+                    {
+                        "sessionId": session.id,
+                        "userMessageId": user_message.id,
+                        "userId": current_user.id,
+                        "status": "RUNNING",
+                        "retryable": False,
+                        "context": prior.context,
+                        "askMode": ask_service.ASK_MODE_HTTP,
+                    }
+                )
+            except ActiveGenerationAttemptError as error:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Another answer is already being generated for this conversation.",
+                ) from error
+            return await _run_http_attempt(
+                user=current_user,
+                session=session,
+                user_message=user_message,
+                attempt=attempt,
+                context=prior.context,
+            )
+    except ask_service.TurnAlreadyInFlight as busy:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=busy.rejection.message
+        ) from busy
 
 
 async def _resolve_ask_session(*, session_id: str | None, user_id: str, repo):
@@ -421,7 +621,9 @@ async def _resolve_ask_session(*, session_id: str | None, user_id: str, repo):
         find_session=repo.find_chat_session,
     )
     if not resolution.allowed or resolution.session is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found"
+        )
     return resolution.session
 
 
@@ -430,8 +632,12 @@ async def _resolve_ask_session(*, session_id: str | None, user_id: str, repo):
 # ===========================================================================
 
 
-@router.post("/ask/attachments", response_model=models.AskAttachmentResponse, status_code=201)
-async def upload_ask_attachment(current_user: CurrentUser, file: UploadFile = File(...)):
+@router.post(
+    "/ask/attachments", response_model=models.AskAttachmentResponse, status_code=201
+)
+async def upload_ask_attachment(
+    current_user: CurrentUser, file: UploadFile = File(...)
+):
     """Store an image to send with a turn.
 
     **This closes §5.2.2, where the affordance existed and the capability did not.** Web's composer
@@ -452,14 +658,17 @@ async def upload_ask_attachment(current_user: CurrentUser, file: UploadFile = Fi
         allowed=attachments.ALLOWED_IMAGE_TYPES,
     )
     if rejection:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=rejection.message
+        )
 
     from src.shared.infrastructure.storage import StorageError, storage_service
 
     await file.seek(0)
     try:
         stored = await storage_service.upload_upload_file(
-            file, path_prefix=attachments.upload_path(user_id=current_user.id, kind="images")
+            file,
+            path_prefix=attachments.upload_path(user_id=current_user.id, kind="images"),
         )
     except StorageError as error:
         logger.error("Attachment upload failed for user %s: %s", current_user.id, error)
@@ -503,13 +712,17 @@ async def delete_ask_attachment(upload_id: str, current_user: CurrentUser):
     """
     upload = await intelligence_repo.find_upload(upload_id, current_user.id)
     if upload is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found"
+        )
 
     from src.shared.infrastructure.storage import storage_service
 
     try:
         await storage_service.delete(upload.url)
-    except Exception as error:  # noqa: BLE001 — the row goes either way; see the docstring
+    except (
+        Exception
+    ) as error:  # noqa: BLE001 — the row goes either way; see the docstring
         logger.warning("Attachment %s left behind in storage: %s", upload_id, error)
 
     await intelligence_repo.delete_upload(upload_id, current_user.id)

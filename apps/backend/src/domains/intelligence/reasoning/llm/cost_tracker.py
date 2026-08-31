@@ -129,6 +129,7 @@ class CostTracker:
         output_tokens: int | None,
         user_id: str,
         user_tier: str,
+        attempt_id: str | None = None,
     ) -> CostRecord:
         """Record a cost entry to the database.
 
@@ -163,6 +164,7 @@ class CostTracker:
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     cost_usd=Decimal(str(cost_usd)),
+                    attempt_id=attempt_id,
                     created_at=now,
                 )
             )

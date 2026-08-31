@@ -28,6 +28,7 @@ so an id being probed is visible rather than silent.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from functools import cache
@@ -84,7 +85,11 @@ async def resolve_topic_chain(
         return None
 
     module = await find_module(topic.module_id) if topic.module_id else None
-    course = await find_course(module.course_id, user_id) if module and module.course_id else None
+    course = (
+        await find_course(module.course_id, user_id)
+        if module and module.course_id
+        else None
+    )
     return TopicChain(topic=topic, module=module, course=course)
 
 
@@ -126,7 +131,9 @@ async def resolve_owned_topic(
 
     try:
         topic, module, course = await check_topic_ownership(topic_id, user_id)
-    except Exception as error:  # noqa: BLE001 — NotFoundError and ForbiddenError alike mean "omit it"
+    except (
+        Exception
+    ) as error:  # noqa: BLE001 — NotFoundError and ForbiddenError alike mean "omit it"
         logger.warning(
             "Topic %s not available to user %s for context enrichment: %s",
             topic_id,
@@ -221,6 +228,9 @@ class ContextReaders:
     memory: Any
     """(user_id, query) -> str | None. Long-term memory: summaries and learning insights."""
 
+    learner_context: Any = None
+    """(user_id, raw_context) -> bounded, owner-scoped learner context."""
+
 
 async def _list_topic_notes(topic_id: str, user_id: str) -> list[Any]:
     """A learner's notes on one topic, oldest first, all of them.
@@ -288,6 +298,128 @@ async def _read_history(
         return list((await session.execute(stmt)).scalars().all())
 
 
+async def _read_learner_context(user_id: str, raw: dict[str, Any]) -> dict[str, Any]:
+    """Bounded personalization plus explicitly authorised entity context."""
+    from src.domains.learning_spaces.repository import space_repo
+    from src.domains.personal_learning.repository import personal_learning_repo
+    from src.domains.personal_learning.services import (
+        behaviour_service,
+        flashcard_service,
+    )
+    from src.domains.progress.repository import progress_repo
+
+    def text(value: Any, limit: int = 500) -> str | None:
+        rendered = str(value).strip() if value is not None else ""
+        return rendered[:limit] if rendered else None
+
+    specifications = (
+        (
+            "examPrepId",
+            personal_learning_repo.find_exam_prep,
+            "examPrep",
+            ("subject", "target_date", "status"),
+        ),
+        (
+            "studyPlanId",
+            personal_learning_repo.get_study_plan,
+            "studyPlan",
+            ("title", "goal_description", "status"),
+        ),
+        ("goalId", progress_repo.find_goal, "goal", ("title", "description", "status")),
+        (
+            "reflectionId",
+            personal_learning_repo.get_reflection,
+            "reflection",
+            ("title", "summary"),
+        ),
+    )
+
+    # These readers each own their database session, so running them concurrently does not
+    # share an AsyncSession. The timeout keeps optional personalization from delaying generation.
+    jobs: list[tuple[str, Any]] = [
+        ("profile", personal_learning_repo.get_profile_by_user(user_id)),
+        ("behaviour", behaviour_service.get_behaviour_profile(user_id=user_id)),
+        # Statistics already uses an owner-keyed cache and a DB aggregate; do not materialize
+        # 101 full flashcards merely to learn the due count.
+        ("flashcardStats", flashcard_service.get_statistics(user_id=user_id)),
+    ]
+    for raw_key, reader, _target_key, _fields in specifications:
+        if raw.get(raw_key):
+            jobs.append((raw_key, reader(raw[raw_key], user_id)))
+    if raw.get("spaceId"):
+        jobs.append(("spaceMember", space_repo.find_member(raw["spaceId"], user_id)))
+
+    async with asyncio.timeout(2.0):
+        values = await asyncio.gather(*(job for _name, job in jobs))
+        resolved = dict(zip((name for name, _job in jobs), values, strict=True))
+
+        updates: dict[str, Any] = {}
+        profile = resolved["profile"]
+        if profile:
+            updates["learnerProfile"] = {
+                key: value
+                for key, value in {
+                    "purpose": text(getattr(profile, "purpose", None), 120),
+                    "subjects": [
+                        text(item, 80)
+                        for item in (getattr(profile, "subjects", None) or [])[:8]
+                    ],
+                    "goals": text(getattr(profile, "goals_text", None), 500),
+                    "explanationStyle": text(
+                        getattr(profile, "preferred_explanation_style", None), 120
+                    ),
+                }.items()
+                if value
+            }
+
+        behaviour = resolved["behaviour"]
+        updates["learningRhythm"] = {
+            key: behaviour.get(key)
+            for key in ("avgSessionMinutes", "consistencyScore", "bestDayOfWeek")
+            if behaviour.get(key) is not None
+        }
+        updates["dueReviewCount"] = int(resolved["flashcardStats"].get("dueToday") or 0)
+
+        rejected: list[str] = []
+        for raw_key, _reader, target_key, fields in specifications:
+            if not raw.get(raw_key):
+                continue
+            row = resolved.get(raw_key)
+            if row is None:
+                rejected.append(raw_key)
+                continue
+            updates[target_key] = {
+                "id": row.id,
+                **{
+                    field: text(getattr(row, field, None), 600)
+                    for field in fields
+                    if text(getattr(row, field, None), 600)
+                },
+            }
+
+        if raw.get("spaceId"):
+            member = resolved.get("spaceMember")
+            if member is None:
+                rejected.append("spaceId")
+            else:
+                # Fetch the space only after membership is proven. This dependent read is still
+                # inside the same timeout and exposes only bounded, non-classroom metadata.
+                space = await space_repo.find_space_basic(raw["spaceId"])
+                if space is None:
+                    rejected.append("spaceId")
+                else:
+                    updates["space"] = {
+                        "id": space.id,
+                        "name": text(getattr(space, "name", None), 160),
+                        "description": text(getattr(space, "description", None), 600),
+                        "role": text(getattr(member, "role", None), 40),
+                        "membershipVerified": True,
+                    }
+
+        updates["rejectedContextIds"] = rejected
+        return updates
+
+
 def production_readers() -> ContextReaders:
     """The real readers. Imported lazily because these cross domains and this module is imported early.
 
@@ -305,7 +437,9 @@ def production_readers() -> ContextReaders:
 
     from .chat_helpers import _attach_topic_resources_context
 
-    async def attach_topic_resources(user_id: str, topic_id: str, context: dict[str, Any]) -> None:
+    async def attach_topic_resources(
+        user_id: str, topic_id: str, context: dict[str, Any]
+    ) -> None:
         # The `None` first argument is a legacy db handle the stub ignores. **This helper is
         # unimplemented** (see `chat_helpers`), so a topic's saved resources do not reach the prompt
         # today. Wired anyway so that implementing it needs no change here.
@@ -328,6 +462,7 @@ def production_readers() -> ContextReaders:
             query=query, user_id=user_id, limit=limit
         ),
         memory=lambda user_id, query: get_memory_context(user_id, query=query),
+        learner_context=_read_learner_context,
     )
 
 
@@ -365,7 +500,9 @@ def production_cache() -> ContextCache:
     async def set_with_ttl(key: str, value: dict[str, Any], ttl_seconds: int) -> None:
         await cache_backend.set(key, value, expire=ttl_seconds)
 
-    return ContextCache(make_key=cache_backend.make_key, get=cache_backend.get, set=set_with_ttl)
+    return ContextCache(
+        make_key=cache_backend.make_key, get=cache_backend.get, set=set_with_ttl
+    )
 
 
 # ===========================================================================
@@ -502,7 +639,9 @@ async def _apply_topic_context(
     # `select(Topic).where(Topic.id == topic_id)` on a client-supplied id, writing the topic's full body
     # and its course's description into the prompt.
     chain = await resolve_owned_topic(
-        topic_id=topic_id, user_id=user_id, check_topic_ownership=readers.check_topic_ownership
+        topic_id=topic_id,
+        user_id=user_id,
+        check_topic_ownership=readers.check_topic_ownership,
     )
     if not chain:
         logger.info(
@@ -543,6 +682,22 @@ async def _apply_course_context(
         enriched.update(ask_service.course_context_updates(course=course))
 
 
+SERVER_DERIVED_CONTEXT_KEYS = frozenset(
+    {
+        "learnerProfile",
+        "learningRhythm",
+        "dueReviewCount",
+        "examPrep",
+        "studyPlan",
+        "goal",
+        "reflection",
+        "space",
+        "spaceMembershipVerified",
+        "rejectedContextIds",
+    }
+)
+
+
 async def enrich_context(
     *,
     context: dict[str, Any] | None,
@@ -569,27 +724,35 @@ async def enrich_context(
     """
     from . import ask_service
 
-    if not context:
-        return None
-
-    enriched = context.copy()
+    raw_context = context or {}
+    context = raw_context
+    enriched = {
+        key: value
+        for key, value in raw_context.items()
+        if key not in SERVER_DERIVED_CONTEXT_KEYS
+    }
 
     cache_key = None
     if cache is not None:
         # Which ids identify a cached enrichment is `ask_service.context_cache_key_parts`. It is a named
         # function because an id that changes what enrichment fetches but is missing from the key serves
         # one learner's topic as another's for the TTL. `None` means there is no id to look up.
-        key_parts = ask_service.context_cache_key_parts(user_id=user_id, context=context)
+        key_parts = ask_service.context_cache_key_parts(
+            user_id=user_id, context=context
+        )
         cache_key = cache.make_key(key_parts) if key_parts else None
 
     cached = await cache.get(cache_key) if (cache is not None and cache_key) else None
 
     if cached:
-        enriched = ask_service.merge_cached_context(context, cached)
+        enriched = ask_service.merge_cached_context(enriched, cached)
     else:
         if context.get("reviewItemId"):
             await _apply_review_context(
-                enriched, review_id=context["reviewItemId"], user_id=user_id, readers=readers
+                enriched,
+                review_id=context["reviewItemId"],
+                user_id=user_id,
+                readers=readers,
             )
         elif context.get("noteId"):
             await _apply_note_context(
@@ -601,7 +764,10 @@ async def enrich_context(
             )
         elif context.get("courseId") and not enriched.get("courseTitle"):
             await _apply_course_context(
-                enriched, course_id=context["courseId"], user_id=user_id, readers=readers
+                enriched,
+                course_id=context["courseId"],
+                user_id=user_id,
+                readers=readers,
             )
 
         # Whatever branch ran, a topic in scope gets its saved resources attached.
@@ -625,7 +791,28 @@ async def enrich_context(
     if context.get("noteContent") and not enriched.get("noteContent"):
         enriched["noteContent"] = context["noteContent"]
 
-    return enriched
+    if readers.learner_context:
+        try:
+            learner_updates = await readers.learner_context(user_id, raw_context)
+            for rejected_key in learner_updates.pop("rejectedContextIds", []):
+                enriched.pop(rejected_key, None)
+            enriched.update(learner_updates)
+        except (
+            Exception
+        ) as error:  # noqa: BLE001 — personalization is optional, ownership is not
+            for unverified_key in (
+                "examPrepId",
+                "studyPlanId",
+                "goalId",
+                "reflectionId",
+                "spaceId",
+            ):
+                enriched.pop(unverified_key, None)
+            logger.warning(
+                "Learner context enrichment failed, continuing without it: %s", error
+            )
+
+    return enriched or None
 
 
 # ===========================================================================
@@ -644,6 +831,7 @@ async def build_history(
     user_id: str,
     review_item_id: str | None,
     readers: ContextReaders,
+    exclude_message_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """The conversation so far, in the provider's history shape, oldest first.
 
@@ -666,9 +854,14 @@ async def build_history(
         session_id=session_id,
         user_id=user_id,
         review_item_id=review_item_id,
-        limit=ask_service.HISTORY_LIMIT,
+        limit=ask_service.HISTORY_LIMIT + (1 if exclude_message_id else 0),
     )
-    return ask_service.format_history(list(reversed(list(records))))
+    ordered = list(reversed(list(records)))
+    if exclude_message_id:
+        ordered = [
+            row for row in ordered if getattr(row, "id", None) != exclude_message_id
+        ]
+    return ask_service.format_history(ordered[-ask_service.HISTORY_LIMIT :])
 
 
 # ===========================================================================
@@ -712,7 +905,9 @@ async def attach_recall(
             if items:
                 context = dict(context or {})
                 context["retrieved_items"] = items
-                logger.debug("Retrieval contributed %d items to the prompt.", len(items))
+                logger.debug(
+                    "Retrieval contributed %d items to the prompt.", len(items)
+                )
         except Exception as error:  # noqa: BLE001 — an enrichment, not a precondition
             logger.warning("Retrieval failed, continuing without it: %s", error)
     else:

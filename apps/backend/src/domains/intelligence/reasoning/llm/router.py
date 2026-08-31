@@ -79,6 +79,7 @@ class CostTrackerProtocol(Protocol):
         output_tokens: int,
         user_id: str,
         user_tier: str,
+        attempt_id: str | None = None,
     ) -> Any: ...
 
 
@@ -140,6 +141,7 @@ class LLMRouter:
         stream_callback: Any = None,
         usage_scope: str = "personal",
         space_id: str | None = None,
+        attempt_id: str | None = None,
     ) -> tuple[str, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
         """Route a request through the selection pipeline.
 
@@ -203,7 +205,9 @@ class LLMRouter:
                     model="none",
                     status_code=None,
                     category="overloaded",
-                    message=(f"Router selection exceeded {self._timeout_seconds}s timeout."),
+                    message=(
+                        f"Router selection exceeded {self._timeout_seconds}s timeout."
+                    ),
                     retriable=True,
                 )
 
@@ -224,7 +228,9 @@ class LLMRouter:
                         model="none",
                         status_code=None,
                         category="overloaded",
-                        message=(f"Router selection exceeded {self._timeout_seconds}s timeout."),
+                        message=(
+                            f"Router selection exceeded {self._timeout_seconds}s timeout."
+                        ),
                         retriable=True,
                     )
 
@@ -261,15 +267,15 @@ class LLMRouter:
                 LLM_REQUESTS_TOTAL.labels(
                     provider=provider, model=model, task=task_name, outcome="success"
                 ).inc()
-                LLM_REQUEST_DURATION.labels(provider=provider, model=model, task=task_name).observe(
-                    duration
-                )
-                LLM_TOKENS_TOTAL.labels(provider=provider, model=model, direction="input").inc(
-                    input_tokens
-                )
-                LLM_TOKENS_TOTAL.labels(provider=provider, model=model, direction="output").inc(
-                    output_tokens
-                )
+                LLM_REQUEST_DURATION.labels(
+                    provider=provider, model=model, task=task_name
+                ).observe(duration)
+                LLM_TOKENS_TOTAL.labels(
+                    provider=provider, model=model, direction="input"
+                ).inc(input_tokens)
+                LLM_TOKENS_TOTAL.labels(
+                    provider=provider, model=model, direction="output"
+                ).inc(output_tokens)
 
                 try:
                     await self._cost_tracker.record(
@@ -279,18 +285,23 @@ class LLMRouter:
                         output_tokens=output_tokens,
                         user_id=user_id,
                         user_tier=user_tier,
+                        attempt_id=attempt_id,
                     )
                 except Exception:
                     # Cost tracking failure should not break the request
                     logger.exception("Failed to record cost for %s:%s", provider, model)
                 else:
                     # Record cost metric (only if DB write succeeded)
-                    from src.domains.intelligence.reasoning.llm.cost_tracker import PROVIDER_PRICING
+                    from src.domains.intelligence.reasoning.llm.cost_tracker import (
+                        PROVIDER_PRICING,
+                    )
 
                     pricing_key = f"{provider}:{model}"
                     if pricing_key in PROVIDER_PRICING:
                         input_rate, output_rate = PROVIDER_PRICING[pricing_key]
-                        cost = (input_tokens * input_rate) + (output_tokens * output_rate)
+                        cost = (input_tokens * input_rate) + (
+                            output_tokens * output_rate
+                        )
                         LLM_COST_USD.labels(
                             provider=provider, model=model, user_tier=user_tier
                         ).inc(cost)
@@ -300,7 +311,9 @@ class LLMRouter:
                 # 7.5, 7.6, 12.2, 13.2, 13.3). Telemetry must never break
                 # the request.
                 try:
-                    from src.domains.billing.services.usage_tracking import emit_ai_usage
+                    from src.domains.billing.services.usage_tracking import (
+                        emit_ai_usage,
+                    )
 
                     await emit_ai_usage(
                         user_id=user_id,
@@ -348,7 +361,10 @@ class LLMRouter:
                     # Retriable: record failure and try next candidate
                     self._circuit_breaker.record_failure(provider, model)
                     LLM_REQUESTS_TOTAL.labels(
-                        provider=provider, model=model, task=task.value, outcome="error_retriable"
+                        provider=provider,
+                        model=model,
+                        task=task.value,
+                        outcome="error_retriable",
                     ).inc()
                     # Record fallback metric if this isn't the first attempt
                     if attempts > 1 and last_error:

@@ -21,10 +21,14 @@ from src.domains.intelligence.reasoning.llm.capabilities import (
 from src.domains.intelligence.reasoning.llm.context import (
     build_enhanced_chat_user_message,
     map_tool_to_action_type,
+    mark_tool_side_effect_intent,
+    tool_has_side_effect,
 )
 from src.domains.intelligence.reasoning.llm.gemini_sdk import new_gemini_client
 from src.domains.intelligence.reasoning.llm.gemini_sdk import types as _types
-from src.domains.intelligence.reasoning.llm.prompts import build_personalized_system_instruction
+from src.domains.intelligence.reasoning.llm.prompts import (
+    build_personalized_system_instruction,
+)
 from src.domains.intelligence.reasoning.llm.registry import (
     LlmTask,
     default_model_for,
@@ -126,7 +130,11 @@ async def run_gemini_chat_with_tools(
             return obj
 
         all_declarations = [_uppercase_types(d) for d in all_declarations]
-        tools = [_types.Tool(function_declarations=all_declarations)] if all_declarations else None
+        tools = (
+            [_types.Tool(function_declarations=all_declarations)]
+            if all_declarations
+            else None
+        )
 
         # Build personalized system instruction with user's name
         system_instruction = build_personalized_system_instruction(user_name)
@@ -142,7 +150,9 @@ async def run_gemini_chat_with_tools(
             return (
                 any(ext in url.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"])
                 or "image" in url.lower()
-                or any(domain in url.lower() for domain in ["bunnycdn", "storage", "cdn"])
+                or any(
+                    domain in url.lower() for domain in ["bunnycdn", "storage", "cdn"]
+                )
             )
 
         # Collect all image URLs to download (current message + history)
@@ -155,7 +165,9 @@ async def run_gemini_chat_with_tools(
         for msg_idx, hist_msg in enumerate(history):
             if isinstance(hist_msg, dict) and "parts" in hist_msg:
                 for part_idx, part in enumerate(hist_msg["parts"]):
-                    if isinstance(part, str) and part.startswith(("http://", "https://")):
+                    if isinstance(part, str) and part.startswith(
+                        ("http://", "https://")
+                    ):
                         if _is_image_url(part):
                             history_image_positions.append((msg_idx, part_idx, part))
                             image_urls_to_download.append(part)
@@ -170,7 +182,9 @@ async def run_gemini_chat_with_tools(
                         response = await http_client.get(url)
                         if response.status_code == 200:
                             return url, {
-                                "mime_type": response.headers.get("content-type", "image/jpeg"),
+                                "mime_type": response.headers.get(
+                                    "content-type", "image/jpeg"
+                                ),
                                 "data": response.content,
                             }
                     except Exception as e:
@@ -205,7 +219,9 @@ async def run_gemini_chat_with_tools(
             message_content = [
                 _types.Part(text=enhanced_message_text),
                 _types.Part(
-                    inline_data=_types.Blob(mime_type=img_data["mime_type"], data=img_data["data"])
+                    inline_data=_types.Blob(
+                        mime_type=img_data["mime_type"], data=img_data["data"]
+                    )
                 ),
             ]
             print(f"🖼️ Including image in message: {image_url}")
@@ -217,7 +233,9 @@ async def run_gemini_chat_with_tools(
                 processed_parts = []
                 for part_idx, part in enumerate(hist_msg["parts"]):
                     if isinstance(part, str):
-                        if part.startswith(("http://", "https://")) and _is_image_url(part):
+                        if part.startswith(("http://", "https://")) and _is_image_url(
+                            part
+                        ):
                             # Replace URL with downloaded image data
                             if part in downloaded_images:
                                 img_data = downloaded_images[part]
@@ -255,7 +273,9 @@ async def run_gemini_chat_with_tools(
                 safety_settings=safety_settings,
                 # Manual tool loop below; disable SDK automatic function calling to avoid
                 # UNEXPECTED_TOOL_CALL / AFC state issues (see googleapis/python-genai#1818).
-                automatic_function_calling=_types.AutomaticFunctionCallingConfig(disable=True),
+                automatic_function_calling=_types.AutomaticFunctionCallingConfig(
+                    disable=True
+                ),
             ),
         )
 
@@ -331,7 +351,11 @@ async def run_gemini_chat_with_tools(
                             ) from stream_err
                         raise
 
-                return last_response, "".join(streamed_text_parts), streamed_function_calls
+                return (
+                    last_response,
+                    "".join(streamed_text_parts),
+                    streamed_function_calls,
+                )
 
             stream_payload = message_content if iteration == 1 else tool_results
             llm_start = time.perf_counter()
@@ -377,17 +401,26 @@ async def run_gemini_chat_with_tools(
 
             # Some streamed turns may not end with a final response object.
             # Avoid hard failures and return a graceful fallback instead.
-            if response is None and not streamed_turn_text and not streamed_function_calls:
+            if (
+                response is None
+                and not streamed_turn_text
+                and not streamed_function_calls
+            ):
                 final_text = (
-                    "I'm sorry, I couldn't generate a response right now. " "Please try again."
+                    "I'm sorry, I couldn't generate a response right now. "
+                    "Please try again."
                 )
-                print(f"⏱️ [{request_id}] LLM iteration {iteration} ended without response")
+                print(
+                    f"⏱️ [{request_id}] LLM iteration {iteration} ended without response"
+                )
                 break
 
             # Track token usage
             if hasattr(response, "usage_metadata"):
                 total_input_tokens += response.usage_metadata.prompt_token_count or 0
-                total_output_tokens += response.usage_metadata.candidates_token_count or 0
+                total_output_tokens += (
+                    response.usage_metadata.candidates_token_count or 0
+                )
 
             # Check for function calls
             function_calls = []
@@ -410,7 +443,10 @@ async def run_gemini_chat_with_tools(
                 except Exception:
                     finish_reason = None
 
-                if finish_reason == _types.FinishReason.UNEXPECTED_TOOL_CALL and not final_text:
+                if (
+                    finish_reason == _types.FinishReason.UNEXPECTED_TOOL_CALL
+                    and not final_text
+                ):
                     final_text = (
                         "I hit a temporary issue coordinating tools for that request. "
                         "Please try again or rephrase your message slightly."
@@ -418,11 +454,15 @@ async def run_gemini_chat_with_tools(
                 elif not final_text:
                     try:
                         final_text = (
-                            response.text if hasattr(response, "text") and response.text else ""
+                            response.text
+                            if hasattr(response, "text") and response.text
+                            else ""
                         )
                     except (ValueError, Exception):
                         final_text = "I'm sorry, I couldn't generate a response."
-                print(f"⏱️ [{request_id}] LLM iteration {iteration} completed with no tools")
+                print(
+                    f"⏱️ [{request_id}] LLM iteration {iteration} completed with no tools"
+                )
                 break
 
             # Execute function calls
@@ -471,10 +511,20 @@ async def run_gemini_chat_with_tools(
                 else:
                     independent_calls.append(function_call)
 
+            # Persist mutating intent before any concurrent or dependent handler starts.
+            # A marker failure propagates and therefore prevents unsafe execution.
+            await mark_tool_side_effect_intent(
+                [function_call.name for function_call in function_calls],
+                progress_callback,
+            )
+
             execution_results = []
             if independent_calls:
                 ind_results = await asyncio.gather(
-                    *[_execute_tool(function_call) for function_call in independent_calls]
+                    *[
+                        _execute_tool(function_call)
+                        for function_call in independent_calls
+                    ]
                 )
                 execution_results.extend(ind_results)
                 for tool_name, tool_args, tool_result, tool_error in ind_results:
@@ -511,15 +561,7 @@ async def run_gemini_chat_with_tools(
                             }
                         )
 
-                    if tool_name.startswith("create_") or tool_name in [
-                        "recommend_resources",
-                        "retake_note",
-                        "add_summary_to_note",
-                        "add_tags_to_note",
-                        "complete_review",
-                        "update_course_outline",
-                        "generate_document",
-                    ]:
+                    if tool_has_side_effect(tool_name):
                         executed_actions.append(
                             {
                                 "type": map_tool_to_action_type(tool_name),
@@ -529,11 +571,15 @@ async def run_gemini_chat_with_tools(
                         )
 
                 tool_results.append(
-                    _types.Part.from_function_response(name=tool_name, response=tool_result)
+                    _types.Part.from_function_response(
+                        name=tool_name, response=tool_result
+                    )
                 )
         else:
             # Max iterations reached
-            final_text = "I encountered an issue processing your request. Please try again."
+            final_text = (
+                "I encountered an issue processing your request. Please try again."
+            )
 
         usage_info = {
             "input_tokens": total_input_tokens,
@@ -560,7 +606,9 @@ async def run_gemini_chat_with_tools(
                     if final_text and not final_text.endswith(("\n", " ")):
                         final_text += " "
                     final_text += pt
-            logger.info("get_chat_response_with_tools: client disconnected (stream): %s", e)
+            logger.info(
+                "get_chat_response_with_tools: client disconnected (stream): %s", e
+            )
             return (
                 final_text,
                 {

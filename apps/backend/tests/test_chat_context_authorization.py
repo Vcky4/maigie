@@ -47,7 +47,11 @@ import pytest
 from src.domains.intelligence.conversation import context_enrichment
 
 CONVERSATION = (
-    Path(__file__).resolve().parents[1] / "src" / "domains" / "intelligence" / "conversation"
+    Path(__file__).resolve().parents[1]
+    / "src"
+    / "domains"
+    / "intelligence"
+    / "conversation"
 )
 
 #: Models whose rows belong to a learner, under the names they are imported as in this package.
@@ -93,12 +97,16 @@ def _statements_selecting_ownable_models() -> list[tuple[str, int, str]]:
             # Only the innermost statement, so a `select` nested in a big `async with` is attributed to
             # its own assignment rather than to the whole block.
             if any(
-                isinstance(child, ast.stmt) and child is not node and selects_ownable(child)
+                isinstance(child, ast.stmt)
+                and child is not node
+                and selects_ownable(child)
                 for child in ast.walk(node)
             ):
                 continue
 
-            found.append((path.name, node.lineno, ast.get_source_segment(source, node) or ""))
+            found.append(
+                (path.name, node.lineno, ast.get_source_segment(source, node) or "")
+            )
 
     return found
 
@@ -166,7 +174,8 @@ def test_no_catalogue_read_is_hand_rolled_in_the_conversation_package() -> None:
                 and isinstance(node.func, ast.Name)
                 and node.func.id == "select"
                 and any(
-                    isinstance(arg, ast.Name) and arg.id in {"Topic", "Course", "Module"}
+                    isinstance(arg, ast.Name)
+                    and arg.id in {"Topic", "Course", "Module"}
                     for arg in node.args
                 )
             ):
@@ -219,8 +228,12 @@ def test_every_reader_that_touches_an_owned_row_takes_an_owner() -> None:
 # ---------------------------------------------------------------------------
 
 
-def a_topic(topic_id="topic_1", module_id="module_1", title="Entropy", content="Disorder."):
-    return SimpleNamespace(id=topic_id, module_id=module_id, title=title, content=content)
+def a_topic(
+    topic_id="topic_1", module_id="module_1", title="Entropy", content="Disorder."
+):
+    return SimpleNamespace(
+        id=topic_id, module_id=module_id, title=title, content=content
+    )
 
 
 def a_module(module_id="module_1", course_id="course_1", title="Thermodynamics"):
@@ -463,7 +476,9 @@ class TestResolveTopicChain:
 # looking at.
 
 
-def a_note(note_id="note_1", topic_id=None, course_id=None, title="My note", content="Body."):
+def a_note(
+    note_id="note_1", topic_id=None, course_id=None, title="My note", content="Body."
+):
     return SimpleNamespace(
         id=note_id,
         topic_id=topic_id,
@@ -534,7 +549,8 @@ def owns(topic=None, module=None, course=None):
 class TestEnrichContextBranchPrecedence:
     """Review beats note beats topic beats course. The ids nest — a review is about a topic which is in
     a course — so the most specific id present is the one that describes what the learner is looking at.
-    Nothing stated this before; it was the order of an `if/elif` chain 900 lines into a function."""
+    Nothing stated this before; it was the order of an `if/elif` chain 900 lines into a function.
+    """
 
     @pytest.mark.asyncio
     async def test_a_review_id_wins_over_every_other_id(self):
@@ -545,7 +561,9 @@ class TestEnrichContextBranchPrecedence:
             return a_topic()
 
         async def unexpected(_a, _b):
-            raise AssertionError("the note branch must not run when a reviewItemId is present")
+            raise AssertionError(
+                "the note branch must not run when a reviewItemId is present"
+            )
 
         enriched = await context_enrichment.enrich_context(
             context={
@@ -584,7 +602,9 @@ class TestEnrichContextBranchPrecedence:
         enriched = await context_enrichment.enrich_context(
             context={"topicId": "topic_1", "courseId": "course_1"},
             user_id="user_1",
-            readers=fake_readers(check_topic_ownership=owns(a_topic(), a_module(), a_course())),
+            readers=fake_readers(
+                check_topic_ownership=owns(a_topic(), a_module(), a_course())
+            ),
         )
         assert enriched["topicTitle"] == "Entropy"
 
@@ -606,7 +626,9 @@ class TestEnrichContextBranchPrecedence:
         the same context."""
 
         async def unexpected(_course_id, _user_id):
-            raise AssertionError("the course branch must not run when courseTitle is already set")
+            raise AssertionError(
+                "the course branch must not run when courseTitle is already set"
+            )
 
         enriched = await context_enrichment.enrich_context(
             context={"courseId": "course_1", "courseTitle": "Already known"},
@@ -667,9 +689,15 @@ class TestEnrichContextNoteFallback:
     """A `noteId` that is really a topic id. A real path — clients have sent topic ids in `noteId`."""
 
     @pytest.mark.asyncio
-    async def test_a_note_id_that_is_a_topic_id_adopts_the_latest_note_on_that_topic(self):
+    async def test_a_note_id_that_is_a_topic_id_adopts_the_latest_note_on_that_topic(
+        self,
+    ):
         async def find_note(note_id, _user_id):
-            return a_note(note_id="note_9", topic_id="topic_1") if note_id == "note_9" else None
+            return (
+                a_note(note_id="note_9", topic_id="topic_1")
+                if note_id == "note_9"
+                else None
+            )
 
         async def latest(_topic_id, _user_id):
             return SimpleNamespace(id="note_9")
@@ -697,10 +725,14 @@ class TestEnrichContextNoteFallback:
         enriched = await context_enrichment.enrich_context(
             context={"noteId": "topic_1"},
             user_id="user_1",
-            readers=fake_readers(check_topic_ownership=owns(a_topic(), a_module(), a_course())),
+            readers=fake_readers(
+                check_topic_ownership=owns(a_topic(), a_module(), a_course())
+            ),
         )
         assert enriched["topicTitle"] == "Entropy"
-        assert enriched["noteId"] == "topic_1", "nothing was adopted, so the id is unchanged"
+        assert (
+            enriched["noteId"] == "topic_1"
+        ), "nothing was adopted, so the id is unchanged"
 
     @pytest.mark.asyncio
     async def test_an_id_that_is_neither_a_note_nor_a_topic_adds_nothing(self):
@@ -749,7 +781,9 @@ class TestEnrichContextCache:
         await context_enrichment.enrich_context(
             context={"topicId": "topic_1"},
             user_id="user_1",
-            readers=fake_readers(check_topic_ownership=owns(a_topic(), a_module(), a_course())),
+            readers=fake_readers(
+                check_topic_ownership=owns(a_topic(), a_module(), a_course())
+            ),
             cache=self.cache(store),
         )
         assert store["__ttl__"] == context_enrichment.CONTEXT_CACHE_TTL_SECONDS
@@ -762,7 +796,9 @@ class TestEnrichContextCache:
         await context_enrichment.enrich_context(
             context={"topicId": "topic_1", "content": "pasted this turn"},
             user_id="user_1",
-            readers=fake_readers(check_topic_ownership=owns(a_topic(), a_module(), a_course())),
+            readers=fake_readers(
+                check_topic_ownership=owns(a_topic(), a_module(), a_course())
+            ),
             cache=self.cache(store),
         )
         written = [v for k, v in store.items() if k != "__ttl__"][0]
@@ -845,7 +881,9 @@ class TestEnrichContextEdges:
         await context_enrichment.enrich_context(
             context=original,
             user_id="user_1",
-            readers=fake_readers(check_topic_ownership=owns(a_topic(), a_module(), a_course())),
+            readers=fake_readers(
+                check_topic_ownership=owns(a_topic(), a_module(), a_course())
+            ),
         )
         assert original == {"topicId": "topic_1"}
 
@@ -869,7 +907,8 @@ class TestEnrichContextEdges:
     @pytest.mark.asyncio
     async def test_a_review_whose_topic_is_gone_contributes_nothing(self):
         """Preserved from the handler and deliberate: `reviewItemId` and `nextReviewAt` without a subject
-        would put the model into the spaced-repetition protocol with nothing to ask about."""
+        would put the model into the spaced-repetition protocol with nothing to ask about.
+        """
 
         async def find_review(_review_id, _user_id):
             return a_review()
@@ -931,7 +970,8 @@ class TestHistoryIsolation:
     @pytest.mark.asyncio
     async def test_general_chat_asks_for_rows_with_no_review(self):
         """`review_item_id=None` means "no review", not "any" — the reader turns it into `IS NULL`. So
-        the learner's next general question does not inherit the review they just did."""
+        the learner's next general question does not inherit the review they just did.
+        """
         calls: list[dict] = []
         await context_enrichment.build_history(
             session_id="sess_1",
@@ -998,13 +1038,20 @@ def recall_readers(*, retrieve=None, memory=None, calls=None):
             calls.append(("memory", query, user_id, None))
         return None
 
-    return fake_readers(retrieve=retrieve or default_retrieve, memory=memory or default_memory)
+    return fake_readers(
+        retrieve=retrieve or default_retrieve, memory=memory or default_memory
+    )
 
     @pytest.mark.asyncio
     async def test_retrieved_items_reach_the_context(self):
         async def retrieve(_query, _user_id, _limit):
             return [
-                {"similarity": 0.9, "objectType": "note", "objectId": "n1", "data": {"title": "E"}}
+                {
+                    "similarity": 0.9,
+                    "objectType": "note",
+                    "objectId": "n1",
+                    "data": {"title": "E"},
+                }
             ]
 
         context = await context_enrichment.attach_recall(
@@ -1160,7 +1207,12 @@ class TestAttachRecall:
     async def test_retrieved_items_reach_the_context(self):
         async def retrieve(_query, _user_id, _limit):
             return [
-                {"similarity": 0.9, "objectType": "note", "objectId": "n1", "data": {"title": "E"}}
+                {
+                    "similarity": 0.9,
+                    "objectType": "note",
+                    "objectId": "n1",
+                    "data": {"title": "E"},
+                }
             ]
 
         context = await context_enrichment.attach_recall(
@@ -1309,3 +1361,58 @@ class TestAttachRecall:
         )
         retrieve = [c for c in calls if c[0] == "retrieve"][0]
         assert retrieve[3] == context_enrichment.RETRIEVAL_LIMIT
+
+
+class TestExtendedContextAuthorization:
+    @pytest.mark.asyncio
+    async def test_refused_owned_ids_are_removed_and_never_claim_grounding(self):
+        async def learner_context(user_id, raw):
+            assert user_id == "user_1"
+            assert raw["goalId"] == "foreign_goal"
+            return {"rejectedContextIds": ["goalId", "spaceId"]}
+
+        enriched = await context_enrichment.enrich_context(
+            context={"goalId": "foreign_goal", "spaceId": "foreign_space"},
+            user_id="user_1",
+            readers=fake_readers(learner_context=learner_context),
+        )
+        assert enriched is None
+
+    @pytest.mark.asyncio
+    async def test_authorized_extended_context_is_added_as_bounded_structured_data(
+        self,
+    ):
+        async def learner_context(_user_id, _raw):
+            return {
+                "goal": {"id": "goal_1", "title": "Thermodynamics"},
+                "spaceMembershipVerified": True,
+                "rejectedContextIds": [],
+            }
+
+        enriched = await context_enrichment.enrich_context(
+            context={"goalId": "goal_1", "spaceId": "space_1"},
+            user_id="user_1",
+            readers=fake_readers(learner_context=learner_context),
+        )
+        assert enriched["goal"]["id"] == "goal_1"
+        assert enriched["spaceMembershipVerified"] is True
+
+
+@pytest.mark.asyncio
+async def test_client_cannot_spoof_server_derived_owner_scoped_context():
+    async def reject_all(_user_id, _raw):
+        return {"rejectedContextIds": ["examPrepId", "spaceId"]}
+
+    enriched = await context_enrichment.enrich_context(
+        context={
+            "examPrepId": "foreign",
+            "examPrep": {"id": "foreign", "subject": "spoofed"},
+            "learnerProfile": {"purpose": "spoofed"},
+            "spaceId": "foreign",
+            "spaceMembershipVerified": True,
+            "unsupportedFutureId": "preserved",
+        },
+        user_id="user_1",
+        readers=fake_readers(learner_context=reject_all),
+    )
+    assert enriched == {"unsupportedFutureId": "preserved"}

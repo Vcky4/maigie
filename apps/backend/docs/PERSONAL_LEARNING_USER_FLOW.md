@@ -793,8 +793,9 @@ The learner asks Maigie questions and gets answers personalized to their learnin
 └──────────┬───────────┘
            │
            ▼
-┌──────────────────────┐     POST /api/v1/learning/chat
-│ SEND MESSAGE         │     body: { message: "Explain backpropagation" }
+┌──────────────────────┐     POST /api/v1/intelligence/ask
+│ SEND MESSAGE         │     body: { message: "Explain backpropagation", context: {...} }
+│                      │     or WS /api/v1/intelligence/ws with turn/retry/cancel frames
 │                      │
 │ System enriches      │
 │ context with:        │
@@ -1488,11 +1489,14 @@ All endpoints mounted at `/api/v1/learning`. All require JWT authentication unle
 | GET | `/reflections` | List reflections |
 | GET | `/reflections/{id}` | Get reflection |
 
-### Chat
+### Ask Maigie (Intelligence API)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/chat` | Send contextual message |
+| POST | `/api/v1/intelligence/ask` | Send a complete-response Ask turn |
+| WS | `/api/v1/intelligence/ws` | Stream Ask turns; supports retry and cancellation frames |
+| GET | `/api/v1/intelligence/conversations/{sessionId}/messages` | Reload owner-scoped history and latest generation retry state |
+| POST | `/api/v1/intelligence/conversations/{sessionId}/messages/{messageId}/retry` | Retry an eligible failed or cancelled turn |
 
 ### Activity Feed
 

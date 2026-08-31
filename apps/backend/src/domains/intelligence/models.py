@@ -42,6 +42,7 @@ __all__ = [
     "ConversationResponse",
     "MessageSend",
     "ChatMessageResponse",
+    "GenerationAttemptSummary",
     "UserFactResponse",
     "ConversationSummaryResponse",
     "MemoryContextResponse",
@@ -160,6 +161,7 @@ class AskResponse(CamelModel):
     """
 
     id: str
+    attempt_id: str | None = None
     session_id: str
     content: str
     suggestion_text: str | None = None
@@ -225,6 +227,15 @@ class MessageSend(CamelModel):
     reply_to_message_id: str | None = None
 
 
+class GenerationAttemptSummary(CamelModel):
+    """Latest durable generation state for one USER message."""
+
+    latest_attempt_id: str
+    status: str
+    retryable: bool
+    failure_code: str | None = None
+
+
 class ChatMessageResponse(CamelModel):
     """A single message in a conversation.
 
@@ -256,9 +267,12 @@ class ChatMessageResponse(CamelModel):
     audio_url: str | None = None
     image_urls: list[str] | None = None
     component_data: dict | list[dict] | None = None
+    # Nullable by design: old rows have no recorded scope and must make no claim.
+    answer_scope: AskScope | None = None
     token_count: int
     model_name: str | None = None
     reply_to_message_id: str | None = None
+    generation: GenerationAttemptSummary | None = None
     created_at: datetime
 
 
@@ -316,7 +330,9 @@ class ModelPreferenceUpdate(CamelModel):
 
     model_config = ConfigDict(protected_namespaces=())
 
-    capability: str = Field(..., description="chat, vision, structured_output, embedding")
+    capability: str = Field(
+        ..., description="chat, vision, structured_output, embedding"
+    )
     provider: str = Field(..., description="gemini, openai, anthropic")
     model_id: str = Field(..., description="e.g. gpt-4o-mini, claude-sonnet-4-20250514")
 

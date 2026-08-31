@@ -29,6 +29,41 @@ def map_tool_to_action_type(tool_name: str) -> str:
     return mapping.get(tool_name, tool_name)
 
 
+def tool_has_side_effect(tool_name: str) -> bool:
+    """Authoritative classification for retry safety across every provider adapter."""
+    return tool_name.startswith("create_") or tool_name in {
+        "recommend_resources",
+        "retake_note",
+        "add_summary_to_note",
+        "add_tags_to_note",
+        "complete_review",
+        "update_course_outline",
+        "generate_document",
+        "delete_course",
+        "save_user_fact",
+        "email_user",
+        "regenerate_schedule",
+        "complete_topic_and_continue",
+    }
+
+
+async def mark_tool_side_effect_intent(
+    tool_names: list[str], progress_callback: Any
+) -> None:
+    """Durably mark every mutating intent before an adapter invokes any handler."""
+    if not progress_callback:
+        return
+    for tool_name in tool_names:
+        if tool_has_side_effect(tool_name):
+            await progress_callback(
+                0,
+                "tool_side_effect_intent",
+                "A mutating tool is about to run.",
+                tool_side_effect=True,
+                tool_name=tool_name,
+            )
+
+
 def build_enhanced_chat_user_message(
     user_message: str, context: dict[str, Any] | None = None
 ) -> str:
@@ -47,7 +82,9 @@ def build_enhanced_chat_user_message(
         if context.get("courseTitle"):
             context_parts.append(f"Current Course: {context['courseTitle']}")
             if context.get("courseDescription"):
-                context_parts.append(f"Course Description: {context['courseDescription']}")
+                context_parts.append(
+                    f"Course Description: {context['courseDescription']}"
+                )
         elif context.get("courseId"):
             context_parts.append(f"Current Course ID: {context['courseId']}")
 
@@ -91,6 +128,62 @@ def build_enhanced_chat_user_message(
                 context_parts.append(f"Circle ID: {context['circleId']}")
             if context.get("memberCount"):
                 context_parts.append(f"Circle Members: {context['memberCount']}")
+
+        if context.get("learnerProfile"):
+            profile = context["learnerProfile"]
+            context_parts.append("Learner Profile (owner-scoped):")
+            for label, key in (
+                ("Purpose", "purpose"),
+                ("Subjects", "subjects"),
+                ("Goals", "goals"),
+                ("Explanation style", "explanationStyle"),
+            ):
+                value = profile.get(key)
+                if value:
+                    rendered = (
+                        ", ".join(str(item) for item in value)
+                        if isinstance(value, list)
+                        else str(value)
+                    )
+                    context_parts.append(f"{label}: {rendered[:600]}")
+
+        if context.get("learningRhythm"):
+            rhythm = context["learningRhythm"]
+            context_parts.append(
+                "Learning rhythm: "
+                f"average session {rhythm.get('avgSessionMinutes', 'unknown')} minutes; "
+                f"consistency {rhythm.get('consistencyScore', 'unknown')}; "
+                f"best day {rhythm.get('bestDayOfWeek', 'unknown')}."
+            )
+        if context.get("dueReviewCount") is not None:
+            context_parts.append(
+                f"Flashcards due for review: {int(context['dueReviewCount'])}"
+            )
+
+        for label, key in (
+            ("Exam preparation", "examPrep"),
+            ("Study plan", "studyPlan"),
+            ("Goal", "goal"),
+            ("Reflection", "reflection"),
+        ):
+            item = context.get(key)
+            if item:
+                fields = [
+                    f"{name}: {str(value)[:600]}"
+                    for name, value in item.items()
+                    if name != "id" and value
+                ]
+                context_parts.append(
+                    f"{label} (owner-scoped, id {item.get('id')}): " + "; ".join(fields)
+                )
+        space = context.get("space")
+        if space and space.get("membershipVerified"):
+            context_parts.append(
+                "Verified learning space (no classroom or assignment data loaded): "
+                f"name: {str(space.get('name') or '')[:160]}; "
+                f"description: {str(space.get('description') or '')[:600]}; "
+                f"learner role: {str(space.get('role') or '')[:40]}."
+            )
 
         if context.get("knowledgeBaseContext"):
             context_parts.append(f"\n{context['knowledgeBaseContext']}")

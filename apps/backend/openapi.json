@@ -644,6 +644,17 @@
             "title": "Actions",
             "type": "array"
           },
+          "attemptId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attemptid"
+          },
           "components": {
             "items": {
               "additionalProperties": true,
@@ -1107,6 +1118,16 @@
       "ChatMessageResponse": {
         "description": "A single message in a conversation.\n\nNamed `ChatMessageResponse`, not `MessageResponse`. Both `identity` and `personal_learning` already\npublish a `MessageResponse` — each a one-field generic acknowledgement — and FastAPI resolves a\nschema-name collision by fully qualifying *every* colliding name, so a third would have exported\nthis as `src__domains__intelligence__models__MessageResponse` and generated a client type to match.\nIt also happens to be the name web already hand-wrote for this shape. The other two collide with\neach other and did so before this router was mounted; untangling them is not this plan's work.\n\n`image_urls` is `list[str] | None` rather than `list[str] = []` because the column is a nullable\narray: a row with no images reads `None`, and declaring a list default would have rejected it\noutright. Rendering it as `[]` would also be the absent-as-zero mistake the plan's §1 forbids —\nthough here the two are the same thing, the validation failure is not.\n\n`protected_namespaces=()` because `model_name` is a real column on this table and pydantic\nreserves the `model_` prefix. Renaming the field would put the ORM and the schema back out of\nstep, which is the defect this file was rewritten to close.",
         "properties": {
+          "answerScope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AskScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "audioUrl": {
             "anyOf": [
               {
@@ -1138,6 +1159,16 @@
             "format": "date-time",
             "title": "Createdat",
             "type": "string"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GenerationAttemptSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "title": "Id",
@@ -4846,6 +4877,41 @@
           "title"
         ],
         "title": "GeneratedOutlineTopic",
+        "type": "object"
+      },
+      "GenerationAttemptSummary": {
+        "description": "Latest durable generation state for one USER message.",
+        "properties": {
+          "failureCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failurecode"
+          },
+          "latestAttemptId": {
+            "title": "Latestattemptid",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "latestAttemptId",
+          "status",
+          "retryable"
+        ],
+        "title": "GenerationAttemptSummary",
         "type": "object"
       },
       "GoalCreate": {
@@ -21548,6 +21614,64 @@
         ]
       }
     },
+    "/api/v1/intelligence/conversations/{session_id}/messages/{message_id}/retry": {
+      "post": {
+        "description": "Retry an explicitly retryable, unanswered attempt without duplicating its USER row.",
+        "operationId": "retry_message_api_v1_intelligence_conversations__session_id__messages__message_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Retry Message",
+        "tags": [
+          "intelligence",
+          "intelligence"
+        ]
+      }
+    },
     "/api/v1/intelligence/memory/context": {
       "get": {
         "description": "What Intelligence remembers about the learner, as data (for transparency and debugging).\n\nReads `get_memory_snapshot`, not `get_memory_context`. The latter returns the same memory rendered\nas a prompt block — a plain string — and this route used to return it under a structured response\nmodel, which would have `500`d on the first request.",
@@ -24483,54 +24607,6 @@
           }
         ],
         "summary": "Get Capabilities",
-        "tags": [
-          "personal-learning",
-          "personal-learning"
-        ]
-      }
-    },
-    "/api/v1/learning/chat": {
-      "post": {
-        "description": "Send a message to Maigie with personal learning context.",
-        "operationId": "send_chat_message_api_v1_learning_chat_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Send Chat Message",
         "tags": [
           "personal-learning",
           "personal-learning"

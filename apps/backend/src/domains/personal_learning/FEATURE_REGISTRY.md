@@ -219,7 +219,7 @@ using the `featureId` to determine the correct UI component and action.
 | **ID** | `ask_maigie` |
 | **Name** | Ask Maigie |
 | **Description** | Ask any learning question — Maigie knows your context, goals, and progress |
-| **Endpoint** | `POST /api/v1/learning/chat` |
+| **Endpoint** | `POST /api/v1/intelligence/ask` or `WS /api/v1/intelligence/ws` |
 | **Prerequisite** | None (always available) |
 | **Relevant when** | Always — but especially when learner is stuck, confused, or needs guidance |
 | **Frontend action** | Open chat interface |

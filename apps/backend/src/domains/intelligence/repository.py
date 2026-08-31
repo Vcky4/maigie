@@ -6,10 +6,11 @@ interaction memory, conversation summaries), agent tasks, uploads, and LLM cost 
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy import and_, case, delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,6 +20,7 @@ from src.shared.field_mapping import map_fields
 from .db_models import (
     AIActionLog,
     AIAgentTask,
+    ChatGenerationAttempt,
     ChatMessage,
     ChatSession,
     ConversationSummary,
@@ -30,6 +32,16 @@ from .db_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+ATTEMPT_LEASE_SECONDS = 300
+
+
+class ActiveGenerationAttemptError(Exception):
+    """A conversation already has a durable PENDING/RUNNING attempt."""
+
+
+class AttemptFenceLostError(Exception):
+    """This worker no longer owns the RUNNING generation attempt."""
 
 
 class IntelligenceRepository:
@@ -76,7 +88,9 @@ class IntelligenceRepository:
     async def update_chat_session(self, session_id: str, data: dict[str, Any]) -> None:
         async with await self._session() as session:
             mapped = self._map_chat_session(data)
-            stmt = update(ChatSession).where(ChatSession.id == session_id).values(**mapped)
+            stmt = (
+                update(ChatSession).where(ChatSession.id == session_id).values(**mapped)
+            )
             await session.execute(stmt)
             await session.commit()
 
@@ -157,7 +171,217 @@ class IntelligenceRepository:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def count_user_messages(self, user_id: str, *, since: datetime | None = None) -> int:
+    async def _expire_stale_attempts(
+        self, session: AsyncSession, session_id: str
+    ) -> None:
+        """Release attempts left active by a dead worker after the bounded router timeout."""
+        cutoff = datetime.now(UTC) - timedelta(seconds=ATTEMPT_LEASE_SECONDS)
+        await session.execute(
+            update(ChatGenerationAttempt)
+            .where(
+                ChatGenerationAttempt.session_id == session_id,
+                ChatGenerationAttempt.status.in_(("PENDING", "RUNNING")),
+                ChatGenerationAttempt.updated_at < cutoff,
+            )
+            .values(
+                status="FAILED",
+                retryable=case(
+                    (ChatGenerationAttempt.tool_side_effects.is_(True), False),
+                    else_=True,
+                ),
+                failure_code="ATTEMPT_LEASE_EXPIRED",
+                updated_at=datetime.now(UTC),
+            )
+        )
+
+    async def create_message_and_attempt(
+        self, *, message_data: dict[str, Any], attempt_data: dict[str, Any]
+    ) -> tuple[ChatMessage, ChatGenerationAttempt]:
+        """Atomically persist a USER row and its active attempt.
+
+        The partial unique index is the cross-worker concurrency authority. If it refuses the attempt,
+        this transaction rolls the USER row back too, so a racing request cannot leave an unanswered
+        duplicate in history.
+        """
+        async with await self._session() as session:
+            await self._expire_stale_attempts(session, attempt_data["sessionId"])
+            message = ChatMessage(**self._map_message(message_data))
+            session.add(message)
+            await session.flush()
+            data = dict(attempt_data)
+            data["userMessageId"] = message.id
+            attempt = ChatGenerationAttempt(**self._map_attempt(data))
+            session.add(attempt)
+            try:
+                await session.commit()
+            except IntegrityError as error:
+                await session.rollback()
+                raise ActiveGenerationAttemptError from error
+            await session.refresh(message)
+            await session.refresh(attempt)
+            return message, attempt
+
+    async def create_attempt(self, data: dict[str, Any]) -> ChatGenerationAttempt:
+        async with await self._session() as session:
+            await self._expire_stale_attempts(session, data["sessionId"])
+            attempt = ChatGenerationAttempt(**self._map_attempt(data))
+            session.add(attempt)
+            try:
+                await session.commit()
+            except IntegrityError as error:
+                await session.rollback()
+                raise ActiveGenerationAttemptError from error
+            await session.refresh(attempt)
+            return attempt
+
+    async def update_attempt(self, attempt_id: str, data: dict[str, Any]) -> None:
+        """Update attempt metadata without weakening a durable side-effect marker."""
+        async with await self._session() as session:
+            mapped = self._map_attempt(data)
+            if mapped.get("retryable") is True:
+                mapped["retryable"] = case(
+                    (ChatGenerationAttempt.tool_side_effects.is_(True), False),
+                    else_=True,
+                )
+            if mapped.get("tool_side_effects") is False:
+                mapped["tool_side_effects"] = case(
+                    (ChatGenerationAttempt.tool_side_effects.is_(True), True),
+                    else_=False,
+                )
+            stmt = (
+                update(ChatGenerationAttempt)
+                .where(ChatGenerationAttempt.id == attempt_id)
+                .values(**mapped)
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+    async def update_running_attempt(
+        self, attempt_id: str, data: dict[str, Any]
+    ) -> None:
+        """CAS update fenced by RUNNING status.
+
+        Stale workers whose lease was expired cannot rewrite the replacement outcome.
+        """
+        async with await self._session() as session:
+            mapped = self._map_attempt(data)
+            if mapped.get("retryable") is True:
+                mapped["retryable"] = case(
+                    (ChatGenerationAttempt.tool_side_effects.is_(True), False),
+                    else_=True,
+                )
+            if mapped.get("tool_side_effects") is False:
+                mapped["tool_side_effects"] = case(
+                    (ChatGenerationAttempt.tool_side_effects.is_(True), True),
+                    else_=False,
+                )
+            result = await session.execute(
+                update(ChatGenerationAttempt)
+                .where(
+                    ChatGenerationAttempt.id == attempt_id,
+                    ChatGenerationAttempt.status == "RUNNING",
+                )
+                .values(**mapped, updated_at=datetime.now(UTC))
+            )
+            if result.rowcount != 1:
+                await session.rollback()
+                raise AttemptFenceLostError(attempt_id)
+            await session.commit()
+
+    async def heartbeat_attempt(self, attempt_id: str) -> None:
+        """Renew a live lease, accepting the same worker's just-committed success."""
+        async with await self._session() as session:
+            result = await session.execute(
+                update(ChatGenerationAttempt)
+                .where(
+                    ChatGenerationAttempt.id == attempt_id,
+                    ChatGenerationAttempt.status == "RUNNING",
+                )
+                .values(updated_at=datetime.now(UTC))
+            )
+            if result.rowcount == 1:
+                await session.commit()
+                return
+            status = (
+                await session.execute(
+                    select(ChatGenerationAttempt.status).where(
+                        ChatGenerationAttempt.id == attempt_id
+                    )
+                )
+            ).scalar_one_or_none()
+            await session.rollback()
+            if status != "SUCCEEDED":
+                raise AttemptFenceLostError(attempt_id)
+
+    async def complete_attempt(
+        self, attempt_id: str, message_data: dict[str, Any]
+    ) -> ChatMessage:
+        """Atomically insert the assistant and transition its owned attempt to SUCCEEDED."""
+        async with await self._session() as session:
+            message = ChatMessage(**self._map_message(message_data))
+            session.add(message)
+            await session.flush()
+            result = await session.execute(
+                update(ChatGenerationAttempt)
+                .where(
+                    ChatGenerationAttempt.id == attempt_id,
+                    ChatGenerationAttempt.status == "RUNNING",
+                    ChatGenerationAttempt.assistant_message_id.is_(None),
+                )
+                .values(
+                    status="SUCCEEDED",
+                    retryable=False,
+                    failure_code=None,
+                    assistant_message_id=message.id,
+                    updated_at=datetime.now(UTC),
+                )
+            )
+            if result.rowcount != 1:
+                await session.rollback()
+                raise AttemptFenceLostError(attempt_id)
+            await session.commit()
+            await session.refresh(message)
+            return message
+
+    async def find_attempt_for_retry(
+        self, *, session_id: str, message_id: str, user_id: str
+    ) -> ChatGenerationAttempt | None:
+        """Latest attempt for an owned USER message in its owned conversation."""
+        async with await self._session() as session:
+            stmt = (
+                select(ChatGenerationAttempt)
+                .join(
+                    ChatMessage, ChatMessage.id == ChatGenerationAttempt.user_message_id
+                )
+                .join(ChatSession, ChatSession.id == ChatGenerationAttempt.session_id)
+                .where(
+                    ChatGenerationAttempt.session_id == session_id,
+                    ChatGenerationAttempt.user_message_id == message_id,
+                    ChatGenerationAttempt.user_id == user_id,
+                    ChatMessage.role == "USER",
+                    ChatMessage.user_id == user_id,
+                    ChatSession.user_id == user_id,
+                )
+                .order_by(ChatGenerationAttempt.created_at.desc())
+                .limit(1)
+            )
+            return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def user_message_has_answer(self, message_id: str) -> bool:
+        async with await self._session() as session:
+            stmt = (
+                select(func.count())
+                .select_from(ChatMessage)
+                .where(
+                    ChatMessage.reply_to_message_id == message_id,
+                    ChatMessage.role == "ASSISTANT",
+                )
+            )
+            return bool((await session.execute(stmt)).scalar() or 0)
+
+    async def count_user_messages(
+        self, user_id: str, *, since: datetime | None = None
+    ) -> int:
         async with await self._session() as session:
             conditions = [ChatMessage.user_id == user_id]
             if since:
@@ -210,7 +434,9 @@ class IntelligenceRepository:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def list_summaries(self, user_id: str, *, take: int = 5) -> list[ConversationSummary]:
+    async def list_summaries(
+        self, user_id: str, *, take: int = 5
+    ) -> list[ConversationSummary]:
         async with await self._session() as session:
             stmt = (
                 select(ConversationSummary)
@@ -234,7 +460,12 @@ class IntelligenceRepository:
     # -----------------------------------------------------------------------
 
     async def list_user_facts(
-        self, user_id: str, *, category: str | None = None, active_only: bool = True, take: int = 30
+        self,
+        user_id: str,
+        *,
+        category: str | None = None,
+        active_only: bool = True,
+        take: int = 30,
     ) -> list[UserFact]:
         async with await self._session() as session:
             conditions = [UserFact.user_id == user_id]
@@ -243,7 +474,10 @@ class IntelligenceRepository:
             if category:
                 conditions.append(UserFact.category == category)
             stmt = (
-                select(UserFact).where(*conditions).order_by(UserFact.updated_at.desc()).limit(take)
+                select(UserFact)
+                .where(*conditions)
+                .order_by(UserFact.updated_at.desc())
+                .limit(take)
             )
             result = await session.execute(stmt)
             return list(result.scalars().all())
@@ -278,7 +512,9 @@ class IntelligenceRepository:
 
     async def deactivate_user_fact(self, fact_id: str) -> None:
         async with await self._session() as session:
-            stmt = update(UserFact).where(UserFact.id == fact_id).values(is_active=False)
+            stmt = (
+                update(UserFact).where(UserFact.id == fact_id).values(is_active=False)
+            )
             await session.execute(stmt)
             await session.commit()
 
@@ -309,7 +545,9 @@ class IntelligenceRepository:
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
-    async def find_insight(self, user_id: str, insight_type: str) -> LearningInsight | None:
+    async def find_insight(
+        self, user_id: str, insight_type: str
+    ) -> LearningInsight | None:
         async with await self._session() as session:
             stmt = select(LearningInsight).where(
                 LearningInsight.user_id == user_id,
@@ -319,7 +557,9 @@ class IntelligenceRepository:
             result = await session.execute(stmt)
             return result.scalars().first()
 
-    async def upsert_insight(self, user_id: str, insight_type: str, data: dict[str, Any]) -> None:
+    async def upsert_insight(
+        self, user_id: str, insight_type: str, data: dict[str, Any]
+    ) -> None:
         async with await self._session() as session:
             stmt = select(LearningInsight).where(
                 LearningInsight.user_id == user_id,
@@ -366,7 +606,9 @@ class IntelligenceRepository:
         async with await self._session() as session:
             conditions = [UserInteractionMemory.user_id == user_id]
             if interaction_type:
-                conditions.append(UserInteractionMemory.interaction_type == interaction_type)
+                conditions.append(
+                    UserInteractionMemory.interaction_type == interaction_type
+                )
             if entity_type:
                 conditions.append(UserInteractionMemory.entity_type == entity_type)
             stmt = (
@@ -386,7 +628,10 @@ class IntelligenceRepository:
         self, user_id: str, *, before: datetime | None = None, take: int = 5
     ) -> list[AIAgentTask]:
         async with await self._session() as session:
-            conditions = [AIAgentTask.user_id == user_id, AIAgentTask.status == "pending"]
+            conditions = [
+                AIAgentTask.user_id == user_id,
+                AIAgentTask.status == "pending",
+            ]
             if before:
                 conditions.append(AIAgentTask.scheduled_at <= before)
             stmt = (
@@ -489,8 +734,22 @@ class IntelligenceRepository:
         # write that fails loudly rather than one that silently disappears. See
         # `tests/test_field_mapping_completeness.py` for why that guarantee exists.
         "citations": "citations",
+        "answerScope": "answer_scope",
         "truncated": "truncated",
         "askMode": "ask_mode",
+    }
+
+    _ATTEMPT_MAP = {
+        "sessionId": "session_id",
+        "userMessageId": "user_message_id",
+        "assistantMessageId": "assistant_message_id",
+        "userId": "user_id",
+        "status": "status",
+        "retryable": "retryable",
+        "failureCode": "failure_code",
+        "context": "context",
+        "askMode": "ask_mode",
+        "toolSideEffects": "tool_side_effects",
     }
 
     _ACTION_LOG_MAP = {
@@ -557,6 +816,7 @@ class IntelligenceRepository:
         "inputTokens": "input_tokens",
         "outputTokens": "output_tokens",
         "costUsd": "cost_usd",
+        "attemptId": "attempt_id",
     }
 
     _UPLOAD_MAP = {
@@ -575,6 +835,9 @@ class IntelligenceRepository:
 
     def _map_message(self, data: dict[str, Any]) -> dict[str, Any]:
         return map_fields(data, self._MESSAGE_MAP, entity="_map_message")
+
+    def _map_attempt(self, data: dict[str, Any]) -> dict[str, Any]:
+        return map_fields(data, self._ATTEMPT_MAP, entity="_map_attempt")
 
     def _map_action_log(self, data: dict[str, Any]) -> dict[str, Any]:
         return map_fields(data, self._ACTION_LOG_MAP, entity="_map_action_log")

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import inspect
 from datetime import UTC, datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel, ConfigDict
@@ -78,6 +79,7 @@ def make_message(**overrides) -> ChatMessage:
         audio_url="https://cdn.example/audio.mp3",
         image_urls=["https://cdn.example/diagram.png"],
         component_data={"type": "mermaid", "source": "graph TD;"},
+        answer_scope=models.AskScope(sources=["note"], library_recall=False),
         token_count=137,
         model_name="gemini-2.0-flash",
         reply_to_message_id="msg_0",
@@ -88,14 +90,22 @@ def make_message(**overrides) -> ChatMessage:
     return row
 
 
-def assert_reads_every_field(model: type[CamelModel], row: object) -> None:
-    """Validate `model` from `row` and assert every field equals the attribute of the same name.
+def assert_reads_every_field(
+    model: type[CamelModel],
+    row: object,
+    *,
+    derived_fields: frozenset[str] = frozenset(),
+) -> None:
+    """Validate `model` from `row` and assert every non-derived field matches its ORM attribute.
 
     Generic on purpose. A test that names the fields it checks stops covering the field somebody adds
-    next week, and the field somebody adds next week is the one that will be declared in camelCase.
+    next week. Service-derived response fields must be excluded explicitly and covered by a dedicated
+    test at the service boundary.
     """
     validated = model.model_validate(row)
     for field_name in model.model_fields:
+        if field_name in derived_fields:
+            continue
         assert hasattr(row, field_name), (
             f"{model.__name__}.{field_name} has no matching attribute on "
             f"{type(row).__name__}. Response fields are declared snake_case to match the ORM; if this "
@@ -120,9 +130,9 @@ class TestConversationResponse:
         `assert_reads_every_field` already covers them, but it covers them by iteration, and an
         iteration that walks an empty set also passes. These are the ones the outage was about.
         """
-        published = models.ConversationResponse.model_validate(make_session()).model_dump(
-            by_alias=True
-        )
+        published = models.ConversationResponse.model_validate(
+            make_session()
+        ).model_dump(by_alias=True)
         assert published["courseId"] == "course_1"
         assert published["topicId"] == "topic_1"
         assert published["examPrepId"] == "prep_1"
@@ -134,9 +144,9 @@ class TestConversationResponse:
 
     def test_publishes_camel_case_on_the_wire(self):
         """The contract the clients already implement. Fields are snake_case in Python only."""
-        published = models.ConversationResponse.model_validate(make_session()).model_dump(
-            by_alias=True
-        )
+        published = models.ConversationResponse.model_validate(
+            make_session()
+        ).model_dump(by_alias=True)
         assert "userId" in published and "user_id" not in published
         assert "createdAt" in published and "created_at" not in published
         assert "isSpaceRoom" in published and "is_space_room" not in published
@@ -146,18 +156,48 @@ class TestConversationResponse:
         validated = models.ConversationResponse.model_validate(make_session(title=None))
         assert validated.title is None
 
-    def test_a_conversation_attached_to_nothing_is_published_as_attached_to_nothing(self):
+    def test_a_conversation_attached_to_nothing_is_published_as_attached_to_nothing(
+        self,
+    ):
         row = make_session(
-            course_id=None, topic_id=None, exam_prep_id=None, note_id=None, space_id=None
+            course_id=None,
+            topic_id=None,
+            exam_prep_id=None,
+            note_id=None,
+            space_id=None,
         )
-        published = models.ConversationResponse.model_validate(row).model_dump(by_alias=True)
+        published = models.ConversationResponse.model_validate(row).model_dump(
+            by_alias=True
+        )
         assert published["courseId"] is None
         assert published["spaceId"] is None
 
 
 class TestMessageResponse:
-    def test_reads_every_field_off_the_row(self):
-        assert_reads_every_field(models.ChatMessageResponse, make_message())
+    def test_reads_every_orm_field_off_the_row(self):
+        assert_reads_every_field(
+            models.ChatMessageResponse,
+            make_message(),
+            derived_fields=frozenset({"generation"}),
+        )
+
+    def test_generation_is_an_explicit_service_derived_field(self):
+        row = make_message()
+        row.generation = SimpleNamespace(
+            latest_attempt_id="attempt_1",
+            status="FAILED",
+            retryable=True,
+            failure_code="PROVIDER_OVERLOADED",
+        )
+        published = models.ChatMessageResponse.model_validate(row).model_dump(
+            by_alias=True
+        )
+        assert published["generation"] == {
+            "latestAttemptId": "attempt_1",
+            "status": "FAILED",
+            "retryable": True,
+            "failureCode": "PROVIDER_OVERLOADED",
+        }
 
     def test_model_name_survives_pydantics_protected_prefix(self):
         """`model_name` is a real column and `model_` is reserved by pydantic.
@@ -175,12 +215,16 @@ class TestMessageResponse:
 
         Declared as `list[str] = []` this raised outright — the plain absence of an image was a `500`.
         """
-        validated = models.ChatMessageResponse.model_validate(make_message(image_urls=None))
+        validated = models.ChatMessageResponse.model_validate(
+            make_message(image_urls=None)
+        )
         assert validated.image_urls is None
 
     def test_a_message_with_images_keeps_them(self):
         validated = models.ChatMessageResponse.model_validate(
-            make_message(image_urls=["https://cdn.example/a.png", "https://cdn.example/b.png"])
+            make_message(
+                image_urls=["https://cdn.example/a.png", "https://cdn.example/b.png"]
+            )
         )
         assert validated.image_urls == [
             "https://cdn.example/a.png",
@@ -190,6 +234,21 @@ class TestMessageResponse:
     def test_component_data_passes_through_unflattened(self):
         validated = models.ChatMessageResponse.model_validate(make_message())
         assert validated.component_data == {"type": "mermaid", "source": "graph TD;"}
+
+    def test_answer_scope_is_published_in_camel_case(self):
+        published = models.ChatMessageResponse.model_validate(
+            make_message()
+        ).model_dump(by_alias=True)
+        assert published["answerScope"] == {
+            "sources": ["note"],
+            "libraryRecall": False,
+        }
+
+    def test_historical_message_scope_remains_null(self):
+        published = models.ChatMessageResponse.model_validate(
+            make_message(answer_scope=None)
+        ).model_dump(by_alias=True)
+        assert published["answerScope"] is None
 
 
 class TestTheGuardBites:
@@ -216,7 +275,9 @@ class TestTheGuardBites:
         assert "userId" in message
         assert "createdAt" in message
 
-    def test_camel_case_fields_with_defaults_are_served_as_the_default_with_no_error(self):
+    def test_camel_case_fields_with_defaults_are_served_as_the_default_with_no_error(
+        self,
+    ):
         """The dangerous half, reproduced. No exception, `200`, and the course link is gone."""
 
         class RevertedConversationResponse(BaseModel):
@@ -411,7 +472,9 @@ class TestRequestModels:
 
     def test_an_omitted_field_stays_omitted(self):
         body = models.ConversationCreate.model_validate({"courseId": "course_9"})
-        assert body.model_dump(exclude_unset=True, by_alias=True) == {"courseId": "course_9"}
+        assert body.model_dump(exclude_unset=True, by_alias=True) == {
+            "courseId": "course_9"
+        }
 
     def test_message_send_rejects_empty_content(self):
         with pytest.raises(Exception):
@@ -500,7 +563,9 @@ class TestSpaceRoomsStayOutOfTheAskSurface:
     def rendered(**kwargs) -> str:
         from sqlalchemy import select
 
-        from src.domains.intelligence.conversation.conversation_service import conversation_filters
+        from src.domains.intelligence.conversation.conversation_service import (
+            conversation_filters,
+        )
         from src.domains.intelligence.db_models import ChatSession
 
         stmt = select(ChatSession.id).where(*conversation_filters(**kwargs))
@@ -525,7 +590,9 @@ class TestSpaceRoomsStayOutOfTheAskSurface:
 
     def test_archived_conversations_are_excluded_either_way(self):
         assert '"isActive" = true' in self.rendered(user_id="user_1")
-        assert '"isActive" = true' in self.rendered(user_id="user_1", space_id="space_1")
+        assert '"isActive" = true' in self.rendered(
+            user_id="user_1", space_id="space_1"
+        )
 
     def test_the_session_type_filter_is_applied_only_when_asked(self):
         assert '"sessionType"' not in self.rendered(user_id="user_1")

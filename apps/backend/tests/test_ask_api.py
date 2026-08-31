@@ -13,6 +13,7 @@ fake bundle — which is the same seam the frame tests use, and the reason both 
 
 from __future__ import annotations
 
+import asyncio
 import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -25,20 +26,28 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.domains.intelligence import models, routes  # noqa: E402
-from src.domains.intelligence.conversation import ask_service, context_enrichment  # noqa: E402
+from src.domains.intelligence.conversation import (
+    ask_service,
+    context_enrichment,
+)  # noqa: E402
 from src.shared.auth import get_current_user  # noqa: E402
 
 USER = SimpleNamespace(id="user_1", name="Ada", tier="FREE", is_onboarded=True)
 
 
 def a_row(id_="msg_1", **extra):
-    return SimpleNamespace(id=id_, **extra)
+    defaults = {"content": "", "image_urls": None}
+    defaults.update(extra)
+    return SimpleNamespace(id=id_, **defaults)
 
 
 def fake_effects(**overrides):
     """A full `AskEffects` that answers without touching anything real."""
     defaults = {
         "create_message": AsyncMock(side_effect=lambda data: a_row("msg_assistant")),
+        "complete_attempt": AsyncMock(
+            side_effect=lambda _attempt_id, data: a_row("msg_assistant")
+        ),
         "create_action_log": AsyncMock(),
         "generate": AsyncMock(
             return_value=(
@@ -118,24 +127,90 @@ def fake_readers():
 class Harness:
     """The route under test, with its effects and reads faked and its writes recorded."""
 
-    def __init__(self, *, effects=None, rate_allowed=True, session=None, find_session=None):
+    def __init__(
+        self, *, effects=None, rate_allowed=True, session=None, find_session=None
+    ):
         self.messages: list[dict] = []
         self.sessions: list[dict] = []
-        self.session = session or SimpleNamespace(id="sess_1", user_id="user_1", title="New Chat")
+        self.session = session or SimpleNamespace(
+            id="sess_1", user_id="user_1", title="New Chat"
+        )
         self.effects = effects or fake_effects()
 
         async def create_message(data):
             self.messages.append(data)
-            return a_row(f"msg_{len(self.messages)}")
+            return a_row(
+                f"msg_{len(self.messages)}",
+                content=data.get("content", ""),
+                image_urls=data.get("imageUrls"),
+            )
+
+        async def create_message_and_attempt(*, message_data, attempt_data):
+            message = await create_message(message_data)
+            attempt = a_row(
+                "attempt_1",
+                **{
+                    "status": attempt_data["status"],
+                    "retryable": attempt_data.get("retryable", False),
+                    "context": attempt_data.get("context"),
+                    "tool_side_effects": False,
+                },
+            )
+            return message, attempt
+
+        self.attempt_updates: list[tuple[str, dict]] = []
+
+        async def update_attempt(attempt_id, data):
+            self.attempt_updates.append((attempt_id, data))
 
         async def create_chat_session(data):
             self.sessions.append(data)
             return self.session
 
         self.create_message = create_message
+        self.create_message_and_attempt = create_message_and_attempt
+        self.update_attempt = update_attempt
+        self.heartbeat_attempt = AsyncMock()
         self.create_chat_session = create_chat_session
         self.find_session = find_session or AsyncMock(return_value=self.session)
         self.rate_allowed = rate_allowed
+        self.prior_attempt = SimpleNamespace(
+            id="attempt_prior",
+            status="FAILED",
+            retryable=True,
+            tool_side_effects=False,
+            context={"goalId": "goal_1"},
+        )
+        self.retry_message_row = a_row(
+            "msg_retry",
+            content="Try this again",
+            image_urls=["https://example.test/a.png"],
+            user_id="user_1",
+        )
+        self.retry_answered = False
+
+        async def find_attempt_for_retry(**_kwargs):
+            return self.prior_attempt
+
+        async def find_message(_message_id):
+            return self.retry_message_row
+
+        async def user_message_has_answer(_message_id):
+            return self.retry_answered
+
+        async def create_attempt(data):
+            return a_row(
+                "attempt_retry",
+                status=data["status"],
+                retryable=False,
+                context=data.get("context"),
+                tool_side_effects=False,
+            )
+
+        self.find_attempt_for_retry = find_attempt_for_retry
+        self.find_message = find_message
+        self.user_message_has_answer = user_message_has_answer
+        self.create_attempt = create_attempt
 
     def __enter__(self):
         app = FastAPI()
@@ -146,9 +221,45 @@ class Harness:
             return (self.rate_allowed, 0)
 
         self._patches = [
-            patch.object(routes.intelligence_repo, "create_message", self.create_message),
-            patch.object(routes.intelligence_repo, "create_chat_session", self.create_chat_session),
-            patch.object(routes.intelligence_repo, "find_chat_session", self.find_session),
+            patch.object(
+                routes.intelligence_repo, "create_message", self.create_message
+            ),
+            patch.object(
+                routes.intelligence_repo,
+                "create_message_and_attempt",
+                self.create_message_and_attempt,
+            ),
+            patch.object(
+                routes.intelligence_repo, "update_attempt", self.update_attempt
+            ),
+            patch.object(
+                routes.intelligence_repo, "update_running_attempt", self.update_attempt
+            ),
+            patch.object(
+                routes.intelligence_repo, "heartbeat_attempt", self.heartbeat_attempt
+            ),
+            patch.object(
+                routes.intelligence_repo,
+                "find_attempt_for_retry",
+                self.find_attempt_for_retry,
+            ),
+            patch.object(routes.intelligence_repo, "find_message", self.find_message),
+            patch.object(
+                routes.intelligence_repo,
+                "user_message_has_answer",
+                self.user_message_has_answer,
+            ),
+            patch.object(
+                routes.intelligence_repo, "create_attempt", self.create_attempt
+            ),
+            patch.object(
+                routes.intelligence_repo,
+                "create_chat_session",
+                self.create_chat_session,
+            ),
+            patch.object(
+                routes.intelligence_repo, "find_chat_session", self.find_session
+            ),
             patch.object(ask_service, "production_effects", lambda: self.effects),
             patch.object(context_enrichment, "production_readers", fake_readers),
             patch.object(context_enrichment, "production_cache", lambda: None),
@@ -170,6 +281,11 @@ class Harness:
         payload = {"message": "What is entropy?"}
         payload.update(body)
         return self.client.post("/api/v1/intelligence/ask", json=payload)
+
+    def retry(self, session_id="sess_1", message_id="msg_retry"):
+        return self.client.post(
+            f"/api/v1/intelligence/conversations/{session_id}/messages/{message_id}/retry"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +323,7 @@ class TestATurnOverHttp:
         with Harness() as h:
             h.ask()
             assert [row["role"] for row in h.messages] == ["USER"]
-            assert h.effects.create_message.await_count == 1
+            assert h.effects.complete_attempt.await_count == 1
 
     def test_the_response_is_camel_case_on_the_wire(self):
         """Decision D. The field is `suggestion_text` in Python and `suggestionText` published."""
@@ -223,7 +339,7 @@ class TestTheHttpPathIsMetered:
         column, and `askMode` existed with no writer at all until this phase."""
         with Harness() as h:
             h.ask()
-            row = h.effects.create_message.await_args.kwargs["data"]
+            row = h.effects.complete_attempt.await_args.args[1]
         assert row["askMode"] == ask_service.ASK_MODE_HTTP
 
     def test_credits_are_consumed_on_a_successful_turn(self):
@@ -234,7 +350,7 @@ class TestTheHttpPathIsMetered:
     def test_the_answer_carries_token_counts_and_cost(self):
         with Harness() as h:
             h.ask()
-            row = h.effects.create_message.await_args.kwargs["data"]
+            row = h.effects.complete_attempt.await_args.args[1]
         assert row["inputTokens"] == 10
         assert row["outputTokens"] == 5
         assert row["costUsd"] is not None
@@ -299,7 +415,9 @@ class TestRateLimiting:
     def test_the_refusal_says_when_to_come_back(self):
         with Harness(rate_allowed=False) as h:
             response = h.ask()
-        assert response.headers["Retry-After"] == str(ask_service.RATE_LIMIT_WINDOW_SECONDS)
+        assert response.headers["Retry-After"] == str(
+            ask_service.RATE_LIMIT_WINDOW_SECONDS
+        )
 
     def test_a_rate_limited_turn_leaves_no_row(self):
         with Harness(rate_allowed=False) as h:
@@ -355,7 +473,9 @@ class TestAFailedGenerationIsNotAnAnswer:
 
     @staticmethod
     def broken():
-        return fake_effects(generate=AsyncMock(side_effect=RuntimeError("provider down")))
+        return fake_effects(
+            generate=AsyncMock(side_effect=RuntimeError("provider down"))
+        )
 
     def test_it_is_a_503(self):
         with Harness(effects=self.broken()) as h:
@@ -449,7 +569,9 @@ class TestOneTurnAtATimePerConversation:
 
     def test_the_slot_is_released_after_a_failed_turn(self):
         """A `503` must not leave the conversation permanently locked."""
-        effects = fake_effects(generate=AsyncMock(side_effect=RuntimeError("provider down")))
+        effects = fake_effects(
+            generate=AsyncMock(side_effect=RuntimeError("provider down"))
+        )
         with Harness(effects=effects) as h:
             assert h.ask().status_code == 503
         assert ask_service.turns_in_flight() == frozenset()
@@ -503,7 +625,9 @@ class TestActionsComeFromTheModelOnly:
         )
         with Harness(effects=effects) as h:
             actions = h.ask().json()["actions"]
-        assert actions == [{"type": "create_course", "status": "SUCCESS", "courseId": "c1"}]
+        assert actions == [
+            {"type": "create_course", "status": "SUCCESS", "courseId": "c1"}
+        ]
 
     def test_a_failed_action_is_still_reported(self):
         """Carried rather than filtered. The event frames and the components are both success-shaped, so a
@@ -517,7 +641,10 @@ class TestActionsComeFromTheModelOnly:
                         {
                             "type": "create_course",
                             "data": {},
-                            "result": {"status": "error", "message": "Topic limit reached"},
+                            "result": {
+                                "status": "error",
+                                "message": "Topic limit reached",
+                            },
                         }
                     ],
                     [],
@@ -527,3 +654,96 @@ class TestActionsComeFromTheModelOnly:
         with Harness(effects=effects) as h:
             actions = h.ask().json()["actions"]
         assert actions[0]["status"] == "FAILED"
+
+
+class TestDurableRetry:
+    def test_http_retry_uses_the_same_rate_limit_before_generation(self):
+        with Harness(rate_allowed=False) as h:
+            response = h.retry()
+        assert response.status_code == 429
+        h.effects.generate.assert_not_awaited()
+
+    def test_retry_reuses_the_original_user_row_content_images_and_context(self):
+        with Harness() as h:
+            response = h.retry()
+        assert response.status_code == 200
+        assert h.messages == [], "retry must not create a second USER row"
+        kwargs = h.effects.generate.await_args.kwargs
+        assert kwargs["user_message"] == "Try this again"
+        assert kwargs["image_url"] == "https://example.test/a.png"
+        assert kwargs["context"] == {"goalId": "goal_1"}
+        assert response.json()["attemptId"] == "attempt_retry"
+
+    @pytest.mark.parametrize(
+        "status,retryable,tool_side_effects",
+        [
+            ("SUCCEEDED", False, False),
+            ("FAILED", False, False),
+            ("FAILED", True, True),
+            ("RUNNING", False, False),
+        ],
+    )
+    def test_only_explicitly_retryable_terminal_side_effect_free_attempts_are_allowed(
+        self, status, retryable, tool_side_effects
+    ):
+        with Harness() as h:
+            h.prior_attempt.status = status
+            h.prior_attempt.retryable = retryable
+            h.prior_attempt.tool_side_effects = tool_side_effects
+            response = h.retry()
+        assert response.status_code == 409
+        h.effects.generate.assert_not_awaited()
+
+    def test_an_answered_attempt_is_rejected(self):
+        with Harness() as h:
+            h.retry_answered = True
+            response = h.retry()
+        assert response.status_code == 409
+
+    def test_an_unknown_legacy_message_is_rejected(self):
+        with Harness() as h:
+            h.prior_attempt = None
+            response = h.retry()
+        assert response.status_code == 409
+
+    def test_a_foreign_conversation_is_hidden(self):
+        foreign = SimpleNamespace(id="sess_1", user_id="someone_else", title="Private")
+        with Harness(session=foreign) as h:
+            response = h.retry()
+        assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cancel_boundary_closes_before_post_generation_persistence():
+    charging = asyncio.Event()
+    release = asyncio.Event()
+
+    async def consume(*_args):
+        charging.set()
+        await release.wait()
+
+    effects = fake_effects(consume_credits=AsyncMock(side_effect=consume))
+    task = asyncio.create_task(
+        ask_service.answer(
+            message="What is entropy?",
+            user=USER,
+            user_obj=USER,
+            session=SimpleNamespace(id="sess_1"),
+            user_message=SimpleNamespace(id="msg_user"),
+            context=None,
+            ask_mode=ask_service.ASK_MODE_WEBSOCKET,
+            readers=fake_readers(),
+            effects=effects,
+            attempt_id="attempt_boundary",
+            update_attempt=AsyncMock(),
+        )
+    )
+    await charging.wait()
+
+    assert ask_service.cancel_turn("attempt_boundary") is False
+    assert not task.done()
+
+    release.set()
+    turn = await task
+    assert turn.assistant_message.id == "msg_assistant"
+    effects.complete_attempt.assert_awaited_once()

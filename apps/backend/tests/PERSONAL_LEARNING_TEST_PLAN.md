@@ -639,11 +639,11 @@ Use an item ID from the plan detail.
 
 ---
 
-### Phase 12: Chat
+### Phase 12: Ask Maigie
 
 #### Test 12.1 — Send Message
 
-**Endpoint:** `POST /api/v1/learning/chat`
+**Endpoint:** `POST /api/v1/intelligence/ask`
 
 ```json
 {
@@ -651,17 +651,13 @@ Use an item ID from the plan detail.
 }
 ```
 
-**Expected:** `200 OK`
-```json
-{
-  "message": "Based on your goals and current progress...",
-  "suggestedAction": { "type": "review_flashcards", "title": "..." }
-}
-```
+**Expected:** `200 OK` with an `id`, `attemptId`, `sessionId`, generated `content`, honest `scope`, and model-executed `actions`.
+
+For streaming, connect to `WS /api/v1/intelligence/ws`; confirm `message_saved`, `stream`, and `assistant_final` frames share the durable attempt `requestId`.
 
 #### Test 12.2 — Empty Message Validation
 
-**Endpoint:** `POST /api/v1/learning/chat`
+**Endpoint:** `POST /api/v1/intelligence/ask`
 
 ```json
 {
@@ -669,7 +665,13 @@ Use an item ID from the plan detail.
 }
 ```
 
-**Expected:** `422 Unprocessable Entity`
+**Expected:** `400 Bad Request` and no conversation message or generation-attempt row.
+
+#### Test 12.3 — Retry a Persisted Failure
+
+**Endpoint:** `POST /api/v1/intelligence/conversations/{session_id}/messages/{message_id}/retry`
+
+**Expected:** Only an explicitly retryable FAILED/CANCELLED unanswered attempt can run again. The original USER message is reused; no duplicate USER row is created.
 
 ---
 

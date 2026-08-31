@@ -6,11 +6,16 @@ Messages flow through the reasoning layer for AI responses.
 """
 
 import logging
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import and_, delete, func, or_, select
 
-from src.domains.intelligence.db_models import ChatMessage, ChatSession
+from src.domains.intelligence.db_models import (
+    ChatGenerationAttempt,
+    ChatMessage,
+    ChatSession,
+)
 from src.domains.intelligence.repository import intelligence_repo
 from src.shared.database import get_session_factory
 from src.shared.exceptions import NotFoundError
@@ -58,7 +63,10 @@ def conversation_filters(
     Ask Maigie is the personal, one-to-one surface. If the `space_id is None` branch ever stops
     excluding rooms, group conversations leak into it.
     """
-    conditions = [ChatSession.user_id == user_id, ChatSession.is_active == True]  # noqa: E712
+    conditions = [
+        ChatSession.user_id == user_id,
+        ChatSession.is_active == True,  # noqa: E712
+    ]  # noqa: E712
     if session_type:
         conditions.append(ChatSession.session_type == session_type)
     if space_id:
@@ -155,15 +163,63 @@ async def get_messages(
                 )
             )
 
-        # One extra row, to answer `has_more` without a second count.
+        latest_attempts = (
+            select(
+                ChatGenerationAttempt.id.label("latest_attempt_id"),
+                ChatGenerationAttempt.user_message_id.label("attempt_message_id"),
+                ChatGenerationAttempt.status.label("attempt_status"),
+                ChatGenerationAttempt.retryable.label("attempt_retryable"),
+                ChatGenerationAttempt.failure_code.label("attempt_failure_code"),
+                func.row_number()
+                .over(
+                    partition_by=ChatGenerationAttempt.user_message_id,
+                    order_by=(
+                        ChatGenerationAttempt.created_at.desc(),
+                        ChatGenerationAttempt.id.desc(),
+                    ),
+                )
+                .label("attempt_rank"),
+            )
+            .where(
+                ChatGenerationAttempt.session_id == session_id,
+                ChatGenerationAttempt.user_id == user_id,
+            )
+            .subquery()
+        )
+
+        # One extra row answers `has_more`; the window join adds latest attempt state in
+        # the same query, independent of page size (no per-message lookup).
         stmt = (
-            select(ChatMessage)
+            select(
+                ChatMessage,
+                latest_attempts.c.latest_attempt_id,
+                latest_attempts.c.attempt_status,
+                latest_attempts.c.attempt_retryable,
+                latest_attempts.c.attempt_failure_code,
+            )
+            .outerjoin(
+                latest_attempts,
+                and_(
+                    latest_attempts.c.attempt_message_id == ChatMessage.id,
+                    latest_attempts.c.attempt_rank == 1,
+                    ChatMessage.role == "USER",
+                ),
+            )
             .where(*conditions)
             .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .limit(limit + 1)
         )
-        result = await session.execute(stmt)
-        window = list(result.scalars().all())
+        rows = (await session.execute(stmt)).all()
+        window = []
+        for message, attempt_id, attempt_status, retryable, failure_code in rows:
+            if attempt_id is not None:
+                message.generation = SimpleNamespace(
+                    latest_attempt_id=attempt_id,
+                    status=attempt_status,
+                    retryable=bool(retryable),
+                    failure_code=failure_code,
+                )
+            window.append(message)
 
     has_more = len(window) > limit
     window = window[:limit]
@@ -185,6 +241,8 @@ async def delete_conversation(*, session_id: str, user_id: str) -> None:
     await get_conversation(session_id=session_id, user_id=user_id)
     factory = get_session_factory()
     async with factory() as session:
-        await session.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
+        await session.execute(
+            delete(ChatMessage).where(ChatMessage.session_id == session_id)
+        )
         await session.execute(delete(ChatSession).where(ChatSession.id == session_id))
         await session.commit()

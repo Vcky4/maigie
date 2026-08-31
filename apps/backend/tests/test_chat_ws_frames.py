@@ -107,7 +107,9 @@ class StrictFakeManager:
 
     def __getattr__(self, name: str):
         if name not in REAL_MANAGER_ATTRS:
-            raise AttributeError(f"'ConnectionManager' object has no attribute '{name}'")
+            raise AttributeError(
+                f"'ConnectionManager' object has no attribute '{name}'"
+            )
 
         if name in ("join_room", "leave_room"):
 
@@ -244,6 +246,7 @@ async def drive(
     credits_available: tuple[bool, str | None] = (True, None),
     route_request=None,
     on_idle=None,
+    rate_allowed: bool = True,
 ) -> dict:
     """Run one connection through the handler and report what left it.
 
@@ -262,6 +265,9 @@ async def drive(
         row = MagicMock()
         row.id = f"msg_{len(created_rows)}"
         row.reply_to_message_id = data.get("replyToMessageId")
+        row.content = data.get("content", "")
+        row.image_urls = data.get("imageUrls")
+        row.user_id = data.get("userId", "user_1")
         row.created_at = MagicMock()
         row.created_at.isoformat.return_value = "2026-08-26T09:00:00+00:00"
         created_rows.append(data)
@@ -277,7 +283,11 @@ async def drive(
                 await stream_callback(chunk, index == len(chunks) - 1)
         return (
             reply,
-            {"input_tokens": 120, "output_tokens": 40, "model_name": "gemini-2.0-flash"},
+            {
+                "input_tokens": 120,
+                "output_tokens": 40,
+                "model_name": "gemini-2.0-flash",
+            },
             executed_actions or [],
             query_results or [],
         )
@@ -304,9 +314,29 @@ async def drive(
 
     credit_check = AsyncMock(return_value=credits_available)
     consume = AsyncMock(return_value=credit_result)
+    attempt_updates: list[tuple[str, dict]] = []
+
+    async def create_message_and_attempt(*, message_data, attempt_data):
+        message = make_row(message_data)
+        return message, SimpleNamespace(
+            id=f"attempt_{len(created_rows)}",
+            status=attempt_data["status"],
+            retryable=False,
+            context=attempt_data.get("context"),
+            tool_side_effects=False,
+        )
+
+    async def update_attempt(attempt_id, data):
+        attempt_updates.append((attempt_id, data))
+
+    async def fake_rate_limit(_key, _maximum, _window):
+        return rate_allowed, 0
 
     effects = ask_service.AskEffects(
         create_message=AsyncMock(side_effect=lambda data: make_row(data)),
+        complete_attempt=AsyncMock(
+            side_effect=lambda _attempt_id, data: make_row(data)
+        ),
         create_action_log=fake_create_action_log,
         generate=route_request or fake_route_request,
         resolve_tier=AsyncMock(return_value="free"),
@@ -339,13 +369,28 @@ async def drive(
 
     with (
         patch.object(wh, "manager", manager),
+        patch.object(wh, "check_rate_limit", fake_rate_limit),
         patch.object(ce, "production_readers", lambda: test_readers),
         patch.object(ask_service, "production_effects", lambda: effects),
         patch.object(wh, "get_session_factory", lambda: FakeDbSession),
-        patch.object(wh.intelligence_repo, "create_chat_session", AsyncMock(return_value=session)),
-        patch.object(wh.intelligence_repo, "find_chat_session", AsyncMock(return_value=session)),
+        patch.object(
+            wh.intelligence_repo, "create_chat_session", AsyncMock(return_value=session)
+        ),
+        patch.object(
+            wh.intelligence_repo, "find_chat_session", AsyncMock(return_value=session)
+        ),
         patch.object(wh.intelligence_repo, "update_chat_session", AsyncMock()),
-        patch.object(wh.intelligence_repo, "create_message", AsyncMock(side_effect=make_row)),
+        patch.object(
+            wh.intelligence_repo,
+            "create_message_and_attempt",
+            create_message_and_attempt,
+        ),
+        patch.object(wh.intelligence_repo, "update_attempt", update_attempt),
+        patch.object(wh.intelligence_repo, "update_running_attempt", update_attempt),
+        patch.object(wh.intelligence_repo, "heartbeat_attempt", AsyncMock()),
+        patch.object(
+            wh.intelligence_repo, "create_message", AsyncMock(side_effect=make_row)
+        ),
         patch(
             "src.domains.identity.repository.IdentityRepository.find_by_id",
             AsyncMock(return_value=FakeUser()),
@@ -357,7 +402,9 @@ async def drive(
             await ws_endpoint()(socket, FakeUser())
         except InputExhausted:
             pass
-        except BaseException as exc:  # noqa: BLE001 — the test decides whether it mattered
+        except (
+            BaseException
+        ) as exc:  # noqa: BLE001 — the test decides whether it mattered
             error = exc
 
     return {
@@ -444,12 +491,16 @@ class TestNoAwaitMismatches:
         awaited_state: dict[str, set[bool]] = {}
 
         class Visitor(ast.NodeVisitor):
-            def visit_Await(self, node):  # noqa: N802 — ast.NodeVisitor dispatches on this name
+            def visit_Await(  # noqa: N802 — ast.NodeVisitor dispatches on this name
+                self, node
+            ):
                 if isinstance(node.value, ast.Call):
                     self.record(node.value, True)
                 self.generic_visit(node)
 
-            def visit_Call(self, node):  # noqa: N802 — ast.NodeVisitor dispatches on this name
+            def visit_Call(  # noqa: N802 — ast.NodeVisitor dispatches on this name
+                self, node
+            ):
                 self.record(node, False)
                 self.generic_visit(node)
 
@@ -467,15 +518,22 @@ class TestNoAwaitMismatches:
             is_async = inspect.iscoroutinefunction(target)
             if is_async and states == {False}:
                 found.append(
-                    (name, "is async but is never awaited — the coroutine is used as a value")
+                    (
+                        name,
+                        "is async but is never awaited — the coroutine is used as a value",
+                    )
                 )
             if not is_async and True in states:
-                found.append((name, "is synchronous but is awaited — TypeError at runtime"))
+                found.append(
+                    (name, "is synchronous but is awaited — TypeError at runtime")
+                )
         return found
 
     def test_the_handler_awaits_exactly_what_it_should(self):
         found = self.mismatches()
-        assert found == [], "async/await mismatches in websocket_handler:\n" + "\n".join(
+        assert (
+            found == []
+        ), "async/await mismatches in websocket_handler:\n" + "\n".join(
             f"  {name}: {problem}" for name, problem in found
         )
 
@@ -526,16 +584,22 @@ class TestStubsAreHonestRatherThanHarmful:
 
     def test_a_suggestion_split_returns_the_answer_whole(self):
         """Unimplemented must mean "no split", never "part of the answer"."""
-        from src.domains.intelligence.conversation.chat_helpers import _extract_suggestion
+        from src.domains.intelligence.conversation.chat_helpers import (
+            _extract_suggestion,
+        )
 
-        content, suggestion = _extract_suggestion("Entropy measures disorder. Next, try a quiz.")
+        content, suggestion = _extract_suggestion(
+            "Entropy measures disorder. Next, try a quiz."
+        )
         assert content == "Entropy measures disorder. Next, try a quiz."
         assert suggestion is None
 
     def test_a_suggestion_split_is_not_a_coroutine(self):
         import inspect
 
-        from src.domains.intelligence.conversation.chat_helpers import _extract_suggestion
+        from src.domains.intelligence.conversation.chat_helpers import (
+            _extract_suggestion,
+        )
 
         assert not inspect.iscoroutinefunction(_extract_suggestion), (
             "_extract_suggestion is async again. The handler unpacks its result into two names without "
@@ -544,12 +608,16 @@ class TestStubsAreHonestRatherThanHarmful:
 
     def test_a_message_with_no_reply_target_previews_as_none(self):
         """`{}` claimed a reply preview with no fields in it. `None` says there is no reply."""
-        from src.domains.intelligence.conversation.chat_helpers import _serialize_reply_preview
+        from src.domains.intelligence.conversation.chat_helpers import (
+            _serialize_reply_preview,
+        )
 
         assert _serialize_reply_preview(None) is None
 
     def test_a_real_reply_target_previews_with_its_content(self):
-        from src.domains.intelligence.conversation.chat_helpers import _serialize_reply_preview
+        from src.domains.intelligence.conversation.chat_helpers import (
+            _serialize_reply_preview,
+        )
 
         row = SimpleNamespace(
             id="msg_1",
@@ -565,13 +633,19 @@ class TestStubsAreHonestRatherThanHarmful:
         assert preview["userName"] == "Ada"
 
     def test_a_long_reply_is_truncated_rather_than_sent_whole(self):
-        from src.domains.intelligence.conversation.chat_helpers import _serialize_reply_preview
+        from src.domains.intelligence.conversation.chat_helpers import (
+            _serialize_reply_preview,
+        )
 
-        row = SimpleNamespace(id="m", role="USER", content="x" * 5_000, user_id="u", user=None)
+        row = SimpleNamespace(
+            id="m", role="USER", content="x" * 5_000, user_id="u", user=None
+        )
         assert len(_serialize_reply_preview(row)["content"]) == 200
 
     def test_roles_are_mapped_to_the_spelling_the_clients_switch_on(self):
-        from src.domains.intelligence.conversation.chat_helpers import _map_db_role_to_client
+        from src.domains.intelligence.conversation.chat_helpers import (
+            _map_db_role_to_client,
+        )
 
         assert _map_db_role_to_client("ASSISTANT") == "assistant"
         assert _map_db_role_to_client("USER") == "user"
@@ -662,6 +736,12 @@ class TestAFullTurn:
         assert assistant["costUsd"] is not None
         assert assistant["revenueUsd"] is not None
 
+    def test_scope_is_identical_in_persistence_and_final_frame(self):
+        result = run(["What is entropy?"])
+        assistant_scope = result["rows"][1]["answerScope"]
+        final = result["manager"].bodies_of("assistant_final")[0]
+        assert final["scope"] == assistant_scope
+
     def test_the_turn_does_not_raise(self):
         assert run(["What is entropy?"])["error"] is None
 
@@ -689,19 +769,31 @@ class TestATurnThatUsedATool:
     ACTION = {
         "type": "create_course",
         "data": {"title": "Thermodynamics"},
-        "result": {"status": "success", "course_id": "course_1", "message": "Course created!"},
+        "result": {
+            "status": "success",
+            "course_id": "course_1",
+            "message": "Course created!",
+        },
     }
 
     def test_a_tool_using_turn_does_not_raise(self):
-        result = run(["Make me a thermodynamics course"], executed_actions=[self.ACTION])
-        assert result["error"] is None, f"a turn with components raised {result['error']!r}"
+        result = run(
+            ["Make me a thermodynamics course"], executed_actions=[self.ACTION]
+        )
+        assert (
+            result["error"] is None
+        ), f"a turn with components raised {result['error']!r}"
 
     def test_the_answer_still_reaches_the_client(self):
-        result = run(["Make me a thermodynamics course"], executed_actions=[self.ACTION])
+        result = run(
+            ["Make me a thermodynamics course"], executed_actions=[self.ACTION]
+        )
         assert "assistant_final" in result["manager"].frame_types
 
     def test_the_assistant_row_is_still_written(self):
-        result = run(["Make me a thermodynamics course"], executed_actions=[self.ACTION])
+        result = run(
+            ["Make me a thermodynamics course"], executed_actions=[self.ACTION]
+        )
         assert [row["role"] for row in result["rows"]] == ["USER", "ASSISTANT"]
 
     def test_the_answer_is_not_truncated_by_the_suggestion_split(self):
@@ -710,12 +802,16 @@ class TestATurnThatUsedATool:
         Returning a partial answer would be worse than not splitting at all: the learner would lose
         prose the model produced, and nothing would report it.
         """
-        result = run(["Make me a thermodynamics course"], executed_actions=[self.ACTION])
+        result = run(
+            ["Make me a thermodynamics course"], executed_actions=[self.ACTION]
+        )
         assistant = result["rows"][1]
         assert assistant["content"] == "Entropy measures disorder."
 
     def test_the_action_is_logged(self):
-        result = run(["Make me a thermodynamics course"], executed_actions=[self.ACTION])
+        result = run(
+            ["Make me a thermodynamics course"], executed_actions=[self.ACTION]
+        )
         assert result["error"] is None
 
 
@@ -747,21 +843,33 @@ class TestAFailedGenerationIsNotAnAnswer:
         return raise_it
 
     def test_a_provider_failure_sends_an_error_frame(self):
-        result = run(["What is entropy?"], route_request=self.failing_router(RuntimeError("boom")))
+        result = run(
+            ["What is entropy?"],
+            route_request=self.failing_router(RuntimeError("boom")),
+        )
         assert "error" in result["manager"].frame_types
 
     def test_a_provider_failure_persists_no_assistant_row(self):
-        result = run(["What is entropy?"], route_request=self.failing_router(RuntimeError("boom")))
+        result = run(
+            ["What is entropy?"],
+            route_request=self.failing_router(RuntimeError("boom")),
+        )
         roles = [row["role"] for row in result["rows"]]
         assert roles == ["USER"], f"a failed turn wrote {roles}"
 
     def test_a_provider_failure_does_not_send_assistant_final(self):
-        result = run(["What is entropy?"], route_request=self.failing_router(RuntimeError("boom")))
+        result = run(
+            ["What is entropy?"],
+            route_request=self.failing_router(RuntimeError("boom")),
+        )
         assert "assistant_final" not in result["manager"].frame_types
 
     def test_a_provider_failure_does_not_consume_credits(self):
         """The learner was not answered, so they are not charged."""
-        result = run(["What is entropy?"], route_request=self.failing_router(RuntimeError("boom")))
+        result = run(
+            ["What is entropy?"],
+            route_request=self.failing_router(RuntimeError("boom")),
+        )
         result["consume"].assert_not_awaited()
 
     def test_the_unmigrated_router_is_reported_as_a_failure_not_an_answer(self):
@@ -775,7 +883,9 @@ class TestAFailedGenerationIsNotAnAnswer:
 
         result = run(
             ["What is entropy?"],
-            route_request=self.failing_router(UnmigratedSubsystemError("router not migrated")),
+            route_request=self.failing_router(
+                UnmigratedSubsystemError("router not migrated")
+            ),
         )
         assert [row["role"] for row in result["rows"]] == ["USER"]
         assert "error" in result["manager"].frame_types
@@ -893,7 +1003,9 @@ class TestOneTurnAtATimePerConversation:
             result = run(["What is entropy?"])
         errors = result["manager"].bodies_of("error")
         assert errors[0]["payload"]["retryable"] is True
-        assert errors[0]["payload"]["code"] == ask_service.MESSAGE_REJECTED_TURN_IN_FLIGHT
+        assert (
+            errors[0]["payload"]["code"] == ask_service.MESSAGE_REJECTED_TURN_IN_FLIGHT
+        )
 
     def test_the_slot_is_released_so_the_next_turn_works(self):
         """Two turns in sequence on one connection. If the slot leaked, the second would be refused —
@@ -913,13 +1025,16 @@ class TestOneTurnAtATimePerConversation:
         assert result["prompts"] == ["What is entropy?"]
         errors = result["manager"].bodies_of("error")
         assert any(
-            e["payload"].get("code") == ask_service.MESSAGE_REJECTED_TURN_IN_FLIGHT for e in errors
+            e["payload"].get("code") == ask_service.MESSAGE_REJECTED_TURN_IN_FLIGHT
+            for e in errors
         )
 
     def test_a_failed_turn_releases_the_slot(self):
         result = run(
             ["What is entropy?", "And enthalpy?"],
-            route_request=TestAFailedGenerationIsNotAnAnswer.failing_router(RuntimeError("boom")),
+            route_request=TestAFailedGenerationIsNotAnAnswer.failing_router(
+                RuntimeError("boom")
+            ),
         )
         assert ask_service.turns_in_flight() == frozenset()
         assert len(result["manager"].bodies_of("error")) == 2
@@ -942,7 +1057,12 @@ class TestStoppingATurn:
             if callback:
                 await callback("Entropy ", False)
             await hang.wait()
-            return ("Entropy measures disorder.", {"input_tokens": 1, "output_tokens": 1}, [], [])
+            return (
+                "Entropy measures disorder.",
+                {"input_tokens": 1, "output_tokens": 1},
+                [],
+                [],
+            )
 
         return route
 
@@ -974,7 +1094,7 @@ class TestStoppingATurn:
                 [
                     "What is entropy?",
                     AWAIT_GENERATING,
-                    json.dumps({"type": "cancel", "requestId": "msg_0"}),
+                    json.dumps({"type": "cancel", "requestId": "attempt_1"}),
                 ],
                 route_request=self.slow_router(hang=hang),
                 on_idle=lambda: hang.set(),
@@ -987,7 +1107,9 @@ class TestStoppingATurn:
             for body in result["manager"].bodies_of("event")
             if body["payload"].get("action") == "cancel"
         ]
-        assert cancels, "the cancel frame was never processed while the turn was running"
+        assert (
+            cancels
+        ), "the cancel frame was never processed while the turn was running"
 
     def test_a_cancelled_turn_writes_no_assistant_row(self):
         """No row and no charge, the rule the failed-generation branches already follow. The partial text
@@ -999,7 +1121,7 @@ class TestStoppingATurn:
                 [
                     "What is entropy?",
                     AWAIT_GENERATING,
-                    json.dumps({"type": "cancel", "requestId": "msg_0"}),
+                    json.dumps({"type": "cancel", "requestId": "attempt_1"}),
                 ],
                 route_request=self.slow_router(hang=hang),
                 on_idle=lambda: hang.set(),
@@ -1014,7 +1136,7 @@ class TestStoppingATurn:
                 [
                     "What is entropy?",
                     AWAIT_GENERATING,
-                    json.dumps({"type": "cancel", "requestId": "msg_0"}),
+                    json.dumps({"type": "cancel", "requestId": "attempt_1"}),
                 ],
                 route_request=self.slow_router(hang=hang),
                 on_idle=lambda: hang.set(),
@@ -1029,7 +1151,7 @@ class TestStoppingATurn:
                 [
                     "What is entropy?",
                     AWAIT_GENERATING,
-                    json.dumps({"type": "cancel", "requestId": "msg_0"}),
+                    json.dumps({"type": "cancel", "requestId": "attempt_1"}),
                 ],
                 route_request=self.slow_router(hang=hang),
                 on_idle=lambda: hang.set(),
@@ -1045,7 +1167,7 @@ class TestStoppingATurn:
                 [
                     "What is entropy?",
                     AWAIT_GENERATING,
-                    json.dumps({"type": "cancel", "requestId": "msg_0"}),
+                    json.dumps({"type": "cancel", "requestId": "attempt_1"}),
                 ],
                 route_request=self.slow_router(hang=hang),
                 on_idle=lambda: hang.set(),
@@ -1053,3 +1175,21 @@ class TestStoppingATurn:
         )
         assert ask_service.turns_in_flight() == frozenset()
         assert ask_service.cancellable_turns() == frozenset()
+
+
+class TestWebSocketRateLimitWiring:
+    def test_a_rate_limited_turn_is_refused_before_persistence_or_generation(self):
+        result = run(["What is entropy?"], rate_allowed=False)
+        errors = result["manager"].bodies_of("error")
+        assert errors[0]["payload"]["code"] == ask_service.MESSAGE_REJECTED_RATE_LIMITED
+        assert result["rows"] == []
+        assert result["prompts"] == []
+
+
+def test_websocket_retry_restores_images_persisted_by_http():
+    http_user_message = SimpleNamespace(
+        image_urls=["https://cdn.example.test/original.png"], image_url=None
+    )
+    assert wh._retry_image_urls(
+        http_user_message, ["https://context.example.test/fallback.png"]
+    ) == ["https://cdn.example.test/original.png"]

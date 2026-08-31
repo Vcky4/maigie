@@ -38,7 +38,11 @@ from src.domains.intelligence.conversation.chat_helpers import (
 from src.domains.intelligence.db_models import ChatMessage, ChatSession
 from src.domains.intelligence.reasoning.llm.errors import LLMProviderError
 from src.domains.intelligence.reasoning.llm.llm_service import llm_service
-from src.domains.intelligence.repository import intelligence_repo
+from src.domains.intelligence.repository import (
+    ActiveGenerationAttemptError,
+    AttemptFenceLostError,
+    intelligence_repo,
+)
 from src.shared.database import get_session_factory
 from src.shared.exceptions import SubscriptionLimitError
 from src.shared.infrastructure.rate_limit import check_rate_limit
@@ -59,6 +63,15 @@ _ERROR_CATEGORY_MESSAGES: dict[str, str] = {
     "unsupported_capability": "This model does not support the requested operation.",
     "unknown": "An unexpected error occurred.",
 }
+
+
+def _retry_image_urls(message: Any, fallback: list[str]) -> list[str]:
+    """Restore persisted HTTP/WS images for a cross-transport retry."""
+    persisted = list(getattr(message, "image_urls", None) or [])
+    legacy = getattr(message, "image_url", None)
+    if legacy and not persisted:
+        persisted = [legacy]
+    return persisted or fallback
 
 
 def register_chat_websocket_routes(router: APIRouter, db: Any):
@@ -142,11 +155,10 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
         # whether a router exists is the thing that changes when the LLM layer is reconfigured.
         effects = ask_service.production_effects()
 
-        # Turns still running on this connection. Held so a disconnect can cancel them: without this a
-        # learner who closes the tab mid-answer leaves the provider call running to completion and gets
-        # charged for an answer nobody will ever see — the same defect as the un-cancellable Stop button,
-        # reached by a different route.
+        # Background turn tasks remain alive through non-cancellable post-generation work.
+        # Request ids separately identify only provider/tool generation that a disconnect may stop.
         open_turns: set[asyncio.Task] = set()
+        connection_attempt_ids: set[str] = set()
 
         try:
             while True:
@@ -158,6 +170,8 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 context = None
                 temp_id = None
                 message_type = None
+                retry_user_message = None
+                retry_prior_attempt = None
 
                 try:
                     # Try to parse as JSON
@@ -195,9 +209,14 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 connection_id,
                             )
                             continue
-                        user_text = message_data.get("message", raw_message)
-                        context = message_data.get("context")
-                        temp_id = message_data.get("tempId")
+                        if message_type == "retry":
+                            context = {"sessionId": message_data.get("sessionId")}
+                            temp_id = message_data.get("tempId")
+                            user_text = ""
+                        else:
+                            user_text = message_data.get("message", raw_message)
+                            context = message_data.get("context")
+                            temp_id = message_data.get("tempId")
                         if context:
                             print(f"📥 Received context from frontend: {context}")
                 except (json.JSONDecodeError, AttributeError):
@@ -235,6 +254,48 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     continue
 
                 session = resolution.session
+
+                if message_type == "retry":
+                    message_id = message_data.get("messageId")
+                    retry_prior_attempt = (
+                        await intelligence_repo.find_attempt_for_retry(
+                            session_id=session.id,
+                            message_id=message_id or "",
+                            user_id=user.id,
+                        )
+                    )
+                    retry_user_message = (
+                        await intelligence_repo.find_message(message_id)
+                        if message_id and retry_prior_attempt is not None
+                        else None
+                    )
+                    retry_allowed = (
+                        retry_prior_attempt is not None
+                        and retry_user_message is not None
+                        and retry_user_message.user_id == user.id
+                        and retry_prior_attempt.status in {"FAILED", "CANCELLED"}
+                        and retry_prior_attempt.retryable
+                        and not retry_prior_attempt.tool_side_effects
+                        and not await intelligence_repo.user_message_has_answer(
+                            message_id
+                        )
+                    )
+                    if not retry_allowed:
+                        await manager.send_connection_json(
+                            {
+                                "type": "error",
+                                "payload": {
+                                    "message": "This message cannot be retried.",
+                                    "retryable": False,
+                                    "sessionId": session.id,
+                                    "messageId": message_id,
+                                },
+                            },
+                            connection_id,
+                        )
+                        continue
+                    user_text = retry_user_message.content
+                    context = retry_prior_attempt.context
 
                 # 3.2 Is this worth starting a turn for?
                 #
@@ -310,6 +371,8 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     user_text=user_text,
                     temp_id=temp_id,
                     inflight=inflight,
+                    retry_user_message=retry_user_message,
+                    retry_prior_attempt=retry_prior_attempt,
                 ):
                     try:
                         # 4. Extract fileUrls from context (if any) — may be a JSON array or single string
@@ -330,6 +393,11 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         file_urls_list = [raw_file_urls]
                                 except (ValueError, TypeError):
                                     file_urls_list = [raw_file_urls]
+
+                        if retry_user_message is not None:
+                            file_urls_list = _retry_image_urls(
+                                retry_user_message, file_urls_list
+                            )
 
                         # 4.1 Save User Message to DB (with imageUrl + imageUrls)
                         reply_to_message_id = (
@@ -388,9 +456,50 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 reply_target_message.id
                             )
 
-                        user_message = await intelligence_repo.create_message(
-                            data=user_message_data
-                        )
+                        try:
+                            if retry_user_message is not None:
+                                user_message = retry_user_message
+                                attempt = await intelligence_repo.create_attempt(
+                                    {
+                                        "sessionId": session.id,
+                                        "userMessageId": user_message.id,
+                                        "userId": user.id,
+                                        "status": "RUNNING",
+                                        "retryable": False,
+                                        "context": context,
+                                        "askMode": ask_service.ASK_MODE_WEBSOCKET,
+                                    }
+                                )
+                            else:
+                                user_message, attempt = (
+                                    await intelligence_repo.create_message_and_attempt(
+                                        message_data=user_message_data,
+                                        attempt_data={
+                                            "sessionId": session.id,
+                                            "userId": user.id,
+                                            "status": "RUNNING",
+                                            "retryable": False,
+                                            "context": context,
+                                            "askMode": ask_service.ASK_MODE_WEBSOCKET,
+                                        },
+                                    )
+                                )
+                        except ActiveGenerationAttemptError:
+                            await manager.send_connection_json(
+                                {
+                                    "type": "error",
+                                    "payload": {
+                                        "message": "Another answer is already being generated for this conversation.",
+                                        "retryable": True,
+                                        "sessionId": session.id,
+                                    },
+                                },
+                                connection_id,
+                            )
+                            return
+
+                        connection_attempt_ids.add(attempt.id)
+                        ask_service.prepare_cancellation(attempt.id)
 
                         # Track activity without holding up message acknowledgement, title maintenance,
                         # context enrichment, or the provider's first streamed token. This write is
@@ -419,6 +528,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 "type": "message_saved",
                                 "payload": {
                                     "id": user_message.id,
+                                    "attemptId": attempt.id,
+                                    "requestId": attempt.id,
+                                    "isRetry": retry_user_message is not None,
                                     "tempId": temp_id,
                                     "role": "user",
                                     "sessionId": session.id,
@@ -504,7 +616,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         # must get the same answer, which is why streaming is a callback and not a branch.
                         #
                         # What stays here is what is genuinely the socket's: the frames.
-                        ai_request_id = user_message.id
+                        ai_request_id = attempt.id
                         ai_reply_target_id = user_message.id
 
                         async def send_progress(
@@ -560,42 +672,41 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             await websocket.close()
                             return
 
-                        # Registered as stoppable only around generation. The window closes as soon as
-                        # `answer()` returns, which is the decision recorded in `ask_service`: once the
-                        # provider has produced the answer the money is spent, so cancelling then would pay
-                        # for something thrown away and lose an answer the learner may have read.
-                        #
-                        # The inner task is cancelled rather than this one, so `run_turn` survives to
-                        # acknowledge the stop and release the turn slot normally.
-                        answer_holder: dict[str, object] = {}
+                        # Lease renewal covers the complete lifecycle. `answer()` itself registers
+                        # only its provider/tool generation task as cancellable; post-generation
+                        # logging, dispatch, pricing, credits and atomic persistence are never stopped.
                         try:
-                            async with ask_service.cancellable_turn(
-                                ai_request_id, answer_holder
+                            async with ask_service.maintain_attempt_lease(
+                                attempt.id, intelligence_repo.heartbeat_attempt
                             ):
-                                answer_task = asyncio.create_task(
-                                    ask_service.answer(
-                                        message=user_text,
-                                        user=user,
-                                        user_obj=user_obj,
-                                        session=session,
-                                        user_message=user_message,
-                                        context=context,
-                                        ask_mode=ask_service.ASK_MODE_WEBSOCKET,
-                                        readers=readers,
-                                        effects=effects,
-                                        cache=context_enrichment.production_cache(),
-                                        image_url=(
-                                            file_urls_list[0]
-                                            if file_urls_list
-                                            else None
-                                        ),
-                                        on_chunk=stream_text,
-                                        on_progress=send_progress,
-                                    )
+                                turn = await ask_service.answer(
+                                    message=user_text,
+                                    user=user,
+                                    user_obj=user_obj,
+                                    session=session,
+                                    user_message=user_message,
+                                    context=context,
+                                    ask_mode=ask_service.ASK_MODE_WEBSOCKET,
+                                    readers=readers,
+                                    effects=effects,
+                                    cache=context_enrichment.production_cache(),
+                                    image_url=(
+                                        file_urls_list[0] if file_urls_list else None
+                                    ),
+                                    on_chunk=stream_text,
+                                    on_progress=send_progress,
+                                    attempt_id=attempt.id,
+                                    update_attempt=intelligence_repo.update_running_attempt,
                                 )
-                                answer_holder["task"] = answer_task
-                                turn = await answer_task
                         except ask_service.TurnRefused as refused:
+                            await intelligence_repo.update_running_attempt(
+                                attempt.id,
+                                {
+                                    "status": "FAILED",
+                                    "retryable": False,
+                                    "failureCode": "CREDIT_REFUSED",
+                                },
+                            )
                             await manager.send_connection_json(
                                 {
                                     "type": "credit_limit_error",
@@ -613,6 +724,14 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             )
                             return
                         except SubscriptionLimitError as e:
+                            await intelligence_repo.update_running_attempt(
+                                attempt.id,
+                                {
+                                    "status": "FAILED",
+                                    "retryable": False,
+                                    "failureCode": "CREDIT_REFUSED",
+                                },
+                            )
                             # A hard cap raised from inside the credit check rather than reported as
                             # unavailable. Same refusal to the learner; the message is the billing layer's.
                             await manager.send_connection_json(
@@ -644,7 +763,37 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         # §1 forbids exactly that. `answer()` now raises instead of returning, so there is no
                         # path from a failure to the write — and no credits are consumed, because consumption
                         # happens after the write that is skipped.
+                        except ask_service.TurnFailed as e:
+                            await intelligence_repo.update_running_attempt(
+                                attempt.id,
+                                {
+                                    "status": "FAILED",
+                                    "retryable": bool(e.retryable),
+                                    "failureCode": "GENERATION_FAILED",
+                                },
+                            )
+                            await manager.send_connection_json(
+                                {
+                                    "type": "error",
+                                    "payload": {
+                                        "message": e.message,
+                                        "retryable": bool(e.retryable),
+                                        "sessionId": session.id,
+                                        "requestId": ai_request_id,
+                                    },
+                                },
+                                connection_id,
+                            )
+                            return
                         except LLMProviderError as e:
+                            await intelligence_repo.update_running_attempt(
+                                attempt.id,
+                                {
+                                    "status": "FAILED",
+                                    "retryable": bool(e.retriable),
+                                    "failureCode": e.category,
+                                },
+                            )
                             logger.error(
                                 "LLM provider error: category=%s provider=%s model=%s msg=%s",
                                 e.category,
@@ -660,7 +809,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                             e.category,
                                             _ERROR_CATEGORY_MESSAGES["unknown"],
                                         ),
-                                        "retryable": True,
+                                        "retryable": bool(e.retriable),
                                         "sessionId": session.id,
                                         "requestId": ai_request_id,
                                     },
@@ -668,7 +817,21 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 connection_id,
                             )
                             return
+                        except AttemptFenceLostError:
+                            logger.info(
+                                "Attempt %s lost its lease fence before completion",
+                                attempt.id,
+                            )
+                            return
                         except Exception as e:
+                            await intelligence_repo.update_running_attempt(
+                                attempt.id,
+                                {
+                                    "status": "FAILED",
+                                    "retryable": True,
+                                    "failureCode": "GENERATION_FAILED",
+                                },
+                            )
                             logger.error("Generation failed: %s", e, exc_info=True)
                             await manager.send_connection_json(
                                 {
@@ -716,6 +879,10 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 "skillsUsed": skills_used if skills_used else None,
                                 "sessionId": session.id,
                                 "requestId": ai_request_id,
+                                "scope": {
+                                    "sources": list(turn.scope.sources),
+                                    "libraryRecall": turn.scope.library_recall,
+                                },
                                 "replyToMessageId": ai_reply_target_id,
                                 "replyToMessage": assistant_reply_preview,
                             }
@@ -733,6 +900,10 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         ),
                                         "sessionId": session.id,
                                         "requestId": ai_request_id,
+                                        "scope": {
+                                            "sources": list(turn.scope.sources),
+                                            "libraryRecall": turn.scope.library_recall,
+                                        },
                                         "replyToMessageId": ai_reply_target_id,
                                         "replyToMessage": assistant_reply_preview,
                                     },
@@ -822,14 +993,21 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
 
                         return  # Skip to next message
                     except asyncio.CancelledError:
-                        # Deliberately swallowed: this task was cancelled by a `cancel` frame, so the
-                        # cancellation is the outcome rather than a failure. Nothing is persisted and
-                        # nothing is charged, because both happen after generation, which is what was
-                        # interrupted. The partial text is discarded — see `ask_service`'s note on why
-                        # keeping it would need a column that can tell 'you stopped this' from 'the
-                        # model ran out'.
+                        if "attempt" in locals():
+                            try:
+                                await intelligence_repo.update_running_attempt(
+                                    attempt.id,
+                                    {
+                                        "status": "CANCELLED",
+                                        "retryable": True,
+                                        "failureCode": "CANCELLED",
+                                    },
+                                )
+                            except AttemptFenceLostError:
+                                pass
                         logger.info(
-                            "Turn cancelled by the learner on session %s", session.id
+                            "Turn generation cancelled by the learner on session %s",
+                            session.id,
                         )
                     except Exception:
                         # The turn is its own task now, so an unhandled error here would surface as a
@@ -841,6 +1019,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             exc_info=True,
                         )
                     finally:
+                        if "attempt" in locals():
+                            connection_attempt_ids.discard(attempt.id)
+                            ask_service.clear_cancellation(attempt.id)
                         await inflight.__aexit__(None, None, None)
 
                 turn_task = asyncio.create_task(run_turn())
@@ -858,10 +1039,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
             await manager.disconnect(connection_id)
             raise
         finally:
-            # Stop anything still generating for a connection that is gone. A learner who closes the tab
-            # mid-answer would otherwise be charged for an answer nobody will ever see — the same defect
-            # as the un-cancellable Stop button, reached by closing the window instead of pressing it.
-            for task in list(open_turns):
-                task.cancel()
+            # A disconnect stops only provider/tool generation. Turns that already crossed the
+            # generation boundary remain alive to finish accounting and atomic persistence.
+            for request_id in list(connection_attempt_ids):
+                ask_service.cancel_turn(request_id)
 
     return get_current_user_ws
