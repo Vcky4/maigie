@@ -191,19 +191,13 @@ async def initialize_user_credits(
     logger.info(
         f"Initialized credits for user {user.id} (tier: {tier_str}): "
         f"hard_cap={limits['hard_cap']}, soft_cap={limits['soft_cap']}"
-        + (
-            f", daily_limit={limits.get('daily_limit', 'N/A')}"
-            if tier_str == "FREE"
-            else ""
-        )
+        + (f", daily_limit={limits.get('daily_limit', 'N/A')}" if tier_str == "FREE" else "")
     )
 
     return updated_user
 
 
-async def reset_daily_credits_if_needed(
-    user: User, db_client: Any | None = None
-) -> User:
+async def reset_daily_credits_if_needed(user: User, db_client: Any | None = None) -> User:
     """
     Reset daily credits if a new day has started (for FREE tier users).
 
@@ -289,11 +283,7 @@ async def ensure_credit_period(user: User, db_client: Any | None = None) -> User
         user = await identity_repo.update(user.id, update_data)
         logger.info(
             f"Synced user {user.id} ({tier_str}) limits to current: hard_cap={current_limits['hard_cap']}"
-            + (
-                f", daily_limit={current_limits.get('daily_limit')}"
-                if tier_str == "FREE"
-                else ""
-            )
+            + (f", daily_limit={current_limits.get('daily_limit')}" if tier_str == "FREE" else "")
         )
 
     # Check if period needs to be initialized or reset
@@ -541,15 +531,11 @@ async def consume_credits(
         factory = get_session_factory()
         async with factory() as session:
             stmt = (
-                sa_update(Space)
-                .where(Space.id == space_id)
-                .values(credits=Space.credits + credits)
+                sa_update(Space).where(Space.id == space_id).values(credits=Space.credits + credits)
             )
             await session.execute(stmt)
             await session.commit()
-        logger.info(
-            f"Consumed {credits} credits for space {space_id} (operation: {operation})"
-        )
+        logger.info(f"Consumed {credits} credits for space {space_id} (operation: {operation})")
         return CreditConsumptionResult(
             user=user,
             credits_consumed=credits,
@@ -591,10 +577,7 @@ async def consume_credits(
         referral_increase = await get_daily_limit_increase(user)
         effective_daily_limit = daily_limit + referral_increase
 
-        if (
-            effective_daily_limit > 0
-            and credits_used_today + credits > effective_daily_limit
-        ):
+        if effective_daily_limit > 0 and credits_used_today + credits > effective_daily_limit:
             daily_limit_hit = True
 
     # Case 1: FREE tier daily limit hit - try purchased credits
@@ -711,9 +694,7 @@ async def consume_credits(
         )
 
     # Case 3: Subscription partially covers - split consumption
-    if remaining_subscription > 0 and purchased_balance >= (
-        credits - remaining_subscription
-    ):
+    if remaining_subscription > 0 and purchased_balance >= (credits - remaining_subscription):
         shortfall = credits - remaining_subscription
 
         # Update: consume remaining subscription + deduct from purchased
@@ -902,9 +883,7 @@ async def get_credit_usage(user: User, db_client: Any | None = None) -> dict:
         "period_start": (
             user.credits_period_start.isoformat() if user.credits_period_start else None
         ),
-        "period_end": (
-            user.credits_period_end.isoformat() if user.credits_period_end else None
-        ),
+        "period_end": (user.credits_period_end.isoformat() if user.credits_period_end else None),
         "is_soft_cap_reached": soft_cap > 0 and credits_used >= soft_cap,
         "is_hard_cap_reached": hard_cap > 0 and credits_used >= hard_cap,
         "purchased_credits_balance": purchased_balance,
@@ -915,9 +894,7 @@ async def get_credit_usage(user: User, db_client: Any | None = None) -> dict:
     if tier_str == "FREE":
         credits_used_today = user.credits_used_today or 0
         daily_limit = user.credits_daily_limit or 0
-        daily_usage_percentage = (
-            (credits_used_today / daily_limit * 100) if daily_limit > 0 else 0
-        )
+        daily_usage_percentage = (credits_used_today / daily_limit * 100) if daily_limit > 0 else 0
         is_daily_limit_reached = daily_limit > 0 and credits_used_today >= daily_limit
         result.update(
             {

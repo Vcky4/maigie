@@ -40,9 +40,7 @@ TEMPLATE_FOLDER = Path(__file__).resolve().parents[2] / "templates" / "email"
 # leave .txt alone or plaintext parts would gain HTML entities.
 jinja_env = Environment(
     loader=FileSystemLoader(str(TEMPLATE_FOLDER)),
-    autoescape=select_autoescape(
-        enabled_extensions=("html", "xml"), default_for_string=False
-    ),
+    autoescape=select_autoescape(enabled_extensions=("html", "xml"), default_for_string=False),
 )
 
 RESEND_API_URL = "https://api.resend.com/emails"
@@ -106,9 +104,9 @@ def _smtp_error_suggests_quota(exc: BaseException) -> bool:
 
 def _get_frontend_base_url() -> str:
     """Base URL for links embedded in emails."""
-    return (
-        settings.FRONTEND_BASE_URL or settings.FRONTEND_URL or "http://localhost:4200"
-    ).rstrip("/")
+    return (settings.FRONTEND_BASE_URL or settings.FRONTEND_URL or "http://localhost:4200").rstrip(
+        "/"
+    )
 
 
 def _standard_headers(ref_id: str) -> dict[str, str]:
@@ -282,9 +280,7 @@ async def _send_multipart_email(
             except Exception as exc:
                 last_error = exc
                 tried.append("smtp")
-                logger.warning(
-                    "Outbound smtp failed to=%s subject=%r: %s", to_email, subject, exc
-                )
+                logger.warning("Outbound smtp failed to=%s subject=%r: %s", to_email, subject, exc)
             else:
                 logger.info(
                     "Outbound email delivered via=smtp to=%s subject=%r tried=%s",
@@ -333,9 +329,7 @@ async def _send_multipart_email(
 
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
-_HTML_BLOCK_BREAK_RE = re.compile(
-    r"(?i)</(?:p|div|h[1-6]|li|tr|table|ul|ol)>|<br\s*/?>"
-)
+_HTML_BLOCK_BREAK_RE = re.compile(r"(?i)</(?:p|div|h[1-6]|li|tr|table|ul|ol)>|<br\s*/?>")
 
 
 def html_to_text(html: str) -> str:
@@ -343,9 +337,7 @@ def html_to_text(html: str) -> str:
     text = _HTML_BLOCK_BREAK_RE.sub("\n", html)
     text = _HTML_TAG_RE.sub("", text)
     text = unescape(text)
-    return "\n".join(
-        line for line in (raw.strip() for raw in text.splitlines()) if line
-    )
+    return "\n".join(line for line in (raw.strip() for raw in text.splitlines()) if line)
 
 
 async def send_transactional_email(
@@ -576,9 +568,7 @@ async def send_subscription_success_email(
         )
         return
 
-    tier_name = (
-        _TIER_DISPLAY_NAMES.get(str(tier)) or str(tier).replace("_", " ").title()
-    )
+    tier_name = _TIER_DISPLAY_NAMES.get(str(tier)) or str(tier).replace("_", " ").title()
     dashboard_url = f"{_get_frontend_base_url()}/dashboard"
     template_data = {
         "name": name,
