@@ -519,8 +519,12 @@ async def _send_purchase_receipt_email(
 ) -> None:
     """Send a purchase receipt email to the user (best-effort).
 
-    Uses the credit_purchase_receipt email template. Skips silently if
-    the user has no email address on file.
+    Composes its own HTML and sends it through ``send_bulk_email``, which wraps it in the
+    shared email shell. This docstring used to claim a ``credit_purchase_receipt`` template
+    was used; there was such a file, nothing ever rendered it, and it has been deleted —
+    a stale comment pointing at dead code is how the next person wastes an hour.
+
+    Skips silently if the user has no email address on file.
 
     Args:
         data: The notification data containing user and purchase details.

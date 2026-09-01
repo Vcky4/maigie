@@ -915,6 +915,38 @@ Exit criteria: web and mobile show the same notification lifecycle and action se
 
 Exit criteria: provider acceptance and receipt evidence exist; invalid tokens are disabled; no preference, quiet-hour, or duplicate-send violations occur. **The EAS preview provider/display/tap matrix and physical online/offline logout revocation gates passed on Android and iOS. Production rollout remains disabled at 0%; only operational rollout approval and the staged 5%/25%/100% progression remain (2026-08-31).**
 
+#### Cohort gate for both external channels (agreed 2026-09-01)
+
+The same gate governs mobile push and email, because both are now planned and dispatched by
+the same orchestrator and the failure modes are shared.
+
+**Hold durations.** Internal allowlist for at least **3 days**; then 5% for at least **7
+days**; then 25% for at least **7 days**; then 100%. Seven days is not padding — the weekly
+summary and the digest preference only exercise themselves once per week, so a shorter hold
+advances a cohort without ever having observed its slowest path. Each hold must also span at
+least one quiet-hour window and one local-day boundary, which is where timezone and deferral
+bugs surface.
+
+**Stop and roll back on any of:**
+
+- a duplicate send of the same notification to the same destination;
+- any delivery to a learner whose consent for that channel is off, or inside quiet hours;
+- an actionable backlog that stops draining, or an oldest-actionable age that keeps climbing;
+- a rise in permanent provider failures, or any `DeviceNotRegistered`/bounce rate above the
+  baseline recorded before the cohort opened;
+- a rise in dismissals, unsubscribes, or push-permission revocations against the previous
+  cohort.
+
+Rollback is a configuration change — set the channel's `*_ENABLED` to `false`, or its
+`ROLLOUT_PERCENT` to `0`, or add the affected users to the denylist. **Decide before opening a
+cohort what rollback does to rows already planned:** ineligible deliveries are deferred, not
+cancelled, so re-enabling later releases everything that accumulated in the meantime as one
+burst unless those rows are expired first.
+
+The cohort hash is stable, so raising the percentage only adds learners and never reshuffles
+the ones already included. Watch it through `GET /api/v1/notifications/operations/metrics` and
+`scripts/inspect_notification_lifecycle.py`.
+
 ### Phase 3 — preferences and email unification
 
 - [x] Ship shared notification settings on web and mobile — **one contract now serves both clients: `GET`/`PUT /api/v1/notifications/settings` exposes an engagement master switch, four product categories (Learning, Progress, Social & classroom, Product updates) across in-app/mobile-push/email, quiet hours, an interruption budget capped at the platform default of 5, and the weekly digest slot. One advisory-locked transaction writes `NotificationPolicy`, category-level `NotificationPreference` rows, and — for compatibility while the legacy senders still read them — `UserPreferences.notifications`/`emailScheduleReminder`/`emailWeeklyTips`/`push*` plus `LearningProfile` quiet hours and daily cap; previously migrated exact-type overrides in a changed category are realigned so they cannot outrank the new choice. Reads fail closed: absent normalized rows fall back to legacy values, external channels default off, and only in-app Learning/Progress default on. Security and account-recovery email are reported as mandatory and no open tracking is offered. Web adds a Notifications settings tab from regenerated OpenAPI types; mobile adds a settings screen that states device push permission separately from product consent, because consent recorded here cannot deliver anything the OS has not granted. Verified against configured PostgreSQL for the internal test user: read, write, re-read, an idempotent repeat write, and the legacy dual-write all matched, then the original effective settings were restored. 53 backend tests, Ruff, format, and targeted mypy pass; web tsc/eslint/3 vitest tests and generated-type drift check pass; mobile typecheck, 241 endpoint-guard tests, 14 settings-rule tests, and the 1,249-test suite pass at an unchanged lint budget (2026-09-01).**
