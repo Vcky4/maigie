@@ -1,0 +1,12 @@
+{{ title }}
+
+{% if name %}Hi {{ name }},
+
+{% endif %}{{ body }}
+
+Open {{ app_name }}: {{ action_url }}
+
+You are receiving this because {{ category_reason }}.
+Change what Maigie emails you: {{ settings_url }}
+
+{{ app_name }} — The Academic Operating System

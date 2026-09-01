@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
+from src.config import get_settings
 from src.core.websocket import manager
 from src.shared.time import (
     UNKNOWN_TIMEZONE,
@@ -23,6 +24,8 @@ from src.shared.time import (
 )
 
 from .db_models import Notification, NotificationInteraction
+from .email_delivery import address_reference
+from .feature_flags import capability_enabled_for
 from .models import (
     MobilePushInstallationUpsert,
     NotificationCategorySetting,
@@ -30,7 +33,7 @@ from .models import (
     NotificationSettingsResponse,
     NotificationSettingsUpdate,
 )
-from .repository import notification_repo
+from .repository import EmailPlan, notification_repo
 from .taxonomy import (
     canonical_action_payload,
     notification_spec,
@@ -234,6 +237,63 @@ async def update_notification_settings(
     return await get_notification_settings(user_id=user_id)
 
 
+#: Types that are themselves a periodic summary, so a learner asking for a "weekly" email is
+#: asking for these to arrive on their own schedule. Every other type treats a digest
+#: preference as "not yet": bundling many notifications into one email is a separate piece of
+#: work, and emailing each one immediately instead would be the opposite of what was asked.
+PERIODIC_EMAIL_TYPES = frozenset(
+    {
+        "progress.weekly_summary",
+        "learning.morning_schedule",
+    }
+)
+
+
+async def _email_plan(user_id: str, *, type: str, spec: Any) -> EmailPlan | None:
+    """Decide whether this notification should also be emailed, and to what address.
+
+    Resolved at plan time so the overwhelming majority of learners — who have email off —
+    never accumulate delivery rows. Consent is rechecked immediately before sending, so a
+    preference changed after planning still suppresses the message rather than racing it.
+    """
+
+    if "EMAIL" not in spec.allowed_channels:
+        return None
+    settings = get_settings()
+    if not settings.NOTIFICATION_EMAIL_ENABLED:
+        return None
+    if not capability_enabled_for("EMAIL", user_id, settings=settings):
+        return None
+
+    decision = await notification_repo.channel_policy(
+        user_id, type, spec.category or "LEARNING", "EMAIL"
+    )
+    policy = decision["policy"]
+    legacy = decision["legacy"]
+    override = decision["override"]
+    # Fail closed on every missing record: absent consent is not consent.
+    if policy is None or not policy.engagement_enabled:
+        return None
+    if legacy is None or not legacy.notifications:
+        return None
+    if override is None or not override.enabled:
+        return None
+    if override.frequency == "DIGEST" and type not in PERIODIC_EMAIL_TYPES:
+        return None
+    if override.frequency not in ("IMMEDIATE", "DIGEST"):
+        return None
+
+    recipient = await notification_repo.email_recipient(user_id)
+    if recipient is None:
+        return None
+    address, _name = recipient
+    return EmailPlan(
+        address_ref=address_reference(address),
+        provider="SMTP_RESEND",
+        max_attempts=settings.NOTIFICATION_EMAIL_MAX_ATTEMPTS,
+    )
+
+
 async def create_notification(
     *,
     user_id: str,
@@ -301,6 +361,7 @@ async def create_notification(
         },
         group_window=spec.dedupe_window if spec.groupable else None,
         plan_mobile_push="MOBILE_PUSH" in spec.default_channels,
+        plan_email=await _email_plan(user_id, type=type, spec=spec),
     )
     if mutation:
         if replaced_id is not None:

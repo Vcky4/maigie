@@ -370,6 +370,8 @@ class Settings(BaseSettings):
     MOBILE_PUSH_INTERNAL_ALLOWLIST: ListStr = []
     MOBILE_PUSH_ROLLOUT_PERCENT: int = Field(default=0, ge=0, le=100)
     MOBILE_PUSH_MAX_ATTEMPTS: int = Field(default=5, ge=1, le=10)
+    NOTIFICATION_EMAIL_MAX_ATTEMPTS: int = Field(default=3, ge=1, le=10)
+    NOTIFICATION_EMAIL_BATCH: int = Field(default=50, ge=1, le=500)
     MOBILE_PUSH_RECEIPT_DELAY_SECONDS: int = Field(default=900, ge=60, le=86400)
     MOBILE_PUSH_STALE_SENDING_SECONDS: int = Field(default=600, ge=60, le=86400)
 

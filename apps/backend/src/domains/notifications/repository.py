@@ -6,6 +6,7 @@ import hashlib
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -41,6 +42,19 @@ def active_unread_predicate(now: datetime) -> ColumnElement[bool]:
     )
 
 
+@dataclass(frozen=True)
+class EmailPlan:
+    """What the service resolved about emailing this notification, before it is planned.
+
+    Passed in rather than resolved here so the address lookup and the consent decision stay
+    in the service, where the taxonomy and preference rules already live.
+    """
+
+    address_ref: str
+    provider: str
+    max_attempts: int
+
+
 class NotificationRepository:
     async def create_canonical(
         self,
@@ -48,6 +62,7 @@ class NotificationRepository:
         *,
         group_window: timedelta | None,
         plan_mobile_push: bool = False,
+        plan_email: EmailPlan | None = None,
     ) -> tuple[Notification, str | None, str | None]:
         """Insert, replay, or replace one active grouped row atomically."""
 
@@ -142,6 +157,26 @@ class NotificationRepository:
                                     max_attempts=get_settings().MOBILE_PUSH_MAX_ATTEMPTS,
                                 )
                             )
+                        await session.flush()
+                    if plan_email is not None:
+                        # One row per notification, guarded by the partial unique index on
+                        # (notificationId, channel) for destination-less channels — a replayed
+                        # planner cannot produce a second email.
+                        session.add(
+                            NotificationDelivery(
+                                notification_id=row.id,
+                                user_id=row.user_id,
+                                destination_id=None,
+                                destination_ref=plan_email.address_ref,
+                                channel="EMAIL",
+                                provider=plan_email.provider,
+                                status="PLANNED",
+                                eligible_at=values["eligible_at"],
+                                next_attempt_at=values["eligible_at"],
+                                expires_at=values.get("expires_at"),
+                                max_attempts=plan_email.max_attempts,
+                            )
+                        )
                         await session.flush()
                     await session.refresh(row)
                     return row, "created", replaced_id
@@ -713,6 +748,132 @@ class NotificationRepository:
                     )
                 )
 
+    async def claim_due_email_deliveries(
+        self, *, limit: int, now: datetime
+    ) -> list[tuple[NotificationDelivery, Notification]]:
+        """Claim due EMAIL rows, marking them SENDING before any provider call.
+
+        `skip_locked` lets two workers run without either waiting or double-sending: a row
+        claimed by one is invisible to the other. The attempt counter is incremented here
+        rather than after the send, so a process that dies mid-send has still consumed an
+        attempt and cannot retry forever.
+        """
+
+        factory = get_session_factory()
+        async with factory() as session, session.begin():
+            rows = list(
+                (
+                    await session.execute(
+                        select(NotificationDelivery, Notification)
+                        .join(Notification, Notification.id == NotificationDelivery.notification_id)
+                        .where(
+                            NotificationDelivery.channel == "EMAIL",
+                            NotificationDelivery.status.in_(["PLANNED", "QUEUED"]),
+                            NotificationDelivery.eligible_at <= now,
+                            or_(
+                                NotificationDelivery.next_attempt_at.is_(None),
+                                NotificationDelivery.next_attempt_at <= now,
+                            ),
+                            or_(
+                                NotificationDelivery.expires_at.is_(None),
+                                NotificationDelivery.expires_at > now,
+                            ),
+                            NotificationDelivery.attempt_count < NotificationDelivery.max_attempts,
+                            # An item the learner has already dealt with in the app is not
+                            # worth an email about.
+                            Notification.read_at.is_(None),
+                            Notification.dismissed_at.is_(None),
+                            Notification.archived_at.is_(None),
+                            Notification.status.notin_(["READ", "DISMISSED", "EXPIRED"]),
+                        )
+                        .order_by(
+                            NotificationDelivery.next_attempt_at.asc().nullsfirst(),
+                            NotificationDelivery.created_at.asc(),
+                        )
+                        .with_for_update(of=NotificationDelivery, skip_locked=True)
+                        .limit(limit)
+                    )
+                ).all()
+            )
+            for delivery, _notification in rows:
+                delivery.status = "SENDING"
+                delivery.attempt_count += 1
+            await session.flush()
+            return rows
+
+    async def record_email_result(
+        self,
+        delivery_id: str,
+        *,
+        requested_at: datetime,
+        duration_ms: int,
+        accepted: bool,
+        provider: str | None,
+        provider_message_id: str | None,
+        retryable: bool,
+        error_code: str | None,
+        error_detail: str | None,
+        next_attempt_at: datetime | None,
+    ) -> None:
+        """Append the attempt and move the delivery to its next honest state.
+
+        Acceptance is recorded as `ACCEPTED`, never `DELIVERED`: a provider taking the
+        message means it will try, not that it arrived. Only a provider webhook could
+        justify `DELIVERED`, and that is not built yet — so `acceptedAt` is set and
+        `nextAttemptAt` is cleared, which is what tells the backlog metric this row is
+        finished rather than waiting on a reconciler.
+        """
+
+        now = datetime.now(UTC)
+        factory = get_session_factory()
+        async with factory() as session, session.begin():
+            delivery = await session.scalar(
+                select(NotificationDelivery)
+                .where(NotificationDelivery.id == delivery_id)
+                .with_for_update()
+            )
+            if delivery is None or delivery.status != "SENDING":
+                return
+            session.add(
+                NotificationDeliveryAttempt(
+                    delivery_id=delivery.id,
+                    attempt_number=delivery.attempt_count,
+                    requested_at=requested_at,
+                    duration_ms=duration_ms,
+                    retryable=retryable,
+                    provider_message_id=provider_message_id,
+                    response_metadata={
+                        "outcome": "ACCEPTED" if accepted else "ERROR",
+                        "provider": provider,
+                    },
+                    error_code=error_code,
+                    error_detail=(error_detail or "")[:500] or None,
+                )
+            )
+            if accepted:
+                delivery.status = "ACCEPTED"
+                delivery.provider = provider or delivery.provider
+                delivery.provider_message_id = provider_message_id
+                delivery.accepted_at = now
+                delivery.next_attempt_at = None
+                delivery.failure_code = None
+                delivery.failure_detail = None
+            elif (
+                retryable
+                and next_attempt_at is not None
+                and (delivery.expires_at is None or next_attempt_at < delivery.expires_at)
+                and delivery.attempt_count < delivery.max_attempts
+            ):
+                delivery.status = "QUEUED"
+                delivery.next_attempt_at = next_attempt_at
+                delivery.failure_code = error_code
+                delivery.failure_detail = (error_detail or "")[:500] or None
+            else:
+                delivery.status = "FAILED"
+                delivery.failed_at = now
+                delivery.failure_code = error_code or "PROVIDER_ERROR"
+                delivery.failure_detail = (error_detail or "")[:500] or None
+
     async def accepted_for_receipts(
         self, *, limit: int, now: datetime
     ) -> list[NotificationDelivery]:
@@ -822,7 +983,17 @@ class NotificationRepository:
             result = await session.execute(
                 update(NotificationDelivery)
                 .where(
-                    NotificationDelivery.status.in_(["PLANNED", "QUEUED", "ACCEPTED"]),
+                    or_(
+                        NotificationDelivery.status.in_(["PLANNED", "QUEUED"]),
+                        # `ACCEPTED` is expirable only where a receipt reconciler can still
+                        # change it — that is Expo. An accepted email is terminal, and
+                        # relabelling it `EXPIRED` would turn a message we did send into a
+                        # failure in the ledger.
+                        and_(
+                            NotificationDelivery.status == "ACCEPTED",
+                            NotificationDelivery.provider == "EXPO",
+                        ),
+                    ),
                     NotificationDelivery.expires_at.is_not(None),
                     NotificationDelivery.expires_at <= now,
                 )
@@ -1038,6 +1209,10 @@ class NotificationRepository:
             ),
             and_(
                 NotificationDelivery.status == "ACCEPTED",
+                # Only awaiting-receipt rows are outstanding work. Email has no receipt
+                # reconciler, so an accepted email is finished; counting it as backlog
+                # would leave a number that only ever grows and means nothing.
+                NotificationDelivery.provider == "EXPO",
                 or_(
                     NotificationDelivery.next_attempt_at.is_(None),
                     NotificationDelivery.next_attempt_at <= now,
@@ -1121,6 +1296,63 @@ class NotificationRepository:
                 for surface, event, count in interaction_rows
             ],
         }
+
+    async def email_recipient(self, user_id: str) -> tuple[str, str | None] | None:
+        """The address to email and the name to greet, or ``None`` when unusable.
+
+        An inactive or deleted account is not emailed. Unverified addresses are allowed
+        because the verification mail itself is transactional and does not come through here.
+        """
+
+        from src.domains.identity.db_models import User
+
+        factory = get_session_factory()
+        async with factory() as session:
+            row = (
+                await session.execute(
+                    select(User.email, User.name, User.is_active).where(User.id == user_id)
+                )
+            ).first()
+        if row is None or not row.is_active or not (row.email or "").strip():
+            return None
+        return row.email.strip(), row.name
+
+    async def channel_policy(
+        self, user_id: str, notification_type: str, category: str, channel: str
+    ) -> dict[str, Any]:
+        """Engagement state plus the most specific preference row for one channel.
+
+        The exact-type override outranks the category row, which is why the ordering puts
+        non-null `notificationType` first rather than relying on insertion order.
+        """
+
+        from src.domains.identity.db_models import UserPreferences
+
+        factory = get_session_factory()
+        async with factory() as session:
+            policy = await session.scalar(
+                select(NotificationPolicy).where(NotificationPolicy.user_id == user_id)
+            )
+            legacy = await session.scalar(
+                select(UserPreferences).where(UserPreferences.user_id == user_id)
+            )
+            override = await session.scalar(
+                select(NotificationPreference)
+                .where(
+                    NotificationPreference.user_id == user_id,
+                    NotificationPreference.channel == channel,
+                    or_(
+                        NotificationPreference.notification_type == notification_type,
+                        and_(
+                            NotificationPreference.notification_type.is_(None),
+                            NotificationPreference.category == category,
+                        ),
+                    ),
+                )
+                .order_by(NotificationPreference.notification_type.desc().nullslast())
+                .limit(1)
+            )
+            return {"policy": policy, "legacy": legacy, "override": override}
 
     async def dispatch_policy(
         self, user_id: str, notification_type: str, category: str

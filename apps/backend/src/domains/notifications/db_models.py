@@ -250,6 +250,9 @@ class NotificationDelivery(Base, TimestampMixin):
         ForeignKey("PushInstallation.id", ondelete="SET NULL"),
         nullable=True,
     )
+    #: SHA-256 of the lowercased recipient address for channels with no installation row.
+    #: A snapshot for correlation and audit, never a plaintext address.
+    destination_ref: Mapped[str | None] = mapped_column("destinationRef", String(64), nullable=True)
     channel: Mapped[str] = mapped_column(String(16), nullable=False)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(
@@ -316,7 +319,20 @@ class NotificationDelivery(Base, TimestampMixin):
             postgresql_where=text('"destinationId" IS NOT NULL'),
         ),
         Index(
+            "NotificationDelivery_notification_channel_no_destination_key",
+            "notificationId",
+            "channel",
+            unique=True,
+            postgresql_where=text('"destinationId" IS NULL'),
+        ),
+        Index(
             "NotificationDelivery_status_nextAttemptAt_idx",
+            "status",
+            "nextAttemptAt",
+        ),
+        Index(
+            "NotificationDelivery_channel_status_nextAttemptAt_idx",
+            "channel",
             "status",
             "nextAttemptAt",
         ),

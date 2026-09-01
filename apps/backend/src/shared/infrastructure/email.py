@@ -45,6 +45,30 @@ jinja_env = Environment(
 
 RESEND_API_URL = "https://api.resend.com/emails"
 
+
+class EmailProviderError(RuntimeError):
+    """A provider refused a message, carrying whether another attempt could succeed.
+
+    Without this, every failure looked the same to a caller: one exception type with a
+    string. A permanent rejection (a malformed address) and a transient one (a 503) then
+    get the same treatment, so either bad addresses are retried until they expire or real
+    outages are given up on after one try.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider: str,
+        status_code: int | None = None,
+        retryable: bool,
+    ) -> None:
+        super().__init__(message)
+        self.provider = provider
+        self.status_code = status_code
+        self.retryable = retryable
+
+
 APP_NAME = "Maigie"
 DEFAULT_FROM_EMAIL = "noreply@maigie.com"
 
@@ -201,8 +225,8 @@ async def _send_via_resend(
     html_body: str,
     text_body: str,
     headers: dict[str, str] | None = None,
-) -> None:
-    """Send through the Resend HTTP API."""
+) -> str | None:
+    """Send through the Resend HTTP API, returning its message id when it gives one."""
     from_addr = settings.RESEND_FROM_EMAIL or _from_email()
     payload: dict[str, object] = {
         "from": f"{_from_name()} <{from_addr}>",
@@ -243,7 +267,23 @@ async def _send_via_resend(
             response.status_code,
             detail,
         )
-        raise RuntimeError(f"Resend send failed with HTTP {response.status_code}")
+        raise EmailProviderError(
+            f"Resend send failed with HTTP {response.status_code}",
+            provider="resend",
+            status_code=response.status_code,
+            # 408/429 and 5xx are worth another attempt; other 4xx are the request's fault
+            # and will fail identically forever, so retrying only delays the failure.
+            retryable=response.status_code in (408, 429) or response.status_code >= 500,
+        )
+
+    # The provider's own id is the only durable handle for correlating a delivery with the
+    # provider's records later. Discarding it, as this function used to, makes an accepted
+    # send unverifiable.
+    try:
+        body = response.json()
+    except Exception:
+        return None
+    return body.get("id") if isinstance(body, dict) else None
 
 
 async def _send_multipart_email(
@@ -252,8 +292,12 @@ async def _send_multipart_email(
     html_body: str,
     text_body: str,
     headers: dict[str, str] | None = None,
-) -> None:
-    """Send via each configured provider in strategy order until one succeeds.
+) -> tuple[str, str | None]:
+    """Send via each provider in strategy order, returning ``(provider, messageId)``.
+
+    Callers that only care whether it raised may ignore the return value; the notification
+    dispatcher needs it, because "an email was accepted" is not evidence unless it records
+    which provider accepted it and under what id.
 
     Quota failures at Brevo and similar providers surface as SMTP exceptions or
     refused recipients, which fall through to the next provider. A provider that
@@ -288,13 +332,16 @@ async def _send_multipart_email(
                     subject,
                     tried,
                 )
-                return
+                # SMTP acceptance carries no provider-side id; the header reference is the
+                # only correlation handle, and the caller already knows it.
+                return "smtp", None
 
         elif provider == "resend":
             if not settings.RESEND_API_KEY:
                 continue
+            message_id: str | None = None
             try:
-                await _send_via_resend(
+                message_id = await _send_via_resend(
                     to_email=to_email,
                     subject=subject,
                     html_body=html_body,
@@ -317,14 +364,18 @@ async def _send_multipart_email(
                     subject,
                     tried,
                 )
-                return
+                return "resend", message_id
 
     if last_error is not None:
         raise last_error
-    raise RuntimeError(
+    raise EmailProviderError(
         "No usable outbound email provider for this strategy "
         f"(chain={chain!s}, SMTP_HOST={'set' if settings.SMTP_HOST else 'unset'}, "
-        f"RESEND_API_KEY={'set' if settings.RESEND_API_KEY else 'unset'})"
+        f"RESEND_API_KEY={'set' if settings.RESEND_API_KEY else 'unset'})",
+        provider="none",
+        # Configuration, not weather. Retrying cannot configure a provider, and a queue full
+        # of retries would hide the fact that nothing is set up.
+        retryable=False,
     )
 
 
@@ -596,60 +647,6 @@ async def send_subscription_success_email(
         logger.exception("Failed to send subscription success email to %s", email)
 
 
-async def send_schedule_reminder_email(
-    email: str,
-    name: str | None,
-    schedule_title: str,
-    schedule_time: str,
-    schedule_description: str | None = None,
-    **_kwargs: object,
-) -> None:
-    """Remind a learner that a study block is about to start.
-
-    The pre-migration version asked an LLM to draft the subject and body through an
-    ``ai_email_service`` module that was not migrated. The subject and lead line are
-    composed deterministically here instead: a reminder needs to arrive in the fifteen
-    minutes before a block starts, and making that depend on a model call adds a
-    failure mode and a latency budget for no benefit the learner can perceive.
-    """
-    if not _email_transport_configured():
-        logger.warning(
-            "Outbound email not configured (SMTP_HOST or RESEND_API_KEY). "
-            "Skipping schedule reminder to %s",
-            email,
-        )
-        return
-
-    schedule_url = f"{_get_frontend_base_url()}/schedule"
-    template_data = {
-        "name": name or "there",
-        "schedule_title": schedule_title,
-        "schedule_time": schedule_time,
-        "schedule_description": schedule_description or None,
-        "schedule_url": schedule_url,
-        "reminder_message": f"{schedule_title} starts at {schedule_time}.",
-        "app_name": APP_NAME,
-        "logo_url": settings.EMAIL_LOGO_URL or "",
-    }
-
-    html_body, text_body = _render(
-        "schedule_reminder",
-        f"{schedule_title} starts at {schedule_time}. Open your schedule: {schedule_url}",
-        **template_data,
-    )
-
-    try:
-        await _send_multipart_email(
-            to_email=email,
-            subject=f"Starting soon: {schedule_title}",
-            html_body=html_body,
-            text_body=text_body,
-            headers=_standard_headers(f"schedule-reminder-{email}"),
-        )
-    except Exception:
-        logger.exception("Failed to send schedule reminder email to %s", email)
-
-
 async def send_bulk_email(
     email: str,
     name: str | None = None,
@@ -686,17 +683,3 @@ async def send_bulk_email(
         )
     except Exception:
         logger.exception("Failed to send bulk email to %s", email)
-
-
-async def send_weekly_summaries() -> dict[str, int]:
-    """Email a weekly learning summary to every eligible user.
-
-    Kept here because the ``notifications.weekly_summary`` beat task imports it from this
-    module. The aggregation lives in the progress domain, which owns the study-time,
-    streak and session data it reads.
-    """
-    from src.domains.progress.services.weekly_summary import (
-        send_weekly_summaries as _send_weekly_summaries,
-    )
-
-    return await _send_weekly_summaries()

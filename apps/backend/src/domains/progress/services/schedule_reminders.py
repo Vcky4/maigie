@@ -15,11 +15,24 @@ Two deliberate differences from the original:
   retired, so that check would now silently exclude paying subscribers on
   ``plus_monthly`` and ``plus_yearly``. The rest of the codebase treats "not FREE" as
   paid, and so does this.
-* **No LLM-drafted copy.** See ``send_schedule_reminder_email``.
+* **No LLM-drafted copy.** A reminder has to arrive in the fifteen minutes before a block
+  starts; making that wait on a model call adds a failure mode and a latency budget for no
+  benefit the learner can perceive.
 
 The window is deliberately narrow and the task is expected to run at roughly the same
-cadence. A block is reminded once because a block only starts once; there is no
-"already sent" column, so running this far more often than the window would email twice.
+cadence.
+
+**This no longer sends email itself.** It produces one canonical notification per block and
+the notification orchestrator decides the channels: in-app always, email and push only where
+the learner has consented and the channel is enabled. That change fixed two things at once.
+The reminder now appears in the notification centre rather than only in an inbox, and
+"already sent" is no longer a gap in the schema — the idempotency key is the block id, so a
+block cannot be reminded twice however often this runs.
+
+Consent for a *channel* is deliberately not checked here any more; the orchestrator owns it
+and rechecks it immediately before sending, so a preference changed after the reminder was
+produced still takes effect. What remains here is the product rule about who gets reminders
+at all, which is a paid-plan feature.
 """
 
 import logging
@@ -54,27 +67,26 @@ def _format_local_time(moment: datetime, tz: ZoneInfo) -> str:
 
 
 def _should_remind(user: Any, prefs: Any) -> bool:
-    """Whether this user has opted in to schedule reminder email."""
-    if not user or not user.email:
+    """Whether a reminder should exist for this user at all.
+
+    Only the plan gate and account state, not channel consent: whether the reminder becomes
+    an email, a push, or stays in the app is the orchestrator's decision, made later and
+    rechecked at send time.
+    """
+    if not user or not user.is_active:
         return False
     if str(getattr(user, "tier", "FREE") or "FREE") == "FREE":
         return False
-
-    if prefs is None:
-        # No preferences row means defaults, and every relevant column defaults to true.
-        return True
-    if not getattr(prefs, "notifications", True):
-        return False
-    return bool(getattr(prefs, "email_schedule_reminder", True))
+    return True
 
 
 async def send_schedule_reminders() -> dict[str, int]:
-    """Email every eligible user whose study block starts within the window.
+    """Create one canonical reminder per study block starting inside the window.
 
     Returns counts rather than nothing, so the Celery task can log what it did and an
     empty run is distinguishable from a broken one.
     """
-    from src.shared.infrastructure.email import send_schedule_reminder_email
+    from src.domains.notifications.service import create_notification
 
     now = datetime.now(UTC)
     window_end = now + timedelta(minutes=REMINDER_WINDOW_MINUTES)
@@ -83,7 +95,7 @@ async def send_schedule_reminders() -> dict[str, int]:
     async with factory() as session:
         # ScheduleBlock has no `user` relationship, so User and UserPreferences are
         # joined explicitly. The preferences join is an outer join because the row is
-        # optional and its absence means "all defaults", not "opted out".
+        # optional and only supplies the timezone used to phrase the local start time.
         result = await session.execute(
             select(ScheduleBlock, User, UserPreferences)
             .join(User, User.id == ScheduleBlock.user_id)
@@ -96,7 +108,7 @@ async def send_schedule_reminders() -> dict[str, int]:
         )
         rows = result.all()
 
-    sent = 0
+    created = 0
     skipped = 0
     failed = 0
 
@@ -107,22 +119,33 @@ async def send_schedule_reminders() -> dict[str, int]:
 
         try:
             tz = _resolve_timezone(getattr(prefs, "timezone", None) if prefs else None)
-            description = (block.description or "")[:200] or None
+            local_time = _format_local_time(block.start_at, tz)
+            description = (block.description or "")[:200]
+            body = f"{block.title} starts at {local_time}."
+            if description:
+                body = f"{body}\n{description}"
 
-            await send_schedule_reminder_email(
-                email=user.email,
-                name=user.name,
-                schedule_title=block.title,
-                schedule_time=_format_local_time(block.start_at, tz),
-                schedule_description=description,
+            await create_notification(
+                user_id=user.id,
+                type="learning.study_session_reminder",
+                title=f"Starting soon: {block.title}",
+                body=body,
+                action={"version": 1, "kind": "OPEN_SESSION", "entityId": block.id},
+                # The block is the unit of work and it starts once, so its id is the
+                # whole key. Re-running this sweep cannot produce a second reminder.
+                idempotency_key=f"schedule-reminder:{block.id}",
+                priority=2,
+                source_domain="progress",
+                source_entity_type="schedule_block",
+                source_entity_id=block.id,
             )
-            sent += 1
+            created += 1
         except Exception:
             # One bad row must not stop the sweep.
             failed += 1
-            logger.exception("Failed to send schedule reminder for block %s", block.id)
+            logger.exception("Failed to create schedule reminder for block %s", block.id)
 
-    summary = {"considered": len(rows), "sent": sent, "skipped": skipped, "failed": failed}
+    summary = {"considered": len(rows), "created": created, "skipped": skipped, "failed": failed}
     if rows:
         logger.info("Schedule reminders: %s", summary)
     return summary
