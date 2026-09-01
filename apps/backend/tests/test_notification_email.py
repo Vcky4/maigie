@@ -192,9 +192,12 @@ class TestSendTimeAuthorisation:
 
         allowed, reason, _ = await email_dispatcher._email_allowed(_notification(), NOW)
 
-        # Asking for a weekly email must never be read as "email me each of these".
+        # Asking for a weekly email must never be read as "email me each of these". The reason
+        # says `HELD_FOR_DIGEST` rather than the older `DIGEST_NOT_SUPPORTED` because it is no
+        # longer a refusal: the digest planner collects this notification and emails it with the
+        # rest of its period.
         assert allowed is False
-        assert reason == "DIGEST_NOT_SUPPORTED"
+        assert reason == "HELD_FOR_DIGEST"
 
     @pytest.mark.asyncio
     async def test_a_weekly_preference_does_send_the_weekly_summary(

@@ -22,6 +22,7 @@ import asyncio
 import logging
 import re
 import smtplib
+from datetime import UTC, datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from html import unescape
@@ -31,6 +32,10 @@ import httpx
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from src.config import settings
+from src.shared.infrastructure.email_evidence import (
+    TransactionalEvidence,
+    record_transactional_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,9 +115,38 @@ def _from_name() -> str:
     return settings.EMAILS_FROM_NAME or APP_NAME
 
 
+def _smtp_usable() -> bool:
+    """Whether an SMTP attempt could actually succeed.
+
+    A host alone is not enough. This module always authenticates (`SMTP_USE_CREDENTIALS`), so a
+    host without a username and password can only ever be refused — and it was: with
+    `smtp_then_resend` and no credentials, every single email spent about two seconds being
+    rejected by Gmail with `530 Authentication Required`, logged an error, and then succeeded
+    through Resend. The send worked, so nothing looked broken; the cost was latency on every
+    message and an error log that trained the reader to ignore it.
+
+    Treating "cannot authenticate" as "not configured" removes the wasted round trip without
+    changing anyone's `EMAIL_OUTBOUND_STRATEGY`.
+    """
+
+    if not settings.SMTP_HOST:
+        return False
+    if SMTP_USE_CREDENTIALS and not (settings.SMTP_USER and settings.SMTP_PASSWORD):
+        return False
+    return True
+
+
+def _resend_usable() -> bool:
+    return bool(settings.RESEND_API_KEY)
+
+
+def _provider_usable(provider: str) -> bool:
+    return _smtp_usable() if provider == "smtp" else _resend_usable()
+
+
 def _email_transport_configured() -> bool:
-    """True if we can send via SMTP and/or the Resend fallback."""
-    return bool(settings.SMTP_HOST) or bool(settings.RESEND_API_KEY)
+    """True if at least one provider in the configured chain could actually send."""
+    return any(_provider_usable(provider) for provider in _outbound_provider_order())
 
 
 def _outbound_provider_order() -> tuple[str, ...]:
@@ -307,11 +341,15 @@ async def _send_multipart_email(
     chain = _outbound_provider_order()
     last_error: BaseException | None = None
     tried: list[str] = []
+    skipped: list[str] = []
 
     for provider in chain:
+        if not _provider_usable(provider):
+            # Skipped, not attempted: an attempt that cannot authenticate costs a round trip
+            # and produces an error indistinguishable from a real outage.
+            skipped.append(provider)
+            continue
         if provider == "smtp":
-            if not settings.SMTP_HOST:
-                continue
             try:
                 await asyncio.to_thread(
                     _send_multipart_email_sync,
@@ -337,8 +375,6 @@ async def _send_multipart_email(
                 return "smtp", None
 
         elif provider == "resend":
-            if not settings.RESEND_API_KEY:
-                continue
             message_id: str | None = None
             try:
                 message_id = await _send_via_resend(
@@ -370,8 +406,8 @@ async def _send_multipart_email(
         raise last_error
     raise EmailProviderError(
         "No usable outbound email provider for this strategy "
-        f"(chain={chain!s}, SMTP_HOST={'set' if settings.SMTP_HOST else 'unset'}, "
-        f"RESEND_API_KEY={'set' if settings.RESEND_API_KEY else 'unset'})",
+        f"(chain={chain!s}, skipped={skipped!s}, smtp_usable={_smtp_usable()}, "
+        f"resend_usable={_resend_usable()})",
         provider="none",
         # Configuration, not weather. Retrying cannot configure a provider, and a queue full
         # of retries would hide the fact that nothing is set up.
@@ -391,12 +427,68 @@ def html_to_text(html: str) -> str:
     return "\n".join(line for line in (raw.strip() for raw in text.splitlines()) if line)
 
 
+async def _send_recording_evidence(
+    *,
+    evidence: TransactionalEvidence | None,
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    headers: dict[str, str] | None,
+) -> None:
+    """Send through the provider chain, appending an evidence row when asked to.
+
+    Failures are recorded and then re-raised: the caller decides whether an unsendable
+    transactional message is fatal, and that decision must not change because we now audit it.
+    Notification email passes no evidence — it has `NotificationDelivery` rows already, and a
+    second record would be a second version of the truth.
+    """
+
+    requested_at = datetime.now(UTC)
+
+    def elapsed_ms() -> int:
+        return int((datetime.now(UTC) - requested_at).total_seconds() * 1000)
+
+    try:
+        provider, message_id = await _send_multipart_email(
+            to_email=to_email,
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body,
+            headers=headers,
+        )
+    except BaseException as exc:
+        if evidence is not None:
+            await record_transactional_message(
+                evidence=evidence,
+                to_email=to_email,
+                status="FAILED",
+                provider=getattr(exc, "provider", None),
+                error_code=type(exc).__name__,
+                error_detail=str(exc),
+                requested_at=requested_at,
+                duration_ms=elapsed_ms(),
+            )
+        raise
+    if evidence is not None:
+        await record_transactional_message(
+            evidence=evidence,
+            to_email=to_email,
+            status="ACCEPTED",
+            provider=provider,
+            provider_message_id=message_id,
+            requested_at=requested_at,
+            duration_ms=elapsed_ms(),
+        )
+
+
 async def send_transactional_email(
     to_email: str,
     subject: str,
     html_body: str,
     text_body: str | None = None,
     ref_id: str | None = None,
+    evidence: TransactionalEvidence | None = None,
 ) -> None:
     """Send a caller-composed message through the configured provider chain.
 
@@ -410,14 +502,21 @@ async def send_transactional_email(
     """
     if not _email_transport_configured():
         logger.warning(
-            "Outbound email not configured (SMTP_HOST or RESEND_API_KEY). "
-            "Skipping email to %s: %s",
-            to_email,
-            subject,
+            "No usable outbound email provider. Skipping email to %s: %s", to_email, subject
         )
+        # Recorded as SKIPPED rather than silently returning: "we never tried" and "the
+        # provider refused" are different answers to "why did the code not arrive".
+        if evidence is not None:
+            await record_transactional_message(
+                evidence=evidence,
+                to_email=to_email,
+                status="SKIPPED",
+                error_code="NO_PROVIDER_CONFIGURED",
+            )
         return
 
-    await _send_multipart_email(
+    await _send_recording_evidence(
+        evidence=evidence,
         to_email=to_email,
         subject=subject,
         html_body=html_body,
@@ -432,6 +531,7 @@ async def send_templated_email(
     subject: str,
     fallback_text: str,
     ref_id: str | None = None,
+    evidence: TransactionalEvidence | None = None,
     **template_data: object,
 ) -> None:
     """Render ``<template_base>.html`` / ``.txt`` and send it through the provider chain.
@@ -444,11 +544,15 @@ async def send_templated_email(
     """
     if not _email_transport_configured():
         logger.warning(
-            "Outbound email not configured (SMTP_HOST or RESEND_API_KEY). "
-            "Skipping email to %s: %s",
-            to_email,
-            subject,
+            "No usable outbound email provider. Skipping email to %s: %s", to_email, subject
         )
+        if evidence is not None:
+            await record_transactional_message(
+                evidence=evidence,
+                to_email=to_email,
+                status="SKIPPED",
+                error_code="NO_PROVIDER_CONFIGURED",
+            )
         return
 
     data: dict[str, object] = {
@@ -460,7 +564,8 @@ async def send_templated_email(
     }
     html_body, text_body = _render(template_base, fallback_text, **data)
 
-    await _send_multipart_email(
+    await _send_recording_evidence(
+        evidence=evidence,
         to_email=to_email,
         subject=subject,
         html_body=html_body,

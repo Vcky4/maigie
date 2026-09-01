@@ -246,6 +246,11 @@ PERIODIC_EMAIL_TYPES = frozenset(
     {
         "progress.weekly_summary",
         "learning.morning_schedule",
+        # The digests themselves. A learner asking for a weekly email is asking for exactly
+        # these, so a DIGEST preference is consent for them rather than a reason to hold them.
+        "learning.digest",
+        "progress.digest",
+        "social.digest",
     }
 )
 

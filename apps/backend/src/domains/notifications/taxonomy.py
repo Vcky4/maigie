@@ -847,6 +847,46 @@ NOTIFICATION_SPECS: dict[str, NotificationSpec] = {
         allowed_channels=ALL_CHANNELS,
         transactional=True,
     ),
+    # --- Digests -----------------------------------------------------------------
+    #
+    # One per settings category, because consent is expressed per category: a learner who asked
+    # for a weekly Learning digest has said nothing about Progress, so a single cross-category
+    # digest would either send them more than they agreed to or withhold what they asked for.
+    #
+    # `digestible=False` on all three: a digest must never become an item inside a later digest.
+    # `action` is `NONE`, which every client resolves to the notification centre — the right
+    # destination for "here is what accumulated", and honest rather than inventing a route.
+    # No mobile push: the point of a digest is to stop interrupting.
+    "learning.digest": _spec(
+        "LEARNING",
+        "LOW",
+        IN_APP_EMAIL,
+        ("NONE",),
+        "review what accumulated and choose one thing to act on",
+        ttl=timedelta(days=14),
+        dedupe=None,
+        allowed_channels=IN_APP_EMAIL,
+    ),
+    "progress.digest": _spec(
+        "PROGRESS",
+        "LOW",
+        IN_APP_EMAIL,
+        ("NONE",),
+        "review the period's progress and choose a useful next action",
+        ttl=timedelta(days=14),
+        dedupe=None,
+        allowed_channels=IN_APP_EMAIL,
+    ),
+    "social.digest": _spec(
+        "SOCIAL",
+        "LOW",
+        IN_APP_EMAIL,
+        ("NONE",),
+        "review classroom and social activity and respond where useful",
+        ttl=timedelta(days=14),
+        dedupe=None,
+        allowed_channels=IN_APP_EMAIL,
+    ),
 }
 
 

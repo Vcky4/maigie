@@ -23,6 +23,8 @@ from .db_models import (
     Notification,
     NotificationDelivery,
     NotificationDeliveryAttempt,
+    NotificationDigest,
+    NotificationDigestItem,
     NotificationInteraction,
     NotificationPolicy,
     NotificationPreference,
@@ -875,6 +877,177 @@ class NotificationRepository:
                 delivery.failed_at = now
                 delivery.failure_code = error_code or "PROVIDER_ERROR"
                 delivery.failure_detail = (error_detail or "")[:500] or None
+
+    async def digest_subscriptions(self, *, limit: int) -> list[dict[str, Any]]:
+        """Every learner/category pair whose email preference asks for a digest."""
+
+        from src.domains.identity.db_models import UserPreferences
+
+        factory = get_session_factory()
+        async with factory() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        NotificationPreference.user_id,
+                        NotificationPreference.category,
+                        NotificationPreference.digest_period,
+                        NotificationPolicy,
+                    )
+                    .join(
+                        NotificationPolicy,
+                        NotificationPolicy.user_id == NotificationPreference.user_id,
+                    )
+                    .join(
+                        UserPreferences,
+                        UserPreferences.user_id == NotificationPreference.user_id,
+                    )
+                    .where(
+                        NotificationPreference.channel == "EMAIL",
+                        NotificationPreference.enabled.is_(True),
+                        NotificationPreference.frequency == "DIGEST",
+                        NotificationPreference.digest_period.is_not(None),
+                        # A category row, not an exact-type override: a digest is a
+                        # category-level promise.
+                        NotificationPreference.notification_type.is_(None),
+                        # Same consent gates the dispatcher applies, so a learner with
+                        # engagement off never has a digest built for them.
+                        NotificationPolicy.engagement_enabled.is_(True),
+                        UserPreferences.notifications.is_(True),
+                    )
+                    .limit(limit)
+                )
+            ).all()
+
+        # Database categories collapse into the settings category the learner actually chose,
+        # so SOCIAL and CLASSROOM produce one digest rather than two.
+        settings_category_of = {
+            "LEARNING": "LEARNING",
+            "PROGRESS": "PROGRESS",
+            "SOCIAL": "SOCIAL_CLASSROOM",
+            "CLASSROOM": "SOCIAL_CLASSROOM",
+        }
+        seen: set[tuple[str, str, str]] = set()
+        subscriptions: list[dict[str, Any]] = []
+        for user_id, category, digest_period, policy in rows:
+            settings_category = settings_category_of.get(category)
+            if settings_category is None:
+                continue
+            key = (user_id, settings_category, digest_period)
+            if key in seen:
+                continue
+            seen.add(key)
+            subscriptions.append(
+                {
+                    "user_id": user_id,
+                    "settings_category": settings_category,
+                    "digest_period": digest_period,
+                    "policy": policy,
+                }
+            )
+        return subscriptions
+
+    async def digestible_notifications(
+        self,
+        user_id: str,
+        *,
+        categories: tuple[str, ...],
+        since: datetime,
+        until: datetime,
+        email_allowed_types: list[str],
+    ) -> list[dict[str, Any]]:
+        """Notifications from the period that belong in a digest and are not already in one.
+
+        Excludes anything the learner has already read, dismissed, or archived: a digest exists
+        to catch what they missed, and repeating what they already dealt with in the app is how
+        a summary becomes noise.
+        """
+
+        if not email_allowed_types:
+            return []
+        factory = get_session_factory()
+        async with factory() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        Notification.id,
+                        Notification.title,
+                        Notification.body,
+                        Notification.created_at,
+                    )
+                    .outerjoin(
+                        NotificationDigestItem,
+                        NotificationDigestItem.notification_id == Notification.id,
+                    )
+                    .where(
+                        Notification.user_id == user_id,
+                        Notification.category.in_(categories),
+                        Notification.type.in_(email_allowed_types),
+                        Notification.created_at >= since,
+                        Notification.created_at < until,
+                        Notification.read_at.is_(None),
+                        Notification.dismissed_at.is_(None),
+                        Notification.archived_at.is_(None),
+                        NotificationDigestItem.id.is_(None),
+                    )
+                    .order_by(Notification.created_at.asc())
+                )
+            ).all()
+        return [{"id": row.id, "title": row.title, "body": row.body or ""} for row in rows]
+
+    async def claim_digest(
+        self,
+        *,
+        user_id: str,
+        category: str,
+        period: str,
+        period_start: datetime,
+        period_end: datetime,
+        notification_ids: list[str],
+    ) -> dict[str, Any] | None:
+        """Create the digest run and claim its items, or return ``None`` if already claimed.
+
+        Both unique constraints do real work here and neither is redundant. The one on the run
+        stops a second hourly pass summarising a period twice. The global one on the item stops a
+        notification created near a boundary from appearing in two periods — and because both are
+        claimed in one transaction, a concurrent run either wins the whole digest or none of it.
+        """
+
+        factory = get_session_factory()
+        async with factory() as session:
+            try:
+                async with session.begin():
+                    digest = NotificationDigest(
+                        user_id=user_id,
+                        category=category,
+                        period=period,
+                        period_start=period_start,
+                        period_end=period_end,
+                        item_count=len(notification_ids),
+                    )
+                    session.add(digest)
+                    await session.flush()
+                    for notification_id in notification_ids:
+                        session.add(
+                            NotificationDigestItem(
+                                digest_id=digest.id, notification_id=notification_id
+                            )
+                        )
+                    await session.flush()
+                    return {"id": digest.id, "itemCount": digest.item_count}
+            except IntegrityError:
+                await session.rollback()
+                return None
+
+    async def attach_digest_notification(self, digest_id: str, notification_id: str) -> None:
+        """Link the digest run to the notification that carries it."""
+
+        factory = get_session_factory()
+        async with factory() as session, session.begin():
+            await session.execute(
+                update(NotificationDigest)
+                .where(NotificationDigest.id == digest_id)
+                .values(notification_id=notification_id)
+            )
 
     async def record_email_provider_event(
         self,

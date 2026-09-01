@@ -79,7 +79,7 @@ async def signup(*, email: str, password: str, name: str) -> User:
 
     # Send verification email (fire-and-forget)
     try:
-        from src.integrations.brevo import send_verification_email
+        from src.domains.identity.emails import send_verification_email
 
         await send_verification_email(email, otp)
     except Exception as e:
@@ -111,7 +111,7 @@ async def verify_email(*, email: str, code: str) -> None:
 
     # Send welcome email (fire-and-forget)
     try:
-        from src.integrations.brevo import send_welcome_email
+        from src.domains.identity.emails import send_welcome_email
 
         await send_welcome_email(email, user.name)
     except Exception as e:
@@ -140,7 +140,7 @@ async def resend_otp(*, email: str) -> None:
     await identity_repo.set_verification_code(user.id, new_otp, new_expiry)
 
     try:
-        from src.integrations.brevo import send_verification_email
+        from src.domains.identity.emails import send_verification_email
 
         await send_verification_email(email, new_otp)
     except Exception as e:
@@ -249,7 +249,7 @@ async def forgot_password(*, email: str) -> None:
     await identity_repo.set_password_reset_code(user.id, otp, expiry)
 
     try:
-        from src.integrations.brevo import send_password_reset_email
+        from src.domains.identity.emails import send_password_reset_email
 
         await send_password_reset_email(email, otp, user.name)
     except Exception as e:

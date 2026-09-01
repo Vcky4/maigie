@@ -78,7 +78,9 @@ async def _email_allowed(notification, now: datetime) -> tuple[bool, str | None,
     if not override.enabled:
         return False, "CHANNEL_DISABLED", None
     if override.frequency == "DIGEST" and notification.type not in PERIODIC_EMAIL_TYPES:
-        return False, "DIGEST_NOT_SUPPORTED", None
+        # Not a refusal any more: the digest planner collects this notification and emails it
+        # with the rest of its period, so the individual send is held rather than dropped.
+        return False, "HELD_FOR_DIGEST", None
     if override.frequency not in ("IMMEDIATE", "DIGEST"):
         return False, "CHANNEL_DISABLED", None
 

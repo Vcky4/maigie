@@ -27,8 +27,16 @@ from src.shared.infrastructure.unmigrated import (  # noqa: E402
 
 @pytest.fixture
 def transport(monkeypatch):
-    """Configure both providers and capture what each one is asked to send."""
+    """Configure both providers *usably* and capture what each one is asked to send.
+
+    The credentials matter now. This module always authenticates, so a host without a username
+    and password is a provider that can only ever be refused, and the transport skips it rather
+    than spending a round trip proving it. The fixture used to set the host alone, which quietly
+    described a configuration that could never send.
+    """
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com", raising=False)
+    monkeypatch.setattr(settings, "SMTP_USER", "mailer@example.com", raising=False)
+    monkeypatch.setattr(settings, "SMTP_PASSWORD", "secret", raising=False)
     monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test", raising=False)
     monkeypatch.setattr(settings, "EMAIL_OUTBOUND_STRATEGY", "smtp_then_resend", raising=False)
 
