@@ -65,9 +65,16 @@ class TestTrialAvailability:
             status = trial_service.TrialStatus(is_active=active)
             assert not (status.is_active and status.trial_available)
 
-    def test_the_cooldown_is_the_documented_length(self):
+    def test_the_trial_terms_are_the_documented_ones(self):
+        """Three days, once a quarter.
+
+        Three rather than seven because a free 7-day trial sitting beside a paid 7-day pass
+        is one product at two prices, and the paid one looks like a trick. `config.
+        TRIAL_DAYS_MAIGIE_PLUS` holds the same number for the Stripe subscription's own
+        trial period; `test_subscription_catalog.py` asserts the two agree.
+        """
         assert trial_service.TRIAL_COOLDOWN_DAYS == 90
-        assert trial_service.TRIAL_DURATION_DAYS == 7
+        assert trial_service.TRIAL_DURATION_DAYS == 3
 
 
 class TestTrialStatusResponse:
@@ -96,7 +103,7 @@ class TestTrialStatusResponse:
             days_remaining=4,
             total_days=trial_service.TRIAL_DURATION_DAYS,
         )
-        assert response.total_days == 7
+        assert response.total_days == trial_service.TRIAL_DURATION_DAYS
         # The progress a UI would draw is derivable without a hardcoded denominator.
         assert response.day_number <= response.total_days
 
@@ -104,7 +111,7 @@ class TestTrialStatusResponse:
         response = models.TrialStatusResponse(
             is_active=False,
             trial_available=True,
-            total_days=7,
+            total_days=trial_service.TRIAL_DURATION_DAYS,
             next_trial_available_at=NOW,
         )
         payload = response.model_dump(by_alias=True)

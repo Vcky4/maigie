@@ -339,8 +339,15 @@ def _build_message(trigger: dict, user_state: dict) -> str:
             prep_count=user_state.get("active_preps", 0),
         )
     except (KeyError, ValueError):
-        # Fallback to a generic message
-        return "Maigie Plus could help you learn more effectively. Try it free for 7 days."
+        # Fallback to a generic message. The trial length is read from the service that
+        # enforces it rather than written into the sentence: this string promised "7 days"
+        # for as long as the trial was 7 days, and would have gone on promising it.
+        from . import trial_service
+
+        return (
+            "Maigie Plus could help you learn more effectively. "
+            f"Try it free for {trial_service.TRIAL_DURATION_DAYS} days."
+        )
 
 
 async def _record_trigger_shown(

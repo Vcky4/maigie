@@ -1,46 +1,32 @@
 """
 Credit management service.
 
-Handles credit pack catalog, purchase initiation, purchase history,
-admin adjustments, and ad rewards.
+Handles purchase history and admin adjustments.
+
+Two things this module used to do are gone.
+
+**Credit packs.** ``get_credit_packs`` and ``initiate_purchase`` sold a quantity of a
+unit that is being replaced by a usage window. A pack of credits cannot be priced
+honestly once the thing a credit buys has changed, and there is no migration to write
+because nobody ever bought one — the router that served these was never mounted.
+
+**Rewarded ads.** ``get_ad_stats`` and ``claim_ad_reward`` granted a daily credit-limit
+increase for watching a video. That reward is invisible: a learner cannot see it, predict
+it, or plan a study session around it, so it bought no advocacy and cost real inference.
+Earning now produces points, and points buy passes — something a learner can hold, see
+and choose when to spend. ``AdRewardClaim`` and the two repository methods that write it
+are left in place, unread, so a future redesign is not foreclosed.
+
+What remains is history and support tooling: both describe transactions that really
+happened, and both are retained.
 """
 
 import logging
-from datetime import UTC, datetime, timezone
 from typing import Any
 
 from src.domains.identity.db_models import User
-from src.shared.events import BillingEvents, emit
-from src.shared.exceptions import NotFoundError, ValidationError
-
-from ..repository import billing_repo
 
 logger = logging.getLogger(__name__)
-
-# Ad reward configuration
-AD_REWARD_CREDITS = 500
-MAX_ADS_PER_DAY = 10
-
-
-async def get_credit_packs(user: User) -> list[dict[str, Any]]:
-    """Get available credit packs with user-specific pricing."""
-    from src.domains.billing.services.credit_purchase_service import get_credit_packs as _get_packs
-
-    return await _get_packs(user)
-
-
-async def initiate_purchase(
-    *, user: User, pack_id: str, success_url: str, cancel_url: str
-) -> dict[str, Any]:
-    """Initiate a credit pack purchase (one-time payment)."""
-    from src.domains.billing.services.credit_purchase_service import initiate_purchase as _initiate
-
-    return await _initiate(
-        user=user,
-        pack_id=pack_id,
-        success_url=success_url,
-        cancel_url=cancel_url,
-    )
 
 
 async def get_purchase_history(
@@ -58,7 +44,9 @@ async def admin_adjust_balance(
     *, admin_id: str, target_user_id: str, amount: int, reason: str
 ) -> User:
     """Admin: adjust a user's purchased credits balance."""
-    from src.domains.billing.services.credit_purchase_service import admin_adjust_balance as _adjust
+    from src.domains.billing.services.credit_purchase_service import (
+        admin_adjust_balance as _adjust,
+    )
 
     return await _adjust(
         admin_id=admin_id,
@@ -66,64 +54,3 @@ async def admin_adjust_balance(
         amount=amount,
         reason=reason,
     )
-
-
-# ---------------------------------------------------------------------------
-# Ad Rewards
-# ---------------------------------------------------------------------------
-
-
-async def get_ad_stats(user_id: str) -> dict[str, Any]:
-    """Get ad watch statistics for a user."""
-    now = datetime.now(UTC)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    ads_today = await billing_repo.count_ads_today(user_id, today_start)
-    total_earned = await billing_repo.get_total_ad_earnings(user_id)
-
-    return {
-        "adsWatchedToday": ads_today,
-        "maxPerDay": MAX_ADS_PER_DAY,
-        "remainingToday": max(0, MAX_ADS_PER_DAY - ads_today),
-        "creditsPerAd": AD_REWARD_CREDITS,
-        "totalEarned": total_earned,
-    }
-
-
-async def claim_ad_reward(
-    *, user_id: str, ad_type: str, ad_unit_id: str | None = None
-) -> dict[str, Any]:
-    """Claim credits for watching a rewarded ad."""
-    now = datetime.now(UTC)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    ads_today = await billing_repo.count_ads_today(user_id, today_start)
-    if ads_today >= MAX_ADS_PER_DAY:
-        raise ValidationError(f"Daily ad limit reached ({MAX_ADS_PER_DAY} per day)")
-
-    credits = AD_REWARD_CREDITS
-
-    await billing_repo.create_ad_claim(
-        {
-            "userId": user_id,
-            "adType": ad_type,
-            "credits": credits,
-            "adUnitId": ad_unit_id,
-        }
-    )
-
-    ads_watched = ads_today + 1
-    logger.info(
-        f"User {user_id} earned {credits} credits from ad ({ads_watched}/{MAX_ADS_PER_DAY})"
-    )
-
-    await emit(
-        BillingEvents.CREDITS_PURCHASED, {"user_id": user_id, "credits": credits, "source": "ad"}
-    )
-
-    return {
-        "credited": credits,
-        "adsWatchedToday": ads_watched,
-        "remainingToday": max(0, MAX_ADS_PER_DAY - ads_watched),
-        "dailyLimitIncrease": credits,
-    }

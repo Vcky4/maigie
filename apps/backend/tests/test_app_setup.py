@@ -181,16 +181,19 @@ async def test_mounted_domain_routers(client: AsyncClient):
 async def test_unmounted_domains_are_absent():
     """Domains still awaiting migration must not appear mounted.
 
-    ``src/app.py`` intentionally leaves billing, admin, classrooms, and
-    intelligence commented out. Asserting their absence keeps the documented
-    state and the wiring honest.
+    ``src/app.py`` intentionally leaves admin and classrooms commented out. Asserting
+    their absence keeps the documented state and the wiring honest.
+
+    Billing has left this list: it is mounted, and while it was not the meter ran with no
+    reachable way to pay it. What is and is not served *inside* that domain is asserted in
+    `test_billing_routes_mounted.py`, endpoint by endpoint — several of its endpoints are
+    absent for several different reasons, and a prefix check cannot tell them apart.
     """
     from src.app import create_app
 
     paths = create_app().openapi()["paths"]
 
     for prefix in (
-        f"{API_PREFIX}/billing",
         f"{API_PREFIX}/admin",
         f"{API_PREFIX}/classrooms",
     ):

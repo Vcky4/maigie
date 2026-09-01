@@ -1397,7 +1397,7 @@ class TrialShowcaseSuggestion(CamelModel):
 
 
 class TrialStatusResponse(CamelModel):
-    """Where the learner stands with the 7-day Plus trial.
+    """Where the learner stands with the Plus trial.
 
     Typed because it was not, and the cost was concrete: the route returned bare
     dicts whose keys differed between branches, so nothing was generated into the

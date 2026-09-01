@@ -1,8 +1,9 @@
 """
 Billing domain — API routes.
 
-Covers subscriptions, credits, plans, referrals, ads, and Google Play billing.
-Webhooks are in a separate module (webhooks.py) mounted at /api/v1/webhooks.
+Covers the plan catalog, subscriptions (Stripe, Paystack, Google Play), purchase
+history, and admin credit adjustments. Webhooks are in a separate module
+(webhooks.py) mounted at /api/v1/webhooks.
 
 Mounted at: /api/v1/billing
 """
@@ -12,12 +13,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from src.config import Settings, get_settings
-from src.domains.identity.db_models import User
 from src.shared.auth import CurrentUser, StaffUser
-from src.shared.exceptions import NotFoundError, ValidationError
 
 from . import models
-from .services import credit_service, referral_service, subscription_service
+from .services import credit_service, subscription_service
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +71,10 @@ async def sync_checkout(body: models.SyncCheckoutRequest, current_user: CurrentU
     )
     if not updated:
         raise HTTPException(status_code=400, detail="Could not sync subscription")
-    return {"tier": updated.tier, "stripe_subscription_id": updated.stripe_subscription_id}
+    return {
+        "tier": updated.tier,
+        "stripe_subscription_id": updated.stripe_subscription_id,
+    }
 
 
 @router.post("/subscriptions/portal", response_model=models.PortalResponse)
@@ -120,46 +122,28 @@ async def cancel_subscription(current_user: CurrentUser):
 
 
 # ===========================================================================
-# Subscriptions (Paystack)
+# Subscriptions (Paystack) — written, not mounted
 # ===========================================================================
-
-
-@router.post("/subscriptions/paystack/initialize", response_model=models.PaystackInitializeResponse)
-async def paystack_initialize(
-    body: models.PaystackInitializeRequest,
-    current_user: CurrentUser,
-    http_request: Request,
-    settings: Settings = Depends(get_settings),
-):
-    """Initialize a Paystack subscription (NGN)."""
-    base_url = settings.FRONTEND_URL or str(http_request.base_url).rstrip("/")
-    success_url = body.success_url or f"{base_url}/subscription/paystack/success"
-    cancel_url = body.cancel_url or f"{base_url}/subscription/cancel"
-
-    try:
-        result = await subscription_service.initialize_paystack(
-            user=current_user,
-            plan_id=body.plan_id,
-            success_url=success_url,
-            cancel_url=cancel_url,
-        )
-        return models.PaystackInitializeResponse(**result)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.get("/subscriptions/paystack/verify", response_model=models.PaystackVerifyResponse)
-async def paystack_verify(reference: str, current_user: CurrentUser):
-    """Verify Paystack transaction after redirect."""
-    updated = await subscription_service.verify_paystack(
-        reference=reference, user_id=current_user.id
-    )
-    if not updated:
-        raise HTTPException(status_code=400, detail="Could not verify transaction")
-    return models.PaystackVerifyResponse(
-        tier=str(updated.tier),
-        paystack_subscription_code=updated.paystack_subscription_code,
-    )
+#
+# `/subscriptions/paystack/initialize` and `/subscriptions/paystack/verify` are the single
+# largest gap between this phase and a working money path, and they are absent because they
+# cannot work yet.
+#
+# `paystack_service` holds a `PrismaClientRemoved` sentinel where its database used to be.
+# `initialize_paystack_subscription`, `verify_paystack_transaction`,
+# `cancel_paystack_subscription` and `handle_paystack_webhook` all reach it, so all four
+# fail. The webhook fails quietly — `webhooks.py` catches and answers 200 — but these two
+# routes would answer 500.
+#
+# That matters more than it first looks. Paystack is the NGN rail and Nigeria is the launch
+# market; the naira prices are set independently rather than converted precisely because FX
+# parity would price Maigie above Netflix Standard there. Mounting Stripe without Paystack
+# makes the money path reachable in the markets we are not launching in and unreachable in
+# the one we are. Porting `paystack_service` to SQLAlchemy is a launch blocker, not a later
+# phase.
+#
+# Absent rather than mounted-and-broken: a 404 tells a client the path does not exist yet,
+# which is true. A 500 tells it we are broken, and invites a retry.
 
 
 # ===========================================================================
@@ -182,58 +166,20 @@ async def google_play_verify(body: models.GooglePlayVerifyRequest, current_user:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post(
-    "/subscriptions/google-play/verify-product",
-    response_model=models.GooglePlayProductVerifyResponse,
-)
-async def google_play_verify_product(
-    body: models.GooglePlayProductVerifyRequest, current_user: CurrentUser
-):
-    """Verify a Google Play in-app product (credit pack) purchase."""
-    try:
-        result = await subscription_service.verify_google_play_product(
-            user_id=current_user.id,
-            product_id=body.productId,
-            purchase_token=body.purchaseToken,
-        )
-        return models.GooglePlayProductVerifyResponse(**result)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+# The in-app product verification endpoint that used to live here verified a credit-pack
+# purchase and granted credits. Credit packs are withdrawn, so it verified a product that
+# no longer exists. Its replacement verifies a Plus pass purchase and grants an inactive
+# pass; it arrives with the purchase rails, alongside the Apple equivalent.
+# `google_play_service.verify_product_purchase` is left in place as the basis for it —
+# the `purchases.products.get` call and the token-replay check are both reusable.
 
 
 # ===========================================================================
 # Credits
 # ===========================================================================
-
-
-@router.get("/credit-packs", response_model=list[models.CreditPackResponse])
-async def get_credit_packs(current_user: CurrentUser):
-    """List available credit packs with user-specific pricing."""
-    return await credit_service.get_credit_packs(current_user)
-
-
-@router.post("/credit-packs/purchase", response_model=models.PurchaseSessionResponse)
-async def purchase_credit_pack(body: models.PurchaseInitiateRequest, current_user: CurrentUser):
-    """Initiate a credit pack purchase."""
-    from src.shared.infrastructure.rate_limit import enforce_rate_limit
-    from src.shared.infrastructure.redis import cache
-
-    await enforce_rate_limit(
-        user_id=current_user.id,
-        endpoint="credit_pack_purchase",
-        max_requests=5,
-        window_seconds=60,
-    )
-    try:
-        return await credit_service.initiate_purchase(
-            user=current_user,
-            pack_id=body.packId,
-            success_url=body.successUrl,
-            cancel_url=body.cancelUrl,
-        )
-    except Exception as e:
-        logger.error(f"Purchase initiation failed: {e}")
-        raise HTTPException(status_code=500, detail="Failed to initiate purchase")
+#
+# The credit-pack catalog and purchase endpoints are gone with the product. What is left
+# is history and a support tool: both describe transactions that really happened.
 
 
 @router.get("/credits/purchases", response_model=models.PaginatedPurchaseHistory)
@@ -269,52 +215,26 @@ async def admin_adjust_credits(body: models.AdminCreditAdjustRequest, admin_user
 
 
 # ===========================================================================
-# Referrals
+# Referrals — not mounted
 # ===========================================================================
-
-
-@router.get("/referrals/stats", response_model=models.ReferralStatsResponse)
-async def get_referral_stats(current_user: CurrentUser):
-    """Get referral statistics."""
-    stats = await referral_service.get_referral_stats(current_user)
-    return models.ReferralStatsResponse(**stats)
-
-
-@router.get("/referrals/claimable", response_model=list[models.ClaimableRewardResponse])
-async def get_claimable_rewards(current_user: CurrentUser):
-    """Get all claimable referral rewards."""
-    rewards = await referral_service.get_claimable_rewards(current_user)
-    return [models.ClaimableRewardResponse(**r) for r in rewards]
-
-
-@router.post("/referrals/claim", response_model=models.ClaimRewardResponse)
-async def claim_referral_reward(body: models.ClaimRewardRequest, current_user: CurrentUser):
-    """Claim a referral reward."""
-    try:
-        result = await referral_service.claim_reward(current_user, body.rewardId)
-        return models.ClaimRewardResponse(**result)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+#
+# `/referrals/stats`, `/referrals/claimable` and `/referrals/claim` are deleted here, and
+# not because they were unwritten. All three resolved into `referral_rewards_service`,
+# which was written against the Prisma client and now holds a `PrismaClientRemoved`
+# sentinel where its database used to be. Every one of them would answer 500. Mounting the
+# router with them attached would take three endpoints that are currently *honestly*
+# unreachable and make them dishonestly reachable.
+#
+# They return when the reward they describe exists. It is no longer a token grant: it is
+# points, earned when a referred learner has genuinely studied on seven distinct days,
+# redeemable for passes and for nothing else. That is a different contract, not a port,
+# which is why these are removed rather than commented out.
 
 
 # ===========================================================================
-# Ads (Rewarded Video)
+# Ads (Rewarded Video) — withdrawn
 # ===========================================================================
-
-
-@router.get("/ads/stats", response_model=models.AdStatsResponse)
-async def get_ad_stats(current_user: CurrentUser):
-    """Get ad watch statistics."""
-    stats = await credit_service.get_ad_stats(current_user.id)
-    return models.AdStatsResponse(**stats)
-
-
-@router.post("/ads/reward", response_model=models.AdRewardResponse)
-async def claim_ad_reward(body: models.AdRewardRequest, current_user: CurrentUser):
-    """Claim credits for watching a rewarded ad."""
-    result = await credit_service.claim_ad_reward(
-        user_id=current_user.id,
-        ad_type=body.adType,
-        ad_unit_id=body.adUnitId,
-    )
-    return models.AdRewardResponse(**result)
+#
+# `/ads/stats` and `/ads/reward` are gone. See `services/credit_service.py` for the
+# reasoning: the reward was an invisible daily credit-limit increase, and nothing in the
+# product asks a learner to watch an advertisement.

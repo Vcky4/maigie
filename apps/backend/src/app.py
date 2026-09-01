@@ -253,8 +253,8 @@ def _openapi_tags() -> list[dict]:
         {
             "name": "billing",
             "description": (
-                "**Billing Domain** — Subscriptions (Stripe, Paystack, Google Play), "
-                "credit packs, referral rewards, ad rewards, and plan catalog."
+                "**Billing Domain** — Plan catalog, subscriptions (Stripe, Paystack, "
+                "Google Play), purchase history, and admin credit adjustments."
             ),
         },
         {
@@ -381,11 +381,32 @@ def _register_domains(app: FastAPI) -> None:
 
     app.include_router(study_voice_router, prefix=f"{prefix}/gemini-live", tags=["study-voice"])
 
-    # --- Billing (pending SQLAlchemy migration) ---
-    # from src.domains.billing.routes import router as billing_router
-    # from src.domains.billing.webhooks import router as webhooks_router
-    # app.include_router(billing_router, prefix=f"{prefix}/billing", tags=["billing"])
-    # app.include_router(webhooks_router, prefix=f"{prefix}/webhooks", tags=["webhooks"])
+    # --- Billing ---
+    #
+    # Mounted. Until now it was not, and the consequence was the most expensive thing in the
+    # codebase: `credit_consumption_service` is imported directly by `study_voice`,
+    # `personal_learning` and `knowledge`, so the meter has been running the whole time —
+    # while every checkout, verification and webhook endpoint that could have paid it was
+    # served by nothing. Both clients call these paths today and get a 404. A learner who
+    # exhausted their allowance had no reachable way to buy more, and no trial has ever
+    # converted to a paying subscriber because there has never been a checkout to convert
+    # into.
+    #
+    # Mounted only after the catalogue it serves was rewritten, not before. Serving the old
+    # one would have exported credit packs, yearly Plus and the rewarded-ad endpoints into
+    # `openapi.json`, and the generated client types would have been regenerated against
+    # products that are being withdrawn in the same change.
+    #
+    # Three endpoints are absent by choice rather than oversight: `/referrals/*`, which
+    # would answer 500 from a Prisma sentinel, and the credit-pack product verification.
+    # See the comment blocks in `billing/routes.py`.
+    from src.domains.billing.routes import router as billing_router
+    from src.domains.billing.webhooks import router as webhooks_router
+
+    app.include_router(billing_router, prefix=f"{prefix}/billing", tags=["billing"])
+    # Provider callbacks. Its own prefix, so the routing table shows at a glance which
+    # paths are unauthenticated and signature-verified rather than user-authenticated.
+    app.include_router(webhooks_router, prefix=f"{prefix}/webhooks", tags=["webhooks"])
 
     # --- Admin (pending SQLAlchemy migration) ---
     # from src.domains.admin.routes import router as admin_router

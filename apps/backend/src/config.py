@@ -177,9 +177,16 @@ class Settings(BaseSettings):
     STRIPE_WEBHOOK_DESTINATION_ID: str = (
         ""  # Webhook destination ID (required when using destinations)
     )
-    # Maigie Plus (7-day trial)
+    # Maigie Plus subscription (3-day trial on first purchase)
     STRIPE_PRICE_ID_MONTHLY: str = ""
+    # DEPRECATED: yearly Plus is withdrawn from the active catalog. The price id is
+    # retained so a renewal webhook for a grandfathered `PREMIUM_YEARLY` subscriber can
+    # still be identified; `plus_yearly` is rejected with 410 on new purchases.
     STRIPE_PRICE_ID_YEARLY: str = ""
+    # Plus passes — one-time prices (`mode: payment`), not subscriptions. A pass is a
+    # consumable product: bought, held, activated, spent. Nothing renews.
+    STRIPE_PRICE_ID_PLUS_PASS_5H: str = ""
+    STRIPE_PRICE_ID_PLUS_PASS_7D: str = ""
     # Circle Plan (per-Circle subscription, 7-day trial on first purchase)
     STRIPE_PRICE_ID_CIRCLE_PLAN_MONTHLY: str = ""
     # Plus Seat add-on (per-seat, no trial)
@@ -194,15 +201,34 @@ class Settings(BaseSettings):
     # (Requirements 1.6, 1.8, 17.9). Same retention rationale as above.
     STRIPE_PRICE_ID_SQUAD_MONTHLY: str = ""
     STRIPE_PRICE_ID_SQUAD_YEARLY: str = ""
-    # Trial days per plan (used when creating checkout sessions)
-    TRIAL_DAYS_MAIGIE_PLUS: int = 7
+    # Trial days per plan (used when creating checkout sessions).
+    #
+    # The Plus trial is **3 days**, not 7. A free 7-day trial sitting beside a $2.49
+    # 7-day pass is the same product at two prices, and the one that costs money looks
+    # like a trick to anyone who remembers the free one. Three days separates them: the
+    # trial is a look, the pass is a study week.
+    #
+    # This number also lives in three places the server does not control — the Stripe
+    # price's `trial_period_days`, the App Store Connect introductory offer, and the Play
+    # Console base-plan free trial. All four must read 3, and no test can catch the two
+    # that live in a console. It is carried in `GET /plans/catalog` as `trialDays` so no
+    # client hardcodes a fourth copy.
+    TRIAL_DAYS_MAIGIE_PLUS: int = 3
+    # Space-scoped and deliberately unchanged at 7.
     TRIAL_DAYS_CIRCLE_PLAN: int = 7
-    TRIAL_DAYS_STUDY_CIRCLE: int = 3  # retained for historical webhook handling
-    TRIAL_DAYS_SQUAD: int = 3  # retained for historical webhook handling
     # Catalog prices (cents, USD). Source of truth for `GET /plans/catalog`.
-    # Per Requirement 1.3: Plus $4.99/mo or $39/yr, Circle Plan $14.99/mo,
-    # Plus Seat add-on $4.99/seat/mo.
+    # Personal: 5-hour pass $0.99, 7-day pass $2.49, Plus $4.99/mo.
+    # Space-scoped: Circle Plan $14.99/mo, Plus Seat add-on $4.99/seat/mo.
+    #
+    # `PRICE_CENTS_PLUS_MONTHLY` stays at 499. A one-cent rise would require a Stripe
+    # price migration, a mandatory 7-day Google Play notice, and on Apple an explicit
+    # consent prompt whose non-responders are cancelled at renewal — real churn for
+    # nothing.
+    PRICE_CENTS_PLUS_PASS_5H: int = 99
+    PRICE_CENTS_PLUS_PASS_7D: int = 249
     PRICE_CENTS_PLUS_MONTHLY: int = 499
+    # DEPRECATED alongside `STRIPE_PRICE_ID_YEARLY`: retained for grandfathered
+    # subscribers' billing records, excluded from the catalog.
     PRICE_CENTS_PLUS_YEARLY: int = 3900
     PRICE_CENTS_CIRCLE_PLAN_MONTHLY: int = 1499
     PRICE_CENTS_PLUS_SEAT_ADD_ON_MONTHLY: int = 499

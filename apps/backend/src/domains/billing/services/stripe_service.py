@@ -37,24 +37,52 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-# Plan identifiers accepted at the active checkout surface.
-# Per Requirements 1.1, 1.6, 1.8, 1.10 and 17.9, the catalog only exposes
-# the new tier set. ``maigie_plus_*`` are kept under the existing slugs to
-# avoid client churn; ``plus_monthly`` / ``plus_yearly`` are the new
-# user-facing aliases that map to the same Stripe prices.
+# Plan identifiers accepted at the **subscription** checkout surface.
+#
+# There is one personal subscription — Maigie Plus monthly — plus the legacy
+# ``maigie_plus_monthly`` slug, kept so a shipped client that still sends it does not
+# break. The two space-scoped entries are unchanged and out of scope.
+#
+# The two Plus passes are deliberately **absent**. A pass is a one-time product bought
+# with ``mode: payment``; it is not a subscription and does not belong on this surface.
+# It appears in the catalog so clients can price and display it, and it becomes
+# purchasable when the one-time checkout lands.
 PLAN_IDS = (
     "maigie_plus_monthly",
-    "maigie_plus_yearly",
     "plus_monthly",
-    "plus_yearly",
     "circle_plan_monthly",
     "plus_seat_add_on_monthly",
 )
 
+# Product identifiers in the catalog that are not subscriptions. Kept separate from
+# ``PLAN_IDS`` so that asking for one at the subscription checkout is a clear, specific
+# refusal rather than a generic "invalid plan_id".
+PASS_PRODUCT_IDS = ("plus_pass_5h", "plus_pass_7d")
+
 # Plan identifiers that have been removed from the active catalog.
-# Creation requests referencing these are rejected with HTTP 410 per
-# Requirements 1.9 and 2.1.
+# Creation requests referencing these are rejected with HTTP 410.
+#
+# These ids stay reachable on purpose. A plan removed from the catalog is not the same
+# thing as a plan that never existed, and a client holding a stale id deserves to be told
+# which. That is only possible if the request model still accepts the id — see the
+# ``PlanId`` literal in ``billing/models.py``, which lists them for exactly this reason.
 DEPRECATED_PLAN_IDS = {
+    # Yearly Plus is withdrawn. Existing PREMIUM_YEARLY subscribers are grandfathered and
+    # keep renewing — the Stripe price id survives in config for that — but the product is
+    # not sold again. Withdrawing it is consistent with retiring every other multi-tier
+    # personal product; the catalog is four entries, not five.
+    "plus_yearly": (
+        "PLUS_YEARLY_PLAN_REMOVED",
+        "Yearly Maigie Plus has been withdrawn. Maigie Plus is $4.99/month, "
+        "and the 5-hour and 7-day Plus passes are available if you would "
+        "rather not subscribe.",
+    ),
+    "maigie_plus_yearly": (
+        "PLUS_YEARLY_PLAN_REMOVED",
+        "Yearly Maigie Plus has been withdrawn. Maigie Plus is $4.99/month, "
+        "and the 5-hour and 7-day Plus passes are available if you would "
+        "rather not subscribe.",
+    ),
     "study_circle_monthly": (
         "STUDY_CIRCLE_PLAN_REMOVED",
         "The Study Circle plan has been retired. Please subscribe to "
@@ -83,10 +111,9 @@ DEPRECATED_PLAN_IDS = {
 def _is_first_plus_purchase(user: User) -> bool:
     """Return True when this user has never had a Maigie Plus subscription.
 
-    Used to decide whether to grant the 7-day Maigie Plus trial per
-    Requirement 1.12. A user is treated as a first-time Plus subscriber
-    when their stored ``Tier`` is ``FREE`` and they have no record of a
-    paid plan in either provider.
+    Used to decide whether to grant the Maigie Plus trial. A user is treated as a
+    first-time Plus subscriber when their stored ``Tier`` is ``FREE`` and they have
+    no record of a paid plan in either provider.
     """
     if str(user.tier or "FREE") != "FREE":
         return False
@@ -96,13 +123,20 @@ def _is_first_plus_purchase(user: User) -> bool:
 def get_active_plan_catalog() -> PlanCatalogResponse:
     """Return the active product catalog.
 
-    Per Requirement 1.10 the catalog contains exactly five entries:
-    ``FREE``, ``PLUS_MONTHLY``, ``PLUS_YEARLY``, ``CIRCLE_PLAN_MONTHLY``,
-    and ``PLUS_SEAT_ADD_ON_MONTHLY``. Deprecated ``STUDY_CIRCLE_*`` and
-    ``SQUAD_*`` products are excluded (Requirements 1.6, 1.8, 17.9).
+    Six entries: four ``personal`` products and the two space-scoped ones.
 
-    Prices are sourced from ``Settings`` (cents, USD) so the catalog
-    stays consistent with the marketing copy in Requirement 1.3.
+    Personal is ``free``, the two Plus passes, and ``plus_monthly``. Yearly Plus,
+    the three credit packs and the ``study_circle_*`` / ``squad_*`` tiers are all
+    withdrawn; the deprecated ids answer 410 rather than disappearing silently.
+
+    Every price, trial length and usage equivalent a client displays is served from
+    here. Nothing on any surface may hold a second copy of these numbers — the four
+    repositories held nine copies of the subscription price alone, and they disagreed.
+
+    ``usage_note`` carries the concrete equivalent in the units a learner recognises,
+    because "5 hours of Plus" invites the reader to assume five hours of live voice
+    tutoring, which costs about $6.00 to serve against a pass that nets $0.75. Stating
+    the voice figure is the difference between a promise we keep and one we don't.
     """
     cfg = get_settings()
     plans = [
@@ -112,27 +146,51 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
             scope="personal",
             price_cents=0,
             interval="none",
-            description="Free personal tier with limited AI access.",
+            description=(
+                "Everything Maigie does, at a standard level: notes, flashcards, "
+                "practice, study plans, courses and weekly reflections."
+            ),
+            usage_note="About 16 chat turns and 2.5 minutes of live voice per 5-hour session.",
+        ),
+        PlanItem(
+            id="plus_pass_5h",
+            name="5-Hour Plus Pass",
+            scope="personal",
+            price_cents=cfg.PRICE_CENTS_PLUS_PASS_5H,
+            # Not "none" and not "month": a pass is bought once and runs once. Clients group
+            # the catalog on this field, and a pass belongs beside the other pass rather
+            # than beside the subscription.
+            interval="one_time",
+            description=(
+                "Full Maigie Plus for 5 hours, starting when you activate it. "
+                "Hold it as long as you like; it does not renew."
+            ),
+            usage_note="About 17 chat turns and 15 minutes of live voice tutoring.",
+        ),
+        PlanItem(
+            id="plus_pass_7d",
+            name="7-Day Plus Pass",
+            scope="personal",
+            price_cents=cfg.PRICE_CENTS_PLUS_PASS_7D,
+            interval="one_time",
+            description=(
+                "Full Maigie Plus for 7 days, starting when you activate it. "
+                "A study week. It does not renew."
+            ),
+            usage_note="About 57 chat turns and 50 minutes of live voice tutoring in total.",
         ),
         PlanItem(
             id="plus_monthly",
-            name="Maigie Plus (Monthly)",
+            name="Maigie Plus",
             scope="personal",
             price_cents=cfg.PRICE_CENTS_PLUS_MONTHLY,
             interval="month",
             trial_days=cfg.TRIAL_DAYS_MAIGIE_PLUS,
             description=(
-                "Unlimited AI, advanced models, and larger uploads in your personal workspace."
+                "Advanced models, adaptive practice and plans, deeper reflections, "
+                "and every document format, in your personal workspace."
             ),
-        ),
-        PlanItem(
-            id="plus_yearly",
-            name="Maigie Plus (Yearly)",
-            scope="personal",
-            price_cents=cfg.PRICE_CENTS_PLUS_YEARLY,
-            interval="year",
-            trial_days=cfg.TRIAL_DAYS_MAIGIE_PLUS,
-            description="Unlimited AI, advanced models, and larger uploads, billed yearly.",
+            usage_note="About 23 chat turns and 20 minutes of live voice per 5-hour session.",
         ),
         PlanItem(
             id="circle_plan_monthly",
@@ -174,12 +232,11 @@ def get_price_id_and_trial_days(plan_id: str, *, user: User | None = None) -> tu
     """
     Get Stripe price ID and trial days for a plan.
 
-    Rejects deprecated plan ids (``study_circle_*`` / ``squad_*``) with
-    ``DeprecatedPlanError`` per Requirements 1.9 and 2.1. Per Requirement
-    1.12, the 7-day Maigie Plus trial is granted only on a user's first
-    PLUS purchase; pass ``user`` to enforce this. When ``user`` is
-    omitted (existing call sites that handle trial logic separately) the
-    full configured trial length is returned.
+    Rejects deprecated plan ids (``plus_yearly`` / ``study_circle_*`` / ``squad_*``)
+    with ``DeprecatedPlanError``. The Maigie Plus trial is granted only on a user's
+    first PLUS purchase; pass ``user`` to enforce this. When ``user`` is omitted
+    (existing call sites that handle trial logic separately) the full configured trial
+    length is returned.
 
     Args:
         plan_id: Active plan identifier.
@@ -190,9 +247,20 @@ def get_price_id_and_trial_days(plan_id: str, *, user: User | None = None) -> tu
 
     Raises:
         DeprecatedPlanError: If plan_id refers to a removed tier.
-        ValueError: If plan_id is otherwise invalid.
+        ValueError: If plan_id is a pass, or is otherwise invalid.
     """
     assert_plan_id_is_active(plan_id)
+
+    if plan_id in PASS_PRODUCT_IDS:
+        # Named explicitly rather than falling through to "invalid plan_id", because a
+        # client asking for a pass here is not confused about the product — it is using
+        # the wrong endpoint. A pass is a one-time charge and has no trial, no renewal
+        # and no subscription to modify.
+        raise ValueError(
+            f"'{plan_id}' is a one-time Plus pass, not a subscription. "
+            f"Passes are purchased through the one-time checkout, not "
+            f"/subscriptions/checkout."
+        )
 
     plus_trial = settings.TRIAL_DAYS_MAIGIE_PLUS
     if user is not None and not _is_first_plus_purchase(user):
@@ -200,8 +268,6 @@ def get_price_id_and_trial_days(plan_id: str, *, user: User | None = None) -> tu
 
     if plan_id in ("maigie_plus_monthly", "plus_monthly"):
         return settings.STRIPE_PRICE_ID_MONTHLY, plus_trial
-    if plan_id in ("maigie_plus_yearly", "plus_yearly"):
-        return settings.STRIPE_PRICE_ID_YEARLY, plus_trial
     if plan_id == "circle_plan_monthly":
         # The Circle Plan trial is owned by the Circle billing service.
         # Personal-checkout surface should not honor it; return 0 here.
@@ -241,10 +307,21 @@ def _price_id_to_tier(price_id: str) -> str:
 def _assert_price_id_is_active(price_id: str) -> None:
     """Reject creation requests against a deprecated Stripe price ID.
 
-    Per Requirements 1.9 and 2.1 (and the Property 2 contract in
-    design.md), any subscription creation that targets a
-    ``STUDY_CIRCLE_*`` or ``SQUAD_*`` price must fail with HTTP 410.
+    Any subscription creation or plan switch that targets a withdrawn price must fail
+    with HTTP 410: ``PREMIUM_YEARLY``, ``STUDY_CIRCLE_*`` or ``SQUAD_*``.
+
+    Yearly is here as well as in ``DEPRECATED_PLAN_IDS`` because the two functions guard
+    different doors. ``assert_plan_id_is_active`` guards a fresh checkout, which arrives
+    as a plan id; this one guards ``modify_existing_subscription``, which arrives as a
+    price id. A monthly subscriber switching to yearly is a new purchase of a withdrawn
+    product, and would otherwise slip through. Existing yearly subscribers are unaffected
+    — nothing here runs on a renewal, which is why the price id survives in config.
     """
+    if price_id and price_id == settings.STRIPE_PRICE_ID_YEARLY:
+        raise DeprecatedPlanError(
+            code="PLUS_YEARLY_PLAN_REMOVED",
+            message="Yearly Maigie Plus has been withdrawn.",
+        )
     if price_id and price_id == settings.STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY:
         raise DeprecatedPlanError(
             code="STUDY_CIRCLE_PLAN_REMOVED",
@@ -433,7 +510,11 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
                 ],
                 proration_behavior="create_prorations",  # Charge prorated amount now
                 billing_cycle_anchor="now",  # Must use "now" for interval changes
-                metadata={"user_id": user.id, "upgrade": "true", "interval_change": "true"},
+                metadata={
+                    "user_id": user.id,
+                    "upgrade": "true",
+                    "interval_change": "true",
+                },
             )
         else:
             # Upgrade within same interval (e.g., free to monthly, or price change)
@@ -467,7 +548,11 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
                 ],
                 proration_behavior="none",  # Don't charge until next billing date
                 billing_cycle_anchor="now",  # Must use "now" for interval changes
-                metadata={"user_id": user.id, "downgrade": "true", "interval_change": "true"},
+                metadata={
+                    "user_id": user.id,
+                    "downgrade": "true",
+                    "interval_change": "true",
+                },
             )
         else:
             # Downgrade within same interval

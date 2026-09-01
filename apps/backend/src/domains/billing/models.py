@@ -1,30 +1,49 @@
 """
 Billing domain — Pydantic request/response schemas.
 
-Covers subscriptions, credits, plans, referrals, ads, and payment webhooks.
+Covers subscriptions, credits, plans, referrals, and payment webhooks.
 """
 
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
+
+from src.shared.schemas import CamelModel
 
 # ===========================================================================
 # Plans
 # ===========================================================================
 
+# Accepted at the subscription checkout surface. This deliberately includes ids that are
+# **not** sold any more, because a request carrying one has to be distinguishable from a
+# request carrying nonsense: a Literal that omitted them would answer 422 "not a valid
+# plan" and shadow the 410 "this plan was withdrawn, here is what replaced it" that
+# ``stripe_service.DEPRECATED_PLAN_IDS`` exists to give. The two Plus passes are absent
+# because they are one-time products, not subscriptions — see ``PASS_PRODUCT_IDS``.
 PlanId = Literal[
+    # Active
     "maigie_plus_monthly",
-    "maigie_plus_yearly",
     "plus_monthly",
-    "plus_yearly",
     "circle_plan_monthly",
     "plus_seat_add_on_monthly",
+    # Withdrawn — accepted so the refusal can be specific (410, not 422)
+    "maigie_plus_yearly",
+    "plus_yearly",
+    "study_circle_monthly",
+    "study_circle_yearly",
+    "squad_monthly",
+    "squad_yearly",
 ]
 
 
-class PlanItem(BaseModel):
-    """Single plan in the catalog."""
+class PlanItem(CamelModel):
+    """Single product in the catalog.
+
+    Serialized camelCase, like every other schema written since ``CamelModel`` landed.
+    Safe to change here because this endpoint has never been mounted, so no client is
+    reading the old snake_case spelling.
+    """
 
     id: str
     name: str
@@ -34,6 +53,11 @@ class PlanItem(BaseModel):
     interval: str  # "none" | "month" | "year" | "one_time"
     trial_days: int = 0
     features: list[str] = []
+    # The concrete usage equivalent, in units a learner recognises, for this product.
+    # Served rather than composed on the client so that "5 hours of Plus" can never be
+    # displayed without the voice figure beside it — five hours of live tutoring costs
+    # roughly eight times what the pass earns, and the sentence has to say so.
+    usage_note: str | None = None
     # Whether the plan applies to one person, to a whole space, or tops up an
     # existing space plan. Clients need this to group the catalog for display.
     scope: Literal["personal", "circle", "add_on"] = "personal"
@@ -137,54 +161,15 @@ class GooglePlayVerifyResponse(BaseModel):
     autoRenewing: bool
 
 
-class GooglePlayProductVerifyRequest(BaseModel):
-    """Verify Google Play in-app product (one-time) purchase."""
-
-    productId: str
-    purchaseToken: str
-
-
-class GooglePlayProductVerifyResponse(BaseModel):
-    """Google Play product verification result."""
-
-    verified: bool
-    credits: int
-    newBalance: int
-
-
 # ===========================================================================
 # Credits
 # ===========================================================================
-
-
-class CreditPackResponse(BaseModel):
-    """Credit pack in the catalog."""
-
-    id: str
-    name: str
-    credits: int
-    price_cents: int
-    currency: str
-    description: str | None = None
-    popular: bool = False
-
-
-class PurchaseInitiateRequest(BaseModel):
-    """Initiate a credit pack purchase."""
-
-    packId: str = Field(..., alias="packId")
-    successUrl: str = Field("", alias="successUrl")
-    cancelUrl: str = Field("", alias="cancelUrl")
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class PurchaseSessionResponse(BaseModel):
-    """Credit pack purchase session."""
-
-    session_url: str
-    session_id: str
-    provider: str  # "stripe" | "paystack"
+#
+# The credit-pack catalog and purchase-initiation schemas are gone with the product.
+# Credit packs are withdrawn: the unit they sold is being replaced by a usage window,
+# and a pack of a unit that no longer exists cannot be priced honestly. The history and
+# admin-adjustment schemas below stay — the transactions they describe are real and are
+# retained as read-only history.
 
 
 class PurchaseHistoryItem(BaseModel):
@@ -268,35 +253,18 @@ class ClaimRewardResponse(BaseModel):
 
 
 # ===========================================================================
-# Ads (Rewarded Video)
+# Ads (Rewarded Video) — withdrawn
 # ===========================================================================
-
-
-class AdRewardRequest(BaseModel):
-    """Claim an ad reward."""
-
-    adType: str
-    rewardAmount: int
-    adUnitId: str | None = None
-
-
-class AdRewardResponse(BaseModel):
-    """Ad reward claim result."""
-
-    credited: int
-    adsWatchedToday: int
-    remainingToday: int
-    dailyLimitIncrease: int
-
-
-class AdStatsResponse(BaseModel):
-    """Ad watch statistics."""
-
-    adsWatchedToday: int
-    maxPerDay: int
-    remainingToday: int
-    creditsPerAd: int
-    totalEarned: int
+#
+# Nothing in the product asks a learner to watch an advertisement. The reward these
+# schemas described was a daily credit-limit increase, which is invisible: a learner
+# cannot see it, predict it, or plan a study session around it, so it bought no goodwill
+# and cost real inference. Earning now produces points, and points buy passes — something
+# a learner can hold, see, and choose when to spend.
+#
+# The `AdRewardClaim` table stays in place, empty and unread. Dropping it would foreclose
+# a redesign at no saving. If ads return they will be designed as a product decision, not
+# inherited as a credit top-up.
 
 
 # ===========================================================================

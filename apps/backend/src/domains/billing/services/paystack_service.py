@@ -32,36 +32,17 @@ logger = logging.getLogger(__name__)
 db = PrismaClientRemoved("billing.services.paystack_service")
 
 PAYSTACK_BASE = "https://api.paystack.co"
-# Active plan identifiers accepted at the checkout surface. Deprecated
-# ``study_circle_*`` and ``squad_*`` ids are rejected on creation per
-# Requirements 1.9 and 2.1.
-PLAN_IDS = (
-    "maigie_plus_monthly",
-    "maigie_plus_yearly",
-    "plus_monthly",
-    "plus_yearly",
-    "circle_plan_monthly",
-    "plus_seat_add_on_monthly",
-)
 
-DEPRECATED_PLAN_IDS = {
-    "study_circle_monthly": (
-        "STUDY_CIRCLE_PLAN_REMOVED",
-        "The Study Circle plan has been retired.",
-    ),
-    "study_circle_yearly": (
-        "STUDY_CIRCLE_PLAN_REMOVED",
-        "The Study Circle plan has been retired.",
-    ),
-    "squad_monthly": (
-        "SQUAD_PLAN_REMOVED",
-        "The Squad plan has been retired.",
-    ),
-    "squad_yearly": (
-        "SQUAD_PLAN_REMOVED",
-        "The Squad plan has been retired.",
-    ),
-}
+# The plan id sets are imported from the Stripe service rather than restated here.
+#
+# They used to be a second copy, and a second copy of a product catalogue is how two
+# surfaces come to sell different things: withdrawing yearly Plus from the Stripe checkout
+# would have left the Paystack checkout still selling it, and the learner who found the
+# difference would have been a Nigerian learner buying a product nobody else could.
+#
+# `PLAN_IDS` is only read to compose an error message here; `DEPRECATED_PLAN_IDS` decides
+# what is refused. Both belong to the catalogue, and the catalogue has one owner.
+from ..services.stripe_service import DEPRECATED_PLAN_IDS, PLAN_IDS  # noqa: E402
 
 
 def _assert_plan_id_is_active(plan_id: str) -> None:
@@ -82,11 +63,14 @@ def _get_plan_code(plan_id: str) -> str:
     """
     _assert_plan_id_is_active(plan_id)
     settings = get_settings()
+    # No yearly entry. `PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY` still exists in config so a
+    # renewal charge for a grandfathered yearly subscriber can be identified by
+    # `_plan_code_to_tier`, but nothing may start a new one — `_assert_plan_id_is_active`
+    # has already refused the id by the time this mapping is read, and keeping a row for it
+    # here would only suggest otherwise to the next reader.
     mapping = {
         "maigie_plus_monthly": settings.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY,
-        "maigie_plus_yearly": settings.PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY,
         "plus_monthly": settings.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY,
-        "plus_yearly": settings.PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY,
         "circle_plan_monthly": settings.PAYSTACK_PLAN_CIRCLE_PLAN_MONTHLY,
         "plus_seat_add_on_monthly": settings.PAYSTACK_PLAN_PLUS_SEAT_ADD_ON_MONTHLY,
     }

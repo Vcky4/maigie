@@ -1,5 +1,5 @@
 """
-Trial Service — Manages the 7-day PLUS trial lifecycle.
+Trial Service — Manages the PLUS trial lifecycle (TRIAL_DURATION_DAYS).
 
 Allows free users to experience PLUS capabilities temporarily.
 Handles start, status checks, showcase suggestions, summary generation,
@@ -21,7 +21,15 @@ logger = logging.getLogger(__name__)
 # Constants
 # ===========================================================================
 
-TRIAL_DURATION_DAYS = 7
+# The second copy of `config.TRIAL_DAYS_MAIGIE_PLUS`, and the one that governs the
+# in-product trial rather than the Stripe subscription's own trial period. Both read 3.
+#
+# Three days rather than seven because a free 7-day trial sitting beside a $2.49 7-day
+# pass is the same product at two prices, and the one that costs money looks like a trick
+# to anyone who remembers the free one. Three days separates them: the trial is a look,
+# the pass is a study week. At a 5-hour usage window that is still ~14 windows, several
+# study sessions, and every Plus capability — long enough to be an honest look.
+TRIAL_DURATION_DAYS = 3
 TRIAL_COOLDOWN_DAYS = 90  # Can only trial once per quarter
 
 
@@ -90,7 +98,7 @@ class TrialSummary:
 
 async def start_trial(user_id: str) -> TrialStatus:
     """
-    Start a 7-day PLUS trial for a free user.
+    Start a PLUS trial for a free user, TRIAL_DURATION_DAYS long.
 
     Raises ValueError if:
     - User is already on trial

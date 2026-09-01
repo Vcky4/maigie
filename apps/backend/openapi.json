@@ -257,6 +257,55 @@
         "title": "ActivityTypeCount",
         "type": "object"
       },
+      "AdminCreditAdjustRequest": {
+        "description": "Admin credit balance adjustment.",
+        "properties": {
+          "amount": {
+            "description": "Positive to grant, negative to deduct",
+            "title": "Amount",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "amount",
+          "reason"
+        ],
+        "title": "AdminCreditAdjustRequest",
+        "type": "object"
+      },
+      "AdminCreditAdjustResponse": {
+        "description": "Admin credit adjustment result.",
+        "properties": {
+          "adjustmentAmount": {
+            "title": "Adjustmentamount",
+            "type": "integer"
+          },
+          "newBalance": {
+            "title": "Newbalance",
+            "type": "integer"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "newBalance",
+          "adjustmentAmount"
+        ],
+        "title": "AdminCreditAdjustResponse",
+        "type": "object"
+      },
       "AgendaAcceptRequest": {
         "description": "Accept a suggested placement, turning it into a scheduled block.\n\n`entryId` is the agenda entry's own namespaced id (`plan_item:…`, `review:…`), which is what tells the\nserver what the block should be linked to. `startAt` and `minutes` are sent rather than assumed, so a\nlearner who nudged the suggestion to a different hour gets the hour they chose.",
         "properties": {
@@ -1067,6 +1116,30 @@
         "title": "CancelDeletionRequest",
         "type": "object"
       },
+      "CancelSubscriptionResponse": {
+        "description": "Subscription cancellation result.",
+        "properties": {
+          "cancel_at_period_end": {
+            "title": "Cancel At Period End",
+            "type": "boolean"
+          },
+          "current_period_end": {
+            "title": "Current Period End",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "cancel_at_period_end",
+          "current_period_end"
+        ],
+        "title": "CancelSubscriptionResponse",
+        "type": "object"
+      },
       "ChangePasswordRequest": {
         "description": "Change password for authenticated users.",
         "properties": {
@@ -1227,6 +1300,84 @@
           "createdAt"
         ],
         "title": "ChatMessageResponse",
+        "type": "object"
+      },
+      "CheckoutRequest": {
+        "description": "Create Stripe checkout session.",
+        "properties": {
+          "plan_id": {
+            "enum": [
+              "maigie_plus_monthly",
+              "plus_monthly",
+              "circle_plan_monthly",
+              "plus_seat_add_on_monthly",
+              "maigie_plus_yearly",
+              "plus_yearly",
+              "study_circle_monthly",
+              "study_circle_yearly",
+              "squad_monthly",
+              "squad_yearly"
+            ],
+            "title": "Plan Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plan_id"
+        ],
+        "title": "CheckoutRequest",
+        "type": "object"
+      },
+      "CheckoutResponse": {
+        "description": "Checkout session result.",
+        "properties": {
+          "current_period_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Period End"
+          },
+          "is_upgrade": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Upgrade"
+          },
+          "modified": {
+            "default": false,
+            "title": "Modified",
+            "type": "boolean"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "title": "CheckoutResponse",
         "type": "object"
       },
       "CollectionCreate": {
@@ -6213,6 +6364,64 @@
         "title": "GoalUpdate",
         "type": "object"
       },
+      "GooglePlayVerifyRequest": {
+        "description": "Verify Google Play subscription purchase.",
+        "properties": {
+          "basePlanId": {
+            "default": "",
+            "title": "Baseplanid",
+            "type": "string"
+          },
+          "productId": {
+            "title": "Productid",
+            "type": "string"
+          },
+          "purchaseToken": {
+            "title": "Purchasetoken",
+            "type": "string"
+          }
+        },
+        "required": [
+          "productId",
+          "purchaseToken"
+        ],
+        "title": "GooglePlayVerifyRequest",
+        "type": "object"
+      },
+      "GooglePlayVerifyResponse": {
+        "description": "Google Play verification result.",
+        "properties": {
+          "autoRenewing": {
+            "title": "Autorenewing",
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "title": "Expiresat",
+            "type": "string"
+          },
+          "startedAt": {
+            "title": "Startedat",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "verified",
+          "tier",
+          "expiresAt",
+          "startedAt",
+          "autoRenewing"
+        ],
+        "title": "GooglePlayVerifyResponse",
+        "type": "object"
+      },
       "GrowthDelta": {
         "description": "Change across the range for one series: first captured value against last.\n\n`None` when fewer than two days were captured. One point is not a trend, and reporting `0`\nchange from a single observation would claim a flat line that was never measured.",
         "properties": {
@@ -9585,6 +9794,43 @@
         "title": "OnboardingStatusResponse",
         "type": "object"
       },
+      "PaginatedPurchaseHistory": {
+        "description": "Paginated purchase history.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PurchaseHistoryItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "totalPages": {
+            "title": "Totalpages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "totalPages"
+        ],
+        "title": "PaginatedPurchaseHistory",
+        "type": "object"
+      },
       "PaginatedResponse_ActivityFeedEntryResponse_": {
         "properties": {
           "items": {
@@ -10160,6 +10406,96 @@
         "title": "PendingInviteResponse",
         "type": "object"
       },
+      "PlanCatalogResponse": {
+        "description": "Active product catalog.",
+        "properties": {
+          "plans": {
+            "items": {
+              "$ref": "#/components/schemas/PlanItem"
+            },
+            "title": "Plans",
+            "type": "array"
+          }
+        },
+        "required": [
+          "plans"
+        ],
+        "title": "PlanCatalogResponse",
+        "type": "object"
+      },
+      "PlanItem": {
+        "description": "Single product in the catalog.\n\nSerialized camelCase, like every other schema written since ``CamelModel`` landed.\nSafe to change here because this endpoint has never been mounted, so no client is\nreading the old snake_case spelling.",
+        "properties": {
+          "currency": {
+            "default": "usd",
+            "title": "Currency",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "features": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "interval": {
+            "title": "Interval",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "priceCents": {
+            "title": "Pricecents",
+            "type": "integer"
+          },
+          "scope": {
+            "default": "personal",
+            "enum": [
+              "personal",
+              "circle",
+              "add_on"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "trialDays": {
+            "default": 0,
+            "title": "Trialdays",
+            "type": "integer"
+          },
+          "usageNote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usagenote"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "priceCents",
+          "interval"
+        ],
+        "title": "PlanItem",
+        "type": "object"
+      },
       "PlanShapePhase": {
         "description": "One phase of a path shape, as previewed in the wizard before the plan exists.\n\n`duration` is a human week range for the preview and is not used for scheduling: real\ndates come from the deadline and the learner's available days, so a shape is not in a\nposition to promise a timetable.",
         "properties": {
@@ -10242,6 +10578,20 @@
           "phases"
         ],
         "title": "PlanShapeResponse",
+        "type": "object"
+      },
+      "PortalResponse": {
+        "description": "Stripe customer portal URL.",
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "PortalResponse",
         "type": "object"
       },
       "PreferencesUpdateRequest": {
@@ -13074,6 +13424,56 @@
           "dueCards"
         ],
         "title": "ProgressSummaryResponse",
+        "type": "object"
+      },
+      "PurchaseHistoryItem": {
+        "description": "Single credit purchase transaction.",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "credits": {
+            "title": "Credits",
+            "type": "integer"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "packName": {
+            "title": "Packname",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "packName",
+          "credits",
+          "amount",
+          "currency",
+          "provider",
+          "status",
+          "createdAt"
+        ],
+        "title": "PurchaseHistoryItem",
         "type": "object"
       },
       "PurposeSetRequest": {
@@ -18412,6 +18812,21 @@
         "title": "SubjectsSetRequest",
         "type": "object"
       },
+      "SyncCheckoutRequest": {
+        "description": "Sync subscription from completed checkout.",
+        "properties": {
+          "session_id": {
+            "description": "Stripe checkout session ID (cs_xxx)",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "title": "SyncCheckoutRequest",
+        "type": "object"
+      },
       "TimezoneResponse": {
         "description": "The learner's timezone and where it came from.\n\n`source` is `null` when the timezone has never been captured, in which case\n`timezone` is a default rather than an observation and nothing should claim a\nlocal time from it.",
         "properties": {
@@ -19787,7 +20202,7 @@
         "type": "object"
       },
       "TrialStatusResponse": {
-        "description": "Where the learner stands with the 7-day Plus trial.\n\nTyped because it was not, and the cost was concrete: the route returned bare\ndicts whose keys differed between branches, so nothing was generated into the\nclient's types and the commercial dialog was built against a hand-written\nfixture (`COMMERCIAL_TRIAL_DEMO`) instead. That fixture then announced \"Day 3 of\nyour Plus trial\" to Free learners who had never trialled at all.\n\n`trialAvailable` is present on every branch and derived from the same rules\n`start_trial` enforces, so the offer shown matches what pressing it would do.",
+        "description": "Where the learner stands with the Plus trial.\n\nTyped because it was not, and the cost was concrete: the route returned bare\ndicts whose keys differed between branches, so nothing was generated into the\nclient's types and the commercial dialog was built against a hand-written\nfixture (`COMMERCIAL_TRIAL_DEMO`) instead. That fixture then announced \"Day 3 of\nyour Plus trial\" to Free learners who had never trialled at all.\n\n`trialAvailable` is present on every branch and derived from the same rules\n`start_trial` enforces, so the offer shown matches what pressing it would do.",
         "properties": {
           "dayNumber": {
             "default": 0,
@@ -21031,6 +21446,338 @@
         "tags": [
           "auth",
           "auth"
+        ]
+      }
+    },
+    "/api/v1/billing/admin/credits/adjust": {
+      "post": {
+        "description": "Admin: adjust a user's credit balance.",
+        "operationId": "admin_adjust_credits_api_v1_billing_admin_credits_adjust_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminCreditAdjustRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCreditAdjustResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Adjust Credits",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/credits/purchases": {
+      "get": {
+        "description": "Get paginated credit purchase history.",
+        "operationId": "get_purchase_history_api_v1_billing_credits_purchases_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedPurchaseHistory"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Purchase History",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/plans/catalog": {
+      "get": {
+        "description": "Return the active product catalog (no auth required).",
+        "operationId": "plan_catalog_api_v1_billing_plans_catalog_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanCatalogResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Plan Catalog",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/subscriptions/cancel": {
+      "post": {
+        "description": "Cancel the active subscription (Stripe or Paystack).",
+        "operationId": "cancel_subscription_api_v1_billing_subscriptions_cancel_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelSubscriptionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancel Subscription",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/subscriptions/checkout": {
+      "post": {
+        "description": "Create a Stripe checkout session for a subscription plan.",
+        "operationId": "create_checkout_api_v1_billing_subscriptions_checkout_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckoutResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Checkout",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/subscriptions/google-play/verify": {
+      "post": {
+        "description": "Verify a Google Play subscription purchase.",
+        "operationId": "google_play_verify_api_v1_billing_subscriptions_google_play_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GooglePlayVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GooglePlayVerifyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Google Play Verify",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/subscriptions/portal": {
+      "post": {
+        "description": "Create a Stripe customer portal session.",
+        "operationId": "create_portal_api_v1_billing_subscriptions_portal_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Portal",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/subscriptions/sync-checkout": {
+      "post": {
+        "description": "Sync subscription from completed Stripe checkout session.",
+        "operationId": "sync_checkout_api_v1_billing_subscriptions_sync_checkout_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncCheckoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Sync Checkout",
+        "tags": [
+          "billing",
+          "billing"
         ]
       }
     },
@@ -36046,6 +36793,111 @@
         ]
       }
     },
+    "/api/v1/webhooks/google-play/rtdn": {
+      "post": {
+        "description": "Handle Google Play Real-Time Developer Notifications via Pub/Sub.",
+        "operationId": "google_play_rtdn_api_v1_webhooks_google_play_rtdn_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Google Play Rtdn",
+        "tags": [
+          "webhooks",
+          "webhooks"
+        ]
+      }
+    },
+    "/api/v1/webhooks/paystack": {
+      "post": {
+        "description": "Handle Paystack webhook events for subscriptions.",
+        "operationId": "paystack_webhook_api_v1_webhooks_paystack_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-paystack-signature",
+            "required": true,
+            "schema": {
+              "title": "X-Paystack-Signature",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Paystack Webhook",
+        "tags": [
+          "webhooks",
+          "webhooks"
+        ]
+      }
+    },
+    "/api/v1/webhooks/stripe": {
+      "post": {
+        "description": "Handle Stripe webhook events (subscriptions + one-time payments).",
+        "operationId": "stripe_webhook_api_v1_webhooks_stripe_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "stripe-signature",
+            "required": true,
+            "schema": {
+              "title": "Stripe-Signature",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stripe Webhook",
+        "tags": [
+          "webhooks",
+          "webhooks"
+        ]
+      }
+    },
     "/health": {
       "get": {
         "description": "Basic health check endpoint.",
@@ -36105,7 +36957,7 @@
       "name": "progress"
     },
     {
-      "description": "**Billing Domain** — Subscriptions (Stripe, Paystack, Google Play), credit packs, referral rewards, ad rewards, and plan catalog.",
+      "description": "**Billing Domain** — Plan catalog, subscriptions (Stripe, Paystack, Google Play), purchase history, and admin credit adjustments.",
       "name": "billing"
     },
     {

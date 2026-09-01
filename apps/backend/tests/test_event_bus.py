@@ -137,11 +137,17 @@ LISTENERS_WITHOUT_AN_EMITTER: dict[str, str] = {
 #:   `update_progress` read too.
 EMITTERS_WITHOUT_A_LISTENER: dict[str, tuple[str, str]] = {
     # --- fire from real code paths ---
-    "billing.credits_purchased": (
+    #
+    # `billing.credits_purchased` used to be listed here. Its only emitter was
+    # `credit_service.claim_ad_reward`, and rewarded ads are withdrawn: nothing in the
+    # product asks a learner to watch an advertisement. `BillingEvents.CREDITS_PURCHASED`
+    # survives on the enum because a purchase event is coming back — a Plus pass purchase,
+    # which is a fact worth publishing — but nothing emits it today and the inventory only
+    # describes what does.
+    "billing.subscription_cancelled": (
         "fires",
-        "Emitted inline by `credit_service` on a real purchase.",
+        "Emitted inline by `subscription_service`.",
     ),
-    "billing.subscription_cancelled": ("fires", "Emitted inline by `subscription_service`."),
     "billing.referral_linked": (
         "fires",
         "Emitted inline by `identity.services` when a referral lands.",
@@ -175,8 +181,14 @@ EMITTERS_WITHOUT_A_LISTENER: dict[str, tuple[str, str]] = {
     ),
     "user.onboarded": ("unreachable", "`emit_user_onboarded` has no callers."),
     "user.tier_changed": ("unreachable", "`emit_user_tier_changed` has no callers."),
-    "user.deletion_requested": ("unreachable", "`emit_deletion_requested` has no callers."),
-    "user.deletion_cancelled": ("unreachable", "`emit_deletion_cancelled` has no callers."),
+    "user.deletion_requested": (
+        "unreachable",
+        "`emit_deletion_requested` has no callers.",
+    ),
+    "user.deletion_cancelled": (
+        "unreachable",
+        "`emit_deletion_cancelled` has no callers.",
+    ),
     "personal_learning.note_created": ("unreachable", "Wrapper has no callers."),
     "personal_learning.topic_studied": ("unreachable", "Wrapper has no callers."),
     "personal_learning.topic_completed": (
@@ -188,8 +200,14 @@ EMITTERS_WITHOUT_A_LISTENER: dict[str, tuple[str, str]] = {
     "personal_learning.quiz_completed": ("unreachable", "Wrapper has no callers."),
     "personal_learning.study_session_ended": ("unreachable", "Wrapper has no callers."),
     "personal_learning.flashcard_reviewed": ("unreachable", "Wrapper has no callers."),
-    "personal_learning.preparation_completed": ("unreachable", "Wrapper has no callers."),
-    "personal_learning.study_plan_item_completed": ("unreachable", "Wrapper has no callers."),
+    "personal_learning.preparation_completed": (
+        "unreachable",
+        "Wrapper has no callers.",
+    ),
+    "personal_learning.study_plan_item_completed": (
+        "unreachable",
+        "Wrapper has no callers.",
+    ),
 }
 
 
@@ -222,7 +240,10 @@ class TestTheEmitterInventoryIsHonest:
     def test_each_entry_states_a_category_and_a_reason(self, name):
         category, reason = EMITTERS_WITHOUT_A_LISTENER[name]
 
-        assert category in {"fires", "unreachable"}, f"{name}: unknown category {category!r}"
+        assert category in {
+            "fires",
+            "unreachable",
+        }, f"{name}: unknown category {category!r}"
         assert len(reason) > 20, f"{name}: the reason is not a reason"
 
 
@@ -403,7 +424,8 @@ class TestRegistration:
 
 class TestTopicCompletionIsActedOn:
     """`topic.completed` is emitted whenever a learner finishes a topic, and until now the only handler
-    logged at debug. Three now: a review schedule, a flashcard suggestion, and the observer."""
+    logged at debug. Three now: a review schedule, a flashcard suggestion, and the observer.
+    """
 
     def test_three_handlers_are_registered_for_it(self):
         register_handlers()
