@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # ===========================================================================
 
 TRIAL_DURATION_DAYS = 7
-TRIAL_COOLDOWN_DAYS = 180  # Can only trial once per 6 months
+TRIAL_COOLDOWN_DAYS = 90  # Can only trial once per quarter
 
 
 # ===========================================================================
@@ -49,7 +49,7 @@ class TrialStatus:
         Derived here so it cannot disagree with `start_trial`'s own rules, and so it
         is answered on every branch. It previously appeared **only** in the route's
         "no status at all" fallback: a learner whose trial had expired and whose
-        180-day cooldown had since elapsed got a response with no `trialAvailable`
+        cooldown had since elapsed got a response with no `trialAvailable`
         key at all. The client read `undefined`, treated it as false, and hid the
         offer from someone who was eligible — while the paywall that sent them there
         had just told them a trial existed.
@@ -94,7 +94,7 @@ async def start_trial(user_id: str) -> TrialStatus:
 
     Raises ValueError if:
     - User is already on trial
-    - User has trialed within the last 180 days
+    - User has trialed within the last TRIAL_COOLDOWN_DAYS days
     - User is already a PLUS subscriber
     """
     from src.domains.personal_learning.repository import PersonalLearningRepository

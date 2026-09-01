@@ -63,7 +63,13 @@ FEATURE_TIER_MATRIX: dict[str, dict[str, Any]] = {
             "description": "Practice quizzes with standard, weak areas, and topic focus modes",
         },
         "plus": {
-            "modes": ["FULL_PRACTICE", "WEAK_AREAS", "TOPIC_FOCUS", "PAST_PAPER_SIM", "ADAPTIVE"],
+            "modes": [
+                "FULL_PRACTICE",
+                "WEAK_AREAS",
+                "TOPIC_FOCUS",
+                "PAST_PAPER_SIM",
+                "ADAPTIVE",
+            ],
             "description": "All quiz modes including past paper simulation and adaptive difficulty",
         },
         "upgrade_value": "Unlock adaptive quizzes that adjust difficulty based on your performance, and past paper simulation mode",
@@ -187,7 +193,9 @@ class CapabilitiesSummary:
 # ===========================================================================
 
 
-async def get_effective_tier(user_id: str) -> tuple[Literal["free", "plus"], bool, int | None]:
+async def get_effective_tier(
+    user_id: str,
+) -> tuple[Literal["free", "plus"], bool, int | None]:
     """
     Get the effective feature tier for a user.
 
@@ -394,8 +402,15 @@ async def trial_available(user_id: str) -> bool:
 
 
 async def _trial_available(user_id: str) -> bool:
-    """Check if the user is eligible to start a trial (hasn't trialed in 180 days)."""
+    """Check if the user is eligible to start a trial (cooldown since last trial has elapsed).
+
+    Reads `trial_service.TRIAL_COOLDOWN_DAYS` rather than repeating the number, so this
+    check and `trial_service.start_trial`'s own rejection cannot disagree — a learner is
+    never told a trial is available only to have `start_trial` refuse it.
+    """
     from src.domains.personal_learning.repository import PersonalLearningRepository
+
+    from . import trial_service
 
     repo = PersonalLearningRepository()
     profile = await repo.get_profile_by_user(user_id)
@@ -403,7 +418,7 @@ async def _trial_available(user_id: str) -> bool:
         return True  # New user can trial
     if profile.last_trial_ended_at:
         days_since = (datetime.now(UTC) - profile.last_trial_ended_at).days
-        return days_since >= 180
+        return days_since >= trial_service.TRIAL_COOLDOWN_DAYS
     if profile.trial_started_at:
         return False  # Currently on trial or just finished
     return True

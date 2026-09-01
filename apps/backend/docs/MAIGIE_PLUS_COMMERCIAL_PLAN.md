@@ -5,15 +5,17 @@
 > The `billing` router is commented out in `app.py:375-379`. Every checkout, verification, webhook and credit-pack endpoint listed in §5.1 exists, is written, and is served by nothing. The web and mobile clients call those paths today and get a `404`. Whatever else this plan does, Phase 1 is mounting the router — and it cannot be mounted as-is, because the catalogue it serves is the one being replaced.
 >
 > Owners: Backend (catalogue, entitlement, usage windows, store verification) + Web client + Mobile client + Public site
-> Scope: the **personal** product catalogue, purchase rails on three surfaces, the pass activation model, the rolling usage window that replaces daily and monthly credit caps, and one entitlement resolver that every personal-scope gate reads.
+> Scope: the **personal** product catalogue, purchase rails on three surfaces, the pass activation model, the rolling usage window that replaces daily and monthly credit caps, the earned-points ledger that redeems into passes, and one entitlement resolver that every personal-scope gate reads.
 > **Out of scope: Learning Spaces, entirely.** Not the Space feature, not Circle Plan, not the Plus Seat add-on, not `SpaceMember.seat_tier`, not `seat_impl.py`, not `Space.credits`, not the space branch of `consume_credits`, not the space branch of `feature_flags.effective_tier_for_request`. Nothing in this plan reads or writes anything space-scoped. See Decision F.
 > Companion documents: [`../../../maigie-client/docs/PREPARE_API_INTEGRATION_PLAN.md`](../../../maigie-client/docs/PREPARE_API_INTEGRATION_PLAN.md) (§4 defers checkout to this document), [`../../../maigie-client/docs/REFLECT_API_INTEGRATION_PLAN.md`](../../../maigie-client/docs/REFLECT_API_INTEGRATION_PLAN.md) (Decision Z, the locked-read convention)
 > Source of authority for pricing intent: the Maigie Book — `business/ch36-pricing-philosophy`, `business/ch37-personal-learning`, `philosophy/ch04-product-principles`. Where this plan and the book disagree, the book wins and this plan is wrong. Decision N and §6.7 are derived from them directly.
-> Last reviewed: 2026-09-01
+> Last reviewed: 2026-09-01 (revision 2 — trial shortened to 3 days, referral cap removed, rewarded ads withdrawn, earned points introduced as a pass-only currency: §6.9, Decision O)
 
 ## 1. Purpose
 
 Three products replace the current **personal** catalogue: two **consumable Plus passes** and one **$5/month subscription**. Credit packs go, and the retired Study Circle and Squad personal tiers are finished off. Daily and monthly credit caps are replaced by a **rolling usage window** that resets on a clock the learner can see.
+
+Alongside the money path there is one earned path: **points**, granted for referring learners who actually stay, redeemable for passes and for nothing else. Rewarded ads are withdrawn.
 
 Then one resolver decides whether a learner is Plus right now, so every personal-scope gate in the codebase agrees.
 
@@ -83,6 +85,8 @@ When complete:
 - There is no daily cap and no monthly cap. Usage is bounded by a **5-hour rolling window** whose allowance depends on tier and whose reset time is on screen before it is reached.
 - One function — `entitlement_service.resolve(user_id)` — answers "is this learner Plus right now, why, and until when". Every personal-scope gate in the codebase calls it. Space-scoped resolution is untouched.
 - A trialling learner, a pass holder and a subscriber get **identical** capabilities, including LLM model selection.
+- A learner can earn **points** by referring learners who stay, with **no monthly cap**, and spend them on passes. Points never touch the subscription, and they expire 60 days after they are earned.
+- Nothing in the product asks a learner to watch an advertisement.
 - Every price, product id and store SKU in all four repos derives from one server response. No client ships a price literal, and no client converts a currency.
 - A Nigerian learner sees NGN prices set for Nigeria (§6.8), not a converted dollar figure.
 - No screen shows a learner a number about their own account that the server did not produce.
@@ -94,7 +98,8 @@ When complete:
 
 - **Yearly Plus.** Withdrawn. Existing `PREMIUM_YEARLY` subscribers are grandfathered and keep renewing; the product is removed from the catalogue for new purchases. Consistent with retiring every other multi-tier product.
 - **Redesigning what a credit costs.** `TOKEN_MULTIPLIER = 0.2` and `CREDIT_COSTS` (`credit_consumption_service.py:106-131`) are untouched, as are the per-operation call sites in `study_voice`, `personal_learning` and `knowledge`. Only the *period* a learner draws against changes, and the *size* of the allowance.
-- **Referrals and rewarded ads.** `referral_rewards_service.py` and `AdRewardClaim` keep working, re-pointed at the window allowance instead of the retired daily limit (Phase 3).
+- **Rewarded ads, in any form.** Withdrawn rather than re-pointed. `credit_service.claim_ad_reward`, `AD_REWARD_CREDITS`, `MAX_ADS_PER_DAY`, the `/billing/ads/*` routes and both client screens go; the `AdRewardClaim` table stays, empty and unread, because dropping it forecloses the redesign at no saving. When ads return they will be designed as a product decision, not inherited as a credit top-up. See Decision O.
+- **Referral reward mechanics are in scope, not deferred**, because a currency that redeems into a sellable product is a commercial design and not a bonus. §6.9 and Decision O replace `referral_rewards_service`'s token grants outright rather than re-pointing them.
 - **Learning Spaces, in every respect.** See Decision F for the full boundary and for the one place the boundary is load-bearing rather than merely respected.
 - **Circle Plan and the Plus Seat add-on.** Space-scoped products. They keep their catalogue entries, Stripe prices, Paystack plan codes, config settings, seat pool accounting and marketing sections exactly as they are.
 - **Migrating legacy tiers off their grandfathered subscriptions in this phase.** Phase 8 does that. Until then `LEGACY_PLUS_TIERS` keeps existing `STUDY_CIRCLE_*` / `SQUAD_*` / `PREMIUM_YEARLY` subscribers on Plus rather than breaking people who are paying us.
@@ -122,7 +127,8 @@ Endpoints that exist and are not mounted:
 | POST | `/billing/credit-packs/purchase` | **removed** |
 | GET | `/billing/credits/purchases` | **replaced** by `/billing/purchases` |
 | POST | `/billing/admin/credits/adjust` | kept (support tool), re-pointed at the window |
-| GET/POST | `/billing/referrals/*`, `/billing/ads/*` | kept, re-pointed at the window |
+| GET/POST | `/billing/referrals/*` | **rewritten** onto the points ledger (§6.9) |
+| GET/POST | `/billing/ads/*` | **removed** (Decision O) |
 | POST | `/webhooks/stripe`, `/paystack`, `/google-play/rtdn` | kept; **`/webhooks/apple` is new** |
 
 Also unmounted: the `admin` router (`app.py:382-383`).
@@ -244,11 +250,15 @@ Four **personal** products. Two are **consumable, non-renewing products**. One i
 | `free` | Free | — | 0 | baseline capabilities, Free window allowance |
 | `plus_pass_5h` | 5-Hour Plus Pass | **consumable product** | **0.99** | full Maigie Plus for 5 hours from activation, then nothing |
 | `plus_pass_7d` | 7-Day Plus Pass | **consumable product** | **2.49** | full Maigie Plus for 7 days from activation, then nothing |
-| `plus_monthly` | Maigie Plus | auto-renewing subscription | **4.99/mo** | full Maigie Plus while active, 7-day trial on first purchase |
+| `plus_monthly` | Maigie Plus | auto-renewing subscription | **4.99/mo** | full Maigie Plus while active, **3-day trial** on first purchase |
 
 These are **US/UK list prices**. The launch market is Nigeria, where FX parity would price the product above Netflix Standard; §6.8 sets NGN independently at ₦700 / ₦1 800 / ₦2 400 and is the table that matters for launch.
 
 **$4.99, not $5.00.** Identical revenue to the cent, better psychologically, an existing store price point, and — decisively — unchanged from today's price, so no subscriber ever sees a price-increase flow. A $0.01 rise would require a Stripe price migration, a mandatory 7-day Google Play notice, and on Apple an **explicit consent prompt where non-responders are cancelled at renewal**. Real churn risk for one cent of nothing.
+
+**The trial is 3 days, not 7.** A free 7-day trial sitting beside a $2.49 7-day pass is the same product at two prices, and the one that costs money looks like a trick to anyone who remembers the free one. Three days separates them cleanly: the trial is a look, the pass is a study week. It costs nothing to shorten because **no trial has ever converted to a paying subscriber** — there has never been a reachable checkout to convert into. Three days is also long enough to be honest at a 5-hour window: ~14 windows, several study sessions, every Plus capability.
+
+The number lives in `config.TRIAL_DAYS_MAIGIE_PLUS` (currently `7`) **and in three store configurations that the server does not control** — the Stripe price's `trial_period_days`, the App Store Connect introductory offer, and the Play Console base-plan free-trial period. All four must agree, and the two store values are set by hand in a console. `TRIAL_DAYS_CIRCLE_PLAN` stays at 7; it is space-scoped (Decision F).
 
 A pass is a product. It does not renew, it cannot be cancelled, there is no billing relationship to manage, and it has no grace period. It is bought, it is held, it is activated, it runs out. That is the entire lifecycle, and it is the reason passes are cheap: nothing about them has to be serviced.
 
@@ -323,7 +333,9 @@ The resolution is that the backstop is not a product limit, it is an abuse limit
 
 **What goes away.** `creditsHardCap`, `creditsSoftCap`, `creditsPeriodStart`, `creditsPeriodEnd`, `creditsUsed`, `creditsDailyLimit`, `creditsUsedToday`, `lastDailyReset`, `CREDIT_LIMITS`, `TOKEN_MULTIPLIER`, `CREDIT_COSTS` as a fixed table, `billing.reset_credit_periods`, `progress.daily_credit_reset`, the 80%-of-month soft warning, and the branch at `check_credit_availability:378-400` reconciling a daily cap against a monthly cap against a purchased balance. **There are no paid users, so none of this needs a migration path** — it needs deleting.
 
-A soft warning fires at 80% of the window allowance, carrying the reset timestamp. `purchasedCreditsBalance` is dropped outright rather than sunset, for the same reason. Referral rewards and rewarded ads, which today grant a *daily limit increase* (`referral_rewards_service.get_daily_limit_increase`), grant a **window allowance increase** instead; same call site, different noun, and now denominated in something that maps to a bill.
+A soft warning fires at 80% of the window allowance, carrying the reset timestamp. `purchasedCreditsBalance` is dropped outright rather than sunset, for the same reason.
+
+**Nothing tops up a window.** `referral_rewards_service.get_daily_limit_increase` and `credit_service.claim_ad_reward` both granted a *daily limit increase*, and neither survives. An earned allowance bump is invisible — the learner cannot see it, cannot predict it, and cannot plan a study session around it — so it buys us no advocacy and costs us real inference. Earning instead produces **points**, and points buy **passes**, which are a thing a learner can hold, see and decide when to spend (§6.9, Decision O). A pass also starts a fresh window, so a redeemed reward lands as a clean five hours of Plus rather than a few more turns in a window that was already half spent.
 
 ### 6.4 Unit economics
 
@@ -556,6 +568,53 @@ And the paid case cannot be "AI access", because free Gemini is on the same phon
 
 A student-verified tier (Spotify charges ₦800 against ₦1 600) is the obvious later move. Not now: verification costs more than it would earn at this scale.
 
+### 6.9 Points: the earned path, and it leads to passes
+
+One earned currency, one thing to spend it on.
+
+| | |
+| --- | --- |
+| Earned by | referring a learner who **stays** — see the qualification below |
+| Grant | **100 points** per qualified referral |
+| Cap | **none.** No monthly limit, no lifetime limit |
+| Spendable on | `plus_pass_5h` (**100 points**), `plus_pass_7d` (**250 points**) |
+| Not spendable on | the subscription, at any point total, ever |
+| Expiry | **60 days from the moment each grant is earned**, FIFO on redemption |
+
+**One qualified referral is exactly one 5-hour pass.** This is the load-bearing number, not a coincidence of rounding. It means a learner who does the thing once, once, gets something whole for it — and therefore nothing ever expires unspent for anyone who did the minimum. A currency where the smallest earn cannot reach the smallest redemption is a currency that mostly expires, and a reward that mostly expires is worse than no reward, because the learner learns we do not mean it.
+
+**Qualification: the referred learner is active on 7 distinct days.** Kept from the earlier design, and it is the whole anti-abuse mechanism now that the cap is gone. Two conditions, both necessary:
+
+- **7 distinct calendar days**, not 7 days elapsed since signup, and not a single 7-day session. A farmed account has to be driven on seven separate days.
+- **Activity means a billable operation**, not an app open. An account that logs in seven times and studies nothing does not qualify. This is measurable the day Phase 3b lands, because that is when every operation starts recording units.
+
+Points are granted **once** per referred learner, at qualification, and never revoked afterwards. A referred learner who churns in week three keeps the referrer's points; clawback for later behaviour is unmanageable and reads as bad faith.
+
+**Removing the cap is safe because the cap was never the control.** The old design had both a 10/month limit and the 7-day qualification, which is two locks on one door — and the cap punished the only person it could reach, the learner with a genuinely large study group. The exposure, priced honestly:
+
+| | Per qualified referral |
+| --- | --- |
+| Reward COGS ceiling | **$0.30** (a 5-hour pass at its full 3 000-unit allowance) |
+| Reward COGS, typical | ~$0.20 |
+| Cost of the referred account itself, if fake | $0.18–0.50/month of free-tier inference (§6.7) |
+| Attacker's cost | seven days of driven activity per fake account, per $0.30 |
+
+So a farm spends more on our free tier than it extracts from our rewards, and it has to spend a week per unit doing it. A real referral, meanwhile, hands us a learner who has already used the product on seven separate days — the cheapest acquisition in the plan by a wide margin, at $0.30. **There is no number of genuine referrals we should want to refuse**, which is the actual argument for removing the cap.
+
+The one control that remains is **velocity, not volume**: qualifications arriving faster than seven days apart from a single referrer are impossible by construction, and a monitoring alert on referral qualifications per referrer per week is worth having so the first farm is noticed rather than discovered in the COGS.
+
+**Why points cannot buy the subscription.** Three reasons, in descending order of how hard they are to argue with.
+
+1. **A subscription is a billing relationship; a pass is inventory.** Granting subscription time for points means either a server-side entitlement that Stripe and the stores do not know about — so `/entitlement` and the store's notion of the subscription disagree, which is exactly the four-resolvers problem Decision B exists to end — or a discount coupon, which drags points into pricing, tax and store-rule territory for no product gain.
+2. **Store rules.** Neither Apple nor Google supports crediting an in-app currency against an auto-renewable subscription managed by their billing. Any implementation is a workaround, and workarounds in the subscription path are what get builds rejected.
+3. **The two products mean different things.** A pass is a decision to study this week. A subscription is a decision to keep studying. Points can honestly produce the first and cannot produce the second, and a subscription arrived at without a payment decision does not renew — it lapses, and it lapses having taught us nothing.
+
+Points therefore sit entirely inside the pass rails already being built: redemption is `POST /billing/points/redeem` producing a `PlusPass` row with `status='inventory'`, source `points` rather than a purchase. Everything downstream — activation, the fresh window, Decision D's redundancy refusal, the sweep, the notification — is the code path passes already use. **Points add a ledger and one endpoint. They add no entitlement mechanics.**
+
+**Expiry: 60 days per grant, FIFO, and the date is on screen.** The reasoning is in Decision O. Redemption always spends the oldest live grant first, so a learner who earns steadily never loses anything, and the wallet shows the next expiring batch with its date — the plan already forbids showing a learner a number about their own account that the server did not produce, and an expiry date is exactly such a number.
+
+**Not enabled at launch: earning by contribution.** `ResourceUploadReward` exists and `UploadResourceModal.tsx:298` already promises "1,500 credits" for an approved resource — a currency that will not exist, for an approval process that does not either. The copy is deleted in Phase 7. Resource contribution is the obvious second earn source and it is a moderation problem before it is a commercial one; Open Question 11.
+
 ## 7. Architecture decisions
 
 ### Decision A: A pass is inventory until the learner activates it. The clock starts on activation, not on purchase.
@@ -746,11 +805,31 @@ Three rules follow, and they are what keep this from becoming the thing the book
 
 - **One offer at a time, at most one per window.** The existing 30-day per-trigger cooldown stays. A learner who dismisses twice (`trigger_dismissal_count`) stops seeing that capability offered for 90 days.
 - **A recommendation that requires Plus must have a free alternative rendered beside it**, not instead of it. "Adaptive practice would target these three topics — or run a weak-areas set now." The learner is never left without a next action, which is Principle Three.
-- **Never recommend a gated action to a learner who cannot act on it at all.** If the trial is exhausted and the learner has no pass, offering a capability they cannot reach is an advertisement wearing a recommendation's clothes.
+- **Never recommend a gated action to a learner who cannot act on it at all.** If the trial is exhausted and the learner has no pass, offering a capability they cannot reach is an advertisement wearing a recommendation's clothes. A learner holding **redeemable points** can act, and the offer becomes "redeem your points for a 5-hour pass" rather than a price (Decision J's panel already branches on owned passes; points are the third branch).
 
 Where the offer appears: home `next_action`, the Prepare practice launcher (`practiceModes.ts` already knows which modes are Plus), the document format picker, the Reflect locked panels, and `UpgradeRequiredPanel` on any `403`. Where it does not: no interstitials, no banners, no upgrade prompt on app open, nothing in a notification.
 
 `ConversionTriggerLog` already records `shownAt`, `dismissedAt`, `convertedAt` and `capabilityHighlighted`, so which recommendations actually convert is measurable from day one. That is the number that should drive this, not opinion about copy.
+
+### Decision O: Points are a ledger that redeems into inventory. They expire per grant at 60 days, and they never touch the subscription.
+
+Three sub-decisions, because they fail independently.
+
+**Points are a ledger, not a balance column.** `PointsLedgerEntry` rows with signed `points`, an `expiresAt` on every positive entry, and a `kind` recording where they came from or went. A single `pointsBalance` integer on `User` cannot express per-grant expiry, and per-grant expiry is the whole design. Balance is `SUM(points) WHERE NOT expired`, denormalised onto `User.pointsBalance` as a cache the ledger can always rebuild — the same relationship §6.3's window columns have to the usage records, and for the same reason: reads are frequent and the truth is elsewhere.
+
+**Expiry is 60 days from each grant, not 30 and not never.**
+
+- **Never** makes every point ever issued a permanent liability against future COGS, and there is no point at which the books close. It also removes the only thing that converts a saver into a user: a reason to spend.
+- **30 days** is too short to be honest. A learner who refers one friend has to wait out that friend's 7-day qualification before the clock even starts, leaving them three weeks to notice they have something and decide to use it. Miss one exam period and it is gone. A reward that expires before the learner has a use for it teaches them the reward was decorative.
+- **60 days** covers a full study cycle plus a slow month, bounds the liability at a period we can actually forecast against, and — with one referral equalling one 5-hour pass — means the only points that ever expire are the *remainder* of someone who earned a second referral and did not reach 250. That remainder is small and its expiry is defensible, which is the test.
+
+Mechanically: FIFO on redemption (oldest live grant first), expiry resolved lazily on read like a pass, and a nightly sweep that writes the negative expiry entries so the ledger is self-explaining rather than reconstructed. A learner is notified once, seven days before their oldest grant expires, and only if that grant alone can still buy something. Notifying someone about 40 unspendable points is noise.
+
+**Redemption produces a pass, and the subscription is unreachable from the points path by construction — not by a check.** `POST /points/redeem` accepts only `plus_pass_5h` and `plus_pass_7d`; there is no branch that could grant subscription time, no coupon code path, and no `productKind: 'subscription'` reachable from a ledger entry. The reasons are in §6.9. Stating it as a construction rather than a validation matters because a validation is a thing a later ticket removes.
+
+The redeemed pass is identical to a bought one in every respect except its provenance: `PlusPass.source = 'points'` alongside `'purchase'`, and no `PlusPurchase` row, since nothing was purchased. Decision G's "verify, persist, then grant" does not apply — there is no store transaction to verify — but Decision A, D, E and the sweep all apply unchanged. A points-redeemed pass sits in inventory indefinitely and the learner activates it when they want it, which is the whole reason points buy passes and not window units.
+
+**Rewarded ads are withdrawn, and the withdrawal is a decision rather than a deferral.** `claim_ad_reward` grants credits against a limit that no longer exists, no ad SDK is integrated on either client, and the two screens that call it (`WEB/features/credits/EarnPage`, `MOB/src/app/earn/watch-ad.tsx`) are already unrouted or standalone. Re-pointing it at the window would have shipped an earn mechanic nobody designed. When ads return, the question to answer first is what they buy — and if the answer is points, they arrive as one more `kind` on the ledger built here, which is a day of work. That is the argument for removing the code now and keeping the table.
 
 ## 8. Data model
 
@@ -767,10 +846,11 @@ Migration `063_add_plus_passes.py` — `062_chat_generation_attempt.py` is the c
 | `unitsAllowance` | Integer | 3 000 \| 10 000. Snapshotted for the same reason (Decision E) |
 | `unitsUsed` | Integer | default 0 |
 | `status` | String | `inventory` \| `active` \| `consumed` \| `refunded` |
-| `purchaseId` | String FK → `PlusPurchase.id` | |
+| `purchaseId` | String FK → `PlusPurchase.id` | **nullable** — null when `source='points'` |
 | `activatedAt` | DateTime tz | null while in inventory |
 | `expiresAt` | DateTime tz | null while in inventory |
 | `endedReason` | String | null \| `expired` \| `exhausted` \| `refund` |
+| `source` | String | `purchase` \| `points` — Decision O |
 | `createdAt` / `updatedAt` | DateTime tz | |
 
 Indexes: `(userId, status)`; `(status, expiresAt)` for the sweep; the partial unique index from Decision A.
@@ -790,11 +870,28 @@ Indexes: `(userId, status)`; `(status, expiresAt)` for the sweep; the partial un
 | `completedAt` / `refundedAt` | DateTime tz | |
 | `rawPayload` | JSON | verification response, for disputes |
 
-**`User`** — added: `activePlusPassId`, `activePlusPassExpiresAt`, `usageWindowStartedAt`, `usageWindowUnitsUsed`, `usageMonthStartedAt`, `usageMonthUnitsUsed` (the §6.3 backstop), `appleOriginalTransactionId` (unique, nullable), `appleProductId`.
+**`PointsLedgerEntry`** — Decision O
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | String PK | |
+| `userId` | String FK → `User.id` CASCADE | indexed |
+| `points` | Integer | **signed.** `+100` grant, `-100` redemption, `-40` expiry |
+| `kind` | String | `referral_qualified` \| `redemption` \| `expiry` \| `adjustment` |
+| `expiresAt` | DateTime tz | set on positive entries only; null on redemptions and expiries |
+| `sourceRef` | String | referred `userId`, redeemed `PlusPass.id`, or the expiring entry's `id` |
+| `note` | String | support-visible reason for `adjustment` |
+| `createdAt` | DateTime tz | |
+
+Indexes: `(userId, createdAt)`; `(userId, expiresAt)` for the sweep and for the FIFO read. Unique on `(userId, kind, sourceRef)` where `kind='referral_qualified'` — one grant per referred learner, enforced by the database rather than by the service, because the qualification job is idempotent only if this holds.
+
+**`User`** — added: `activePlusPassId`, `activePlusPassExpiresAt`, `usageWindowStartedAt`, `usageWindowUnitsUsed`, `usageMonthStartedAt`, `usageMonthUnitsUsed` (the §6.3 backstop), `pointsBalance` (cache over `PointsLedgerEntry`, rebuildable), `appleOriginalTransactionId` (unique, nullable), `appleProductId`.
 
 **`User`** — dropped in the same migration: `creditsUsed`, `creditsPeriodStart`, `creditsPeriodEnd`, `creditsSoftCap`, `creditsHardCap`, `creditsUsedToday`, `creditsDailyLimit`, `lastDailyReset`, `purchasedCreditsBalance`. One migration, not two. The earlier draft staged this over two releases to keep a rollback path; with **no paid users and no purchased balances to honour** there is nothing to roll back to and nothing to preserve.
 
-**Dropped tables**: `CreditPack`, `CreditPurchaseTransaction`. Kept only if a query shows non-zero rows worth keeping as history; the default is to drop both. `ResourceUploadReward` and the referral/ad tables stay.
+**Dropped tables**: `CreditPack`, `CreditPurchaseTransaction`. Kept only if a query shows non-zero rows worth keeping as history; the default is to drop both.
+
+**Kept but no longer written**: `ReferralRewardClaim` (superseded by the ledger; the referral *link* tables and `User.referralCode` stay and are the input to qualification), `AdRewardClaim` (Decision O — kept so the redesign is not foreclosed), `ResourceUploadReward` (Open Question 11).
 
 Unchanged: every space-scoped table and column — `SpaceMember.seat_tier`, `Space.credits`, `Space.credits_limit` (Decision F).
 
@@ -811,24 +908,33 @@ New, under `/api/v1/billing`:
 | POST | `/purchases/apple/verify` | StoreKit transaction → verified purchase (+ pass, or subscription tier) |
 | POST | `/purchases/google-play/verify` | replaces `/subscriptions/google-play/verify-product` |
 | GET | `/purchases` | unified history across `PlusPurchase` and legacy `CreditPurchaseTransaction` |
+| GET | `/points` | `{balance, nextExpiry: {points, expiresAt} \| null, redeemable[], history[]}` |
+| POST | `/points/redeem` | body `{productId}` — `plus_pass_5h` \| `plus_pass_7d` only. `200` → the new inventory `PlusPass`; `409 INSUFFICIENT_POINTS` |
+| GET | `/referrals` | code, qualified count, pending count with each one's days-active progress |
 | GET | `/entitlement` | the resolved `Entitlement` — what the clients poll after a purchase |
 | GET | `/usage` | `{windowResetsAt, percentUsed, tier}` — a percentage and a timestamp, never a unit count (§6.3). `monthlyPercentUsed` appears only above 80% |
 | POST | `/webhooks/apple` | App Store Server Notifications V2 |
 
 `GET /users/usage` (`WEB/features/usage/services/usageApi.ts`) is rewritten onto the same window shape rather than kept alongside it.
 
-`GET /learning/capabilities` gains `entitlementSource`, `entitlementExpiresAt`, `ownedPassCount` and `windowResetsAt`, so `UpgradeRequiredPanel` can offer activation and show a reset time (Decision J) without a second request. `UpgradeRequiredDetail` gains `ownedPassCount`; the window-cap refusal gains `windowResetsAt`.
+Removed: `/billing/ads/*` and `/billing/credit-packs*` (Decision O, §6.1).
+
+`GET /learning/capabilities` gains `entitlementSource`, `entitlementExpiresAt`, `ownedPassCount`, `pointsBalance` and `windowResetsAt`, so `UpgradeRequiredPanel` can offer activation, offer redemption, or show a reset time (Decision J) without a second request. `UpgradeRequiredDetail` gains `ownedPassCount` and `pointsBalance`; the window-cap refusal gains `windowResetsAt`.
 
 ## 10. Phases
 
 ### Phase 0 — Decide (blocks everything)
 
-- [ ] Answer Open Questions 1–3. Question 1 (7-day pass price) changes store products, which are painful to reprice after creation.
+- [ ] Answer Open Questions 1–3. Question 3 (`cost_calculator` rates) moves every COGS figure in the document ~3× and blocks any allowance tuning. *(This line previously referred to "Question 1 (7-day pass price)" — a stale numbering from an earlier draft; pass prices are settled in §6.1.)*
+- [ ] Answer Open Question 10 (points price for the 7-day pass) before Phase 4b. Unlike a store price it is cheap to change later, so it should not block anything else.
 
 ### Phase 1 — Make the money path reachable
 
 - [ ] Delete `credit-packs` routes and `credit_service.get_credit_packs` / `initiate_purchase`. **Leave `SeatAddonPurchaseRequest` and the seat repository methods alone** (Decision F).
+- [ ] **Delete the rewarded-ad path** (Decision O): `credit_service.claim_ad_reward` and `get_ad_status`, `AD_REWARD_CREDITS`, `MAX_ADS_PER_DAY`, `billing_repo.count_ads_today` / `create_ad_claim`, the `/billing/ads/*` routes. Leave the `AdRewardClaim` table in place.
 - [ ] Rewrite the four `scope: "personal"` entries in `stripe_service.get_active_plan_catalog`, leaving the `circle` and `add_on` entries at `:137-155` byte-identical. Add `PRICE_CENTS_PLUS_PASS_5H = 99`, `PRICE_CENTS_PLUS_PASS_7D = 249`; **leave `PRICE_CENTS_PLUS_MONTHLY` at `499`**; add `STRIPE_PRICE_ID_PLUS_PASS_5H` / `_7D`; move `plus_yearly` into `DEPRECATED_PLAN_IDS`; delete `TRIAL_DAYS_STUDY_CIRCLE` and `TRIAL_DAYS_SQUAD` only. Catalogue entries carry the stated usage equivalents (§6.3) so no client invents them.
+- [ ] **Set `TRIAL_DAYS_MAIGIE_PLUS = 3`** (`config.py:198`) and carry it in the catalogue response as `trialDays` so no client hardcodes it. **Leave `TRIAL_DAYS_CIRCLE_PLAN` at 7** (Decision F). Also set the Stripe price's `trial_period_days` to 3; the App Store Connect and Play Console trial periods are set by hand in Phase 5 when the products are created, and a test cannot catch a mismatch there — so it goes on the store checklist, not only in code.
+- [ ] Shorten `TrialService.TRIAL_DURATION_DAYS` (`personal_learning/services/trial_service.py`) to 3 to match; it is a second copy of the same number and `feature_tier_service` reads its output.
 - [ ] Mount `billing_router` and `webhooks_router` in `app.py:375-379`. Uncomment, verify against `openapi.json`, delete the comment.
 - [ ] Regenerate `openapi.json` and `libs/types/src/generated/api-types.ts`; re-run `maigie-mobile/scripts/sync-api-paths.mjs`.
 - [ ] Test: `test_subscription_catalog.py` asserts four `personal` products, the three prices, `410` on `plus_yearly` / `study_circle_*` / `squad_*`, and — as a scope guard — that `circle_plan_monthly` and `plus_seat_add_on_monthly` are still present and still checkout-able.
@@ -852,7 +958,7 @@ New, under `/api/v1/billing`:
 - [ ] Rewrite the **non-space path** of `check_credit_availability` and `consume_credits` against window + monthly backstop. Delete `initialize_user_credits`, `reset_daily_credits_if_needed`, `ensure_credit_period`, `reset_credits_for_period_start`. **Leave the `space_id` early-return at `:334-343` and the space branch of `consume_credits` exactly as they are** — both return before any of the deleted machinery is reached, which is what makes this separable.
 - [ ] Pre-flight estimates for voice: `min_session_credits()` becomes a units estimate at the real rate, so a session cannot start that the allowance cannot fund.
 - [ ] Delete `billing.reset_credit_periods` and `progress.daily_credit_reset` (closes drift 13).
-- [ ] Re-point `referral_rewards_service.get_daily_limit_increase` → `get_window_allowance_increase`; same for `credit_service.claim_ad_reward`.
+- [ ] **Delete `referral_rewards_service.get_daily_limit_increase`, `claim_referral_reward`, `get_claimable_rewards`, `track_referral_subscription` and `REFERRAL_REWARDS`.** Nothing tops up a window (§6.3). The module's `PrismaClientRemoved` sentinel means none of this runs today, so there is no behaviour to preserve — keep only `generate_referral_code`, `get_or_create_referral_code`, `track_referral_signup` and `get_referral_stats`, ported to SQLAlchemy, as the input to Phase 4b.
 - [ ] `GET /billing/usage` returning percentage + reset time only; rewrite `GET /users/usage` onto the same shape and delete the credit-balance fields.
 - [ ] Refusal messages carry `windowResetsAt`. Delete the monthly soft-cap, daily-limit and purchased-balance message bodies at `check_credit_availability:378-455` and the `ask_service:913-924` refusal copy.
 - [ ] `LimitReachedEmailLog` dedupe key moves from period to window.
@@ -892,11 +998,25 @@ Without this, §6.7's contribution is roughly **−$270 at 10 000 MAU** rather t
 - [ ] Notifications: pass activated (with expiry time), 30 minutes remaining, pass ended.
 - [ ] Tests: one-active invariant under concurrency, `PASS_REDUNDANT` for each of the three reasons, pass grants every Plus capability for its duration and none after, activation resets the window, expiry forfeits remaining time. Scope guard: an activated pass does not change any space-scoped read.
 
+### Phase 4b — Points (§6.9, Decision O)
+
+Depends on Phase 4 and on Phase 3b, which is what makes "active" measurable.
+
+- [ ] Migration `063` part three: `PointsLedgerEntry`, `User.pointsBalance`, `PlusPass.source`, `PlusPass.purchaseId` made nullable. Constants: `POINTS_PER_QUALIFIED_REFERRAL = 100`, `POINTS_EXPIRY_DAYS = 60`, `POINTS_COST = {"plus_pass_5h": 100, "plus_pass_7d": 250}`.
+- [ ] `points_service.py`: `grant(user_id, points, kind, source_ref)` (idempotent on the unique index), `balance(user_id)`, `redeem(user_id, product_id)` → `pass_service.grant(source="points")`, `expire_due()`. Redemption spends the oldest live grant first and writes one negative entry per grant it consumes, so the ledger explains itself.
+- [ ] **Qualification job**: a referred learner is qualified on their **7th distinct day with a billable operation**. Evaluate from the usage records Phase 3b creates — not from `lastLoginAt`, which an app open satisfies. Daily Celery task, idempotent, granting once per referred learner.
+- [ ] Celery beat: `billing.expire_points` nightly, writing the negative entries. Lazy expiry on read as well, so a stale sweep can never let expired points be spent (the same belt-and-braces as the pass sweep, Decision E).
+- [ ] Notify once, 7 days before the oldest grant expires, **and only if that grant alone can still buy a pass**. No notification for an unspendable remainder.
+- [ ] `GET /billing/points`, `POST /billing/points/redeem`, `GET /billing/referrals`. The redeem endpoint accepts the two pass ids and has no subscription branch to remove later (Decision O).
+- [ ] Monitoring: qualified referrals per referrer per week, and total live points as a forecastable COGS liability. There is no cap, so the alert is the control.
+- [ ] Tests: 100 points buys a 5-hour pass and leaves zero; 249 points cannot buy the 7-day pass; a grant 61 days old cannot be spent even if the sweep has not run; redemption is FIFO across three grants with different expiries; the same referred learner cannot grant twice; **six days of activity grants nothing and the seventh grants exactly 100**; seven logins with no billable operation grant nothing; **no request can produce subscription time from points** — assert on the redeem endpoint's accepted product set.
+
 ### Phase 5 — Purchase rails
 
 - [ ] **Stripe**: one-time Checkout for passes (`mode: payment`), existing `$4.99` subscription price reused, Apple Pay + Google Pay + Link enabled in the dashboard. `checkout.session.completed` → `PlusPurchase` → `pass_service.grant`.
 - [ ] **Paystack**: NGN one-time charges for both passes; extend `handle_paystack_webhook`.
-- [ ] **Google Play**: create `plus_pass_5h` / `plus_pass_7d` as **consumable** in-app products; the `plus-monthly` base plan stays at `$4.99`; `purchases.products.get` verification in `google_play_service.py`; extend RTDN for `SUBSCRIPTION_*` and voided-purchase revocation. Delete the three `credit_pack_*` products — nobody has bought one.
+- [ ] **Google Play**: create `plus_pass_5h` / `plus_pass_7d` as **consumable** in-app products; the `plus-monthly` base plan stays at `$4.99` and its **free-trial offer is set to 3 days**; `purchases.products.get` verification in `google_play_service.py`; extend RTDN for `SUBSCRIPTION_*` and voided-purchase revocation. Delete the three `credit_pack_*` products — nobody has bought one.
+- [ ] **Store trial parity check**: the App Store Connect introductory offer, the Play base-plan free trial, the Stripe `trial_period_days` and `config.TRIAL_DAYS_MAIGIE_PLUS` all read **3**. Four places, two of them consoles, no test covers them — check by hand and record the check.
 - [ ] **Apple** (new domain code): `apple_service.py` — App Store Server API client, JWS verification of `signedTransactionInfo` against Apple's root CAs, `POST /purchases/apple/verify`, `POST /webhooks/apple` handling `DID_RENEW`, `EXPIRED`, `REFUND`, `REVOKE`, `CONSUMPTION_REQUEST`. Config: `APPLE_ISSUER_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY`, `APPLE_BUNDLE_ID`, `APPLE_ENVIRONMENT`.
 - [ ] Idempotency and abuse tests: replayed token grants nothing; token bound to user A rejected for user B with `409`; refund revokes an active pass mid-run.
 
@@ -905,7 +1025,7 @@ Without this, §6.7's contribution is roughly **−$270 at 10 000 MAU** rather t
 - [ ] `next_action` gains `requiresPlus`, `capability`, `upgradeValue`, populated by asking `feature_tier_service.check_capability` about the action `guidance_engine` **already chose**.
 - [ ] Connect `conversion_engine.evaluate_triggers` to `guidance_engine` / `home_service`. They currently reason about the same learner independently and have never met.
 - [ ] Every gated recommendation renders a free alternative beside it, never instead of it (Principle Three — the learner always has a next action).
-- [ ] Suppress offers a learner cannot act on: trial exhausted and no pass owned means no gated recommendation.
+- [ ] Suppress offers a learner cannot act on: trial exhausted, no pass owned **and no redeemable points** means no gated recommendation. A learner with 100+ points can act, and the offer is redemption rather than a price.
 - [ ] One offer per window, existing 30-day per-capability cooldown retained, two dismissals silence that capability for 90 days.
 - [ ] Copy carries the learning reason, never a sales line. No interstitials, no banners, no upgrade prompt on app open, nothing in a notification.
 - [ ] **Test that guidance is entitlement-blind when choosing**: identical state must produce an identical `next_action` for a free and a Plus learner. The gate lookup happens after the choice, never during it.
@@ -927,26 +1047,30 @@ Without this, §6.7's contribution is roughly **−$270 at 10 000 MAU** rather t
 - [ ] `features/commercial`: catalogue hook, `usePasses`, `useActivatePass`, `useEntitlement`, `useUsageWindow`.
 - [ ] Pass wallet on `/subscription`: inventory, one-tap activate, active-pass countdown.
 - [ ] Window meter: allowance used, remaining, reset time. Replaces the credit-balance UI.
-- [ ] Collapse all **five** locked cards into `UpgradeRequiredPanel`; add owned-pass activation and the window-cap variant (Decision J).
+- [ ] Collapse all **five** locked cards into `UpgradeRequiredPanel`; add owned-pass activation, points redemption, and the window-cap variant (Decision J).
+- [ ] Points wallet, in the same screen as the pass wallet rather than a separate "Earn" section: balance, what it buys, the next expiry date from the server, referral code, and each pending referral's days-active progress. Replaces `EarnPage` / `EarnReferralsPage` rather than reviving them.
 - [ ] Fix `SubscriptionPage.tsx:18` and `:182` to read the resolved entitlement; delete the hardcoded `$1.99`, `purchasedCreditsBalance: 250`, and the two dead `/credits/*` links.
 - [ ] **Rewrite `pages/settings/UsageSettings.tsx` onto `GET /billing/usage`** — percentage and reset time, no token counts (drift 15). It currently renders a `USAGE_DATA` literal to live learners.
 - [ ] **Document studio (drift 16):** mark `docx` / `pptx` and the report/minimal styles as Plus in the picker from `/capabilities`, and read `getApiError(...).upgrade` so the 403 renders `UpgradeRequiredPanel` the way `CourseCreatePage` and `PreparePracticePage` already do.
 - [ ] **Ask Maigie (drift 18):** render the window-limit state distinctly from a network error — it already stores `failureCode: 'CREDIT_LIMIT'` and nothing branches on it. Show `windowResetsAt`, and the pass-activation action when one is owned. Surface `credit_info` frames carrying only a balance.
 - [ ] **Study Mode (drift 19):** the `402` and `credit_limit_error` paths get the reset time and an action instead of a bare sentence.
 - [ ] Persist `TrialBanner` dismissal (drift 17) — currently local state defaulting to `true`, so it returns on every reload.
-- [ ] Delete the six unrouted credit/earn pages and the hardcoded credit-reward copy at `UploadResourceModal.tsx:298` (drift 20).
+- [ ] Delete the six unrouted credit/earn pages and the hardcoded credit-reward copy at `UploadResourceModal.tsx:298` (drift 20), including the ad-reward UI inside `EarnPage` (Decision O).
 - [ ] Reconcile `pages/settings/AiModelSettings.tsx:13-25` with the tier allowlist, or remove the picker (drift 22).
 
 **Mobile**
 - [ ] Generalise `usePlayBilling` → `useStoreBilling`: remove the `Platform.OS !== 'android'` early return, add the StoreKit path, drive SKUs from the catalogue, render store `displayPrice` (Decision I).
 - [ ] Rewrite `SubscriptionScreen` for the four personal products; delete the `PLANS` literal.
 - [ ] Pass wallet screen; replace `src/app/earn/buy-credits.tsx`. Window meter in `src/app/profile/usage.tsx`.
+- [ ] **Delete `src/app/earn/watch-ad.tsx`** and any ad-reward call site (Decision O). Rebuild `src/app/earn/` as the points wallet: balance, referral code and share sheet, pending referrals with days-active progress, next expiry date, redeem-to-pass action.
 - [ ] Pass paywall copy says "your personal workspace", not "everywhere" (Decision F).
 - [ ] iOS: `expo prebuild` for `ios/`, StoreKit capability, App Store Connect app record and three products, uncomment the iOS EAS jobs.
 
 ### Phase 8 — Copy, and existing customers
 
-- [ ] `maigie-public/plan-data.ts`: four personal products, new prices, `trialDays: 7` on monthly only. Delete `CreditPacks.tsx`. **`CIRCLE_PRODUCTS` and `CircleProductsSection.tsx` stay** (Decision F).
+- [ ] `maigie-public/plan-data.ts`: four personal products, new prices, **`trialDays: 3`** on monthly only. Delete `CreditPacks.tsx`. **`CIRCLE_PRODUCTS` and `CircleProductsSection.tsx` stay** (Decision F).
+- [ ] Referral and points copy states the qualification plainly — "when they've studied on 7 different days" — and the expiry plainly. A reward whose condition is in the small print produces support tickets from exactly the learners we most wanted to reward.
+- [ ] Remove every "watch an ad" and "earn credits" claim from the public site and the FAQ (Decision O).
 - [ ] Rewrite `PRICING_COMPARE_ROWS` against §5.3 — remove the five unenforced rows, state the window allowance instead of "unlimited", leave the three Circle rows alone.
 - [ ] Fix the duplicated credit-pack prices in `landing/Pricing.tsx`; rewrite `content/faq/pricing-and-plans.yaml`, which still sells Study Circle at $9.99 and Squad at $14.99 — both retired personal tiers, not the live Circle Plan.
 - [ ] Test asserting `plan-data.ts` matches `GET /plans/catalog` (Decision I).
@@ -958,14 +1082,17 @@ Without this, §6.7's contribution is roughly **−$270 at 10 000 MAU** rather t
 
 ## 11. Open questions
 
-**Resolved, recorded so they are not reopened.** *Is there pass-versus-subscription arbitrage?* No — the per-day ladder is $4.75 / $0.356 / $0.166 and three 7-day passes already exceed a month. An earlier draft claimed otherwise and was wrong. *Should monthly be $5.00?* No, §6.1. *Should passes be unmetered?* No, Decision E.
+**Resolved, recorded so they are not reopened.** *Is there pass-versus-subscription arbitrage?* No — the per-day ladder is $4.75 / $0.356 / $0.166 and three 7-day passes already exceed a month. An earlier draft claimed otherwise and was wrong. *Should monthly be $5.00?* No, §6.1. *Should passes be unmetered?* No, Decision E. *Does the 7-day trial survive the 7-day pass?* **No — the trial is 3 days** (§6.1). *Should referrals stay capped at 10/month?* **No — the cap is removed; the 7-day qualification is the control** (§6.9). *Should rewarded ads be re-pointed at the window?* **No — withdrawn** (Decision O). *Can points buy the subscription?* **No, and not by validation but by construction** (Decision O).
 
 1. **Who owns the `max_tokens` audit?** Growth narrative, growth drivers and goal insight each budget 8 192 output tokens to write a paragraph, at 6× the input rate — 89% of each operation's cost. Twenty-six operations have never had these numbers reviewed. This is the single largest lever in §6.8, it is invisible to learners, and it is not a commercial change, which is why nobody has picked it up.
 2. **Is 8 000 input tokens per chat turn necessary?** `HISTORY_LIMIT = 12` plus the enrichment block. Halving it lifts contribution ~60% at every tier simultaneously and no learner can perceive it. Same ownership problem as question 1.
 3. **Is `cost_calculator._EXACT_MODEL_PRICING` current?** It says `gemini-3.5-flash` is $0.50/$3.00 per 1M; published rates are ~$1.50/$9.00. Every COGS figure in this document moves 3× on the answer, in whichever direction. **Answer this before tuning any allowance.**
 4. **Is the free tier affordable at scale?** After the §6.5 fixes, free inference is still $940 of $2 267 revenue at 10 000 MAU. The model rests on two unmeasured assumptions — 50% of free MAU AI-active, and typical consumption around half the allowance. If either is materially higher, contribution goes negative again. Instrument before tuning (Phase 3, last item).
-5. **Does the 7-day trial survive the 7-day pass?** A free 7-day trial and a $2.49 7-day pass are close to the same product at different prices, and the trial has a 180-day cooldown (`feature_tier_service.py:388-410`) the pass does not. Keeping both is defensible — the trial converts, the pass monetises the cooled-down learner — but the paywall copy must make the difference obvious or the pass reads as a trick to anyone who remembers the trial. Sharpening the trial to 3 days would separate them cleanly and cost little, since no trial has converted to a paying subscriber yet.
+5. ~~**Does the 3-day trial still need the 180-day cooldown?**~~ **Decided: 90 days.** The 180-day figure was sized for a 7-day trial; a 3-day trial is a much smaller giveaway, and a learner who trialled in January and returns in May is one we want to re-engage rather than turn away. `trial_service.TRIAL_COOLDOWN_DAYS` is now 90 and is the single source — `feature_tier_service._trial_available` reads it instead of repeating the number, so eligibility as shown and eligibility as enforced cannot drift. Still a retention question with no data behind it: watch whether second trials convert at all before treating 90 as settled.
 6. **When does iOS ship?** There is no `ios/` directory, no App Store Connect record, and Apple review adds 1–2 weeks minimum plus first-submission rejection risk. If iOS is not near-term, Phases 1–7 ship Android + web and the Apple work in Phase 5 defers wholesale.
 7. **Refunds on an activated pass.** Apple and Google decide refunds unilaterally and neither asks first, so a learner can consume most of a pass and be refunded. `CONSUMPTION_REQUEST` (Apple) lets us report usage and reduces this, but it is advisory. Recommend accepting the leakage and measuring it — a consumption cap that fires on a legitimate learner is worse than the loss.
 8. **Is a 5-hour window right for Free, or should Free be longer?** Five hours means a Free learner can reach up to 4.8 allowances a day, which the monthly backstop bounds but does not prevent. The length is shared with Plus for explainability and because it is the pass duration. A 12-hour Free window (~2/day) tightens it at the cost of two numbers to explain. Recommend 5h for both, and let question 1's instrumentation decide.
 9. **Should the 5-hour pass be shown next to the 7-day pass?** $1.50 more buys 33× the duration, so the 5-hour pass is value-dominated for anyone uncertain about how long they need. Its job is the sub-$1 impulse and the first card on file, not volume. Displaying them side by side with equal weight makes the cheap one look silly; surfacing the 5-hour pass contextually — at a paywall, mid-session — is probably where it earns its place.
+10. **Is 250 points the right price for the 7-day pass?** 100 and 250 mirror the cash ratio ($0.99 : $2.49), which is tidy but arbitrary — nothing says an earned currency should price like a sold one. 200 would make two referrals buy the better product cleanly and would push learners toward the 7-day pass, which is the one that actually establishes a study habit. 300 would make the 5-hour pass the default redemption and leave a remainder to expire. Recommend 250 for launch and watch which pass gets redeemed.
+11. **Should contributing a resource earn points?** `ResourceUploadReward` exists and the UI already promises 1 500 credits for an approved upload. Contribution is a better earn source than referral in principle — it produces something other learners use — but "approved" implies a moderation process that does not exist, and points redeemable for real product make an unmoderated upload queue an attack surface. Deferred, deliberately, until moderation exists.
+12. **What is the total points liability?** Every live point is deferred COGS at up to $0.003 (100 points → a $0.30-ceiling pass). Uncapped referrals make this unbounded in principle and 60-day expiry bounds it in practice, but the missing number is qualified referrals per learner. Until Phase 4b's monitoring runs, this is a guess.

@@ -1038,7 +1038,7 @@ Any PLUS-only capability requested by a FREE user (no trial) returns:
 
 ### Test: Trial Cooldown Enforcement
 
-After trial expires, attempting `POST /api/v1/learning/trial/start` within 180 days returns:
+After trial expires, attempting `POST /api/v1/learning/trial/start` within 90 days returns:
 `400 Bad Request` — "Trial available again on [date]."
 
 ---

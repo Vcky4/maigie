@@ -2,7 +2,7 @@
 
 `GET /trial/status` returned bare dicts whose keys differed between branches. In
 particular `trialAvailable` appeared **only** in the "no status at all" fallback, so
-a learner whose trial had expired and whose 180-day cooldown had since elapsed got a
+a learner whose trial had expired and whose cooldown had since elapsed got a
 response with no such key. The client read `undefined`, treated it as false, and hid
 the trial offer from someone who was eligible — immediately after a paywall had told
 them a trial existed.
@@ -30,7 +30,10 @@ class TestTrialAvailability:
 
     def test_an_active_trial_is_not_a_second_one(self):
         status = trial_service.TrialStatus(
-            is_active=True, day_number=3, days_remaining=4, ends_at=NOW + timedelta(days=4)
+            is_active=True,
+            day_number=3,
+            days_remaining=4,
+            ends_at=NOW + timedelta(days=4),
         )
         assert status.trial_available is False
 
@@ -44,14 +47,14 @@ class TestTrialAvailability:
 
     def test_past_the_cooldown_is_eligible_again(self):
         """The bug. `get_trial_status` leaves `next_trial_available_at` as None once
-        the 180 days have elapsed, and that learner is eligible — but the route used
+        the cooldown has elapsed, and that learner is eligible — but the route used
         to omit `trialAvailable` on this branch entirely.
         """
         status = trial_service.TrialStatus(
             is_active=False,
             expired=True,
-            started_at=NOW - timedelta(days=400),
-            ends_at=NOW - timedelta(days=393),
+            started_at=NOW - timedelta(days=200),
+            ends_at=NOW - timedelta(days=193),
             next_trial_available_at=None,
         )
         assert status.trial_available is True
@@ -63,7 +66,7 @@ class TestTrialAvailability:
             assert not (status.is_active and status.trial_available)
 
     def test_the_cooldown_is_the_documented_length(self):
-        assert trial_service.TRIAL_COOLDOWN_DAYS == 180
+        assert trial_service.TRIAL_COOLDOWN_DAYS == 90
         assert trial_service.TRIAL_DURATION_DAYS == 7
 
 
