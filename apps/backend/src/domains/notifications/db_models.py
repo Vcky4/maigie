@@ -754,3 +754,95 @@ class OutboundMessage(Base, TimestampMixin):
             postgresql_where=text('"providerMessageId" IS NOT NULL'),
         ),
     )
+
+
+class NotificationDigest(Base, TimestampMixin):
+    """One digest run for one learner, one category, one period.
+
+    **The unique key is what makes a digest safe to build repeatedly.** The planner runs hourly
+    because a period ends at a different moment for every timezone, so most runs must do nothing
+    for most learners. `(userId, category, period, periodStart)` means the second run of a period
+    finds the existing row and stops, instead of sending a learner the same week twice.
+
+    `notificationId` is set once the canonical digest notification exists, which is also what
+    plans its email. A row with `itemCount = 0` is never created: a digest that says nothing
+    happened teaches its reader to ignore the sender.
+    """
+
+    __tablename__ = "NotificationDigest"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The settings category this digest was built for, not the database category of its items.
+    category: Mapped[str] = mapped_column(String(24), nullable=False)
+    period: Mapped[str] = mapped_column(String(8), nullable=False)
+    #: Period bounds in UTC, derived from the learner's own local day or week.
+    period_start: Mapped[datetime] = mapped_column(
+        "periodStart", DateTime(timezone=True), nullable=False
+    )
+    period_end: Mapped[datetime] = mapped_column(
+        "periodEnd", DateTime(timezone=True), nullable=False
+    )
+    notification_id: Mapped[str | None] = mapped_column(
+        "notificationId",
+        String,
+        ForeignKey("Notification.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    item_count: Mapped[int] = mapped_column("itemCount", Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "userId",
+            "category",
+            "period",
+            "periodStart",
+            name="NotificationDigest_user_category_period_start_key",
+        ),
+        CheckConstraint("period IN ('DAILY', 'WEEKLY')", name="NotificationDigest_period_check"),
+        CheckConstraint('"itemCount" >= 1', name="NotificationDigest_itemCount_check"),
+        CheckConstraint(
+            '"periodEnd" > "periodStart"', name="NotificationDigest_period_order_check"
+        ),
+        Index("NotificationDigest_userId_periodStart_idx", "userId", "periodStart"),
+    )
+
+
+class NotificationDigestItem(Base, TimestampMixin):
+    """Membership of one notification in one digest.
+
+    Exists so a notification cannot appear in two digests. Without it, an item created near a
+    period boundary — or during a retry — would be summarised twice, and the learner would have
+    no way to tell whether something happened once or twice.
+    """
+
+    __tablename__ = "NotificationDigestItem"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    digest_id: Mapped[str] = mapped_column(
+        "digestId",
+        String,
+        ForeignKey("NotificationDigest.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    notification_id: Mapped[str] = mapped_column(
+        "notificationId",
+        String,
+        ForeignKey("Notification.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "digestId", "notificationId", name="NotificationDigestItem_digest_notification_key"
+        ),
+        # Global, not per digest: one notification belongs to at most one digest ever.
+        UniqueConstraint("notificationId", name="NotificationDigestItem_notificationId_key"),
+        Index("NotificationDigestItem_digestId_idx", "digestId"),
+    )

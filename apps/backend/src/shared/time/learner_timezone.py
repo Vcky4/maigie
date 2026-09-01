@@ -173,6 +173,30 @@ def local_day_bounds(instant: datetime, timezone: LearnerTimezone) -> tuple[date
     return start_local.astimezone(UTC), end_local.astimezone(UTC)
 
 
+def local_week_bounds(
+    instant: datetime, timezone: LearnerTimezone, *, week_starts_on: int = 0
+) -> tuple[datetime, datetime]:
+    """The UTC instants that bracket the learner's own week containing ``instant``.
+
+    Same contract as ``local_day_bounds`` and for the same reason: a week is a claim about the
+    learner's calendar, so a window bounded in UTC summarises somebody else's week. A learner in
+    Auckland would have their week close on Sunday afternoon.
+
+    ``week_starts_on`` is a Python weekday number, defaulting to Monday, matching
+    ``NotificationPolicy.digestDayOfWeek`` where 0 is Sunday only in the settings contract — the
+    caller converts, because the two conventions genuinely differ and hiding that here would move
+    the off-by-one somewhere harder to find.
+
+    Stepped as seven local wall-clock days rather than 168 hours, so a week containing a
+    daylight-saving transition is still exactly one week.
+    """
+    local = to_learner_local(instant, timezone)
+    midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_local = midnight - timedelta(days=(midnight.weekday() - week_starts_on) % 7)
+    end_local = (start_local + timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return start_local.astimezone(UTC), end_local.astimezone(UTC)
+
+
 def local_hour(instant: datetime, timezone: LearnerTimezone) -> int:
     """The hour of the learner's day an instant fell in, 0-23.
 

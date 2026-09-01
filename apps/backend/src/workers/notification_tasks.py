@@ -138,8 +138,26 @@ def dispatch_notification_email_task() -> int:
     return _run_notification_coro("dispatch_due_email", module="email_dispatcher")
 
 
+@celery_app.task(
+    name="notifications.plan_digests",
+    queue="default",
+    time_limit=300,
+    soft_time_limit=280,
+)
+def plan_notification_digests_task() -> int:
+    summary = _run_producer("src.domains.notifications.digest", "plan_due_digests")
+    return int(summary.get("created", 0))
+
+
 def get_beat_schedule() -> dict:
     return {
+        "notifications.plan_digests": {
+            "task": "notifications.plan_digests",
+            # Hourly, because a period closes at a different instant in every timezone and the
+            # digest's unique key makes a run that has nothing to do a no-op.
+            "schedule": 3600.0,
+            "options": {"queue": "default"},
+        },
         "notifications.schedule_reminders": {
             "task": "notifications.schedule_reminders",
             # Must match REMINDER_WINDOW_MINUTES in the producer. The idempotency key makes
