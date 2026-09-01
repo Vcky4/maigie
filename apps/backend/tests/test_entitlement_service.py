@@ -26,6 +26,7 @@ from src.domains.billing.services import entitlement_service as svc  # noqa: E40
 
 NOW = datetime.now(UTC)
 LATER = NOW + timedelta(days=10)
+EARLIER = NOW - timedelta(days=1)
 PASS_ENDS = NOW + timedelta(hours=4)
 TRIAL_ENDS = NOW + timedelta(days=2, hours=3)
 
@@ -75,6 +76,39 @@ class TestPrecedence:
         assert result.source == "subscription"
         assert result.is_trial is False
         assert result.trial_days_remaining is None
+
+    def test_a_lapsed_subscription_grants_nothing(self):
+        """All three sources expire lazily on read, not just two of them.
+
+        Until Phase 2a a paid tier returned `plus` whatever `subscription_period_end` said, while
+        pass and trial both checked. That is only safe if webhooks are the sole writer of
+        `User.tier` and always land — and `handle_paystack_webhook` reaches a Prisma sentinel until
+        Phase 2b, so a lost `subscription.disable` meant a tier that never returned to `FREE`.
+        """
+        result = compose(subscription_tier="PREMIUM_MONTHLY", subscription_period_end=EARLIER)
+        assert result.tier == "free"
+        assert result.source == "none"
+
+    def test_a_lapsed_subscription_falls_through_to_a_pass(self):
+        """Lapsing is not short-circuiting: the next source in precedence still gets its turn.
+
+        A learner whose card failed and who then bought a pass to keep working is the case that
+        makes this matter.
+        """
+        result = compose(
+            subscription_tier="PREMIUM_MONTHLY",
+            subscription_period_end=EARLIER,
+            active_pass=A_PASS,
+        )
+        assert result.tier == "plus"
+        assert result.source == "pass"
+
+    def test_a_missing_period_end_is_not_read_as_lapsed(self):
+        """Absent is not expired. Inferring cancellation from a null would revoke access from
+        subscribers whose row predates the column being written."""
+        result = compose(subscription_tier="PREMIUM_MONTHLY", subscription_period_end=None)
+        assert result.tier == "plus"
+        assert result.source == "subscription"
 
     def test_pass_outranks_a_trial(self):
         """A learner who paid for a pass gets the pass's identity, not the trial's.
@@ -126,22 +160,36 @@ class TestTierMap:
             "PREMIUM_YEARLY",
         ],
     )
-    def test_retired_tiers_resolve_to_free(self, tier):
-        """Drift 10, closed by deleting the tiers rather than admitting them.
+    def test_retired_tiers_are_grandfathered(self, tier):
+        """Withdrawn from sale is not the same as withdrawn from the people who bought it.
 
-        Revision 3 of the plan asserted the opposite: a `LEGACY_PLUS_TIERS` frozenset resolved all
-        five to `plus` so that subscribers on withdrawn products kept what they were paying for.
-        There are none — the precondition is Phase 2b's first task — so `free` is now the correct
-        answer and a `User.tier` holding one of these strings is a data error.
+        This assertion has been both ways round. Revision 4 of the plan resolved all five to
+        `free` on the product fact that no such subscriber exists; Phase 2a put it back, because
+        dropping it changed nothing about what *writes* `User.tier`. `_price_id_to_tier` still
+        returns `PREMIUM_YEARLY` for the yearly price id, and the renewal path deliberately
+        bypasses the withdrawn-product check so existing subscriptions keep billing — so a yearly
+        renewal was charged, verified, written, and then entitled to nothing.
 
-        If this test is ever the thing standing between a paying subscriber and their features, the
-        fix is to restore `LEGACY_PLUS_TIERS`, not to argue with the assertion.
+        The count is almost certainly zero and Phase 2b will record it. Until it does, the cost of
+        being wrong in this direction is a tidier frozenset; the cost of being wrong in the other
+        is charging someone for a product we then refuse to serve them.
         """
         result = compose(subscription_tier=tier, subscription_period_end=LATER)
-        assert result.tier == "free"
-        assert result.source == "none"
-        # Still reported, because display and history need the raw value even when it grants nothing.
+        assert result.tier == "plus"
+        assert result.source == "subscription"
+        # Reported raw, so display and history can name the actual product.
         assert result.subscription_tier == tier
+
+    def test_a_retired_tier_still_lapses_when_its_period_ends(self):
+        """Grandfathering honours the period paid for, not the tier string forever."""
+        result = compose(subscription_tier="PREMIUM_YEARLY", subscription_period_end=EARLIER)
+        assert result.tier == "free"
+
+    def test_legacy_tiers_are_separable_from_the_active_one(self):
+        """Two frozensets rather than one, so Phase 2b deletes a name instead of editing a set."""
+        assert svc.PLUS_TIERS == frozenset({"PREMIUM_MONTHLY"})
+        assert "PREMIUM_MONTHLY" not in svc.LEGACY_PLUS_TIERS
+        assert svc.ALL_PLUS_TIERS == svc.PLUS_TIERS | svc.LEGACY_PLUS_TIERS
 
     def test_a_prefix_match_would_have_passed_and_is_not_used(self):
         """`startswith("PREMIUM")` was the bug. An unknown PREMIUM-ish string must not be Plus."""
@@ -181,7 +229,8 @@ class TestWindowAllowance:
 
     def test_unknown_pass_product_falls_to_the_smallest_allowance(self):
         """A pass product added to the store without a row in the allowance map must not grant the
-        largest allowance by default. Under-granting is a support ticket; over-granting is COGS."""
+        largest allowance by default. Under-granting is a support ticket; over-granting is COGS.
+        """
         mystery = svc.ActivePass(pass_id="p3", product_id="plus_pass_30d", expires_at=PASS_ENDS)
         assert compose(active_pass=mystery).window_allowance == 3_000
 
@@ -225,7 +274,8 @@ class TestSeamsAndFailure:
     @pytest.mark.asyncio
     async def test_resolve_gates_as_free_when_the_read_fails(self, monkeypatch):
         """A failure to resolve an entitlement must not fail the request. `resolve()` is called on
-        nearly every gated request, so raising here would turn a database blip into an outage."""
+        nearly every gated request, so raising here would turn a database blip into an outage.
+        """
 
         def boom():
             raise RuntimeError("no database")
@@ -243,7 +293,8 @@ class TestSeamsAndFailure:
 
     def test_resolve_takes_a_user_id_and_nothing_else(self):
         """Decision F, enforced by signature. An optional `space_id` here is how a personal-scope
-        resolver quietly becomes the space resolver, and space entitlement is out of scope."""
+        resolver quietly becomes the space resolver, and space entitlement is out of scope.
+        """
         import inspect
 
         assert list(inspect.signature(svc.resolve).parameters) == ["user_id"]
@@ -276,7 +327,11 @@ class TestTheFourthOpinionIsGone:
             return compose(active_pass=A_PASS)
 
         monkeypatch.setattr(svc, "resolve", fake_resolve)
-        assert asyncio.run(feature_tier_service.get_effective_tier("u1")) == ("plus", False, None)
+        assert asyncio.run(feature_tier_service.get_effective_tier("u1")) == (
+            "plus",
+            False,
+            None,
+        )
 
     def test_the_llm_router_sees_a_trial(self, monkeypatch):
         """Drift 11. Before this delegation the model allowlist read `User.tier` alone, so a
@@ -303,10 +358,13 @@ class TestTheFourthOpinionIsGone:
 
     def test_personal_tier_cannot_be_passed_to_the_router(self):
         """The parameter is removed rather than ignored. A caller passing a pre-loaded `"FREE"` for a
-        trialling learner would reintroduce drift 11 through the door marked optimisation."""
+        trialling learner would reintroduce drift 11 through the door marked optimisation.
+        """
         import inspect
 
-        from src.domains.intelligence.reasoning.llm.feature_flags import FeatureFlagService
+        from src.domains.intelligence.reasoning.llm.feature_flags import (
+            FeatureFlagService,
+        )
 
         params = inspect.signature(FeatureFlagService.effective_tier_for_request).parameters
         assert "personal_tier" not in params

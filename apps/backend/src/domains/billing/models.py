@@ -19,14 +19,23 @@ from src.shared.schemas import CamelModel
 # **not** sold any more, because a request carrying one has to be distinguishable from a
 # request carrying nonsense: a Literal that omitted them would answer 422 "not a valid
 # plan" and shadow the 410 "this plan was withdrawn, here is what replaced it" that
-# ``stripe_service.DEPRECATED_PLAN_IDS`` exists to give. The two Plus passes are absent
-# because they are one-time products, not subscriptions — see ``PASS_PRODUCT_IDS``.
+# ``stripe_service.DEPRECATED_PLAN_IDS`` exists to give.
+#
+# The two Plus passes are here for the same reason, having originally been omitted on the
+# grounds that they are one-time products rather than subscriptions. That was true and still
+# produced the wrong behaviour: ``stripe_service.get_price_id_and_trial_days`` carries a
+# specific refusal — "that is a one-time Plus pass, use the pass checkout" — and a Literal
+# without the ids meant FastAPI answered 422 before the handler ran, so the refusal was
+# unreachable and the message never seen. Exactly the failure the paragraph above describes.
 PlanId = Literal[
     # Active
     "maigie_plus_monthly",
     "plus_monthly",
     "circle_plan_monthly",
     "plus_seat_add_on_monthly",
+    # One-time products — accepted so the refusal names the right door (400, not 422)
+    "plus_pass_5h",
+    "plus_pass_7d",
     # Withdrawn — accepted so the refusal can be specific (410, not 422)
     "maigie_plus_yearly",
     "plus_yearly",
@@ -61,6 +70,14 @@ class PlanItem(CamelModel):
     # Whether the plan applies to one person, to a whole space, or tops up an
     # existing space plan. Clients need this to group the catalog for display.
     scope: Literal["personal", "circle", "add_on"] = "personal"
+    # Whether this product can be bought right now.
+    #
+    # The two Plus passes are in the catalogue from Phase 1 so that clients and generated
+    # types can be built against the real shape, but their one-time checkout does not exist
+    # until Phase 5. Without this field a client had no way to tell, and the honest reading
+    # of a catalogue entry is "you can buy this" — so it would have rendered a Buy button
+    # that answers 400. `false` means list it, describe it, and do not offer it.
+    purchasable: bool = True
 
 
 class PlanCatalogResponse(BaseModel):

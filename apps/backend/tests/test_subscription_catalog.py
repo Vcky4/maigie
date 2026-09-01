@@ -29,6 +29,7 @@ from types import SimpleNamespace  # noqa: E402
 import pytest  # noqa: E402
 
 from src.config import get_settings  # noqa: E402
+from src.domains.billing import models as billing_models  # noqa: E402
 from src.domains.billing.services import paystack_service as paystack_svc  # noqa: E402
 from src.domains.billing.services import stripe_service as stripe_svc  # noqa: E402
 from src.domains.personal_learning.services import trial_service  # noqa: E402
@@ -270,6 +271,31 @@ class TestPassesAreNotSubscriptions:
         and display a pass before there is a rail to buy it on.
         """
         assert _by_id()[plan_id].interval == "one_time"
+
+    @pytest.mark.parametrize("plan_id", stripe_svc.PASS_PRODUCT_IDS)
+    def test_the_checkout_schema_accepts_a_pass_so_the_refusal_is_reachable(self, plan_id):
+        """The refusal above is only useful if a request carrying a pass id reaches the handler.
+
+        `CheckoutRequest.plan_id` is a `Literal`, and while the pass ids were omitted from it
+        FastAPI answered `422 not a valid plan` before `get_price_id_and_trial_days` ran — so the
+        carefully worded "use the pass checkout" message was unreachable and the test above passed
+        while the route behaved differently. This is the same argument the comment above `PlanId`
+        makes for keeping the six *withdrawn* ids in the Literal, applied to the two passes.
+        """
+        assert billing_models.CheckoutRequest(plan_id=plan_id).plan_id == plan_id
+
+    @pytest.mark.parametrize("plan_id", stripe_svc.PASS_PRODUCT_IDS)
+    def test_a_pass_is_not_advertised_as_purchasable_yet(self, plan_id):
+        """Listed, described, priced — and not offered, until Phase 5 builds the one-time rail.
+
+        Without this a client had no way to tell, and the honest reading of a catalogue entry is
+        "you can buy this", so it would have rendered a Buy button that answers 400.
+        """
+        assert _by_id()[plan_id].purchasable is False
+
+    def test_the_subscription_is_purchasable(self):
+        """The flag has to distinguish, or it is decoration."""
+        assert _by_id()["plus_monthly"].purchasable is True
 
 
 # ---------------------------------------------------------------------------

@@ -262,6 +262,15 @@ class Settings(BaseSettings):
     # Base plan IDs within the subscription
     GOOGLE_PLAY_BASE_PLAN_MONTHLY: str = "plus-monthly"
     GOOGLE_PLAY_BASE_PLAN_YEARLY: str = "plus-yearly"
+    #: Audience configured on the Pub/Sub push subscription that delivers Google Play RTDN.
+    #: Empty means RTDN ingestion is refused rather than trusted — the endpoint had no
+    #: authentication at all before Phase 2a, and it is unauthenticated by construction, so the
+    #: OIDC token Pub/Sub signs is the only thing distinguishing a notification from a `curl`.
+    GOOGLE_PUBSUB_AUDIENCE: str = ""
+    #: Service account email of that push subscription. A Google-signed token only proves Google
+    #: minted it; this proves it was *our* subscription. Optional but strongly recommended.
+    GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL: str = ""
+
     # Credit pack product IDs (in-app products, consumable)
     GOOGLE_PLAY_SKU_CREDIT_STARTER: str = "credit_pack_starter"
     GOOGLE_PLAY_SKU_CREDIT_VALUE: str = "credit_pack_value"

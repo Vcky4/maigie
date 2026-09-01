@@ -166,6 +166,10 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 "Hold it as long as you like; it does not renew."
             ),
             usage_note="About 17 chat turns and 15 minutes of live voice tutoring.",
+            # Listed so clients and generated types can be built against the real shape;
+            # the one-time checkout that sells it arrives in Phase 5. Until then a Buy
+            # button would answer 400.
+            purchasable=False,
         ),
         PlanItem(
             id="plus_pass_7d",
@@ -178,6 +182,7 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 "A study week. It does not renew."
             ),
             usage_note="About 57 chat turns and 50 minutes of live voice tutoring in total.",
+            purchasable=False,  # Phase 5, as above.
         ),
         PlanItem(
             id="plus_monthly",

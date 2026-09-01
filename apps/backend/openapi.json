@@ -1311,6 +1311,8 @@
               "plus_monthly",
               "circle_plan_monthly",
               "plus_seat_add_on_monthly",
+              "plus_pass_5h",
+              "plus_pass_7d",
               "maigie_plus_yearly",
               "plus_yearly",
               "study_circle_monthly",
@@ -10542,6 +10544,11 @@
           "priceCents": {
             "title": "Pricecents",
             "type": "integer"
+          },
+          "purchasable": {
+            "default": true,
+            "title": "Purchasable",
+            "type": "boolean"
           },
           "scope": {
             "default": "personal",
@@ -36909,6 +36916,24 @@
       "post": {
         "description": "Handle Google Play Real-Time Developer Notifications via Pub/Sub.",
         "operationId": "google_play_rtdn_api_v1_webhooks_google_play_rtdn_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -36917,6 +36942,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Google Play Rtdn",

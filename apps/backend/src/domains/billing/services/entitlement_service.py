@@ -45,13 +45,39 @@ EntitlementSource = Literal["none", "subscription", "pass", "trial"]
 # Revision 3 of the plan fixed that with a `LEGACY_PLUS_TIERS` frozenset holding `PREMIUM_YEARLY`,
 # `STUDY_CIRCLE_MONTHLY` / `_YEARLY` and `SQUAD_MONTHLY` / `_YEARLY`, resolving all five to `plus` so
 # that subscribers on withdrawn products were not denied what they were paying for. Revision 4
-# removed it: there are no such subscribers, so the bug has no victim and the fix has no
-# beneficiary. Those five strings resolve to `free`, which is now the correct answer rather than a
-# defect, and a `User.tier` holding one of them is a data error rather than a supported state.
+# removed it on the product fact that there are no such subscribers.
 #
-# If a live subscription on any of them is ever found, restore the frozenset — breaking someone who
-# is paying us is not a trade worth the tidier code.
+# **Phase 2a restored it, and the reason is worth keeping.** Dropping it here changed nothing about
+# what *writes* `User.tier`: `stripe_service._price_id_to_tier` still returns `PREMIUM_YEARLY` for
+# the yearly price id, the renewal path deliberately bypasses the withdrawn-product check so
+# existing subscriptions keep billing, and config keeps that price id specifically so a renewal can
+# be identified. So a yearly renewal would have been charged, verified, written — and then resolved
+# to `free`, denying every capability and serving flash-lite models to someone who had just paid.
+# Worse, it was a regression: before this resolver existed, `feature_flags` mapped any non-`FREE`
+# tier to `plus`, so that learner used to be served correctly.
+#
+# The product fact is almost certainly right and the count is almost certainly zero. But the plan's
+# own rule is that breaking someone who is paying us is not a trade worth making, and the confidence
+# for that came from a count that Phase 2b has not taken yet. One frozenset is a cheap price for not
+# needing to be right about it.
+#
+# **Delete `LEGACY_PLUS_TIERS` when Phase 2b records the count as zero** — not before. At that point
+# these five strings become a data error rather than a supported state, and the writers should stop
+# producing them in the same change.
 PLUS_TIERS = frozenset({"PREMIUM_MONTHLY"})
+
+LEGACY_PLUS_TIERS = frozenset(
+    {
+        "PREMIUM_YEARLY",
+        "STUDY_CIRCLE_MONTHLY",
+        "STUDY_CIRCLE_YEARLY",
+        "SQUAD_MONTHLY",
+        "SQUAD_YEARLY",
+    }
+)
+"""Withdrawn products whose subscribers, if any exist, keep what they are paying for."""
+
+ALL_PLUS_TIERS = PLUS_TIERS | LEGACY_PLUS_TIERS
 
 
 # ===========================================================================
@@ -131,7 +157,7 @@ def _compose(
     """
     raw_tier = subscription_tier or "FREE"
 
-    if raw_tier in PLUS_TIERS:
+    if raw_tier in ALL_PLUS_TIERS and not _subscription_lapsed(subscription_period_end):
         return Entitlement(
             tier="plus",
             source="subscription",
@@ -240,6 +266,33 @@ async def resolve(user_id: str) -> Entitlement:
         active_pass=await _read_active_pass(user_id),
         active_trial=_active_trial(trial_ends_at),
     )
+
+
+def _subscription_lapsed(period_end: datetime | None) -> bool:
+    """Whether a stored paid tier has outlived the period that was paid for.
+
+    Pass and trial both expire lazily on read, and until Phase 2a a subscription did not: `_compose`
+    returned `plus` for a `PREMIUM_MONTHLY` row whatever `subscription_current_period_end` said,
+    even though it already had the value in hand. Two of three sources failed closed on a stale
+    timestamp and one failed open.
+
+    That is only safe if webhooks are the sole writer of `User.tier` *and* they always land. Neither
+    holds today — `handle_paystack_webhook` reaches a Prisma sentinel until Phase 2b, so a
+    `subscription.disable` can be lost, and a lost cancellation means a tier that never returns to
+    `FREE`. This bounds that exposure to one billing period without depending on webhook health.
+
+    `None` is treated as **not** lapsed. A missing period end means we never recorded one rather
+    than that it has passed, and inferring cancellation from absent data would revoke access from
+    subscribers whose row predates the field being written. `billing.check_expired_trials` is the
+    job that reconciles genuinely stale rows.
+    """
+    if period_end is None:
+        return False
+    if period_end.tzinfo is None:
+        # Defensive: the column is `DateTime(timezone=True)`, but a naive value read back from a
+        # provider payload or a fixture would raise on comparison rather than answer the question.
+        period_end = period_end.replace(tzinfo=UTC)
+    return datetime.now(UTC) >= period_end
 
 
 def _active_trial(trial_ends_at: datetime | None) -> ActiveTrial | None:
