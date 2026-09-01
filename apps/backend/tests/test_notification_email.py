@@ -342,3 +342,83 @@ class TestAddressReference:
         assert reference == address_reference("learner@example.com")
         assert "learner" not in reference
         assert len(reference) == 64
+
+
+class TestNotificationTemplate:
+    """The notification email uses the shared shell, not a second layout of its own.
+
+    It was first written as a standalone HTML document, copied from the pre-existing
+    `schedule_reminder.html`. That is the older style in this folder: a full `<html>` with its
+    own body styling, no preheader, and colours that do not survive a client forcing dark
+    mode. Meanwhile auth mail — verification, welcome, password reset — extends `base.html`,
+    which uses tables for structure, states every colour explicitly, and carries an inbox
+    preview line.
+
+    Two layouts is the actual defect, not either layout: the brand drifts silently, and a fix
+    applied to one is invisible in the other. So this asserts the notification mail is built
+    from the shared shell, and that the templates whose senders were removed stay removed
+    rather than lingering as a template someone later "reuses".
+    """
+
+    def _render(self, **overrides: Any) -> tuple[str, str]:
+        from src.shared.infrastructure.email import APP_NAME, _render
+
+        data: dict[str, Any] = {
+            "app_name": APP_NAME,
+            "logo_url": "",
+            "title": "Your week in review",
+            "body": "Study time: 1.5 hours\nStudy sessions: 3",
+            "name": "Ada",
+            "action_url": "https://maigie.com/notifications?open=abc",
+            "settings_url": "https://maigie.com/settings?tab=notifications",
+            "category_reason": "you asked Maigie to email you about your progress",
+        }
+        data.update(overrides)
+        return _render("notification", "fallback", **data)
+
+    def test_it_is_built_from_the_shared_shell(self) -> None:
+        html, _ = self._render()
+
+        # Structure and colours that only `base.html` supplies.
+        assert '<table role="presentation"' in html
+        assert "#f4f4f7" in html
+        assert "background-color:#4F46E5" in html
+        # The standalone body styling it used to carry must not come back.
+        assert "font-family: Helvetica, Arial, sans-serif; color: #333333" not in html
+
+    def test_it_carries_the_content_every_surface_needs(self) -> None:
+        html, text = self._render()
+
+        for part in (html, text):
+            assert "Your week in review" in part
+            assert "Study sessions: 3" in part
+            assert "notifications?open=abc" in part
+            assert "settings?tab=notifications" in part
+            assert "you asked Maigie to email you about your progress" in part
+
+    def test_a_multi_line_body_keeps_its_lines(self) -> None:
+        html, text = self._render()
+
+        # A summary is a list of figures. Collapsed onto one line it is unreadable, and HTML
+        # collapses whitespace by default.
+        assert "white-space:pre-line" in html
+        assert "Study time: 1.5 hours\nStudy sessions: 3" in text
+
+    def test_the_greeting_is_optional(self) -> None:
+        html, text = self._render(name=None)
+
+        assert "Hi " not in html
+        assert "Hi " not in text
+
+    def test_the_replaced_templates_are_gone(self) -> None:
+        from pathlib import Path
+
+        from src.shared.infrastructure.email import TEMPLATE_FOLDER
+
+        folder = Path(str(TEMPLATE_FOLDER))
+        for stem in ("schedule_reminder", "weekly_tips"):
+            for suffix in (".html", ".txt"):
+                assert not (folder / f"{stem}{suffix}").exists(), (
+                    f"{stem}{suffix} has no sender since the reminder and summary became "
+                    "canonical notifications; leaving it invites a second layout back in"
+                )

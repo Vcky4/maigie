@@ -7,6 +7,6 @@
 Open {{ app_name }}: {{ action_url }}
 
 You are receiving this because {{ category_reason }}.
-Change what Maigie emails you: {{ settings_url }}
+Change what {{ app_name }} emails you: {{ settings_url }}
 
-{{ app_name }} — The Academic Operating System
+— {{ app_name }}, The Academic Operating System

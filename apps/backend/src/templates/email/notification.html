@@ -1,55 +1,30 @@
-<!DOCTYPE html>
-<html>
+{% extends "base.html" %}
 
-<head>
-    <meta charset="utf-8">
-    <title>{{ title }}</title>
-</head>
+{% block title %}{{ title }}{% endblock %}
 
-<body
-    style="font-family: Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; padding: 20px; background-color: #ffffff;">
+{% block preheader %}{{ body|truncate(120, true) }}{% endblock %}
 
-    <div style="max-width: 600px; margin: 0;">
-        {% if logo_url %}
-        <div style="margin-bottom: 30px; text-align: center;">
-            <img src="{{ logo_url }}" alt="{{ app_name }}" style="max-width: 200px; height: auto;" />
-        </div>
-        {% endif %}
+{% block heading %}{{ title }}{% endblock %}
 
-        <h1 style="color: #222222; font-size: 24px; font-weight: bold; margin-bottom: 20px;">
-            {{ title }}
-        </h1>
+{% block content %}
+{% if name %}<p style="margin:0 0 16px 0;">Hi {{ name }},</p>{% endif %}
 
-        {% if name %}
-        <p style="margin-bottom: 15px;">Hi {{ name }},</p>
-        {% endif %}
+<!-- pre-line keeps the line breaks of a multi-line body, which a summary uses for its
+     figures. Without it every figure collapses onto one run-on line. -->
+<p style="margin:0 0 24px 0; white-space:pre-line;">{{ body }}</p>
 
-        <!-- pre-line keeps the line breaks of a multi-line notification body, which a
-             summary uses for its figures. Without it they collapse into one run-on line. -->
-        <p style="margin-bottom: 25px; white-space: pre-line;">{{ body }}</p>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 8px 0;">
+    <tr>
+        <td align="center" bgcolor="#4F46E5" style="background-color:#4F46E5; border-radius:8px;">
+            <a href="{{ action_url }}"
+                style="display:inline-block; padding:14px 28px; font-family:Helvetica,Arial,sans-serif; font-size:15px; font-weight:bold; line-height:1; color:#ffffff; text-decoration:none;">Open
+                {{ app_name }}</a>
+        </td>
+    </tr>
+</table>
+{% endblock %}
 
-        <div style="margin-bottom: 30px;">
-            <a href="{{ action_url }}" style="
-                background-color: #4F46E5;
-                color: #ffffff;
-                display: inline-block;
-                padding: 12px 24px;
-                border-radius: 5px;
-                font-size: 16px;
-                font-weight: bold;
-                text-decoration: none;">
-                Open {{ app_name }}
-            </a>
-        </div>
-
-        <p style="font-size: 12px; color: #999999; margin-top: 20px; border-top: 1px solid #eeeeee; padding-top: 20px;">
-            You are receiving this because {{ category_reason }}.
-            <a href="{{ settings_url }}" style="color: #4F46E5;">Change what Maigie emails you</a>.
-            <br><br>
-            {{ app_name }} — The Academic Operating System
-        </p>
-    </div>
-
-</body>
-
-</html>
+{% block footnote %}
+You are receiving this because {{ category_reason }}.
+<a href="{{ settings_url }}" style="color:#4F46E5;">Change what {{ app_name }} emails you</a>.
+{% endblock %}
