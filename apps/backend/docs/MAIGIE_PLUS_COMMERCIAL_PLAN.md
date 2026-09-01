@@ -1,15 +1,23 @@
 # Maigie Plus Commercial Plan
 
-> Status: **Phase 1 done. The money path is reachable on Stripe and Google Play, and not on Paystack.**
+> Status: **Phase 1 done. Phase 0 open and verified open. The money path is reachable on Stripe and Google Play, and not on Paystack.**
 >
 > The `billing` router is mounted, the personal catalogue is the four new products, credit packs and rewarded ads are gone, and the trial is 3 days. Two blockers remain before this is a money path anyone can actually use: **`paystack_service` is Prisma-removed**, so the NGN rail — the launch market's rail — is still unreachable and its two routes are deliberately unmounted rather than serving 500s (see Phase 1); and there is still no way to buy a pass, which needs the one-time checkout in Phase 5. `require_premium` still gates nothing and four incompatible notions of "paid" still disagree, which is Phase 2.
+>
+> **Phase 0 is unstarted, not merely unmarked.** Checked in code on 2026-09-01: `cost_calculator._EXACT_MODEL_PRICING:26` still prices `gemini-3.5-flash` at `(0.50, 3.00)` (Question 3), `ask_service.HISTORY_LIMIT:383` is still `12` (Question 2), and `narrative_cache.py:237` still passes `max_tokens=8192` — as does the `generate_content_json` default at `llm/__init__.py:136` (Question 1). The unticked boxes were accurate. Every COGS figure below still rests on an unverified rate card, so **no allowance is tuned in Phase 3 until Question 3 is answered.**
+>
+> **The Paystack port is now Phase 2b**, an explicit phase with its own checklist, rather than a paragraph inside Phase 1's list of deliberate absences. It was a launch blocker recorded as prose, which is how launch blockers get missed.
+>
+> **iOS ships with Android.** Open Question 6 is resolved: there is no Android-first phase and the Apple work in Phase 5 does not defer. §5.6 and Phase 5 are rewritten accordingly, and the store-product creation timeline — the thing with the longest external lead time in this plan — is now stated in one place, §5.7.
+>
+> **There are no paying subscribers, so nothing is grandfathered.** Confirmed as a product fact by the owner, to be confirmed against the database by the first item of Phase 2b. Consequences throughout: `LEGACY_PLUS_TIERS` is never written, `PREMIUM_YEARLY` is removed rather than carried, the retired `STUDY_CIRCLE_*` / `SQUAD_*` price and plan settings are deleted rather than kept for webhook archaeology, and `CreditPack` / `CreditPurchaseTransaction` are dropped rather than kept as read-only history. Store-side, the existing `plus-yearly` base plan and the three `credit_pack_*` consumables are deleted rather than left in place for RTDN lookups that can no longer arrive. New products are created clean; nothing is repurposed.
 >
 > Owners: Backend (catalogue, entitlement, usage windows, store verification) + Web client + Mobile client + Public site
 > Scope: the **personal** product catalogue, purchase rails on three surfaces, the pass activation model, the rolling usage window that replaces daily and monthly credit caps, the earned-points ledger that redeems into passes, and one entitlement resolver that every personal-scope gate reads.
 > **Out of scope: Learning Spaces, entirely.** Not the Space feature, not Circle Plan, not the Plus Seat add-on, not `SpaceMember.seat_tier`, not `seat_impl.py`, not `Space.credits`, not the space branch of `consume_credits`, not the space branch of `feature_flags.effective_tier_for_request`. Nothing in this plan reads or writes anything space-scoped. See Decision F.
 > Companion documents: [`../../../maigie-client/docs/PREPARE_API_INTEGRATION_PLAN.md`](../../../maigie-client/docs/PREPARE_API_INTEGRATION_PLAN.md) (§4 defers checkout to this document), [`../../../maigie-client/docs/REFLECT_API_INTEGRATION_PLAN.md`](../../../maigie-client/docs/REFLECT_API_INTEGRATION_PLAN.md) (Decision Z, the locked-read convention)
 > Source of authority for pricing intent: the Maigie Book — `business/ch36-pricing-philosophy`, `business/ch37-personal-learning`, `philosophy/ch04-product-principles`. Where this plan and the book disagree, the book wins and this plan is wrong. Decision N and §6.7 are derived from them directly.
-> Last reviewed: 2026-09-01 (revision 3 — Phase 1 implemented; revision 2 shortened the trial to 3 days, removed the referral cap, withdrew rewarded ads and introduced earned points as a pass-only currency: §6.9, Decision O)
+> Last reviewed: 2026-09-01 (revision 4 — Phase 0 verified open against code; Paystack port promoted to Phase 2b; iOS committed alongside Android and Open Question 6 resolved; store-product creation timeline consolidated into §5.7; all grandfathering machinery removed on the zero-subscriber fact. Revision 3 implemented Phase 1; revision 2 shortened the trial to 3 days, removed the referral cap, withdrew rewarded ads and introduced earned points as a pass-only currency: §6.9, Decision O)
 
 ## 1. Purpose
 
@@ -96,13 +104,13 @@ When complete:
 
 ## 4. Non-goals
 
-- **Yearly Plus.** Withdrawn. Existing `PREMIUM_YEARLY` subscribers are grandfathered and keep renewing; the product is removed from the catalogue for new purchases. Consistent with retiring every other multi-tier product.
+- **Yearly Plus.** Withdrawn outright. There are no `PREMIUM_YEARLY` subscribers, so there is nothing to grandfather: the plan id is refused on both doors (Phase 1), the Stripe price is archived, the Play `plus-yearly` base plan is deleted, and `PREMIUM_YEARLY` is not carried in any tier set. Consistent with retiring every other multi-tier product, and cheaper than the alternative — grandfathering is a permanent tax on every tier comparison in the codebase, and it is only worth paying for people who are actually paying us.
 - **Redesigning what a credit costs.** `TOKEN_MULTIPLIER = 0.2` and `CREDIT_COSTS` (`credit_consumption_service.py:106-131`) are untouched, as are the per-operation call sites in `study_voice`, `personal_learning` and `knowledge`. Only the *period* a learner draws against changes, and the *size* of the allowance.
 - **Rewarded ads, in any form.** Withdrawn rather than re-pointed. `credit_service.claim_ad_reward`, `AD_REWARD_CREDITS`, `MAX_ADS_PER_DAY`, the `/billing/ads/*` routes and both client screens go; the `AdRewardClaim` table stays, empty and unread, because dropping it forecloses the redesign at no saving. When ads return they will be designed as a product decision, not inherited as a credit top-up. See Decision O.
 - **Referral reward mechanics are in scope, not deferred**, because a currency that redeems into a sellable product is a commercial design and not a bonus. §6.9 and Decision O replace `referral_rewards_service`'s token grants outright rather than re-pointing them.
 - **Learning Spaces, in every respect.** See Decision F for the full boundary and for the one place the boundary is load-bearing rather than merely respected.
 - **Circle Plan and the Plus Seat add-on.** Space-scoped products. They keep their catalogue entries, Stripe prices, Paystack plan codes, config settings, seat pool accounting and marketing sections exactly as they are.
-- **Migrating legacy tiers off their grandfathered subscriptions in this phase.** Phase 8 does that. Until then `LEGACY_PLUS_TIERS` keeps existing `STUDY_CIRCLE_*` / `SQUAD_*` / `PREMIUM_YEARLY` subscribers on Plus rather than breaking people who are paying us.
+- ~~**Migrating legacy tiers off their grandfathered subscriptions in this phase.**~~ **Withdrawn — there is nobody to migrate.** Earlier revisions carried `LEGACY_PLUS_TIERS` so that live `STUDY_CIRCLE_*` / `SQUAD_*` / `PREMIUM_YEARLY` subscribers kept Plus until Phase 8 moved them. There are none. The frozenset is therefore never written, drift 10 is closed by deleting the tiers rather than by admitting them, and the Phase 8 migration step is deleted. **This is the one assumption in the plan that must be checked against the database before any of it is acted on** — it is the first item of Phase 2b, and if it turns out to be false the correct response is to restore `LEGACY_PLUS_TIERS`, not to break a payer.
 
 ## 5. Current state
 
@@ -135,7 +143,9 @@ Also unmounted: the `admin` router (`app.py:382-383`).
 
 Untouched, per Decision F: `POST /billing/subscriptions/checkout` keeps accepting `circle_plan_monthly` and `plus_seat_add_on_monthly`, `models.SeatAddonPurchaseRequest`, `repository.py:292-298, 393-401`, all four Circle/seat settings in `config.py`, `TRIAL_DAYS_CIRCLE_PLAN`, and the `"plus_seat_add_on_monthly"` display name at `shared/infrastructure/email.py:540`.
 
-Deleted with the retired *personal* tiers: `TRIAL_DAYS_STUDY_CIRCLE`, `TRIAL_DAYS_SQUAD`. The `STRIPE_PRICE_ID_STUDY_CIRCLE_*` / `_SQUAD_*` and `PAYSTACK_PLAN_STUDY_CIRCLE_*` / `_SQUAD_*` settings stay — `config.py:188-196` already records why, and Phase 8 still needs them to identify a grandfathered subscriber's source tier from a webhook.
+Deleted with the retired *personal* tiers: `TRIAL_DAYS_STUDY_CIRCLE`, `TRIAL_DAYS_SQUAD` (done in Phase 1).
+
+**Also deleted, revised in revision 4:** `STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY` / `_YEARLY`, `STRIPE_PRICE_ID_SQUAD_MONTHLY` / `_YEARLY` (`config.py:198-203`) and `PAYSTACK_PLAN_STUDY_CIRCLE_*` / `_SQUAD_*` (`config.py:248-251`). Revision 3 kept all eight so that Phase 8 could identify a grandfathered subscriber's source tier from an incoming webhook. With no subscribers on those tiers, no such webhook can arrive, and eight empty-string settings whose only purpose is to decode events that will never be received are exactly the kind of workaround this revision removes. `_price_id_to_tier` and `_assert_price_id_is_active` (`stripe_service.py:214-266`) lose their Study Circle and Squad branches with them; `DEPRECATED_PLAN_IDS` keeps the six ids, because a learner or a stale client presenting a retired plan id still deserves `410` rather than `422` (Phase 1 established this and it does not change).
 
 ### 5.2 What is actually enforced today, by surface
 
@@ -201,7 +211,7 @@ Every item here is either enforced in Phase 5 or deleted from the copy in Phase 
 7. **"Unlimited" AI.** Plus was 300 000 credits/month and is now a window allowance. → **stop saying unlimited**; state the window and the allowance, which §6.2 makes possible to state honestly for the first time.
 8. **`require_premium` / `PremiumUser`.** A gate with no callers. → **delete**, replaced by Decision B.
 9. **`check_capability("study_plan", "adaptive")`.** The branch exists at `feature_tier_service.py:322-333`; nothing calls it. → **wire it** so a Free learner asking for an adaptive plan gets a truthful `200 + notice` instead of a silently different plan.
-10. **`STUDY_CIRCLE_*` / `SQUAD_*` tiers resolve to `"free"`.** `startswith("PREMIUM")` at `feature_tier_service.py:216`. These are personal `User.tier` values, so this is in scope. → fixed by Decision B's explicit `LEGACY_PLUS_TIERS`, so grandfathered subscribers get what they pay for until Phase 8 moves them.
+10. **`STUDY_CIRCLE_*` / `SQUAD_*` tiers resolve to `"free"`.** `startswith("PREMIUM")` at `feature_tier_service.py:216`. These are personal `User.tier` values, so this is in scope. → **revised in revision 4: fixed by deleting the four tier values, not by admitting them.** Revision 3 fixed this with a `LEGACY_PLUS_TIERS` frozenset so grandfathered subscribers kept what they paid for until Phase 8 moved them. There are no subscribers on these tiers, so the bug has no victim and the fix has no beneficiary — Decision B resolves them to `free`, which is now the correct answer rather than a bug. Precondition checked in Phase 2b.
 11. **Trials invisible to the LLM router.** `feature_flags.py:455-501`. → fixed by Decision B.
 12. **Value summary is the only outright-locked read** (`routes.py:2694-2698`), with a plain-string `403`. It contradicts both the "no feature is entirely locked" principle at `feature_tier_service.py:6-9` and the locked-read convention. → **convert to `200 + LockedNotice`**.
 13. **`progress.daily_credit_reset` is registered and never scheduled** (`workers/progress_tasks.py:182-185`). → **delete it.** §6.2 removes the daily counter it was written to reset, and `billing.reset_credit_periods` (`workers/billing_tasks.py:15`) goes with it for the same reason. The pass sweep (Decision E) replaces both.
@@ -221,7 +231,7 @@ Every item here is either enforced in Phase 5 or deleted from the copy in Phase 
 
 A second sweep of the personal-learning surfaces found four things the first pass missed, recorded as drift items 15–22: a **live settings tab showing fabricated token balances**, the **document studio having no gate in its UI at all** despite being hard-gated on the server, **Ask Maigie reporting a billing limit as a generic error**, and **four mocked upsell cards already mounted at exactly the moments Decision N wants to make real**. Surfaces confirmed clean: lessons, flashcards, notes, collections, resources, schedule, exam-prep, onboarding, discovery, learn, notifications, knowledge base, course analytics, and the Ask Maigie history panel and overlays.
 
-**Mobile** (`maigie-mobile`). Expo SDK 55, `react-native-iap ^15.3.1` already installed and plugin-registered, `com.android.vending.BILLING` declared. `src/hooks/usePlayBilling.ts` is a complete Play Billing implementation — and `Platform.OS !== 'android'` early-returns at `:88`, so **iOS has no purchase path at all**. There is no `ios/` directory; the iOS jobs in `.eas/workflows/deploy-production.yml` are commented out. `MOB/src/app/prepare/launch.tsx:90` is the only client anywhere that pre-empts a gate rather than waiting for the `403`.
+**Mobile** (`maigie-mobile`). Expo SDK 55, `react-native-iap ^15.3.1` already installed and plugin-registered, `com.android.vending.BILLING` declared. `src/hooks/usePlayBilling.ts` is a complete Play Billing implementation (357 lines) — and `Platform.OS !== 'android'` early-returns at `:88-93`, before `initConnection`, so **iOS has no purchase path at all**. The iOS jobs in `.eas/workflows/deploy-production.yml:72-108` are commented out and `eas.json` has no `submit.production.ios` block. **Correction to revision 3, which said there is no `ios/` directory:** there is one — a gitignored Expo prebuild with `Maigie.xcworkspace` and installed Pods, including `react-native-iap`'s `NitroIap`. The iOS native integration is done; the JavaScript refuses the platform anyway. See §5.6. `MOB/src/app/prepare/launch.tsx:90` is the only client anywhere that pre-empts a gate rather than waiting for the `403`.
 
 **Public site** (`maigie-public`). `plan-data.ts` is the catalogue; `CreditPacks.tsx` and `landing/Pricing.tsx` each duplicate the credit-pack prices independently. `CircleProductsSection.tsx` is space-scoped and untouched.
 
@@ -231,13 +241,42 @@ A second sweep of the personal-learning surfaces found four things the first pas
 
 | | Google Play | App Store |
 | --- | --- | --- |
-| Console | live, `submit.production.android.track: production` | **not set up** |
-| Bundle id | `com.maigie` | `com.maigie` declared, never built |
+| Console | live, `submit.production.android.track: production` | **no app record** |
+| Bundle id | `com.maigie` | `com.maigie` (`app.config.js:32`), builds locally, never submitted |
 | Products | subscription `maigie_plus` with base plans `plus-monthly` / `plus-yearly`; consumables `credit_pack_starter/value/power` | none |
 | Server verification | `google_play_service.py`, service account, `purchases.subscriptions.get` | none |
 | Server notifications | RTDN endpoint written (`webhooks.py`) | none |
+| EAS submit config | `eas.json` `submit.production.android.track: production` | **absent** — no `appleId`, `ascAppId` or `appleTeamId` |
 
-iOS is greenfield: no StoreKit code, no products, no App Store Server API credentials, no notification endpoint, no built app.
+**iOS is less greenfield than revision 3 claimed, and the correction changes the estimate.** Revision 3 said "there is no `ios/` directory". There is: `expo prebuild` has been run and `ios/` contains `Maigie.xcodeproj`, `Maigie.xcworkspace`, a `Podfile.lock` and installed `Pods`. It is **gitignored** (`.gitignore:12`, alongside `android/` at `:11`), which is the normal Expo CBA arrangement and the reason a source-only reading missed it — the directory is a build artifact regenerated from `app.config.js`, not committed state.
+
+More usefully: **`react-native-iap`'s iOS pod is already linked.** `ios/Podfile.lock` carries `NitroIap` from `../node_modules/react-native-iap`, so the StoreKit native module is present and building. The iOS purchase gap is JavaScript and console configuration, not native integration — `usePlayBilling.ts:88-93` early-returns on `Platform.OS !== 'android'` before `initConnection`, so the hook refuses the platform its own dependency already supports.
+
+Two further corrections to revision 3's Phase 7 checklist:
+
+- **`expo prebuild` is not a task.** It has been run and it will be re-run by EAS on every build. What is actually missing from version control is nothing; what is missing from EAS is the `submit.production.ios` block.
+- **"StoreKit capability" is not an entitlements change.** `ios/Maigie/Maigie.entitlements` carries `aps-environment` and `applinks:app.maigie.com`, and correctly carries nothing for in-app purchase: In-App Purchase is enabled on the **App ID in the Apple Developer portal**, and modern StoreKit adds no entitlement key. The checklist item was asking for a file edit that would be wrong to make. What is required is the App ID capability plus the App Store Connect records in §5.7.
+
+What genuinely does not exist for iOS: the App Store Connect app record, the three in-app purchase products, the App Store Server API key (`APPLE_ISSUER_ID` / `APPLE_KEY_ID` / `APPLE_PRIVATE_KEY`), the `POST /webhooks/apple` endpoint and its JWS verification, the StoreKit branch of the purchase hook, and the EAS iOS submit configuration. That is Phase 5 and §5.7, and none of it is deferred.
+
+### 5.7 Store product creation: the longest lead time in the plan
+
+The question "at what point do we create the Play and App Store products" was not answered in one place in revision 3 — Google Play products sat in Phase 5 and Apple products sat in a Phase 7 mobile bullet, which is both a split ownership and the wrong order, because the store consoles are the only part of this plan with an external dependency measured in days.
+
+**Answer: create every store product at the start of Phase 5, and create the App Store Connect app record before that — it gates everything else on iOS and it costs nothing to do early.**
+
+The dependency that decides the order is this: an in-app purchase product cannot be submitted for review on its own. Apple reviews IAP products **attached to a build**, and the first submission of a paid app with IAP is the single most rejection-prone submission a project makes. Google is more forgiving — Play in-app products go live from the console without review — but a Play subscription still needs an **active** app with a published build on some track before purchases can be tested, and Play's 7-day price-change notice applies later.
+
+| When | Google Play | App Store Connect | Blocks |
+| --- | --- | --- | --- |
+| **Now, in parallel with Phase 2b** | — | Create the app record for `com.maigie`; enable In-App Purchase on the App ID; generate the App Store Server API key; complete the Paid Apps agreement and banking/tax | Everything Apple. The agreement in particular: **no IAP product can even be created until Paid Apps is active**, and it involves banking details that are not an engineer's to supply |
+| **Phase 5, first task** | Create `plus_pass_5h` and `plus_pass_7d` as **consumable** in-app products; set the `plus-monthly` base plan free trial to **3 days**; set NGN prices per §6.8; **delete `plus-yearly` and the three `credit_pack_*` products** | Create `com.maigie.plus.pass5h` and `com.maigie.plus.pass7d` as **Consumable**; create `com.maigie.plus.monthly` in subscription group `maigie_plus` with a **3-day introductory free trial**; set NGN prices per §6.8 | Server verification work has nothing to verify against until the ids exist |
+| **Phase 5, after the products exist** | `purchases.products.get` verification; RTDN voided-purchase revocation | `apple_service.py`, JWS verification, `POST /webhooks/apple` | Phase 7's client purchase flows |
+| **Phase 7, iOS** | — | Uncomment the iOS EAS jobs; add `submit.production.ios` (`appleId`, `ascAppId`, `appleTeamId`); submit the first build **with the three IAP products attached** | App Review, 1–2 weeks, first-submission rejection risk |
+
+**Sandbox testing does not wait for review.** Both stores let you test purchases against products in a pre-approved state — Play from an internal-testing track, Apple with a StoreKit configuration file or a Sandbox Apple Account — so Phase 5's verification code and Phase 7's purchase flows can be built and tested end to end while the products are still unreviewed. Nothing in the engineering plan is blocked by review; only the public launch is.
+
+**Deleting rather than repurposing is the rule here too.** The live Play catalogue holds a `plus-yearly` base plan and three `credit_pack_*` consumables. Revision 3 kept `GOOGLE_PLAY_BASE_PLAN_YEARLY` and the three `GOOGLE_PLAY_SKU_CREDIT_*` settings (`config.py:264-268`) so historical RTDN events could still be decoded, and `google_play_service.py:65, 191-193` reads all four. With nobody having bought any of them, there is no history: the four settings, both `google_play_service` branches, and the four store products are deleted. A new `plus_pass_5h` is created as a new consumable — no existing SKU is renamed into the role, because a renamed SKU carries its old purchase history and its old type, and a non-consumable repurposed as a pass is unbuyable twice.
 
 ## 6. The new model
 
@@ -278,7 +317,9 @@ Store product ids:
 | `plus_pass_7d` | one-time price, `mode: payment` | `com.maigie.plus.pass7d` (**consumable**) | `plus_pass_7d` (in-app, **consumable**) |
 | `plus_monthly` | recurring price, `mode: subscription` | `com.maigie.plus.monthly` (auto-renewable, group `maigie_plus`) | `maigie_plus` / base plan `plus-monthly` |
 
-Consumable is the correct store type and not a detail: a non-consumable would be permanently owned, restorable forever, and unbuyable a second time — which is the opposite of a pass. `GOOGLE_PLAY_BASE_PLAN_YEARLY` and the three `GOOGLE_PLAY_SKU_CREDIT_*` settings stay in `config.py` for historical RTDN lookups, exactly as the deprecated Stripe price ids do, and are excluded from the catalogue.
+Consumable is the correct store type and not a detail: a non-consumable would be permanently owned, restorable forever, and unbuyable a second time — which is the opposite of a pass.
+
+**Revised in revision 4:** `GOOGLE_PLAY_BASE_PLAN_YEARLY` and the three `GOOGLE_PLAY_SKU_CREDIT_*` settings (`config.py:264-268`) are **deleted**, along with the branches that read them at `google_play_service.py:65` and `:191-193`, and the four corresponding Play products are deleted from the console. Revision 3 kept them for historical RTDN lookups by analogy with the deprecated Stripe price ids; with zero purchases behind them there is no history to look up, and an RTDN for a product nobody owns cannot arrive. The deprecated Stripe price ids go the same way for the same reason (§5.1). Every one of the six store products in the table above is **created new**, and none is a rename of an existing SKU — a renamed SKU keeps its purchase history and its store type, and repurposing a non-consumable as a pass would produce a pass that can only ever be bought once.
 
 ### 6.2 The unit is cost, not tokens
 
@@ -659,14 +700,13 @@ Tier is resolved from an **explicit map**, never a prefix:
 
 ```python
 PLUS_TIERS = frozenset({"PREMIUM_MONTHLY"})
-LEGACY_PLUS_TIERS = frozenset({
-    "PREMIUM_YEARLY",                                    # grandfathered, still renewing
-    "STUDY_CIRCLE_MONTHLY", "STUDY_CIRCLE_YEARLY",       # retired product, live subscribers
-    "SQUAD_MONTHLY", "SQUAD_YEARLY",
-})
 ```
 
-Legacy tiers resolve to `plus` with the Plus window allowance. They are people paying us more than $5 who are currently denied every matrix capability by `startswith("PREMIUM")` (drift item 10); leaving that in place while retiring their product would be the worst of both. Phase 8 moves them onto `plus_monthly`, and `LEGACY_PLUS_TIERS` empties itself as it does.
+**One frozenset, one member.** Revision 3 sat a `LEGACY_PLUS_TIERS` beside it holding `PREMIUM_YEARLY`, `STUDY_CIRCLE_MONTHLY` / `_YEARLY` and `SQUAD_MONTHLY` / `_YEARLY`, resolving all five to `plus` so that subscribers on retired products were not denied capabilities by the `startswith("PREMIUM")` bug (drift 10) while their product was being withdrawn.
+
+**There are no such subscribers, so the frozenset is not written.** Drift 10 is closed by deleting the five tier values, not by admitting them: no tier set names them, `_price_id_to_tier` loses its Study Circle and Squad branches, and a `User.tier` holding one of those strings is a data error rather than a supported state. This is the difference between an entitlement layer with one rule and an entitlement layer with one rule plus an exception table — and the exception table would have outlived the exception, because nothing ever deletes a frozenset that once mattered.
+
+**The precondition, stated where it can be checked:** Phase 2b's first task queries for live subscriptions on all five tiers and for any non-zero `purchasedCreditsBalance`. If any row comes back, `LEGACY_PLUS_TIERS` is restored exactly as revision 3 specified it and Phase 8's migration step returns with it. Breaking someone who is paying us is not a trade this plan is willing to make; the confidence here comes from the count being zero, not from preferring the tidier code.
 
 The four mechanisms in §2 become four thin callers:
 
@@ -679,7 +719,7 @@ The four mechanisms in §2 become four thin callers:
 
 ### Decision C: The active pass and the usage window are denormalised onto `User`.
 
-Pass: `activePlusPassId`, `activePlusPassExpiresAt`. Window: `usageWindowStartedAt`, `usageWindowCreditsUsed`. `resolve()` and every credit check read them from the `User` row they already load, and touch `PlusPass` only on activate, expire and inventory listing.
+Pass: `activePlusPassId`, `activePlusPassExpiresAt`. Window: `usageWindowStartedAt`, `usageWindowUnitsUsed` — **units, not credits**, matching §6.2 and the Phase 3 migration; revision 3 spelled this `usageWindowCreditsUsed` here and `usageWindowUnitsUsed` in Phase 3, and a column cannot have two names. `resolve()` and every credit check read them from the `User` row they already load, and touch `PlusPass` only on activate, expire and inventory listing.
 
 `PlusPass` remains the record of truth for passes; the two cached columns have exactly one writer (`pass_service`) and a reconciliation sweep (Decision E). This is the same trade `Course.progress` already makes, kept true by `recount_course_progress`.
 
@@ -703,7 +743,7 @@ The 7-day pass works the same way with a weekly total (10 000 units) rather than
 
 **Activation starts a fresh usage window** — `usageWindowStartedAt = now`, `usageWindowUnitsUsed = 0`. Without this, a 5-hour pass activated at minute 290 of a Free window would deliver ten minutes of allowance and then a wall, and the product would be mis-sold on a technicality.
 
-**Activation starts a fresh usage window** — `usageWindowStartedAt = now`, `usageWindowCreditsUsed = 0`. Without this, a 5-hour pass activated at minute 290 of a Free window would deliver ten minutes of allowance and then a wall, and the product would be mis-sold on a technicality.
+*(Revision 4 removed a duplicate of the paragraph above that named the column `usageWindowCreditsUsed`. The column is `usageWindowUnitsUsed`, matching §6.2's rename of credits to cost-denominated units and the migration in Phase 3. Decision C carried the same stale spelling and is corrected.)*
 
 Expiry resolves lazily on read — an expired pass is treated as free the instant it is read, before any sweep runs — but a Celery beat task every 5 minutes flips `status='consumed'`, clears the cached `User` columns, and emits the notification. Lazy-only is not sufficient: a learner whose pass ended must be *told*, and nothing tells them if nothing runs.
 
@@ -731,9 +771,13 @@ This matters most on iOS. **StoreKit does not return finished consumables from `
 
 A purchase token already bound to a different `userId` is rejected with `409 PURCHASE_ALREADY_CLAIMED` and logged. This is the standard cross-account IAP abuse vector and the unique constraint is the whole defence.
 
-### Decision H: `PlusPurchase` supersedes `CreditPurchaseTransaction`. The old table is read-only history.
+### Decision H: `PlusPurchase` replaces `CreditPurchaseTransaction`, and the old tables are dropped.
 
-A new table rather than columns on the old one, because the old one is `NOT NULL` on `creditPackId` and `creditsGranted` — both meaningless for a pass or a subscription. `CreditPurchaseTransaction` and `CreditPack` are kept, unmigrated, so purchase history stays readable; `GET /billing/purchases` reads both and unions them.
+A new table rather than columns on the old one, because the old one is `NOT NULL` on `creditPackId` and `creditsGranted` — both meaningless for a pass or a subscription.
+
+**Revised in revision 4.** Revision 3 kept `CreditPurchaseTransaction` and `CreditPack` unmigrated so that purchase history stayed readable, with `GET /billing/purchases` unioning both. There is no purchase history: nobody has bought a credit pack. Both tables are **dropped** in the Phase 4 migration, `GET /billing/purchases` reads `PlusPurchase` only, and the union logic is never written.
+
+The union was the more expensive half of that endpoint — two schemas with different notions of what was bought, reconciled into one response shape for the benefit of zero rows. Dropping it also removes the last reason `credit_purchase_service.fulfill_purchase` exists, which the Paystack port (Phase 2b) would otherwise have had to carry forward into SQLAlchemy.
 
 ### Decision I: Store prices are displayed from the store. The catalogue is for identity, not for currency.
 
@@ -745,7 +789,7 @@ Web renders the catalogue price, because Stripe charges exactly what the catalog
 
 ### Decision J: One `UpgradeRequiredPanel`, one `LockedNotice` mapper, per client.
 
-The four hand-rolled locked cards in the web app (§5.5) collapse into the existing `UpgradeRequiredPanel`. It grows two things: when the learner **owns an unactivated pass**, the primary action becomes "Activate your 7-day pass" instead of "Upgrade"; and when the block is a window cap rather than a capability, it shows the reset time instead of a price.
+The **five** hand-rolled locked cards in the web app (§5.5, and drift 17 found the fifth) collapse into the existing `UpgradeRequiredPanel`. It grows two things: when the learner **owns an unactivated pass**, the primary action becomes "Activate your 7-day pass" instead of "Upgrade"; and when the block is a window cap rather than a capability, it shows the reset time instead of a price.
 
 The first is the single highest-value piece of UI in this plan — the difference between a pass being bought and a pass being used — and it must not be reimplemented four times.
 
@@ -889,7 +933,7 @@ Indexes: `(userId, createdAt)`; `(userId, expiresAt)` for the sweep and for the 
 
 **`User`** — dropped in the same migration: `creditsUsed`, `creditsPeriodStart`, `creditsPeriodEnd`, `creditsSoftCap`, `creditsHardCap`, `creditsUsedToday`, `creditsDailyLimit`, `lastDailyReset`, `purchasedCreditsBalance`. One migration, not two. The earlier draft staged this over two releases to keep a rollback path; with **no paid users and no purchased balances to honour** there is nothing to roll back to and nothing to preserve.
 
-**Dropped tables**: `CreditPack`, `CreditPurchaseTransaction`. Kept only if a query shows non-zero rows worth keeping as history; the default is to drop both.
+**Dropped tables**: `CreditPack`, `CreditPurchaseTransaction` — unconditionally, per Decision H as revised. The Phase 2b row count confirms they are empty before the Phase 4 migration drops them; it is a precondition check, not a decision point.
 
 **Kept but no longer written**: `ReferralRewardClaim` (superseded by the ledger; the referral *link* tables and `User.referralCode` stay and are the input to qualification), `AdRewardClaim` (Decision O — kept so the redesign is not foreclosed), `ResourceUploadReward` (Open Question 11).
 
@@ -907,7 +951,7 @@ New, under `/api/v1/billing`:
 | POST | `/passes/checkout` | web only — Stripe one-time session for a pass |
 | POST | `/purchases/apple/verify` | StoreKit transaction → verified purchase (+ pass, or subscription tier) |
 | POST | `/purchases/google-play/verify` | replaces `/subscriptions/google-play/verify-product` |
-| GET | `/purchases` | unified history across `PlusPurchase` and legacy `CreditPurchaseTransaction` |
+| GET | `/purchases` | purchase history from `PlusPurchase` (Decision H — no legacy union; the old tables are dropped) |
 | GET | `/points` | `{balance, nextExpiry: {points, expiresAt} \| null, redeemable[], history[]}` |
 | POST | `/points/redeem` | body `{productId}` — `plus_pass_5h` \| `plus_pass_7d` only. `200` → the new inventory `PlusPass`; `409 INSUFFICIENT_POINTS` |
 | GET | `/referrals` | code, qualified count, pending count with each one's days-active progress |
@@ -923,16 +967,31 @@ Removed: `/billing/ads/*` and `/billing/credit-packs*` (Decision O, §6.1).
 
 ## 10. Phases
 
-### Phase 0 — Decide (blocks everything)
+### Phase 0 — Decide (blocks allowance tuning; no longer blocks everything)
 
-- [ ] Answer Open Questions 1–3. Question 3 (`cost_calculator` rates) moves every COGS figure in the document ~3× and blocks any allowance tuning. *(This line previously referred to "Question 1 (7-day pass price)" — a stale numbering from an earlier draft; pass prices are settled in §6.1.)*
+**Verified unstarted on 2026-09-01, not merely unmarked.** The question "was Phase 0 done and left unticked?" was checked against the code rather than assumed, because an unticked box and a done-but-unrecorded task look identical in a document and lead to opposite decisions. All three questions are open, with the evidence:
+
+| Question | Claim in §11 | State in code | Open? |
+| --- | --- | --- | --- |
+| 3 — is the rate card current? | `gemini-3.5-flash` priced at $0.50/$3.00 vs published ~$1.50/$9.00 | `cost_calculator.py:26` reads `"gemini-3.5-flash": (0.50, 3.00)` | **yes** |
+| 2 — 8 000 input tokens per chat turn? | `HISTORY_LIMIT = 12` plus enrichment | `ask_service.py:383` reads `HISTORY_LIMIT = 12` | **yes** |
+| 1 — who owns the `max_tokens` audit? | 8 192 output tokens budgeted for a paragraph | `narrative_cache.py:237` passes `max_tokens=8192`; `llm/__init__.py:136` **defaults** every caller to `8192` | **yes** |
+
+Question 1 is worse than §11 described. The 8 192 budget is not three call sites that each chose badly — it is the **default parameter value** of `generate_content_json` at `llm/__init__.py:136`, so every one of the 26 operations that does not pass `max_tokens` explicitly inherits it. The comment at `:124` records that it was raised from 2 048 because a *third* call site was truncating, which is how a fix for one operation became the budget for all of them. The audit is therefore one default plus a per-operation review, not twenty-six independent decisions, which makes it substantially cheaper than §11 implies and does not change who has to own it.
+
+**Scope correction: Phase 0 does not block everything.** Revision 3's heading said it did, which is part of why nothing moved — it made three unowned research questions look like a gate on the whole plan, and they are not. Nothing in Phase 2, 2b, 4, 4b or 5 depends on the rate card: entitlement resolution, the Paystack port, pass lifecycle, points and the purchase rails are all correct whatever a token costs. What Phase 0 genuinely blocks is **allowance tuning** — the window sizes in §6.3, the COGS and contribution figures in §6.7 and §6.8, and any decision that the free tier is affordable.
+
+- [ ] **Answer Question 3 first.** Verify `_EXACT_MODEL_PRICING:26-38` against the live Gemini rate card. Five minutes of work; every COGS figure in this document moves up to ~3× on the answer. **No allowance in Phase 3 is tuned until this is answered** — ship Phase 3 with today's effective limits carried across to the new window mechanism, and tune once the rate card is trustworthy.
+- [ ] Answer Questions 1 and 2 (the `max_tokens` default and the chat context size). Both are pure cost work, invisible to learners, and neither blocks a phase — but §6.8's Nigeria economics are negative without them, so they block *launch* in the launch market. Assign an owner; that, and not the analysis, is what has been missing.
 - [ ] Answer Open Question 10 (points price for the 7-day pass) before Phase 4b. Unlike a store price it is cheap to change later, so it should not block anything else.
+
+*(Revision 3's first line referred to "Question 1 (7-day pass price)", stale numbering from an earlier draft; pass prices are settled in §6.1.)*
 
 ### Phase 1 — Make the money path reachable
 
 **Done**, with two additions and one blocker found on the way. All three are recorded below rather than folded in silently.
 
-- [x] Delete `credit-packs` routes and `credit_service.get_credit_packs` / `initiate_purchase`. **`SeatAddonPurchaseRequest` and the seat repository methods left alone** (Decision F). `credit_purchase_service` itself is untouched: `get_purchase_history` and `admin_adjust_balance` are still served, and `fulfill_purchase` is still reachable from the Paystack webhook, so nothing was deleted that a real transaction can still arrive for. Decision H already keeps `CreditPurchaseTransaction` as read-only history and Phase 8 decides whether it survives.
+- [x] Delete `credit-packs` routes and `credit_service.get_credit_packs` / `initiate_purchase`. **`SeatAddonPurchaseRequest` and the seat repository methods left alone** (Decision F). `credit_purchase_service` itself is untouched: `get_purchase_history` and `admin_adjust_balance` are still served, and `fulfill_purchase` is still reachable from the Paystack webhook, so nothing was deleted that a real transaction can still arrive for. *(Superseded by revision 4: Decision H now drops `CreditPurchaseTransaction` and `CreditPack` outright in Phase 4, and `credit_purchase_service.fulfill_purchase` goes with them in Phase 2b rather than being ported. The caution in this line was correct when written — it assumed a real transaction could still arrive for a credit pack, and the zero-purchase count is what makes that assumption safe to drop.)*
 - [x] **Delete the rewarded-ad path** (Decision O): `credit_service.claim_ad_reward` and `get_ad_stats`, `AD_REWARD_CREDITS`, `MAX_ADS_PER_DAY`, the `/billing/ads/*` routes and the `AdRewardRequest` / `AdRewardResponse` / `AdStatsResponse` schemas. `billing_repo.count_ads_today` / `create_ad_claim` / `get_total_ad_earnings` and the `AdRewardClaim` table are all left in place, now unread. One consequence to know about: `billing.credits_purchased` had exactly one emitter and it was the ad claim, so nothing emits it now. The enum member stays — a pass purchase is a fact worth publishing — and the entry was removed from `test_event_bus.EMITTERS_WITHOUT_A_LISTENER`, which describes what fires rather than what exists.
 - [x] Rewrite the four `scope: "personal"` entries in `stripe_service.get_active_plan_catalog`, leaving the `circle` and `add_on` entries unchanged. Added `PRICE_CENTS_PLUS_PASS_5H = 99`, `PRICE_CENTS_PLUS_PASS_7D = 249`; `PRICE_CENTS_PLUS_MONTHLY` **left at `499`**; added `STRIPE_PRICE_ID_PLUS_PASS_5H` / `_7D`; `plus_yearly` **and** `maigie_plus_yearly` moved into `DEPRECATED_PLAN_IDS`; deleted `TRIAL_DAYS_STUDY_CIRCLE` and `TRIAL_DAYS_SQUAD` only. Catalogue entries carry the §6.3 usage equivalents in a new `usageNote` field, and a test asserts every one of them names the voice figure — "5 hours of Plus" without it reads as five hours of tutoring, which costs ~8× what the pass earns.
 - [x] **Set `TRIAL_DAYS_MAIGIE_PLUS = 3`**, carried in the catalogue as `trialDays`. **`TRIAL_DAYS_CIRCLE_PLAN` left at 7** (Decision F).
@@ -957,16 +1016,50 @@ Removed: `/billing/ads/*` and `/billing/credit-packs*` (Decision O, §6.1).
 - **`/billing/referrals/stats`, `/claimable`, `/claim`.** All three resolve into `referral_rewards_service`, which holds a `PrismaClientRemoved` sentinel where its database used to be, so all three would answer 500. Mounting them would take three endpoints that are currently *honestly* unreachable and make them dishonestly reachable. They return in Phase 4b as the points ledger, which is a different contract rather than a port.
 - **⚠️ `/billing/subscriptions/paystack/initialize` and `/verify`.** §5.1 lists these as "kept", and they cannot be: `paystack_service` holds the same Prisma sentinel. `initialize_paystack_subscription`, `verify_paystack_transaction`, `cancel_paystack_subscription` and `handle_paystack_webhook` all reach it. The webhook fails quietly — `webhooks.py` catches and answers 200, so Paystack events are silently discarded — but the two routes would answer 500.
 
-  **This is a launch blocker and it was not in the plan.** Paystack is the NGN rail and §6.8 makes Nigeria the launch market, with naira prices set independently rather than converted precisely because FX parity would price Maigie above Netflix Standard there. Phase 1 has therefore made the money path reachable in every market except the one we are launching in. Porting `paystack_service` to SQLAlchemy belongs immediately after Phase 2, not in Phase 5 — it is the difference between a reachable checkout and a reachable checkout that the launch market cannot use. `test_billing_routes_mounted.py` fails if the sentinel is removed without the routes being mounted, so the port cannot land and be forgotten.
+  **This is a launch blocker and it was not in the plan.** Paystack is the NGN rail and §6.8 makes Nigeria the launch market, with naira prices set independently rather than converted precisely because FX parity would price Maigie above Netflix Standard there. Phase 1 has therefore made the money path reachable in every market except the one we are launching in. `test_billing_routes_mounted.py:104-114` fails if the sentinel is removed without the routes being mounted, so the port cannot land and be forgotten.
+
+  **Now Phase 2b, with its own checklist.** Revision 3 said the port "belongs immediately after Phase 2" and then gave it no phase, no owner and no task list — the same failure mode as Phase 0, on the more expensive item. It is a phase now.
 
 ### Phase 2 — Entitlement resolver
 
-- [ ] `entitlement_service.py` per Decision B, with `PLUS_TIERS` and `LEGACY_PLUS_TIERS` as explicit frozensets.
+- [ ] `entitlement_service.py` per Decision B, with `PLUS_TIERS = frozenset({"PREMIUM_MONTHLY"})` as an explicit frozenset. **No `LEGACY_PLUS_TIERS`** — revision 4 removed it; the retired tiers resolve to `free`.
 - [ ] Repoint `feature_tier_service.get_effective_tier` at it, preserving the `(tier, is_trial, days)` shape.
 - [ ] Repoint the **personal branch** of `feature_flags.effective_tier_for_request` at it; leave the `seat_tier` branch at `:498-501` untouched (Decision F, closes drift 11 for personal scope).
 - [ ] Delete `require_premium`, `PremiumUser`, `PAID_TIERS` from `shared/auth/dependencies.py` and `shared/auth/__init__.py` (closes drift 8). All three are unused, including by `learning_spaces`.
 - [ ] `GET /billing/entitlement`.
-- [ ] Tests: subscription-outranks-pass, pass-outranks-trial, legacy tiers resolve to `plus` (closes drift 10), trial gets Plus models. Scope guard: a space-scoped request for a pass holder still resolves from `seat_tier`.
+- [ ] Tests: subscription-outranks-pass, pass-outranks-trial, trial gets Plus models, and **a `User.tier` of `STUDY_CIRCLE_MONTHLY` resolves to `free`** — the retired tiers are deleted rather than admitted (closes drift 10; revision 3 asserted the opposite because it grandfathered them). Scope guard: a space-scoped request for a pass holder still resolves from `seat_tier`.
+
+### Phase 2b — Port `paystack_service` to SQLAlchemy (launch blocker)
+
+**Runs immediately after Phase 2 and before Phase 3.** Nigeria is the launch market (§6.8), Paystack is its rail, and today `POST /billing/subscriptions/paystack/initialize` and `GET /verify` are unmounted because `paystack_service` holds `PrismaClientRemoved` at `:32`. The webhook is worse than unmounted: `webhooks.py` catches and answers `200`, so **live Paystack events are being silently discarded**.
+
+**The port is smaller than the phase's importance suggests.** 595 lines, but only **nine** Prisma call sites — `:214`, `:405`, `:429`, `:487`, `:489`, `:515`, `:535`, `:538` (all `db_client.user.find_unique` / `find_first` / `update`) and `:565` (`db_client.creditpurchasetransaction.find_first`). Every column they touch already exists on the SQLAlchemy `User` model with an explicit camelCase DB name: `paystack_customer_code` → `"paystackCustomerCode"` and `paystack_subscription_code` → `"paystackSubscriptionCode"` (`identity/db_models.py:69-73`), plus `subscription_current_period_end` (`:64`) and `tier` (`:28`). The three camelCase attribute reads to fix are `user.paystackCustomerCode:424`, `user.paystackSubscriptionCode`, and `user.subscriptionCurrentPeriodEnd:228`.
+
+**Sequencing matters here and revision 3 did not notice it.** `paystack_service` imports two functions that Phase 3 deletes:
+
+```python
+from ..services.credit_consumption_service import reset_credits_for_period_start   # :22, called at :435
+from ..services.referral_rewards_service import track_referral_subscription        # :23, called at :454
+```
+
+Phase 3 deletes `reset_credits_for_period_start` when the monthly credit period gives way to the rolling window, and deletes `track_referral_subscription` outright. Porting both to SQLAlchemy in Phase 2b and deleting them in Phase 3 is wasted work on the critical path. So:
+
+- **`reset_credits_for_period_start:435`** — port the *call*, not the function. Phase 3 replaces the body with a window reset; Phase 2b leaves the existing signature in place and does not touch its internals.
+- **`track_referral_subscription:454`** — **delete the call now.** Phase 3 already deletes the function, `referral_rewards_service` holds its own Prisma sentinel so the call cannot work today, and Phase 4b replaces referral rewards with the points ledger, in which a subscription grants nothing (Decision O). Porting it would mean writing SQLAlchemy for behaviour the plan has already withdrawn.
+- **`creditpurchasetransaction.find_first:565`** — **delete the branch.** Decision H as revised drops the table, and no credit-pack transaction exists for it to find. `credit_purchase_service.fulfill_purchase` is deleted here rather than ported, which removes the last live reader of `CreditPurchaseTransaction` ahead of Phase 4's migration.
+
+Checklist:
+
+- [ ] **First, and before anything else in this phase: run the subscriber count.** Live subscriptions on `PREMIUM_MONTHLY`, `PREMIUM_YEARLY`, `STUDY_CIRCLE_MONTHLY` / `_YEARLY`, `SQUAD_MONTHLY` / `_YEARLY`; rows in `CreditPurchaseTransaction`; users with non-zero `purchasedCreditsBalance`; active `paystackSubscriptionCode` values. **All of revision 4's deletions rest on these being zero.** If any is not, restore `LEGACY_PLUS_TIERS` per Decision B, keep the tables per revision 3's Decision H, and re-plan Phase 8. Record the counts and the date in this document — an assumption this load-bearing should not have to be re-derived.
+- [ ] Port the nine call sites to SQLAlchemy sessions; delete the `db = PrismaClientRemoved(...)` sentinel at `:32`.
+- [ ] Delete the `track_referral_subscription` call (`:23`, `:454`) and the `CreditPurchaseTransaction` branch (`:565`), with `credit_purchase_service.fulfill_purchase`.
+- [ ] **Fix the NGN placeholder.** `:317-323` sends `"amount": "10000"` — ₦100 — with the comment that the plan overrides it. Paystack requires the field and the plan does override it for a subscription charge, so this has never been wrong in production; it becomes wrong the moment Phase 5 adds **one-time pass charges**, where nothing overrides it and ₦100 is the price. Set it from `PRICE_NGN_*` per §6.8. *(Revision 3 cited this as `:333`, which is inside the `httpx` call, not the payload.)*
+- [ ] Add `PRICE_NGN_PLUS_PASS_5H = 70_000`, `PRICE_NGN_PLUS_PASS_7D = 180_000`, `PRICE_NGN_PLUS_MONTHLY = 240_000` (kobo) to `config.py` — ₦700 / ₦1 800 / ₦2 400 per §6.8, all deliberately under Paystack's ₦2 500 flat-fee threshold.
+- [ ] Mount `POST /billing/subscriptions/paystack/initialize` and `GET /verify`; delete the sentinel comment block at `routes.py:128-142`.
+- [ ] Make `handle_paystack_webhook` fail loudly. It currently reaches a sentinel and `webhooks.py` swallows the exception into a `200`, so a real charge produces no record and no alert. A verification failure must log at error and alert; only a *successfully processed* event answers `200`.
+- [ ] Delete the four `STRIPE_PRICE_ID_STUDY_CIRCLE_*` / `_SQUAD_*` and four `PAYSTACK_PLAN_STUDY_CIRCLE_*` / `_SQUAD_*` settings (§5.1), and the Study Circle / Squad branches of `_plan_code_to_tier`, `_price_id_to_tier` and `_assert_price_id_is_active`. `DEPRECATED_PLAN_IDS` keeps all six ids so a stale client still gets `410`.
+- [ ] Update `test_billing_routes_mounted.py:104-114` — it asserts the sentinel is *present* and tells the next reader to mount the routes when it goes. Invert it: assert both routes are mounted, and that `paystack_service` has no `PrismaClientRemoved` attribute.
+- [ ] Tests: initialize returns an authorization URL with the NGN amount from config; verify promotes a `FREE` user to `PREMIUM_MONTHLY` and sets `subscription_current_period_end`; `charge.success` on a renewal extends the period; `subscription.disable` returns the user to `FREE`; a webhook whose signature fails answers non-`200` and logs; a retired plan id answers `410` on the Paystack door as well as the Stripe one (already asserted in Phase 1 — keep it green through the port).
 
 ### Phase 3 — Reprice voice, redenominate usage, add windows
 
@@ -978,7 +1071,7 @@ Removed: `/billing/ads/*` and `/billing/credit-packs*` (Decision O, §6.1).
 - [ ] Rewrite the **non-space path** of `check_credit_availability` and `consume_credits` against window + monthly backstop. Delete `initialize_user_credits`, `reset_daily_credits_if_needed`, `ensure_credit_period`, `reset_credits_for_period_start`. **Leave the `space_id` early-return at `:334-343` and the space branch of `consume_credits` exactly as they are** — both return before any of the deleted machinery is reached, which is what makes this separable.
 - [ ] Pre-flight estimates for voice: `min_session_credits()` becomes a units estimate at the real rate, so a session cannot start that the allowance cannot fund.
 - [ ] Delete `billing.reset_credit_periods` and `progress.daily_credit_reset` (closes drift 13).
-- [ ] **Delete `referral_rewards_service.get_daily_limit_increase`, `claim_referral_reward`, `get_claimable_rewards`, `track_referral_subscription` and `REFERRAL_REWARDS`.** Nothing tops up a window (§6.3). The module's `PrismaClientRemoved` sentinel means none of this runs today, so there is no behaviour to preserve — keep only `generate_referral_code`, `get_or_create_referral_code`, `track_referral_signup` and `get_referral_stats`, ported to SQLAlchemy, as the input to Phase 4b.
+- [ ] **Delete `referral_rewards_service.get_daily_limit_increase`, `claim_referral_reward`, `get_claimable_rewards`, `track_referral_subscription` and `REFERRAL_REWARDS`.** Nothing tops up a window (§6.3). The module's `PrismaClientRemoved` sentinel means none of this runs today, so there is no behaviour to preserve — keep only `generate_referral_code`, `get_or_create_referral_code`, `track_referral_signup` and `get_referral_stats`, ported to SQLAlchemy, as the input to Phase 4b. **Phase 2b has already deleted the only caller of `track_referral_subscription`** (`paystack_service.py:23, 454`), so this deletion is unblocked by the time it runs.
 - [ ] `GET /billing/usage` returning percentage + reset time only; rewrite `GET /users/usage` onto the same shape and delete the credit-balance fields.
 - [ ] Refusal messages carry `windowResetsAt`. Delete the monthly soft-cap, daily-limit and purchased-balance message bodies at `check_credit_availability:378-455` and the `ask_service:913-924` refusal copy.
 - [ ] `LimitReachedEmailLog` dedupe key moves from period to window.
@@ -1033,12 +1126,25 @@ Depends on Phase 4 and on Phase 3b, which is what makes "active" measurable.
 
 ### Phase 5 — Purchase rails
 
+**iOS is in this phase, not after it.** Open Question 6 is resolved — iOS ships with Android — so the Apple work below is a peer of the Google work, not a contingency. §5.7 holds the creation timeline and the reason the console tasks come first.
+
+**Store setup, before any verification code** (§5.7). These are console and agreement tasks with external lead times, and every server task below needs the product ids to exist:
+
+- [ ] **Apple, start now — earlier than this phase if possible.** App Store Connect app record for `com.maigie`; In-App Purchase enabled on the **App ID** (a developer-portal capability, *not* an entitlements-file change — see §5.6); App Store Server API key generated (`APPLE_ISSUER_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY`); **Paid Apps agreement active with banking and tax complete**. No in-app purchase product can be created until that agreement is active, and it needs details an engineer cannot supply.
+- [ ] **Apple products**: `com.maigie.plus.pass5h` and `com.maigie.plus.pass7d` as **Consumable**; `com.maigie.plus.monthly` in subscription group `maigie_plus` with a **3-day introductory free trial**; NGN prices per §6.8.
+- [ ] **Google Play products**: `plus_pass_5h` / `plus_pass_7d` as **consumable** in-app products; `plus-monthly` base plan stays at `$4.99` with its **free-trial offer set to 3 days**; NGN prices per §6.8.
+- [ ] **Delete, do not repurpose** (§6.1): the Play `plus-yearly` base plan and the three `credit_pack_*` consumables, plus `GOOGLE_PLAY_BASE_PLAN_YEARLY` and the three `GOOGLE_PLAY_SKU_CREDIT_*` settings (`config.py:264-268`) and the branches reading them at `google_play_service.py:65, 191-193`. Nobody has bought any of them, so there is no RTDN history to decode. Archive the Stripe yearly price.
+- [ ] **Store trial parity check**: the App Store Connect introductory offer, the Play base-plan free trial, the Stripe `trial_period_days` and `config.TRIAL_DAYS_MAIGIE_PLUS` all read **3**. Four places, two of them consoles, no test covers them — check by hand and record the check here with a date.
+
+Server rails:
+
 - [ ] **Stripe**: one-time Checkout for passes (`mode: payment`), existing `$4.99` subscription price reused, Apple Pay + Google Pay + Link enabled in the dashboard. `checkout.session.completed` → `PlusPurchase` → `pass_service.grant`.
-- [ ] **Paystack**: NGN one-time charges for both passes; extend `handle_paystack_webhook`.
-- [ ] **Google Play**: create `plus_pass_5h` / `plus_pass_7d` as **consumable** in-app products; the `plus-monthly` base plan stays at `$4.99` and its **free-trial offer is set to 3 days**; `purchases.products.get` verification in `google_play_service.py`; extend RTDN for `SUBSCRIPTION_*` and voided-purchase revocation. Delete the three `credit_pack_*` products — nobody has bought one.
-- [ ] **Store trial parity check**: the App Store Connect introductory offer, the Play base-plan free trial, the Stripe `trial_period_days` and `config.TRIAL_DAYS_MAIGIE_PLUS` all read **3**. Four places, two of them consoles, no test covers them — check by hand and record the check.
-- [ ] **Apple** (new domain code): `apple_service.py` — App Store Server API client, JWS verification of `signedTransactionInfo` against Apple's root CAs, `POST /purchases/apple/verify`, `POST /webhooks/apple` handling `DID_RENEW`, `EXPIRED`, `REFUND`, `REVOKE`, `CONSUMPTION_REQUEST`. Config: `APPLE_ISSUER_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY`, `APPLE_BUNDLE_ID`, `APPLE_ENVIRONMENT`.
-- [ ] Idempotency and abuse tests: replayed token grants nothing; token bound to user A rejected for user B with `409`; refund revokes an active pass mid-run.
+- [ ] **Paystack**: NGN one-time charges for both passes, using the `PRICE_NGN_*` settings Phase 2b adds; extend `handle_paystack_webhook`. Depends on Phase 2b — there is no NGN rail to extend until the port lands.
+- [ ] **Google Play**: `purchases.products.get` verification in `google_play_service.py` — `verify_product_purchase` is left in place from Phase 1 precisely as the basis for this, since the `purchases.products.get` call and the token-replay check are both reusable; extend RTDN for `SUBSCRIPTION_*` and voided-purchase revocation. Mount the replacement as `POST /billing/purchases/google-play/verify`.
+- [ ] **Apple** (new domain code): `apple_service.py` — App Store Server API client, JWS verification of `signedTransactionInfo` against Apple's root CAs, `POST /billing/purchases/apple/verify`, `POST /webhooks/apple` handling `DID_RENEW`, `EXPIRED`, `REFUND`, `REVOKE`, `CONSUMPTION_REQUEST`. Config: `APPLE_ISSUER_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY`, `APPLE_BUNDLE_ID`, `APPLE_ENVIRONMENT`.
+- [ ] Idempotency and abuse tests: replayed token grants nothing; token bound to user A rejected for user B with `409`; refund revokes an active pass mid-run. Run the set against **both** stores, not just Play — Apple's `REVOKE` and Google's voided-purchase RTDN are different shapes reaching the same revocation path.
+
+**Testing does not wait for App Review** (§5.7). Play internal-testing track and an Apple Sandbox Apple Account or StoreKit configuration file both exercise unapproved products end to end, so every item above can be verified before the first submission. Review gates the launch, not the phase.
 
 ### Phase 6 — Close the drift list, and wire conversion to guidance (Decision N)
 
@@ -1084,7 +1190,14 @@ Depends on Phase 4 and on Phase 3b, which is what makes "active" measurable.
 - [ ] Pass wallet screen; replace `src/app/earn/buy-credits.tsx`. Window meter in `src/app/profile/usage.tsx`.
 - [ ] **Delete `src/app/earn/watch-ad.tsx`** and any ad-reward call site (Decision O). Rebuild `src/app/earn/` as the points wallet: balance, referral code and share sheet, pending referrals with days-active progress, next expiry date, redeem-to-pass action.
 - [ ] Pass paywall copy says "your personal workspace", not "everywhere" (Decision F).
-- [ ] iOS: `expo prebuild` for `ios/`, StoreKit capability, App Store Connect app record and three products, uncomment the iOS EAS jobs.
+- [ ] **iOS — corrected in revision 4.** Revision 3 listed "`expo prebuild` for `ios/`, StoreKit capability, App Store Connect app record and three products, uncomment the iOS EAS jobs". Three of those five were wrong or misplaced:
+  - ~~`expo prebuild`~~ — already run; `ios/` exists with `Maigie.xcworkspace` and installed Pods, and is gitignored (`.gitignore:12`) because EAS regenerates it per build. Nothing to do, and nothing to commit.
+  - ~~StoreKit capability~~ — not an entitlements change. In-App Purchase is a capability on the **App ID** in the developer portal; `ios/Maigie/Maigie.entitlements` correctly holds only `aps-environment` and `applinks:app.maigie.com`. Moved to Phase 5's store-setup block, where it belongs with the other portal tasks.
+  - ~~App Store Connect record and three products~~ — moved to **Phase 5** (§5.7). They gate the server verification code, so they cannot sit in the last client phase.
+  - [ ] **Add the StoreKit branch to `useStoreBilling`.** This is the real iOS work and it was buried. `react-native-iap`'s iOS pod (`NitroIap`) is already linked in `ios/Podfile.lock`, so the native module is present and building — the only thing stopping iOS purchases is the `Platform.OS !== 'android'` early return at `usePlayBilling.ts:88-93`, which refuses the platform its own dependency supports.
+  - [ ] **Add `submit.production.ios` to `eas.json`** (`appleId`, `ascAppId`, `appleTeamId`). The `submit.production` block currently holds `android` only.
+  - [ ] Uncomment the iOS EAS jobs at `.eas/workflows/deploy-production.yml:72-108` (`get_ios_build`, `build_ios`, `submit_ios_build`, `publish_ios_update`).
+  - [ ] Submit the first iOS build **with the three IAP products attached** — Apple reviews in-app purchases against a build, and this is the highest rejection-risk submission the project will make. Budget 1–2 weeks and expect one rejection round.
 
 ### Phase 8 — Copy, and existing customers
 
@@ -1095,21 +1208,23 @@ Depends on Phase 4 and on Phase 3b, which is what makes "active" measurable.
 - [ ] Fix the duplicated credit-pack prices in `landing/Pricing.tsx`; rewrite `content/faq/pricing-and-plans.yaml`, which still sells Study Circle at $9.99 and Squad at $14.99 — both retired personal tiers, not the live Circle Plan.
 - [ ] Test asserting `plan-data.ts` matches `GET /plans/catalog` (Decision I).
 - [ ] **No price migration is needed.** `PREMIUM_MONTHLY` stays at $4.99, so no Stripe price migration, no Play notice, no Apple consent flow.
-- [ ] Query for live `PREMIUM_*` / `STUDY_CIRCLE_*` / `SQUAD_*` subscriptions and non-zero `purchasedCreditsBalance`. **If all are zero, delete `LEGACY_PLUS_TIERS`, `CreditPack` and `CreditPurchaseTransaction` outright** rather than carrying grandfathering machinery for nobody. The expectation is that they are zero; confirm rather than assume.
+- [x] ~~Query for live `PREMIUM_*` / `STUDY_CIRCLE_*` / `SQUAD_*` subscriptions and non-zero `purchasedCreditsBalance`, and delete the grandfathering machinery if all are zero.~~ **Moved to Phase 2b, first item.** It was the precondition for decisions taken in Phases 2, 4 and 5, so running it in the final phase meant every earlier phase had to hedge against its answer. That hedging *was* the grandfathering machinery. `LEGACY_PLUS_TIERS` is now never written (Decision B), and `CreditPack` / `CreditPurchaseTransaction` are dropped in Phase 4 (Decision H) rather than conditionally surviving to here.
+- [ ] ~~Migrate grandfathered legacy subscribers onto `plus_monthly`.~~ **Deleted — there are none.** If Phase 2b's count comes back non-zero, this step returns along with `LEGACY_PLUS_TIERS`.
 - [ ] Set the **§6.8 NGN prices** on Play, App Store Connect and Paystack: ₦700 / ₦1 800 / ₦2 400. All three sit under Paystack's ₦2 500 flat-fee threshold, deliberately — do not round any of them up.
-- [ ] Fix the 100 NGN placeholder amount at `paystack_service.py:333`.
-- [ ] Add `PRICE_NGN_*` settings so the catalogue can serve a currency, and make `GET /plans/catalog` currency-aware rather than USD-only.
+- [x] ~~Fix the 100 NGN placeholder amount at `paystack_service.py:333`.~~ **Moved to Phase 2b**, and the line reference corrected to `:317-323` — `:333` is inside the `httpx` call, not the payload. It cannot wait until the copy phase: the placeholder is harmless for subscriptions (the plan overrides the amount) and becomes the actual price the moment Phase 5 adds one-time pass charges.
+- [x] ~~Add `PRICE_NGN_*` settings.~~ **Moved to Phase 2b**, for the same reason — the NGN rail needs them to charge correctly.
+- [ ] Make `GET /plans/catalog` currency-aware rather than USD-only, serving the `PRICE_NGN_*` values Phase 2b added. Store-purchased products display the store's own `displayPrice` regardless (Decision I); this is for the web rail and for copy.
 
 ## 11. Open questions
 
-**Resolved, recorded so they are not reopened.** *Is there pass-versus-subscription arbitrage?* No — the per-day ladder is $4.75 / $0.356 / $0.166 and three 7-day passes already exceed a month. An earlier draft claimed otherwise and was wrong. *Should monthly be $5.00?* No, §6.1. *Should passes be unmetered?* No, Decision E. *Does the 7-day trial survive the 7-day pass?* **No — the trial is 3 days** (§6.1). *Should referrals stay capped at 10/month?* **No — the cap is removed; the 7-day qualification is the control** (§6.9). *Should rewarded ads be re-pointed at the window?* **No — withdrawn** (Decision O). *Can points buy the subscription?* **No, and not by validation but by construction** (Decision O).
+**Resolved, recorded so they are not reopened.** *Is there pass-versus-subscription arbitrage?* No — the per-day ladder is $4.75 / $0.356 / $0.166 and three 7-day passes already exceed a month. An earlier draft claimed otherwise and was wrong. *Should monthly be $5.00?* No, §6.1. *Should passes be unmetered?* No, Decision E. *Does the 7-day trial survive the 7-day pass?* **No — the trial is 3 days** (§6.1). *Should referrals stay capped at 10/month?* **No — the cap is removed; the 7-day qualification is the control** (§6.9). *Should rewarded ads be re-pointed at the window?* **No — withdrawn** (Decision O). *Can points buy the subscription?* **No, and not by validation but by construction** (Decision O). *Does iOS ship after Android?* **No — together** (question 6). *Is anything grandfathered?* **No — there are no subscribers**, so `LEGACY_PLUS_TIERS`, the retired tier settings and the credit tables are deleted rather than carried (Decision B, Decision H, §5.1); the count is verified in Phase 2b before any of it is acted on. *Was Phase 0 quietly done?* **No — verified open against the code**, and its scope corrected: it blocks allowance tuning, not every phase.
 
 1. **Who owns the `max_tokens` audit?** Growth narrative, growth drivers and goal insight each budget 8 192 output tokens to write a paragraph, at 6× the input rate — 89% of each operation's cost. Twenty-six operations have never had these numbers reviewed. This is the single largest lever in §6.8, it is invisible to learners, and it is not a commercial change, which is why nobody has picked it up.
 2. **Is 8 000 input tokens per chat turn necessary?** `HISTORY_LIMIT = 12` plus the enrichment block. Halving it lifts contribution ~60% at every tier simultaneously and no learner can perceive it. Same ownership problem as question 1.
 3. **Is `cost_calculator._EXACT_MODEL_PRICING` current?** It says `gemini-3.5-flash` is $0.50/$3.00 per 1M; published rates are ~$1.50/$9.00. Every COGS figure in this document moves 3× on the answer, in whichever direction. **Answer this before tuning any allowance.**
 4. **Is the free tier affordable at scale?** After the §6.5 fixes, free inference is still $940 of $2 267 revenue at 10 000 MAU. The model rests on two unmeasured assumptions — 50% of free MAU AI-active, and typical consumption around half the allowance. If either is materially higher, contribution goes negative again. Instrument before tuning (Phase 3, last item).
 5. ~~**Does the 3-day trial still need the 180-day cooldown?**~~ **Decided: 90 days.** The 180-day figure was sized for a 7-day trial; a 3-day trial is a much smaller giveaway, and a learner who trialled in January and returns in May is one we want to re-engage rather than turn away. `trial_service.TRIAL_COOLDOWN_DAYS` is now 90 and is the single source — `feature_tier_service._trial_available` reads it instead of repeating the number, so eligibility as shown and eligibility as enforced cannot drift. Still a retention question with no data behind it: watch whether second trials convert at all before treating 90 as settled.
-6. **When does iOS ship?** There is no `ios/` directory, no App Store Connect record, and Apple review adds 1–2 weeks minimum plus first-submission rejection risk. If iOS is not near-term, Phases 1–7 ship Android + web and the Apple work in Phase 5 defers wholesale.
+6. ~~**When does iOS ship?**~~ **Decided: iOS ships with Android.** No Android-first phasing, and the Apple work in Phase 5 does not defer. Two premises of the original question were also wrong: `ios/` **does** exist as a gitignored Expo prebuild with `react-native-iap`'s `NitroIap` pod already linked, so the native side of StoreKit is in place and the gap is the `Platform.OS !== 'android'` early return at `usePlayBilling.ts:88-93` plus console configuration (§5.6). What remains true is the schedule risk: Apple review is 1–2 weeks with real first-submission rejection risk, and **IAP products are reviewed attached to a build**. That makes the App Store Connect record, the Paid Apps agreement and the three product records the longest-lead items in the plan, which is why §5.7 starts them in parallel with Phase 2b rather than waiting for Phase 5.
 7. **Refunds on an activated pass.** Apple and Google decide refunds unilaterally and neither asks first, so a learner can consume most of a pass and be refunded. `CONSUMPTION_REQUEST` (Apple) lets us report usage and reduces this, but it is advisory. Recommend accepting the leakage and measuring it — a consumption cap that fires on a legitimate learner is worse than the loss.
 8. **Is a 5-hour window right for Free, or should Free be longer?** Five hours means a Free learner can reach up to 4.8 allowances a day, which the monthly backstop bounds but does not prevent. The length is shared with Plus for explainability and because it is the pass duration. A 12-hour Free window (~2/day) tightens it at the cost of two numbers to explain. Recommend 5h for both, and let question 1's instrumentation decide.
 9. **Should the 5-hour pass be shown next to the 7-day pass?** $1.50 more buys 33× the duration, so the 5-hour pass is value-dominated for anyone uncertain about how long they need. Its job is the sub-$1 impulse and the first card on file, not volume. Displaying them side by side with equal weight makes the cheap one look silly; surfacing the 5-hour pass contextually — at a paywall, mid-session — is probably where it earns its place.
