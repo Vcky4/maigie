@@ -20,3 +20,12 @@ MOBILE_PUSH_LAST_BATCH = Gauge(
     "Rows handled by the latest canonical mobile push batch",
     ("kind",),
 )
+EMAIL_OUTCOMES = Counter(
+    "notification_email_outcomes_total",
+    "Canonical notification email lifecycle outcomes",
+    ("stage", "outcome"),
+)
+EMAIL_CLAIMED = Counter(
+    "notification_email_claimed_total",
+    "Canonical notification email delivery rows claimed",
+)

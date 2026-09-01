@@ -111,6 +111,22 @@ ALLOWED: dict[str, str] = {
         "against the delivery and its attempt row and returns nothing to any caller that could relay it "
         "to a learner."
     ),
+    "domains/notifications/repository.py::claim_due_email_deliveries": (
+        "The email counterpart of `claim_due_deliveries`, and unscoped for the same reason: no id "
+        "enters it, the batch is chosen by channel, status and time, and the `.id ==` is the "
+        "delivery→notification join rather than a lookup. Its only caller is "
+        "`email_dispatcher.dispatch_due_email`, reached solely from the argument-less beat task "
+        "`notifications.dispatch_email`. Each claimed row is emailed to its own owner's address, which "
+        "the dispatcher re-reads per row, so nothing crosses between learners and nothing reaches a "
+        "response."
+    ),
+    "domains/notifications/repository.py::record_email_result": (
+        "The `delivery_id` is one this process claimed moments earlier in "
+        "`email_dispatcher.dispatch_due_email`, not one off a request — the only caller is that "
+        "dispatch loop, under the beat task `notifications.dispatch_email`. It writes the provider "
+        "outcome and its attempt row and returns nothing, so an owner filter would need an owner the "
+        "worker does not have and does not act on behalf of."
+    ),
 }
 
 

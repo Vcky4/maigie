@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
+from src.config import get_settings
 from src.core.websocket import manager
 from src.shared.time import (
     UNKNOWN_TIMEZONE,
@@ -23,6 +24,8 @@ from src.shared.time import (
 )
 
 from .db_models import Notification, NotificationInteraction
+from .email_delivery import address_reference
+from .feature_flags import capability_enabled_for
 from .models import (
     MobilePushInstallationUpsert,
     NotificationCategorySetting,
@@ -30,13 +33,14 @@ from .models import (
     NotificationSettingsResponse,
     NotificationSettingsUpdate,
 )
-from .repository import notification_repo
+from .repository import EmailPlan, notification_repo
 from .taxonomy import (
     canonical_action_payload,
     notification_spec,
     validate_action,
     validate_action_for_type,
 )
+from .unsubscribe import parse_unsubscribe_token
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +238,109 @@ async def update_notification_settings(
     return await get_notification_settings(user_id=user_id)
 
 
+#: Types that are themselves a periodic summary, so a learner asking for a "weekly" email is
+#: asking for these to arrive on their own schedule. Every other type treats a digest
+#: preference as "not yet": bundling many notifications into one email is a separate piece of
+#: work, and emailing each one immediately instead would be the opposite of what was asked.
+PERIODIC_EMAIL_TYPES = frozenset(
+    {
+        "progress.weekly_summary",
+        "learning.morning_schedule",
+    }
+)
+
+
+async def _email_plan(user_id: str, *, type: str, spec: Any) -> EmailPlan | None:
+    """Decide whether this notification should also be emailed, and to what address.
+
+    Resolved at plan time so the overwhelming majority of learners — who have email off —
+    never accumulate delivery rows. Consent is rechecked immediately before sending, so a
+    preference changed after planning still suppresses the message rather than racing it.
+    """
+
+    if "EMAIL" not in spec.allowed_channels:
+        return None
+    settings = get_settings()
+    if not settings.NOTIFICATION_EMAIL_ENABLED:
+        return None
+    if not capability_enabled_for("EMAIL", user_id, settings=settings):
+        return None
+
+    decision = await notification_repo.channel_policy(
+        user_id, type, spec.category or "LEARNING", "EMAIL"
+    )
+    policy = decision["policy"]
+    legacy = decision["legacy"]
+    override = decision["override"]
+    # Fail closed on every missing record: absent consent is not consent.
+    if policy is None or not policy.engagement_enabled:
+        return None
+    if legacy is None or not legacy.notifications:
+        return None
+    if override is None or not override.enabled:
+        return None
+    if override.frequency == "DIGEST" and type not in PERIODIC_EMAIL_TYPES:
+        return None
+    if override.frequency not in ("IMMEDIATE", "DIGEST"):
+        return None
+
+    recipient = await notification_repo.email_recipient(user_id)
+    if recipient is None:
+        return None
+    address, _name = recipient
+    address_ref = address_reference(address)
+    # A suppressed address is a hard stop the provider asked for. Checking it here as well as
+    # at dispatch keeps rows out of the ledger that could never be sent.
+    if await notification_repo.is_address_suppressed(address_ref):
+        return None
+    return EmailPlan(
+        address_ref=address_ref,
+        provider="SMTP_RESEND",
+        max_attempts=settings.NOTIFICATION_EMAIL_MAX_ATTEMPTS,
+    )
+
+
+async def apply_unsubscribe(*, token: str) -> bool:
+    """Honour a signed unsubscribe link. Returns whether a valid token was applied.
+
+    Switches email off for the requested scope through the same settings write the UI uses, so
+    the change is visible in the settings screen rather than living in a hidden side table —
+    a learner who unsubscribes and later looks at their settings must see it already off.
+
+    Mandatory mail is unaffected: security and account-recovery messages are transactional and
+    never planned through the consent matrix, so there is nothing here to switch off.
+    """
+
+    request = parse_unsubscribe_token(token)
+    if request is None:
+        return False
+
+    current = await get_notification_settings(user_id=request.user_id)
+    scopes = (
+        {"LEARNING", "PROGRESS", "SOCIAL_CLASSROOM", "PRODUCT_UPDATES"}
+        if request.scope == "ALL"
+        else {request.scope}
+    )
+    updated = NotificationSettingsUpdate(
+        engagement_enabled=current.engagement_enabled,
+        quiet_hours_start=current.quiet_hours_start,
+        quiet_hours_end=current.quiet_hours_end,
+        max_daily_notifications=current.max_daily_notifications,
+        digest_local_time=current.digest_local_time,
+        digest_day_of_week=current.digest_day_of_week,
+        categories=[
+            item.model_copy(update={"email_frequency": "OFF"}) if item.category in scopes else item
+            for item in current.categories
+        ],
+    )
+    await update_notification_settings(user_id=request.user_id, request=updated)
+    logger.info(
+        "Applied an unsubscribe request",
+        extra={"scope": request.scope, "categories": len(scopes)},
+    )
+    return True
+
+
 async def create_notification(
     *,
     user_id: str,
@@ -301,6 +408,7 @@ async def create_notification(
         },
         group_window=spec.dedupe_window if spec.groupable else None,
         plan_mobile_push="MOBILE_PUSH" in spec.default_channels,
+        plan_email=await _email_plan(user_id, type=type, spec=spec),
     )
     if mutation:
         if replaced_id is not None:

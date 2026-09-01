@@ -40,43 +40,56 @@ def send_push_task(user_id: str, title: str, body: str, data: dict | None = None
         loop.close()
 
 
-@celery_app.task(name="notifications.schedule_reminders", queue="default", time_limit=60)
-def send_schedule_reminders_task():
-    """Send schedule reminders to users with upcoming study blocks."""
+def _run_producer(module_path: str, function_name: str) -> dict:
+    """Run one notification producer, with the database connected.
+
+    Both producers previously opened an event loop and ran their coroutine without calling
+    `ensure_db`, unlike every dispatch task below. Neither was in the beat schedule, so the
+    omission never fired; scheduling them makes it a real defect, hence this shared runner.
+    """
     import asyncio
+    import importlib
 
-    from src.domains.progress.services.schedule_reminders import send_schedule_reminders
-
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(send_schedule_reminders())
-    finally:
-        loop.close()
-
-
-@celery_app.task(name="notifications.weekly_summary", queue="default", time_limit=120)
-def send_weekly_summaries_task():
-    """Send weekly learning summary emails."""
-    import asyncio
-
-    from src.shared.infrastructure.email import send_weekly_summaries
-
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(send_weekly_summaries())
-    finally:
-        loop.close()
-
-
-def _run_notification_coro(function_name: str) -> int:
-    import asyncio
-
-    from src.domains.notifications import dispatcher
     from src.shared.database.session import ensure_db
+
+    target = importlib.import_module(module_path)
+
+    async def _run() -> dict:
+        await ensure_db()
+        return await getattr(target, function_name)()
+
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_run())
+    finally:
+        loop.close()
+
+
+@celery_app.task(name="notifications.schedule_reminders", queue="default", time_limit=120)
+def send_schedule_reminders_task() -> dict:
+    """Produce canonical reminders for study blocks starting soon."""
+    return _run_producer(
+        "src.domains.progress.services.schedule_reminders", "send_schedule_reminders"
+    )
+
+
+@celery_app.task(name="notifications.weekly_summary", queue="default", time_limit=300)
+def send_weekly_summaries_task() -> dict:
+    """Produce canonical weekly learning summaries."""
+    return _run_producer("src.domains.progress.services.weekly_summary", "send_weekly_summaries")
+
+
+def _run_notification_coro(function_name: str, module: str = "dispatcher") -> int:
+    import asyncio
+    import importlib
+
+    from src.shared.database.session import ensure_db
+
+    target = importlib.import_module(f"src.domains.notifications.{module}")
 
     async def _run() -> int:
         await ensure_db()
-        return await getattr(dispatcher, function_name)()
+        return await getattr(target, function_name)()
 
     loop = asyncio.new_event_loop()
     try:
@@ -115,8 +128,42 @@ def recover_stale_mobile_push_task() -> int:
     return _run_notification_coro("recover_stale_sending")
 
 
+@celery_app.task(
+    name="notifications.dispatch_email",
+    queue="default",
+    time_limit=120,
+    soft_time_limit=110,
+)
+def dispatch_notification_email_task() -> int:
+    return _run_notification_coro("dispatch_due_email", module="email_dispatcher")
+
+
 def get_beat_schedule() -> dict:
     return {
+        "notifications.schedule_reminders": {
+            "task": "notifications.schedule_reminders",
+            # Must match REMINDER_WINDOW_MINUTES in the producer. The idempotency key makes
+            # a mismatch harmless rather than duplicating, but a slower cadence than the
+            # window would still miss blocks entirely.
+            "schedule": 900.0,
+            "options": {"queue": "default"},
+        },
+        "notifications.weekly_summary": {
+            "task": "notifications.weekly_summary",
+            # Hourly, guarded by an ISO-week idempotency key: the first run of a new week
+            # produces the summary and every later run that week replays it. This avoids
+            # pinning delivery to one hour, which would miss anyone whose week has not
+            # ended yet in their own timezone.
+            "schedule": 3600.0,
+            "options": {"queue": "default"},
+        },
+        "notifications.dispatch_email": {
+            "task": "notifications.dispatch_email",
+            # Email is not time-critical the way a push is, and a slower cadence keeps the
+            # provider request rate low. Quiet-hour deferrals set their own release time.
+            "schedule": 300.0,
+            "options": {"queue": "default"},
+        },
         "notifications.dispatch_mobile_push": {
             "task": "notifications.dispatch_mobile_push",
             "schedule": 60.0,

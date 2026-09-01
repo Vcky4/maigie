@@ -1,10 +1,12 @@
 """Canonical notification HTTP and realtime API."""
 
 import hashlib
+import json
 from typing import Any
 
 from fastapi import (
     APIRouter,
+    Header,
     HTTPException,
     Query,
     Request,
@@ -22,6 +24,7 @@ from src.shared.auth.jwt import decode_access_token
 from src.shared.infrastructure.rate_limit import enforce_rate_limit
 
 from . import service
+from .email_webhooks import process_resend_event
 from .models import (
     MarkAllReadResponse,
     MobilePushInstallationUpsert,
@@ -40,6 +43,7 @@ from .models import (
 
 router = APIRouter()
 push_installations_router = APIRouter()
+email_webhooks_router = APIRouter()
 
 
 @router.get("/operations/metrics", include_in_schema=False)
@@ -95,6 +99,86 @@ async def disable_push_installation(installation_id: str, current_user: CurrentU
     ):
         raise HTTPException(status_code=404, detail="Push installation not found")
     return Response(status_code=204)
+
+
+@router.post("/unsubscribe", status_code=200)
+async def one_click_unsubscribe(request: Request, token: str = Query(...)) -> dict[str, str]:
+    """RFC 8058 one-click unsubscribe. Unauthenticated by necessity.
+
+    A mail provider POSTs here on the learner's behalf, from their infrastructure and without a
+    session, so the signed token is the only proof of identity available. It must act
+    immediately and without a confirmation step — a provider that gets a landing page instead
+    of an action reports the sender as not honouring unsubscribes.
+
+    Answers 200 even for a token that does not verify. The caller is a mail provider, not a
+    person: telling it which tokens are real would turn this into an oracle, and a retry storm
+    against a link a learner already used is worse than a quiet no-op.
+    """
+
+    client_host = request.client.host if request.client is not None else "unknown"
+    await enforce_rate_limit(
+        user_id=hashlib.sha256(client_host.encode()).hexdigest(),
+        endpoint="notification_unsubscribe",
+        max_requests=30,
+        window_seconds=60,
+    )
+    await service.apply_unsubscribe(token=token)
+    return {"status": "ok"}
+
+
+@router.get("/unsubscribe", status_code=200)
+async def unsubscribe_from_link(request: Request, token: str = Query(...)) -> dict[str, object]:
+    """The same action for a person following the footer link.
+
+    Kept separate from the POST because the two callers need different answers: a provider
+    needs the act done and nothing else, while a person needs to know it worked and where to
+    adjust it. The web app renders that page and calls nothing else.
+    """
+
+    client_host = request.client.host if request.client is not None else "unknown"
+    await enforce_rate_limit(
+        user_id=hashlib.sha256(client_host.encode()).hexdigest(),
+        endpoint="notification_unsubscribe",
+        max_requests=30,
+        window_seconds=60,
+    )
+    applied = await service.apply_unsubscribe(token=token)
+    return {"applied": applied, "settingsPath": "/settings?tab=notifications"}
+
+
+@email_webhooks_router.post("/resend", status_code=200)
+async def resend_webhook(
+    request: Request,
+    svix_id: str = Header(default="", alias="svix-id"),
+    svix_timestamp: str = Header(default="", alias="svix-timestamp"),
+    svix_signature: str = Header(default="", alias="svix-signature"),
+) -> Response:
+    """Receive Resend delivery, bounce, and complaint events.
+
+    Malformed JSON and unverifiable signatures both answer 400 so the provider surfaces the
+    problem in its own dashboard rather than retrying forever. Everything that verifies answers
+    200, including an event type this system does not act on, because asking a provider to retry
+    an event we deliberately ignore only wastes both sides' capacity.
+    """
+
+    body = await request.body()
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="Malformed webhook body") from None
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Malformed webhook body")
+
+    result = await process_resend_event(
+        body=body,
+        svix_id=svix_id,
+        svix_timestamp=svix_timestamp,
+        svix_signature=svix_signature,
+        payload=payload,
+    )
+    if not result.accepted:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    return Response(status_code=200)
 
 
 @router.get("/settings", response_model=NotificationSettingsResponse)

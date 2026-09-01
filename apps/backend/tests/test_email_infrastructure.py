@@ -263,25 +263,32 @@ async def test_subscription_email_names_the_tier(transport, tier, expected):
     assert transport["smtp"][0]["subject"] == f"Your {expected} subscription is active"
 
 
-async def test_weekly_summaries_delegates_to_the_progress_implementation(monkeypatch):
-    """The beat task imports this from the email module, but progress owns the data.
+def test_the_email_module_no_longer_re_exports_notification_producers():
+    """Producers do not belong here, and the re-export that put them here is gone.
 
-    This was a ``NotImplementedError`` while the aggregation was unmigrated.
+    ``send_weekly_summaries`` used to be re-exported from this module purely because the beat
+    task imported it from here, while the progress domain owned the data — an indirection that
+    made the email module look like the owner of a notification producer. The task now calls
+    the progress service directly, and the summary reaches an inbox through the notification
+    orchestrator rather than through a direct send, so neither shim has a reason to exist.
+
+    ``send_schedule_reminder_email`` is gone for the same reason: the reminder is a canonical
+    notification now, and a second way to send one would be a second place for consent to be
+    forgotten.
     """
-    called: list[bool] = []
+    assert not hasattr(em, "send_weekly_summaries")
+    assert not hasattr(em, "send_schedule_reminder_email")
 
-    async def fake_send():
-        called.append(True)
-        return {"considered": 0, "sent": 0, "skipped": 0, "failed": 0}
 
-    monkeypatch.setattr(
-        "src.domains.progress.services.weekly_summary.send_weekly_summaries", fake_send
-    )
+def test_the_shared_transport_still_serves_its_remaining_direct_callers():
+    """Billing receipts and the intelligence email skill are not engagement notifications.
 
-    result = await em.send_weekly_summaries()
-
-    assert called == [True]
-    assert result["sent"] == 0
+    They are deterministic, user-commanded messages, so they keep sending directly. Removing
+    ``send_bulk_email`` alongside the producers would have broken both.
+    """
+    assert callable(em.send_bulk_email)
+    assert callable(em.send_transactional_email)
+    assert callable(em.send_templated_email)
 
 
 # ---------------------------------------------------------------------------

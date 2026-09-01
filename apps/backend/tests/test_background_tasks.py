@@ -61,16 +61,26 @@ def test_current_paid_tier_names_are_eligible(tier):
     assert sr._should_remind(_user(tier=tier), _prefs()) is True
 
 
-def test_user_without_an_address_is_not_reminded():
-    assert sr._should_remind(_user(email=None), _prefs()) is False
+def test_a_deactivated_account_is_not_reminded():
+    assert sr._should_remind(_user(is_active=False), _prefs()) is False
 
 
-def test_notifications_off_overrides_the_email_preference():
-    assert sr._should_remind(_user(), _prefs(notifications=False)) is False
+def test_channel_consent_is_no_longer_this_functions_business():
+    """Eligibility here decides whether the reminder *exists*, not how it is sent.
 
+    These three used to assert that a missing address, the notification master switch, and the
+    schedule-reminder email preference each stopped the reminder — correct when this producer
+    sent the email itself. It does not any more: it creates a canonical notification, and the
+    orchestrator decides the channels and rechecks consent immediately before sending.
 
-def test_reminder_preference_off_is_respected():
-    assert sr._should_remind(_user(), _prefs(email_schedule_reminder=False)) is False
+    Keeping the old assertions would have frozen the bug they were written to prevent in
+    place: a learner who turns *email* off would lose the reminder from the notification
+    centre too, and the reminder would remain unsendable by push forever. So the checks moved
+    rather than disappeared — `tests/test_notification_email.py` asserts each of them at the
+    point where they now decide something.
+    """
+    assert sr._should_remind(_user(email=None), _prefs(notifications=False)) is True
+    assert sr._should_remind(_user(), _prefs(email_schedule_reminder=False)) is True
 
 
 def test_unknown_timezone_falls_back_to_utc_rather_than_failing():
@@ -143,7 +153,7 @@ def test_a_week_with_nothing_in_it_is_not_emailed(minutes, sessions, messages, e
     assert ws._is_worth_sending(summary) is expected
 
 
-def test_rendered_summary_carries_the_figures_in_both_parts():
+def test_rendered_summary_carries_the_figures_as_plain_text():
     summary = {
         "name": "Ada",
         "minutes_this_week": 150,
@@ -154,15 +164,18 @@ def test_rendered_summary_carries_the_figures_in_both_parts():
         "current_streak": 3,
         "longest_streak": 9,
     }
-    html, text = ws.render_weekly_summary(summary)
+    body = ws.render_weekly_summary(summary)
 
-    for body in (html, text):
-        assert "Ada" in body
-        assert "2.5 hours" in body
-        assert "150% more than last week" in body
-        assert "4" in body
-        assert "23" in body
-        assert "3 day" in body
+    # One plain-text body now rather than an HTML and a text part. It is stored on the
+    # canonical notification and read by the notification centre, a push payload, and the
+    # email template, so it must not carry markup belonging to any one of them. The greeting
+    # moved to the template, which is why the learner's name is no longer expected here.
+    assert "<" not in body
+    assert "2.5 hours" in body
+    assert "150% more than last week" in body
+    assert "Study sessions: 4" in body
+    assert "Questions asked: 23" in body
+    assert "3 day" in body
 
 
 def test_a_zero_streak_is_omitted_rather_than_shown_as_zero():
@@ -176,9 +189,9 @@ def test_a_zero_streak_is_omitted_rather_than_shown_as_zero():
         "current_streak": 0,
         "longest_streak": 0,
     }
-    html, text = ws.render_weekly_summary(summary)
-    assert "streak" not in html.lower()
-    assert "streak" not in text.lower()
+    body = ws.render_weekly_summary(summary)
+
+    assert "streak" not in body.lower()
 
 
 def test_singular_day_is_not_pluralised():
@@ -192,6 +205,7 @@ def test_singular_day_is_not_pluralised():
         "current_streak": 1,
         "longest_streak": 1,
     }
-    html, _ = ws.render_weekly_summary(summary)
-    assert "1 day" in html
-    assert "1 days" not in html
+    body = ws.render_weekly_summary(summary)
+
+    assert "1 day" in body
+    assert "1 days" not in body

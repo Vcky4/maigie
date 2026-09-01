@@ -1,9 +1,7 @@
 """Weekly learning summary emails.
 
 Restores the pre-migration ``weekly_summary_email_service``, which was Prisma-based and
-never migrated. Until now ``send_weekly_summaries`` raised, so the
-``notifications.weekly_summary`` beat task failed loudly every week rather than pretending
-to have sent anything.
+never migrated.
 
 The summary compares this week against the previous one, because a bare number is not
 information a learner can act on: "4 hours" means nothing without knowing whether last
@@ -13,9 +11,13 @@ A user with nothing to report is skipped rather than emailed an empty summary. T
 point of ``_is_worth_sending``: an engagement email that arrives to say nothing happened
 teaches the recipient to ignore the sender.
 
-The body is composed here rather than in a Jinja template, matching the original. There is
-no ``weekly_summary`` template in ``src/templates/email``, and the content is a small
-fixed set of figures.
+The figures are composed here rather than in a Jinja template: the content is a small fixed
+set of numbers, and the shared notification template supplies the surrounding layout.
+
+**This no longer sends email itself.** It produces one canonical notification per learner per
+week and the orchestrator decides the channels. A learner whose settings say "weekly email"
+gets it in their inbox; one who turned email off still finds the summary in the notification
+centre rather than losing the week entirely.
 """
 
 import logging
@@ -74,15 +76,12 @@ async def generate_weekly_summary_for_user(user_id: str) -> dict[str, Any] | Non
         if row is None:
             return None
 
-        user, prefs = row
-        if not user.is_active or not user.email:
+        user, _prefs = row
+        if not user.is_active:
             return None
-        # A missing preferences row means defaults, which are opt-in.
-        if prefs is not None:
-            if not getattr(prefs, "notifications", True):
-                return None
-            if not getattr(prefs, "email_weekly_tips", True):
-                return None
+        # Channel consent is not checked here. Whether this becomes an email is decided by
+        # the orchestrator and rechecked at send time; the summary itself is worth having
+        # in the notification centre either way.
 
         this_week = (
             await session.execute(
@@ -124,7 +123,6 @@ async def generate_weekly_summary_for_user(user_id: str) -> dict[str, Any] | Non
 
     return {
         "user_id": user_id,
-        "email": user.email,
         "name": (user.name or "").split()[0] if user.name else "there",
         "minutes_this_week": minutes_this_week,
         "minutes_previous_week": minutes_previous_week,
@@ -145,8 +143,13 @@ def _is_worth_sending(summary: dict[str, Any]) -> bool:
     )
 
 
-def render_weekly_summary(summary: dict[str, Any]) -> tuple[str, str]:
-    """Return ``(html, text)`` for one summary."""
+def render_weekly_summary(summary: dict[str, Any]) -> str:
+    """The figures as the notification body, one per line.
+
+    Plain text, not HTML: this is stored on the canonical notification and rendered by every
+    surface — the notification centre, a push payload, and the email template — so it cannot
+    carry markup belonging to one of them.
+    """
     hours = summary["minutes_this_week"] / 60
     lines = [
         f"Study time: {hours:.1f} hours ({summary['change']})",
@@ -158,25 +161,15 @@ def render_weekly_summary(summary: dict[str, Any]) -> tuple[str, str]:
             f"Current streak: {summary['current_streak']} day"
             f"{'s' if summary['current_streak'] != 1 else ''}"
         )
-
-    html_items = "".join(f"<li style='margin-bottom:8px;'>{line}</li>" for line in lines)
-    html = (
-        f"<p>Hi {summary['name']},</p>"
-        "<p>Here's how your week went.</p>"
-        f"<ul style='padding-left:20px;'>{html_items}</ul>"
-    )
-    text = f"Hi {summary['name']},\n\nHere's how your week went.\n\n" + "\n".join(
-        f"- {line}" for line in lines
-    )
-    return html, text
+    return "\n".join(lines)
 
 
 async def send_weekly_summaries() -> dict[str, int]:
-    """Email a weekly summary to every eligible, active user.
+    """Create one canonical weekly summary per eligible, active learner.
 
     Returns counts so an empty run is distinguishable from a broken one.
     """
-    from src.shared.infrastructure.email import send_bulk_email
+    from src.domains.notifications.service import create_notification
 
     factory = get_session_factory()
     async with factory() as session:
@@ -191,7 +184,10 @@ async def send_weekly_summaries() -> dict[str, int]:
             ).all()
         ]
 
-    sent = 0
+    # The ISO week of the period being reported, so a re-run inside the same week replays
+    # the existing notification instead of producing a second one.
+    year, week, _day = datetime.now(UTC).isocalendar()
+    created = 0
     skipped = 0
     failed = 0
 
@@ -202,22 +198,27 @@ async def send_weekly_summaries() -> dict[str, int]:
                 skipped += 1
                 continue
 
-            html, _text = render_weekly_summary(summary)
-            await send_bulk_email(
-                email=summary["email"],
-                name=summary["name"],
-                subject="Your week in review",
-                content=html,
+            await create_notification(
+                user_id=user_id,
+                type="progress.weekly_summary",
+                title="Your week in review",
+                body=render_weekly_summary(summary),
+                action={"version": 1, "kind": "OPEN_PROGRESS"},
+                idempotency_key=f"weekly-summary:{user_id}:{year}-W{week:02d}",
+                priority=5,
+                source_domain="progress",
+                source_entity_type="weekly_summary",
+                source_entity_id=f"{year}-W{week:02d}",
             )
-            sent += 1
+            created += 1
         except Exception:
             # One user's bad data must not stop the run.
             failed += 1
-            logger.exception("Failed to send weekly summary to user %s", user_id)
+            logger.exception("Failed to create weekly summary for user %s", user_id)
 
     summary_counts = {
         "considered": len(user_ids),
-        "sent": sent,
+        "created": created,
         "skipped": skipped,
         "failed": failed,
     }
