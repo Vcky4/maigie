@@ -18,6 +18,8 @@ from src.config import get_settings
 from src.shared.database import get_session_factory
 
 from .db_models import (
+    EmailProviderEvent,
+    EmailSuppression,
     Notification,
     NotificationDelivery,
     NotificationDeliveryAttempt,
@@ -874,6 +876,105 @@ class NotificationRepository:
                 delivery.failure_code = error_code or "PROVIDER_ERROR"
                 delivery.failure_detail = (error_detail or "")[:500] or None
 
+    async def record_email_provider_event(
+        self,
+        *,
+        provider: str,
+        provider_event_id: str,
+        event_type: str,
+        provider_message_id: str | None,
+        address_hash: str | None,
+        occurred_at: datetime,
+        outcome: str,
+    ) -> bool:
+        """Record one provider event. Returns ``False`` if it was already ingested.
+
+        The unique constraint on `(provider, providerEventId)` is what makes replay safe, so a
+        retried webhook returns ``False`` here and the caller skips the side effects rather
+        than applying them a second time.
+        """
+
+        factory = get_session_factory()
+        async with factory() as session:
+            try:
+                async with session.begin():
+                    delivery_id = None
+                    if provider_message_id:
+                        delivery_id = await session.scalar(
+                            select(NotificationDelivery.id).where(
+                                NotificationDelivery.provider_message_id == provider_message_id,
+                                NotificationDelivery.channel == "EMAIL",
+                            )
+                        )
+                    session.add(
+                        EmailProviderEvent(
+                            provider=provider,
+                            provider_event_id=provider_event_id,
+                            event_type=event_type[:48],
+                            provider_message_id=provider_message_id,
+                            address_hash=address_hash,
+                            delivery_id=delivery_id,
+                            occurred_at=occurred_at,
+                            outcome=outcome[:32],
+                        )
+                    )
+                    await session.flush()
+                    return True
+            except IntegrityError:
+                await session.rollback()
+                return False
+
+    async def mark_email_delivered(
+        self, *, provider_message_id: str, delivered_at: datetime
+    ) -> bool:
+        """Promote an accepted email to `DELIVERED` on the provider's word.
+
+        Only `ACCEPTED` may become `DELIVERED`. A late `delivered` for a row already marked
+        `FAILED` by a bounce must not overwrite that: the bounce is the outcome the learner
+        experienced, and providers do not promise event ordering.
+        """
+
+        factory = get_session_factory()
+        async with factory() as session, session.begin():
+            result = await session.execute(
+                update(NotificationDelivery)
+                .where(
+                    NotificationDelivery.provider_message_id == provider_message_id,
+                    NotificationDelivery.channel == "EMAIL",
+                    NotificationDelivery.status == "ACCEPTED",
+                )
+                .values(status="DELIVERED", delivered_at=delivered_at, next_attempt_at=None)
+            )
+            return bool(getattr(result, "rowcount", 0))
+
+    async def mark_email_failed(
+        self, *, provider_message_id: str, failure_code: str, failed_at: datetime
+    ) -> bool:
+        """Record a bounce or complaint against the delivery it belongs to.
+
+        A bounce can arrive after the provider accepted *and* reported delivery, so `DELIVERED`
+        is also a valid state to leave — the message reached the provider's next hop and was
+        then rejected, and the ledger should say so rather than keep the rosier status.
+        """
+
+        factory = get_session_factory()
+        async with factory() as session, session.begin():
+            result = await session.execute(
+                update(NotificationDelivery)
+                .where(
+                    NotificationDelivery.provider_message_id == provider_message_id,
+                    NotificationDelivery.channel == "EMAIL",
+                    NotificationDelivery.status.in_(["ACCEPTED", "DELIVERED"]),
+                )
+                .values(
+                    status="FAILED",
+                    failed_at=failed_at,
+                    failure_code=failure_code,
+                    next_attempt_at=None,
+                )
+            )
+            return bool(getattr(result, "rowcount", 0))
+
     async def accepted_for_receipts(
         self, *, limit: int, now: datetime
     ) -> list[NotificationDelivery]:
@@ -1296,6 +1397,78 @@ class NotificationRepository:
                 for surface, event, count in interaction_rows
             ],
         }
+
+    async def is_address_suppressed(self, address_hash: str) -> str | None:
+        """Return the active suppression reason for an address, or ``None``."""
+
+        factory = get_session_factory()
+        async with factory() as session:
+            return await session.scalar(
+                select(EmailSuppression.reason).where(
+                    EmailSuppression.address_hash == address_hash,
+                    EmailSuppression.released_at.is_(None),
+                )
+            )
+
+    async def suppress_address(
+        self,
+        address_hash: str,
+        *,
+        reason: str,
+        provider: str | None = None,
+        provider_event_id: str | None = None,
+        detail: str | None = None,
+    ) -> bool:
+        """Record an active suppression, or leave an existing one alone.
+
+        Returns whether this call created the suppression. Idempotent by the partial unique
+        index, so a retried webhook cannot stack duplicate rows for one address.
+        """
+
+        factory = get_session_factory()
+        async with factory() as session:
+            try:
+                async with session.begin():
+                    existing = await session.scalar(
+                        select(EmailSuppression.id).where(
+                            EmailSuppression.address_hash == address_hash,
+                            EmailSuppression.released_at.is_(None),
+                        )
+                    )
+                    if existing is not None:
+                        return False
+                    session.add(
+                        EmailSuppression(
+                            address_hash=address_hash,
+                            reason=reason,
+                            provider=provider,
+                            provider_event_id=provider_event_id,
+                            detail=(detail or "")[:500] or None,
+                        )
+                    )
+                    await session.flush()
+                    return True
+            except IntegrityError:
+                # Another worker inserted it between the check and the flush, which is the
+                # outcome we wanted anyway.
+                await session.rollback()
+                return False
+
+    async def release_address_suppression(self, address_hash: str) -> bool:
+        """Lift an active suppression, keeping the row as history."""
+
+        now = datetime.now(UTC)
+        factory = get_session_factory()
+        async with factory() as session, session.begin():
+            result = await session.execute(
+                update(EmailSuppression)
+                .where(
+                    EmailSuppression.address_hash == address_hash,
+                    EmailSuppression.released_at.is_(None),
+                )
+                .values(released_at=now)
+            )
+            return bool(getattr(result, "rowcount", 0))
 
     async def email_recipient(self, user_id: str) -> tuple[str, str | None] | None:
         """The address to email and the name to greet, or ``None`` when unusable.

@@ -307,6 +307,7 @@ def _register_domains(app: FastAPI) -> None:
 
     # --- Notifications (canonical in-app platform) ---
     from src.domains.notifications.routes import (
+        email_webhooks_router,
         push_installations_router,
     )
     from src.domains.notifications.routes import (
@@ -320,6 +321,14 @@ def _register_domains(app: FastAPI) -> None:
         push_installations_router,
         prefix=f"{prefix}/push-installations",
         tags=["notifications"],
+    )
+    # Provider callbacks. Mounted under its own prefix rather than beside the authenticated
+    # notification routes, so it is obvious at the routing table which paths are public.
+    app.include_router(
+        email_webhooks_router,
+        prefix=f"{prefix}/webhooks/email",
+        tags=["notifications"],
+        include_in_schema=False,
     )
 
     # --- Knowledge (migrated to SQLAlchemy) ---

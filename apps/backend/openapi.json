@@ -33320,6 +33320,96 @@
         ]
       }
     },
+    "/api/v1/notifications/unsubscribe": {
+      "get": {
+        "description": "The same action for a person following the footer link.\n\nKept separate from the POST because the two callers need different answers: a provider\nneeds the act done and nothing else, while a person needs to know it worked and where to\nadjust it. The web app renders that page and calls nothing else.",
+        "operationId": "unsubscribe_from_link_api_v1_notifications_unsubscribe_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Unsubscribe From Link Api V1 Notifications Unsubscribe Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unsubscribe From Link",
+        "tags": [
+          "notifications"
+        ]
+      },
+      "post": {
+        "description": "RFC 8058 one-click unsubscribe. Unauthenticated by necessity.\n\nA mail provider POSTs here on the learner's behalf, from their infrastructure and without a\nsession, so the signed token is the only proof of identity available. It must act\nimmediately and without a confirmation step — a provider that gets a landing page instead\nof an action reports the sender as not honouring unsubscribes.\n\nAnswers 200 even for a token that does not verify. The caller is a mail provider, not a\nperson: telling it which tokens are real would turn this into an oracle, and a retry storm\nagainst a link a learner already used is worse than a quiet no-op.",
+        "operationId": "one_click_unsubscribe_api_v1_notifications_unsubscribe_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response One Click Unsubscribe Api V1 Notifications Unsubscribe Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One Click Unsubscribe",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
     "/api/v1/notifications/{notification_id}/dismiss": {
       "post": {
         "operationId": "dismiss_api_v1_notifications__notification_id__dismiss_post",

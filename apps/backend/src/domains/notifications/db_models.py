@@ -592,3 +592,102 @@ class NotificationPreference(Base, TimestampMixin):
             "category",
         ),
     )
+
+
+class EmailSuppression(Base, TimestampMixin):
+    """An address Maigie must stop emailing, and why.
+
+    **Address-level and global on purpose.** A hard bounce or a spam complaint is a statement
+    about the mailbox, not about one category, so honouring it per-category would keep sending
+    to an address the provider has already told us to leave alone — which is how a sender
+    reputation is destroyed. Category-level choices live in `NotificationPreference`; this is
+    the harder stop that outranks them.
+
+    The address is stored only as a SHA-256 hash. Suppression is always checked with an address
+    in hand, so the hash is sufficient to answer "may we send to this?" without the table
+    becoming a list of everyone who ever bounced.
+
+    Rows are released rather than deleted. A mailbox that was full in March may work in June,
+    and keeping the history means a repeat suppression is visibly a repeat.
+    """
+
+    __tablename__ = "EmailSuppression"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    address_hash: Mapped[str] = mapped_column("addressHash", String(64), nullable=False)
+    reason: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    provider_event_id: Mapped[str | None] = mapped_column("providerEventId", String, nullable=True)
+    #: Free-text operator note. Never the address, and never provider payload.
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Set when the suppression is deliberately lifted; a released row stops blocking sends.
+    released_at: Mapped[datetime | None] = mapped_column(
+        "releasedAt", DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "reason IN ('HARD_BOUNCE', 'COMPLAINT', 'UNSUBSCRIBE', 'MANUAL')",
+            name="EmailSuppression_reason_check",
+        ),
+        # One active suppression per address. A released row does not occupy the slot, so the
+        # same address can be suppressed again later and both attempts stay on the record.
+        Index(
+            "EmailSuppression_addressHash_active_key",
+            "addressHash",
+            unique=True,
+            postgresql_where=text('"releasedAt" IS NULL'),
+        ),
+        Index("EmailSuppression_addressHash_idx", "addressHash"),
+    )
+
+
+class EmailProviderEvent(Base, TimestampMixin):
+    """One webhook event from an email provider, recorded once.
+
+    Providers retry webhooks, and they do not promise to deliver each event exactly once or in
+    order. Without a uniqueness constraint on the provider's own event id, a retried
+    `bounced` event would suppress an address twice and a re-ordered `delivered` after a
+    `bounced` would overwrite a real failure with a success. The unique index is what makes
+    ingestion replay-safe; the row is written in the same transaction as its effect, so
+    "recorded" and "applied" cannot diverge.
+
+    No provider payload is stored. The event type, the message id it refers to, and when it
+    happened are the parts that decide anything; the rest is the provider's copy to keep.
+    """
+
+    __tablename__ = "EmailProviderEvent"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_event_id: Mapped[str] = mapped_column("providerEventId", String, nullable=False)
+    event_type: Mapped[str] = mapped_column("eventType", String(48), nullable=False)
+    provider_message_id: Mapped[str | None] = mapped_column(
+        "providerMessageId", String, nullable=True
+    )
+    address_hash: Mapped[str | None] = mapped_column("addressHash", String(64), nullable=True)
+    delivery_id: Mapped[str | None] = mapped_column(
+        "deliveryId",
+        String,
+        ForeignKey("NotificationDelivery.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        "occurredAt", DateTime(timezone=True), nullable=False
+    )
+    #: What ingestion did with it, so an unmapped event type is visible rather than silent.
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "providerEventId",
+            name="EmailProviderEvent_provider_providerEventId_key",
+        ),
+        Index("EmailProviderEvent_providerMessageId_idx", "providerMessageId"),
+        Index("EmailProviderEvent_occurredAt_idx", "occurredAt"),
+    )

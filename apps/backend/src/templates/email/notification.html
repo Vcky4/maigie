@@ -26,5 +26,6 @@
 
 {% block footnote %}
 You are receiving this because {{ category_reason }}.
-<a href="{{ settings_url }}" style="color:#4F46E5;">Change what {{ app_name }} emails you</a>.
+<a href="{{ settings_url }}" style="color:#4F46E5;">Change what {{ app_name }} emails you</a>{% if unsubscribe_url %}
+or <a href="{{ unsubscribe_url }}" style="color:#4F46E5;">unsubscribe from these emails</a>{% endif %}.
 {% endblock %}

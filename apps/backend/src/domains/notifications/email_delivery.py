@@ -28,6 +28,8 @@ from src.shared.infrastructure.email import (
     _standard_headers,
 )
 
+from .unsubscribe import create_unsubscribe_token
+
 logger = logging.getLogger(__name__)
 
 #: Why this message arrived, in the learner's terms, per canonical category.
@@ -72,6 +74,44 @@ def notification_urls(notification_id: str) -> tuple[str, str]:
     return f"{base}/notifications?open={notification_id}", f"{base}/settings?tab=notifications"
 
 
+#: The four settings categories, keyed by the database categories they cover, so an email can
+#: offer to switch off the group the learner recognises rather than one notification type.
+_UNSUBSCRIBE_SCOPE: dict[str, str] = {
+    "LEARNING": "LEARNING",
+    "PROGRESS": "PROGRESS",
+    "SOCIAL": "SOCIAL_CLASSROOM",
+    "CLASSROOM": "SOCIAL_CLASSROOM",
+    "OPERATIONS": "PRODUCT_UPDATES",
+}
+
+
+def unsubscribe_urls(user_id: str, category: str | None) -> tuple[str, str]:
+    """Return ``(one_click_url, landing_url)`` for this learner and category.
+
+    Two URLs because they serve different callers. The one-click URL is what a mail provider
+    POSTs to on the learner's behalf under RFC 8058 and must act without a confirmation step.
+    The landing URL is what a person clicking the footer link opens, and it lands on their
+    settings so they can see what changed and adjust it rather than only having switched
+    something off.
+    """
+
+    scope = _UNSUBSCRIBE_SCOPE.get(category or "", "ALL")
+    token = create_unsubscribe_token(user_id, scope)  # type: ignore[arg-type]
+    base = _frontend_base_url()
+    api = f"{settings.API_V1_STR}/notifications/unsubscribe"
+    return f"{_api_base_url()}{api}?token={token}", f"{base}/unsubscribe?token={token}"
+
+
+def _api_base_url() -> str:
+    """Where the provider should POST a one-click unsubscribe.
+
+    Falls back to the frontend origin only so a misconfigured environment produces a link that
+    is merely wrong rather than one pointing at localhost from a real inbox.
+    """
+
+    return (settings.PUBLIC_API_BASE_URL or _frontend_base_url()).rstrip("/")
+
+
 async def send_notification_email(
     *,
     to_email: str,
@@ -80,6 +120,7 @@ async def send_notification_email(
     body: str,
     category: str | None,
     notification_id: str,
+    user_id: str,
 ) -> EmailOutcome:
     """Render and send one notification email, never raising for a provider failure.
 
@@ -89,6 +130,7 @@ async def send_notification_email(
     """
 
     action_url, settings_url = notification_urls(notification_id)
+    one_click_url, unsubscribe_url = unsubscribe_urls(user_id, category)
     template_data = {
         "app_name": APP_NAME,
         "logo_url": settings.EMAIL_LOGO_URL or "",
@@ -100,6 +142,7 @@ async def send_notification_email(
         "category_reason": _CATEGORY_REASON.get(
             category or "", "you have optional Maigie email switched on"
         ),
+        "unsubscribe_url": unsubscribe_url,
     }
     html_body, text_body = _render(
         "notification",
@@ -116,7 +159,14 @@ async def send_notification_email(
             text_body=text_body,
             # The notification id, not the address, so the reference cannot leak an
             # address into provider logs or bounce reports.
-            headers=_standard_headers(f"notification-{notification_id}"),
+            headers={
+                **_standard_headers(f"notification-{notification_id}"),
+                # RFC 8058. Both headers are required for one-click to be offered: the URL
+                # alone leaves providers guessing whether a POST is safe, and a `mailto:`-only
+                # header makes Gmail render nothing.
+                "List-Unsubscribe": f"<{one_click_url}>",
+                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+            },
         )
     except EmailProviderError as exc:
         return EmailOutcome(

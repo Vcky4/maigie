@@ -30,7 +30,7 @@ from src.shared.time import (
     parse_hhmm,
 )
 
-from .email_delivery import send_notification_email
+from .email_delivery import address_reference, send_notification_email
 from .feature_flags import capability_enabled_for
 from .metrics import EMAIL_CLAIMED, EMAIL_OUTCOMES
 from .repository import notification_repo
@@ -132,6 +132,15 @@ async def dispatch_due_email(*, limit: int | None = None) -> int:
             continue
         address, name = recipient
 
+        # Rechecked here even though planning also checks it: a bounce or complaint webhook
+        # may have arrived in between, and that is exactly the case where sending again does
+        # lasting damage to the sending domain.
+        suppression = await notification_repo.is_address_suppressed(address_reference(address))
+        if suppression is not None:
+            await notification_repo.suppress_delivery(delivery.id, f"SUPPRESSED_{suppression}")
+            EMAIL_OUTCOMES.labels(stage="policy", outcome="address_suppressed").inc()
+            continue
+
         requested_at = datetime.now(UTC)
         outcome = await send_notification_email(
             to_email=address,
@@ -140,6 +149,7 @@ async def dispatch_due_email(*, limit: int | None = None) -> int:
             body=notification.body,
             category=notification.category,
             notification_id=notification.id,
+            user_id=notification.user_id,
         )
         await notification_repo.record_email_result(
             delivery.id,

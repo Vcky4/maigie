@@ -70,6 +70,7 @@ class FakeRepo:
     legacy: Any = None
     override: Any = None
     recipient: tuple[str, str | None] | None = ("learner@example.com", "Ada")
+    suppression_reason: str | None = None
     claimed: list[tuple[Any, Any]] | None = None
     suppressed: list[tuple[str, str]] | None = None
     deferred: list[tuple[str, datetime]] | None = None
@@ -92,6 +93,10 @@ class FakeRepo:
 
     async def email_recipient(self, user_id):
         return self.recipient
+
+    async def is_address_suppressed(self, address_hash):
+        """No active suppression by default; the suppression path has its own tests."""
+        return self.suppression_reason
 
     async def claim_due_email_deliveries(self, *, limit, now):
         return self.claimed
@@ -302,6 +307,27 @@ class TestDispatchEvidence:
 
         await email_dispatcher.dispatch_due_email()
         assert repo.suppressed == [("d1", "NO_USABLE_ADDRESS")]
+        assert repo.results == []
+
+    @pytest.mark.asyncio
+    async def test_a_suppressed_address_is_never_sent_to_again(
+        self, repo: FakeRepo, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _use_settings(monkeypatch, _settings())
+        repo.claimed = [(SimpleNamespace(id="d1", attempt_count=1), _notification())]
+        repo.suppression_reason = "HARD_BOUNCE"
+
+        async def must_not_send(**_: Any) -> EmailOutcome:  # pragma: no cover - must not run
+            raise AssertionError("the address is suppressed; this must not have been sent")
+
+        monkeypatch.setattr(email_dispatcher, "send_notification_email", must_not_send)
+
+        await email_dispatcher.dispatch_due_email()
+
+        # Rechecked at send time, not only at planning: the bounce webhook that caused this may
+        # have arrived after the row was planned, and that is exactly when sending again costs
+        # the sending domain its reputation.
+        assert repo.suppressed == [("d1", "SUPPRESSED_HARD_BOUNCE")]
         assert repo.results == []
 
     @pytest.mark.asyncio

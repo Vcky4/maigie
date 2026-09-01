@@ -8,5 +8,7 @@ Open {{ app_name }}: {{ action_url }}
 
 You are receiving this because {{ category_reason }}.
 Change what {{ app_name }} emails you: {{ settings_url }}
+{% if unsubscribe_url %}Unsubscribe from these emails: {{ unsubscribe_url }}
+{% endif %}
 
 — {{ app_name }}, The Academic Operating System
