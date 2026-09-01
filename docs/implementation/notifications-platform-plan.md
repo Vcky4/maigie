@@ -2,7 +2,7 @@
 
 A single notification system for Maigie across in-app, mobile push, web push, and email — governed by learner consent, attention limits, delivery evidence, and an intelligence layer that improves timing and relevance without becoming the source of truth.
 
-> Status: **Engineering implementation complete through Phase 2 physical validation — 2026-08-31.** Phase 0 contracts, channel/intelligence rollout controls, database-backed lifecycle observability, canonical in-app delivery, and production-like physical mobile-push validation are implemented. Percentage rollout remains at 0% pending operational approval; Phase 3 and later work remains open.
+> Status: **Implemented through Phase 2 physical validation, with Phase 3 shared settings shipped — 2026-09-01.** Phase 0 contracts, channel/intelligence rollout controls, database-backed lifecycle observability, canonical in-app delivery, production-like physical mobile-push validation, and the shared web/mobile notification settings matrix are implemented. Percentage rollout remains at 0% pending operational approval, and the rest of Phase 3 — email through the ledger, unsubscribe/webhooks, digests — plus Phase 4 onward remain open.
 >
 > Owners: Backend, web, mobile, product, design, data/ML, and operations.
 >
@@ -917,8 +917,8 @@ Exit criteria: provider acceptance and receipt evidence exist; invalid tokens ar
 
 ### Phase 3 — preferences and email unification
 
-- [ ] Ship shared notification settings on web and mobile.
-- [ ] Route learning/progress email through the orchestrator and delivery ledger.
+- [x] Ship shared notification settings on web and mobile — **one contract now serves both clients: `GET`/`PUT /api/v1/notifications/settings` exposes an engagement master switch, four product categories (Learning, Progress, Social & classroom, Product updates) across in-app/mobile-push/email, quiet hours, an interruption budget capped at the platform default of 5, and the weekly digest slot. One advisory-locked transaction writes `NotificationPolicy`, category-level `NotificationPreference` rows, and — for compatibility while the legacy senders still read them — `UserPreferences.notifications`/`emailScheduleReminder`/`emailWeeklyTips`/`push*` plus `LearningProfile` quiet hours and daily cap; previously migrated exact-type overrides in a changed category are realigned so they cannot outrank the new choice. Reads fail closed: absent normalized rows fall back to legacy values, external channels default off, and only in-app Learning/Progress default on. Security and account-recovery email are reported as mandatory and no open tracking is offered. Web adds a Notifications settings tab from regenerated OpenAPI types; mobile adds a settings screen that states device push permission separately from product consent, because consent recorded here cannot deliver anything the OS has not granted. Verified against configured PostgreSQL for the internal test user: read, write, re-read, an idempotent repeat write, and the legacy dual-write all matched, then the original effective settings were restored. 53 backend tests, Ruff, format, and targeted mypy pass; web tsc/eslint/3 vitest tests and generated-type drift check pass; mobile typecheck, 241 endpoint-guard tests, 14 settings-rule tests, and the 1,249-test suite pass at an unchanged lint budget (2026-09-01).**
+- [ ] Route learning/progress email through the orchestrator and delivery ledger — **not started. The settings matrix already records email consent per category, but no `EMAIL` delivery is planned or dispatched yet: `create_notification` plans mobile push only, and the schedule-reminder and weekly-summary producers still send directly through the shared transport without a delivery ledger row. Email therefore remains gated by `NOTIFICATION_EMAIL_ENABLED=false`, and a learner switching email on records a preference that nothing acts on yet.**
 - [ ] Preserve transactional auth/security behavior while recording delivery evidence.
 - [ ] Consolidate SMTP/Resend/Brevo responsibilities.
 - [ ] Add unsubscribe and provider webhook processing.
@@ -1052,12 +1052,14 @@ Existing endpoints, records, and preferences remain compatible until deployed cl
 
 ## 17. Open product decisions before Phase 0 closes
 
-1. Which security/account events must use every reachable channel, and which remain email-only?
-2. Which notification categories appear in the first settings matrix?
-3. What should the default engagement interruption budget be, and may users increase it?
-4. Which learning events are immediate versus digest by default?
+Decisions 2, 3, and 6 were answered on 2026-09-01 and are implemented in the settings contract. Decision 1 is answered only for the mandatory floor; decision 4 is answered only for the categories the first matrix exposes. The rest remain open.
+
+1. Which security/account events must use every reachable channel, and which remain email-only? — **Partly answered: security and account-recovery email is mandatory and cannot be switched off. Which of those events may also use other channels is still open.**
+2. Which notification categories appear in the first settings matrix? — **Answered: Learning, Progress, Social & classroom, and Product updates.**
+3. What should the default engagement interruption budget be, and may users increase it? — **Answered: five optional interruptions per local day, lowerable to one and not raisable past five.**
+4. Which learning events are immediate versus digest by default? — **Partly answered at category level: Learning and Progress are immediate in-app, external channels start off, and the only digest offered is weekly and opt-in. Per-type defaults inside those categories are still open.**
 5. How long should notification history and interaction-level analytics be retained?
-6. Are email open pixels acceptable under Maigie's privacy policy, or should evaluation rely on clicks/actions only?
+6. Are email open pixels acceptable under Maigie's privacy policy, or should evaluation rely on clicks/actions only? — **Answered: no open pixels. Evaluation uses clicks and meaningful actions, and the settings response states this.**
 7. Which countries/ages require additional consent handling?
 8. What exact product outcomes define success for each initial intelligence-eligible notification type?
 9. Should social chat notifications join this platform in the first migration or after learning/progress notifications stabilize?

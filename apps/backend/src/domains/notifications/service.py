@@ -23,7 +23,13 @@ from src.shared.time import (
 )
 
 from .db_models import Notification, NotificationInteraction
-from .models import MobilePushInstallationUpsert, NotificationInteractionCreate
+from .models import (
+    MobilePushInstallationUpsert,
+    NotificationCategorySetting,
+    NotificationInteractionCreate,
+    NotificationSettingsResponse,
+    NotificationSettingsUpdate,
+)
 from .repository import notification_repo
 from .taxonomy import (
     canonical_action_payload,
@@ -38,6 +44,194 @@ PRIORITY_TIME_CRITICAL = 1
 DEFAULT_MAX_DAILY = 5
 MIN_HISTORY_LIMIT = 1
 MAX_HISTORY_LIMIT = 100
+
+_SETTINGS_CATEGORIES: dict[str, tuple[str, ...]] = {
+    "LEARNING": ("LEARNING",),
+    "PROGRESS": ("PROGRESS",),
+    "SOCIAL_CLASSROOM": ("SOCIAL", "CLASSROOM"),
+    "PRODUCT_UPDATES": ("OPERATIONS",),
+}
+_DEFAULT_IN_APP = {"LEARNING": True, "PROGRESS": True}
+
+
+def _effective_category_setting(
+    key: str, preferences: list[Any], legacy: Any
+) -> NotificationCategorySetting:
+    categories = _SETTINGS_CATEGORIES[key]
+
+    def rows(channel: str, *, exact: bool) -> list[Any]:
+        return [
+            row
+            for row in preferences
+            if row.category in categories
+            and row.channel == channel
+            and (row.notification_type is not None) is exact
+        ]
+
+    def enabled(channel: str, default: bool = False) -> bool:
+        category_rows = rows(channel, exact=False)
+        if category_rows:
+            return all(row.enabled and row.frequency == "IMMEDIATE" for row in category_rows)
+        exact_rows = rows(channel, exact=True)
+        if exact_rows:
+            return any(row.enabled and row.frequency == "IMMEDIATE" for row in exact_rows)
+        return default
+
+    email_rows = rows("EMAIL", exact=False) or rows("EMAIL", exact=True)
+    if any(row.enabled and row.frequency == "DIGEST" for row in email_rows):
+        email_frequency = "WEEKLY"
+    elif any(row.enabled and row.frequency == "IMMEDIATE" for row in email_rows):
+        email_frequency = "IMMEDIATE"
+    else:
+        email_frequency = "OFF"
+
+    # Legacy fallback is used only when normalized rows are absent.
+    if not email_rows and legacy is not None:
+        if key == "LEARNING" and legacy.email_schedule_reminder:
+            email_frequency = "IMMEDIATE"
+        elif key == "PROGRESS" and legacy.email_weekly_tips:
+            email_frequency = "WEEKLY"
+
+    mobile_default = False
+    if not rows("MOBILE_PUSH", exact=False) and not rows("MOBILE_PUSH", exact=True):
+        if key == "LEARNING" and legacy is not None:
+            mobile_default = bool(legacy.push_schedule_reminder or legacy.push_study_tips)
+
+    return NotificationCategorySetting(
+        category=key,
+        in_app=enabled("IN_APP", _DEFAULT_IN_APP.get(key, False)),
+        mobile_push=enabled("MOBILE_PUSH", mobile_default),
+        email_frequency=email_frequency,
+    )
+
+
+async def get_notification_settings(*, user_id: str) -> NotificationSettingsResponse:
+    snapshot = await notification_repo.notification_settings_snapshot(user_id)
+    policy = snapshot["policy"]
+    legacy = snapshot["legacy"]
+    profile = snapshot["profile"]
+    preferences = snapshot["preferences"]
+    return NotificationSettingsResponse(
+        engagement_enabled=(
+            bool(policy.engagement_enabled)
+            if policy is not None
+            else bool(legacy.notifications if legacy is not None else False)
+        ),
+        timezone=(
+            policy.timezone
+            if policy is not None
+            else (legacy.timezone if legacy is not None else "UTC")
+        ),
+        timezone_source=(
+            policy.timezone_source
+            if policy is not None
+            else (legacy.timezone_source if legacy is not None else None)
+        ),
+        quiet_hours_start=(
+            policy.quiet_hours_start
+            if policy is not None
+            else getattr(profile, "quiet_hours_start", None)
+        ),
+        quiet_hours_end=(
+            policy.quiet_hours_end
+            if policy is not None
+            else getattr(profile, "quiet_hours_end", None)
+        ),
+        max_daily_notifications=min(
+            5,
+            max(
+                1,
+                (
+                    policy.max_daily_notifications
+                    if policy is not None
+                    else (getattr(profile, "max_daily_notifications", None) or 5)
+                ),
+            ),
+        ),
+        digest_local_time=(
+            policy.digest_local_time if policy and policy.digest_local_time else "09:00"
+        ),
+        digest_day_of_week=(
+            policy.digest_day_of_week if policy and policy.digest_day_of_week is not None else 0
+        ),
+        categories=[
+            _effective_category_setting(key, preferences, legacy) for key in _SETTINGS_CATEGORIES
+        ],
+    )
+
+
+async def update_notification_settings(
+    *, user_id: str, request: NotificationSettingsUpdate
+) -> NotificationSettingsResponse:
+    current = await notification_repo.notification_settings_snapshot(user_id)
+    policy = current["policy"]
+    legacy = current["legacy"]
+    preferences: list[dict[str, Any]] = []
+    by_key = {item.category: item for item in request.categories}
+    for key, database_categories in _SETTINGS_CATEGORIES.items():
+        item = by_key[key]
+        email_enabled = item.email_frequency != "OFF"
+        email_frequency = "DIGEST" if item.email_frequency == "WEEKLY" else item.email_frequency
+        for category in database_categories:
+            preferences.extend(
+                [
+                    {
+                        "category": category,
+                        "channel": "IN_APP",
+                        "enabled": item.in_app,
+                        "frequency": "IMMEDIATE" if item.in_app else "OFF",
+                        "digest_period": None,
+                    },
+                    {
+                        "category": category,
+                        "channel": "MOBILE_PUSH",
+                        "enabled": item.mobile_push,
+                        "frequency": "IMMEDIATE" if item.mobile_push else "OFF",
+                        "digest_period": None,
+                    },
+                    {
+                        "category": category,
+                        "channel": "EMAIL",
+                        "enabled": email_enabled,
+                        "frequency": email_frequency,
+                        "digest_period": "WEEKLY" if item.email_frequency == "WEEKLY" else None,
+                    },
+                ]
+            )
+
+    learning = by_key["LEARNING"]
+    progress = by_key["PROGRESS"]
+    await notification_repo.update_notification_settings(
+        user_id,
+        policy_values={
+            "engagement_enabled": request.engagement_enabled,
+            "timezone": (
+                policy.timezone
+                if policy is not None
+                else (legacy.timezone if legacy is not None else "UTC")
+            ),
+            "timezone_source": (
+                policy.timezone_source
+                if policy is not None
+                else (legacy.timezone_source if legacy is not None else None)
+            ),
+            "quiet_hours_start": request.quiet_hours_start,
+            "quiet_hours_end": request.quiet_hours_end,
+            "max_daily_notifications": request.max_daily_notifications,
+            "digest_local_time": request.digest_local_time,
+            "digest_day_of_week": request.digest_day_of_week,
+        },
+        preferences=preferences,
+        legacy_values={
+            "notifications": request.engagement_enabled,
+            "email_schedule_reminder": learning.email_frequency == "IMMEDIATE",
+            "email_weekly_tips": progress.email_frequency == "WEEKLY",
+            "email_morning_schedule": False,
+            "push_schedule_reminder": learning.mobile_push,
+            "push_study_tips": learning.mobile_push,
+        },
+    )
+    return await get_notification_settings(user_id=user_id)
 
 
 async def create_notification(

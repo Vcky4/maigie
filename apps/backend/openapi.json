@@ -8747,6 +8747,45 @@
         "title": "NoteVersionResponse",
         "type": "object"
       },
+      "NotificationCategorySetting": {
+        "properties": {
+          "category": {
+            "enum": [
+              "LEARNING",
+              "PROGRESS",
+              "SOCIAL_CLASSROOM",
+              "PRODUCT_UPDATES"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "emailFrequency": {
+            "enum": [
+              "OFF",
+              "IMMEDIATE",
+              "WEEKLY"
+            ],
+            "title": "Emailfrequency",
+            "type": "string"
+          },
+          "inApp": {
+            "title": "Inapp",
+            "type": "boolean"
+          },
+          "mobilePush": {
+            "title": "Mobilepush",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "category",
+          "inApp",
+          "mobilePush",
+          "emailFrequency"
+        ],
+        "title": "NotificationCategorySetting",
+        "type": "object"
+      },
       "NotificationHistoryPage": {
         "properties": {
           "items": {
@@ -9300,6 +9339,174 @@
           "createdAt"
         ],
         "title": "NotificationResponse",
+        "type": "object"
+      },
+      "NotificationSettingsResponse": {
+        "properties": {
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationCategorySetting"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Categories",
+            "type": "array"
+          },
+          "digestDayOfWeek": {
+            "maximum": 6.0,
+            "minimum": 0.0,
+            "title": "Digestdayofweek",
+            "type": "integer"
+          },
+          "digestLocalTime": {
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+            "title": "Digestlocaltime",
+            "type": "string"
+          },
+          "emailOpenTracking": {
+            "const": false,
+            "default": false,
+            "title": "Emailopentracking",
+            "type": "boolean"
+          },
+          "engagementEnabled": {
+            "title": "Engagementenabled",
+            "type": "boolean"
+          },
+          "mandatoryEmailTypes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Mandatoryemailtypes",
+            "type": "array"
+          },
+          "maxDailyNotifications": {
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Maxdailynotifications",
+            "type": "integer"
+          },
+          "quietHoursEnd": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiethoursend"
+          },
+          "quietHoursStart": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiethoursstart"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "timezoneSource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezonesource"
+          },
+          "webPushAvailable": {
+            "default": false,
+            "title": "Webpushavailable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "engagementEnabled",
+          "maxDailyNotifications",
+          "digestLocalTime",
+          "digestDayOfWeek",
+          "categories",
+          "timezone"
+        ],
+        "title": "NotificationSettingsResponse",
+        "type": "object"
+      },
+      "NotificationSettingsUpdate": {
+        "properties": {
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationCategorySetting"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Categories",
+            "type": "array"
+          },
+          "digestDayOfWeek": {
+            "maximum": 6.0,
+            "minimum": 0.0,
+            "title": "Digestdayofweek",
+            "type": "integer"
+          },
+          "digestLocalTime": {
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+            "title": "Digestlocaltime",
+            "type": "string"
+          },
+          "engagementEnabled": {
+            "title": "Engagementenabled",
+            "type": "boolean"
+          },
+          "maxDailyNotifications": {
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Maxdailynotifications",
+            "type": "integer"
+          },
+          "quietHoursEnd": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiethoursend"
+          },
+          "quietHoursStart": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiethoursstart"
+          }
+        },
+        "required": [
+          "engagementEnabled",
+          "maxDailyNotifications",
+          "digestLocalTime",
+          "digestDayOfWeek",
+          "categories"
+        ],
+        "title": "NotificationSettingsUpdate",
         "type": "object"
       },
       "OAuthAuthorizeResponse": {
@@ -33012,6 +33219,76 @@
           }
         ],
         "summary": "Read All",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/notifications/settings": {
+      "get": {
+        "operationId": "get_notification_settings_api_v1_notifications_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Notification Settings",
+        "tags": [
+          "notifications"
+        ]
+      },
+      "put": {
+        "operationId": "put_notification_settings_api_v1_notifications_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Put Notification Settings",
         "tags": [
           "notifications"
         ]

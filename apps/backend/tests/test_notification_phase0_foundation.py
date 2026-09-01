@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from fastapi.routing import APIRoute
@@ -95,3 +96,121 @@ def test_operational_metrics_route_requires_staff_authentication() -> None:
     }
 
     assert "get_staff_user" in dependency_names
+
+
+@pytest.mark.asyncio
+async def test_notification_settings_defaults_are_conservative(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    async def fake_snapshot(user_id: str) -> dict[str, Any]:
+        assert user_id == "user-1"
+        return {
+            "policy": None,
+            "preferences": [],
+            "legacy": SimpleNamespace(
+                notifications=True,
+                timezone="Africa/Lagos",
+                timezone_source="MANUAL",
+                email_schedule_reminder=False,
+                email_weekly_tips=False,
+                push_schedule_reminder=False,
+                push_study_tips=False,
+            ),
+            "profile": None,
+        }
+
+    monkeypatch.setattr(service.notification_repo, "notification_settings_snapshot", fake_snapshot)
+
+    result = await service.get_notification_settings(user_id="user-1")
+    by_category = {item.category: item for item in result.categories}
+    assert result.engagement_enabled is True
+    assert result.max_daily_notifications == 5
+    assert by_category["LEARNING"].in_app is True
+    assert by_category["PROGRESS"].in_app is True
+    assert by_category["SOCIAL_CLASSROOM"].in_app is False
+    assert all(item.mobile_push is False for item in result.categories)
+    assert all(item.email_frequency == "OFF" for item in result.categories)
+    assert result.web_push_available is False
+    assert result.email_open_tracking is False
+
+
+@pytest.mark.asyncio
+async def test_notification_settings_update_dual_writes_legacy_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from src.domains.notifications.models import (
+        NotificationCategorySetting,
+        NotificationSettingsUpdate,
+    )
+
+    current: dict[str, Any] = {
+        "policy": SimpleNamespace(timezone="Europe/London", timezone_source="MANUAL"),
+        "preferences": [],
+        "legacy": None,
+        "profile": None,
+    }
+    captured: dict[str, Any] = {}
+
+    async def fake_snapshot(user_id: str) -> dict[str, Any]:
+        return current
+
+    async def fake_update(user_id: str, **values: Any) -> None:
+        captured["user_id"] = user_id
+        captured.update(values)
+
+    async def fake_get(*, user_id: str) -> str:
+        return "updated"
+
+    monkeypatch.setattr(service.notification_repo, "notification_settings_snapshot", fake_snapshot)
+    monkeypatch.setattr(service.notification_repo, "update_notification_settings", fake_update)
+    monkeypatch.setattr(service, "get_notification_settings", fake_get)
+
+    request = NotificationSettingsUpdate(
+        engagement_enabled=True,
+        quiet_hours_start="22:00",
+        quiet_hours_end="07:00",
+        max_daily_notifications=3,
+        digest_local_time="09:00",
+        digest_day_of_week=0,
+        categories=[
+            NotificationCategorySetting(
+                category="LEARNING", in_app=True, mobile_push=True, email_frequency="IMMEDIATE"
+            ),
+            NotificationCategorySetting(
+                category="PROGRESS", in_app=True, mobile_push=False, email_frequency="WEEKLY"
+            ),
+            NotificationCategorySetting(
+                category="SOCIAL_CLASSROOM",
+                in_app=False,
+                mobile_push=False,
+                email_frequency="OFF",
+            ),
+            NotificationCategorySetting(
+                category="PRODUCT_UPDATES",
+                in_app=False,
+                mobile_push=False,
+                email_frequency="OFF",
+            ),
+        ],
+    )
+
+    assert (
+        await service.update_notification_settings(user_id="user-1", request=request) == "updated"
+    )
+    assert captured["user_id"] == "user-1"
+    assert len(captured["preferences"]) == 15
+    assert captured["legacy_values"] == {
+        "notifications": True,
+        "email_schedule_reminder": True,
+        "email_weekly_tips": True,
+        "email_morning_schedule": False,
+        "push_schedule_reminder": True,
+        "push_study_tips": True,
+    }
+    policy = captured["policy_values"]
+    assert policy["timezone"] == "Europe/London"
+    assert policy["max_daily_notifications"] == 3

@@ -872,6 +872,139 @@ class NotificationRepository:
                     )
             return len(rows)
 
+    async def notification_settings_snapshot(self, user_id: str) -> dict[str, Any]:
+        """Load normalized policy/preferences and legacy compatibility sources."""
+
+        from src.domains.identity.db_models import UserPreferences
+        from src.domains.personal_learning.db_models import LearningProfile
+
+        factory = get_session_factory()
+        async with factory() as session:
+            policy = await session.scalar(
+                select(NotificationPolicy).where(NotificationPolicy.user_id == user_id)
+            )
+            preferences = list(
+                (
+                    await session.execute(
+                        select(NotificationPreference).where(
+                            NotificationPreference.user_id == user_id
+                        )
+                    )
+                ).scalars()
+            )
+            legacy = await session.scalar(
+                select(UserPreferences).where(UserPreferences.user_id == user_id)
+            )
+            profile = await session.scalar(
+                select(LearningProfile).where(LearningProfile.user_id == user_id)
+            )
+            return {
+                "policy": policy,
+                "preferences": preferences,
+                "legacy": legacy,
+                "profile": profile,
+            }
+
+    async def update_notification_settings(
+        self,
+        user_id: str,
+        *,
+        policy_values: dict[str, Any],
+        preferences: list[dict[str, Any]],
+        legacy_values: dict[str, bool],
+    ) -> None:
+        """Atomically update normalized settings and fields still read by legacy paths."""
+
+        from src.domains.identity.db_models import UserPreferences
+        from src.domains.personal_learning.db_models import LearningProfile
+
+        factory = get_session_factory()
+        async with factory() as session, session.begin():
+            await session.execute(
+                select(
+                    func.pg_advisory_xact_lock(
+                        func.hashtextextended(f"notification-settings:{user_id}", 0)
+                    )
+                )
+            )
+            policy = await session.scalar(
+                select(NotificationPolicy)
+                .where(NotificationPolicy.user_id == user_id)
+                .with_for_update()
+            )
+            if policy is None:
+                policy = NotificationPolicy(user_id=user_id)
+                session.add(policy)
+            for key, value in policy_values.items():
+                setattr(policy, key, value)
+
+            legacy = await session.scalar(
+                select(UserPreferences).where(UserPreferences.user_id == user_id).with_for_update()
+            )
+            if legacy is None:
+                legacy = UserPreferences(user_id=user_id)
+                session.add(legacy)
+            for key, value in legacy_values.items():
+                setattr(legacy, key, value)
+
+            profile = await session.scalar(
+                select(LearningProfile).where(LearningProfile.user_id == user_id).with_for_update()
+            )
+            if profile is None:
+                profile = LearningProfile(user_id=user_id)
+                session.add(profile)
+            profile.quiet_hours_start = policy_values["quiet_hours_start"]
+            profile.quiet_hours_end = policy_values["quiet_hours_end"]
+            profile.max_daily_notifications = policy_values["max_daily_notifications"]
+
+            existing = list(
+                (
+                    await session.execute(
+                        select(NotificationPreference)
+                        .where(NotificationPreference.user_id == user_id)
+                        .with_for_update()
+                    )
+                ).scalars()
+            )
+            category_rows = {
+                (row.category, row.channel): row
+                for row in existing
+                if row.notification_type is None
+            }
+            for values in preferences:
+                key = (values["category"], values["channel"])
+                row = category_rows.get(key)
+                if row is None:
+                    row = NotificationPreference(
+                        user_id=user_id,
+                        category=values["category"],
+                        notification_type=None,
+                        channel=values["channel"],
+                        enabled=values["enabled"],
+                        frequency=values["frequency"],
+                        digest_period=values["digest_period"],
+                    )
+                    session.add(row)
+                    category_rows[key] = row
+                else:
+                    row.enabled = values["enabled"]
+                    row.frequency = values["frequency"]
+                    row.digest_period = values["digest_period"]
+
+                # The UI is category-level. Keep previously migrated exact overrides
+                # in the selected category aligned so they cannot outrank the new choice.
+                for exact in existing:
+                    if (
+                        exact.notification_type is not None
+                        and exact.category == values["category"]
+                        and exact.channel == values["channel"]
+                    ):
+                        exact.enabled = values["enabled"]
+                        exact.frequency = values["frequency"]
+                        exact.digest_period = values["digest_period"]
+
+            await session.flush()
+
     async def lifecycle_metrics(self, *, now: datetime) -> dict[str, Any]:
         """Return database-backed, low-cardinality operational lifecycle metrics."""
 

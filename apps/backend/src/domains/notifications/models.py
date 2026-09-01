@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from src.shared.schemas import CamelModel
 
@@ -137,3 +137,49 @@ class PushInstallationList(CamelModel):
 class PushInstallationRevoke(CamelModel):
     installation_id: str = Field(min_length=1, max_length=200)
     revocation_secret: str = Field(min_length=32, max_length=200)
+
+
+NotificationSettingsCategoryKey = Literal[
+    "LEARNING",
+    "PROGRESS",
+    "SOCIAL_CLASSROOM",
+    "PRODUCT_UPDATES",
+]
+NotificationEmailFrequency = Literal["OFF", "IMMEDIATE", "WEEKLY"]
+
+
+class NotificationCategorySetting(CamelModel):
+    category: NotificationSettingsCategoryKey
+    in_app: bool
+    mobile_push: bool
+    email_frequency: NotificationEmailFrequency
+
+
+class NotificationSettingsUpdate(CamelModel):
+    engagement_enabled: bool
+    quiet_hours_start: str | None = Field(default=None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    quiet_hours_end: str | None = Field(default=None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    max_daily_notifications: int = Field(ge=1, le=5)
+    digest_local_time: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    digest_day_of_week: int = Field(ge=0, le=6)
+    categories: list[NotificationCategorySetting] = Field(min_length=4, max_length=4)
+
+    @model_validator(mode="after")
+    def validate_complete_contract(self) -> "NotificationSettingsUpdate":
+        if (self.quiet_hours_start is None) != (self.quiet_hours_end is None):
+            raise ValueError("quietHoursStart and quietHoursEnd must both be set or both be null")
+        expected = {"LEARNING", "PROGRESS", "SOCIAL_CLASSROOM", "PRODUCT_UPDATES"}
+        actual = {item.category for item in self.categories}
+        if actual != expected or len(actual) != len(self.categories):
+            raise ValueError("categories must contain each supported category exactly once")
+        return self
+
+
+class NotificationSettingsResponse(NotificationSettingsUpdate):
+    timezone: str
+    timezone_source: str | None = None
+    web_push_available: bool = False
+    email_open_tracking: Literal[False] = False
+    mandatory_email_types: list[str] = Field(
+        default_factory=lambda: ["SECURITY", "ACCOUNT_RECOVERY"]
+    )

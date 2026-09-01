@@ -30,6 +30,8 @@ from .models import (
     NotificationInteractionCreate,
     NotificationInteractionResponse,
     NotificationItem,
+    NotificationSettingsResponse,
+    NotificationSettingsUpdate,
     PushInstallationList,
     PushInstallationResponse,
     PushInstallationRevoke,
@@ -93,6 +95,18 @@ async def disable_push_installation(installation_id: str, current_user: CurrentU
     ):
         raise HTTPException(status_code=404, detail="Push installation not found")
     return Response(status_code=204)
+
+
+@router.get("/settings", response_model=NotificationSettingsResponse)
+async def get_notification_settings(current_user: CurrentUser) -> NotificationSettingsResponse:
+    return await service.get_notification_settings(user_id=current_user.id)
+
+
+@router.put("/settings", response_model=NotificationSettingsResponse)
+async def put_notification_settings(
+    body: NotificationSettingsUpdate, current_user: CurrentUser
+) -> NotificationSettingsResponse:
+    return await service.update_notification_settings(user_id=current_user.id, request=body)
 
 
 @router.get("", response_model=NotificationHistoryPage)
