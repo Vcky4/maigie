@@ -17,7 +17,7 @@ def send_email_task(to_email: str, template: str, context: dict):
     """Send a transactional email."""
     import asyncio
 
-    from src.integrations.brevo import send_template_email
+    from src.domains.identity.emails import send_template_email
 
     loop = asyncio.new_event_loop()
     try:

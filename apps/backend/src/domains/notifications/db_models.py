@@ -691,3 +691,66 @@ class EmailProviderEvent(Base, TimestampMixin):
         Index("EmailProviderEvent_providerMessageId_idx", "providerMessageId"),
         Index("EmailProviderEvent_occurredAt_idx", "occurredAt"),
     )
+
+
+class OutboundMessage(Base, TimestampMixin):
+    """Evidence that a non-notification message was sent, and what the provider said.
+
+    Engagement notifications have `NotificationDelivery`; these are the messages that
+    deliberately do not go through consent or the orchestrator — email verification, password
+    reset, billing receipts, space invites. They are mandatory or user-commanded, so forcing them
+    through an engagement policy would be wrong, but that left them with no record at all: when a
+    learner says a reset code never arrived, there was nothing to check.
+
+    Deliberately not linked to `Notification`: there is no notification, and inventing one would
+    put a security email into a learner's notification centre.
+
+    Content is never stored. Not the code, not the body, not the address — only its hash, the
+    class of message, a purpose label, and the provider's own outcome. That is enough to answer
+    "did we send it, when, and what did the provider say", which is the whole question.
+    """
+
+    __tablename__ = "OutboundMessage"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    #: Coarse class, used to decide retention and to keep security mail auditable separately.
+    message_class: Mapped[str] = mapped_column("messageClass", String(16), nullable=False)
+    #: Which message this was, e.g. `verification`, `password_reset`, `space_invite`.
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    address_hash: Mapped[str] = mapped_column("addressHash", String(64), nullable=False)
+    #: Nullable because the account may not exist yet — an invite goes to an address, not a user.
+    user_id: Mapped[str | None] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="SET NULL"), nullable=True
+    )
+    provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    provider_message_id: Mapped[str | None] = mapped_column(
+        "providerMessageId", String, nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error_code: Mapped[str | None] = mapped_column("errorCode", String(64), nullable=True)
+    error_detail: Mapped[str | None] = mapped_column("errorDetail", Text, nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(
+        "requestedAt", DateTime(timezone=True), nullable=False
+    )
+    duration_ms: Mapped[int | None] = mapped_column("durationMs", Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "\"messageClass\" IN ('AUTH', 'SECURITY', 'BILLING', 'MEMBERSHIP', 'OPERATIONS')",
+            name="OutboundMessage_messageClass_check",
+        ),
+        CheckConstraint(
+            "status IN ('ACCEPTED', 'FAILED', 'SKIPPED')",
+            name="OutboundMessage_status_check",
+        ),
+        Index("OutboundMessage_addressHash_createdAt_idx", "addressHash", "createdAt"),
+        Index("OutboundMessage_userId_createdAt_idx", "userId", "createdAt"),
+        Index("OutboundMessage_purpose_createdAt_idx", "purpose", "createdAt"),
+        Index(
+            "OutboundMessage_providerMessageId_idx",
+            "providerMessageId",
+            postgresql_where=text('"providerMessageId" IS NOT NULL'),
+        ),
+    )
