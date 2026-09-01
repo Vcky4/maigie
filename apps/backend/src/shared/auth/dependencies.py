@@ -2,10 +2,12 @@
 FastAPI dependency injection for authentication and authorization.
 
 Provides reusable dependencies that protect routes by validating JWT tokens
-and enforcing role/tier requirements.
+and enforcing role requirements.
+
+Entitlement is deliberately not here — see the note where `require_premium` used to be.
 
 Usage:
-    from src.shared.auth import CurrentUser, StaffUser, PremiumUser
+    from src.shared.auth import CurrentUser, StaffUser
 
     @router.get("/me")
     async def get_me(user: CurrentUser):
@@ -213,30 +215,22 @@ SuperAdminUser = Annotated[User, Depends(get_super_admin_user)]
 
 
 # ---------------------------------------------------------------------------
-# Tier-based access
+# Tier-based access — deleted
 # ---------------------------------------------------------------------------
-
-PAID_TIERS = (
-    "PREMIUM_MONTHLY",
-    "PREMIUM_YEARLY",
-    "STUDY_CIRCLE_MONTHLY",
-    "STUDY_CIRCLE_YEARLY",
-    "SQUAD_MONTHLY",
-    "SQUAD_YEARLY",
-)
-
-
-async def require_premium(current_user: CurrentUser) -> User:
-    """Require an active paid subscription."""
-    if str(current_user.tier) not in PAID_TIERS:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This feature requires a paid plan. Start a free trial to unlock it.",
-        )
-    return current_user
-
-
-PremiumUser = Annotated[User, Depends(require_premium)]
+#
+# `PAID_TIERS`, `require_premium` and `PremiumUser` lived here and were wired to zero endpoints: a
+# working gate that gated nothing, in a codebase where four mechanisms already disagreed about what
+# "paid" meant. This was the third of the four, and the only one whose answer nobody consumed.
+#
+# It was also wrong in the way that mattered. It matched a six-tier tuple against `User.tier` and
+# knew nothing about trials, so had anything ever depended on it, a trialling learner would have been
+# refused a feature that `feature_tier_service` was granting them in the same request.
+#
+# Replaced by `billing.services.entitlement_service.resolve`, which is the one resolver
+# (MAIGIE_PLUS_COMMERCIAL_PLAN.md Decision B). A route needing Plus asks
+# `feature_tier_service.check_capability` for the specific capability and returns an
+# `UpgradeRequiredDetail`, rather than asking a dependency whether the learner is generically paid —
+# the response conventions want to name what is locked and what unlocking it is worth.
 
 
 # ---------------------------------------------------------------------------

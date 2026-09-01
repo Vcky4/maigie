@@ -41,8 +41,9 @@ decides access, not a stub.
 The pure logic is unchanged. Two reads were rewritten because they spoke to something that no
 longer exists:
 
-- ``_fetch_personal_tier`` read ``User.tier`` through ``prisma.user.find_unique``. Now a SQLAlchemy
-  ``select`` on the ``User`` model.
+- ``_fetch_personal_tier`` read ``User.tier`` through ``prisma.user.find_unique``, then a SQLAlchemy
+  ``select`` on the ``User`` model. It is now gone entirely: personal-scope resolution delegates to
+  ``billing.services.entitlement_service.resolve``, which sees trials and passes as well as tiers.
 - ``_fetch_seat_tier`` imported ``src.services.seat_service.get_seat_tier``, and a second
   module-level helper (``read_seat_tier_for_user``) read ``CircleMember.seatTier`` through Prisma
   directly. Both now delegate to the migrated ``learning_spaces.services.seat_impl.get_seat_tier``,
@@ -457,28 +458,33 @@ class FeatureFlagService:
         user_id: str,
         scope: UsageScope,
         *,
-        personal_tier: str | None = None,
         seat_tier: str | None = None,
     ) -> EffectiveTier:
         """Resolve the effective tier for an AI request under a given scope.
 
-        For ``scope == "personal"``, returns ``"plus"`` if the user's
-        Personal_Tier maps to PLUS (any of PREMIUM_*, PLUS_*, STUDY_CIRCLE_*,
-        SQUAD_* — the legacy paid tiers retain paid capabilities until
-        migration runs), else ``"free"``.
+        For ``scope == "personal"``, delegates to
+        ``billing.services.entitlement_service.resolve`` — the one resolver (Decision B). A
+        subscriber, a pass holder and a trialling learner all resolve to ``"plus"`` here, which is
+        the point: until this delegation existed, a learner on a trial got Plus quiz modes and
+        Plus documents and then free-tier *models*, because this method read ``User.tier`` and
+        nothing else knew a trial was running (drift item 11).
 
         For ``scope == "circle:{space_id}"``, returns ``"plus"`` if the
         user's Seat_Tier in that Space is ``PLUS_SEAT``, else ``"free"``.
-        Independent of Personal_Tier (Requirements 7.2, 7.3, 7.4).
+        Independent of personal entitlement (Requirements 7.2, 7.3, 7.4), and deliberately not
+        routed through ``resolve()`` — that function takes a ``user_id`` and nothing else so it
+        cannot become the Space resolver (Decision F).
 
-        Pre-resolved values may be passed via ``personal_tier`` /
-        ``seat_tier`` to avoid redundant DB reads when the caller already
-        loaded them.
+        **``personal_tier`` is gone from this signature, not merely unused.** It was a pre-loaded
+        ``User.tier`` offered as a way to skip a read, and a tier string cannot answer this question
+        any more: it says nothing about a trial or a pass. Leaving the parameter in place would let a
+        caller pass ``"FREE"`` for a trialling learner and reintroduce drift 11 through the door
+        marked optimisation. ``seat_tier`` stays, because a seat tier *is* the whole answer under
+        space scope.
 
         Args:
             user_id: The requesting User's id.
             scope: Either ``"personal"`` or ``"circle:{space_id}"``.
-            personal_tier: Optional pre-loaded ``User.tier`` string.
             seat_tier: Optional pre-loaded ``SpaceMember.seatTier`` string.
 
         Returns:
@@ -488,10 +494,10 @@ class FeatureFlagService:
         kind, space_id = parse_scope(scope)
 
         if kind == "personal":
-            tier_value = personal_tier
-            if tier_value is None:
-                tier_value = await self._fetch_personal_tier(user_id)
-            return self._personal_tier_to_effective(tier_value)
+            from src.domains.billing.services import entitlement_service
+
+            entitlement = await entitlement_service.resolve(user_id)
+            return entitlement.tier
 
         # Space scope
         assert space_id is not None  # parse_scope guarantees this
@@ -500,40 +506,9 @@ class FeatureFlagService:
             seat_value = await self._fetch_seat_tier(user_id, space_id)
         return "plus" if str(seat_value).upper() == "PLUS_SEAT" else "free"
 
-    @staticmethod
-    def _personal_tier_to_effective(tier_value: str | None) -> EffectiveTier:
-        """Map a stored Personal_Tier enum value to an EffectiveTier.
-
-        FREE → ``"free"``. Any non-FREE value (PREMIUM_*, PLUS_*,
-        STUDY_CIRCLE_*, SQUAD_*) → ``"plus"`` so that paid users retain
-        paid capabilities through the Circle Reimagining migration window.
-        """
-        if not tier_value:
-            return "free"
-        return "free" if str(tier_value).upper() == "FREE" else "plus"
-
-    @staticmethod
-    async def _fetch_personal_tier(user_id: str) -> str | None:
-        """Read ``User.tier``.
-
-        Returns ``None`` if the user is not found or the read fails, which the caller maps to
-        ``"free"``. A failure to read a tier must not fail the request; it gates as Free.
-        """
-        from sqlalchemy import select
-
-        from src.domains.identity.db_models import User
-        from src.shared.database import get_session_factory
-
-        try:
-            factory = get_session_factory()
-            async with factory() as session:
-                result = await session.execute(select(User.tier).where(User.id == user_id))
-                tier = result.scalar_one_or_none()
-        except Exception:
-            logger.exception("Failed to read User.tier for user_id=%s", user_id)
-            return None
-
-        return str(tier) if tier else None
+    # `_fetch_personal_tier` and `_personal_tier_to_effective` were deleted with the personal branch
+    # they served. `entitlement_service.resolve` does that read, including the trial the tier alone
+    # could not see, and it gates as Free on a failed read for the same reason this did.
 
     @staticmethod
     async def _fetch_seat_tier(user_id: str, space_id: str) -> str:

@@ -16,7 +16,7 @@ from src.config import Settings, get_settings
 from src.shared.auth import CurrentUser, StaffUser
 
 from . import models
-from .services import credit_service, subscription_service
+from .services import credit_service, entitlement_service, subscription_service
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,36 @@ router = APIRouter(tags=["billing"])
 async def plan_catalog():
     """Return the active product catalog (no auth required)."""
     return await subscription_service.get_plan_catalog()
+
+
+# ===========================================================================
+# Entitlement
+# ===========================================================================
+
+
+@router.get("/entitlement", response_model=models.EntitlementResponse)
+async def entitlement(current_user: CurrentUser):
+    """Resolve the caller's personal entitlement.
+
+    One endpoint over the one resolver, so a client never has to reconstruct entitlement from
+    `User.tier` plus a trial field plus, later, a pass. Every gate on the server already reads
+    `entitlement_service.resolve`; this is the same answer, so a locked panel and the screen that
+    explains why it is locked cannot disagree.
+
+    Personal scope only. A learner's seat in a Space is a different question with a different answer
+    and is not served here (Decision F).
+    """
+    resolved = await entitlement_service.resolve(current_user.id)
+    return models.EntitlementResponse(
+        tier=resolved.tier,
+        source=resolved.source,
+        expiresAt=resolved.expires_at,
+        passId=resolved.pass_id,
+        subscriptionTier=resolved.subscription_tier,
+        isTrial=resolved.is_trial,
+        trialDaysRemaining=resolved.trial_days_remaining,
+        windowAllowance=resolved.window_allowance,
+    )
 
 
 # ===========================================================================

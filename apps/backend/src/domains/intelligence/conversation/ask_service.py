@@ -1873,9 +1873,10 @@ async def answer(
         )
 
     # --- generation --------------------------------------------------------
-    tier = await effects.resolve_tier(
-        user.id, str(user.tier) if getattr(user, "tier", None) else None
-    )
+    # Was `resolve_tier(user.id, str(user.tier))` — the loaded tier passed in to save a read. It no
+    # longer answers the question: a trialling or pass-holding learner has `tier == "FREE"` and is
+    # entitled to Plus models. `entitlement_service` does the read.
+    tier = await effects.resolve_tier(user.id)
     preference = await effects.model_preference(user.id, "chat")
 
     async def generation_progress(*args: Any, **kwargs: Any) -> None:
@@ -2070,11 +2071,11 @@ def production_effects() -> AskEffects:
             **kwargs,
         )
 
-    async def resolve_tier(user_id: str, personal_tier: str | None) -> str:
+    async def resolve_tier(user_id: str) -> str:
         from src.domains.intelligence.reasoning.llm.feature_flags import PERSONAL_SCOPE
 
         return await get_feature_flag_service().effective_tier_for_request(
-            user_id=user_id, scope=PERSONAL_SCOPE, personal_tier=personal_tier
+            user_id=user_id, scope=PERSONAL_SCOPE
         )
 
     async def check_credits(user_obj: Any, tokens: int):

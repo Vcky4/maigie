@@ -36,6 +36,9 @@ def paths() -> set[str]:
 REACHABLE = [
     # The catalogue. Unauthenticated: a price is not private, and the pricing page needs it.
     f"{PREFIX}/billing/plans/catalog",
+    # The one resolver, served. Clients read this instead of inferring entitlement from
+    # `User.tier`, which is what every hardcoded `tierLabel` in the web app does today.
+    f"{PREFIX}/billing/entitlement",
     # Stripe subscription lifecycle.
     f"{PREFIX}/billing/subscriptions/checkout",
     f"{PREFIX}/billing/subscriptions/sync-checkout",

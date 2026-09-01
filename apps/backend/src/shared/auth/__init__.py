@@ -3,7 +3,6 @@
 from .dependencies import (
     CurrentUser,
     OptionalCurrentUser,
-    PremiumUser,
     SpaceMemberUser,
     StaffUser,
     SuperAdminUser,
@@ -11,7 +10,6 @@ from .dependencies import (
     get_current_user_optional,
     get_staff_user,
     get_super_admin_user,
-    require_premium,
     require_space_membership,
 )
 from .jwt import (
@@ -28,7 +26,6 @@ __all__ = [
     # Dependencies (type aliases for route signatures)
     "CurrentUser",
     "OptionalCurrentUser",
-    "PremiumUser",
     "SpaceMemberUser",
     "StaffUser",
     "SuperAdminUser",
@@ -37,7 +34,6 @@ __all__ = [
     "get_current_user_optional",
     "get_staff_user",
     "get_super_admin_user",
-    "require_premium",
     "require_space_membership",
     # JWT
     "create_access_token",

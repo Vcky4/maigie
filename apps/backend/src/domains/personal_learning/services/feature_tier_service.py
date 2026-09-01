@@ -13,10 +13,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
-
-from src.shared.database.session import get_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -200,38 +198,21 @@ async def get_effective_tier(
     Get the effective feature tier for a user.
 
     Returns (tier, is_trial, trial_days_remaining).
-    Considers both subscription status and active trial.
+
+    A thin caller of `entitlement_service.resolve`, which is the single thing that decides whether a
+    learner is Plus (Decision B). The three-tuple shape is kept because ~15 call sites across this
+    module, `knowledge`, `conversion_engine` and `routes` read it, and none of them needs to change
+    to gain passes: a pass holder arrives here as `("plus", False, None)`, exactly like a subscriber.
+
+    What this used to do, and why it was wrong: it read `User.tier` itself and matched
+    `startswith("PREMIUM")`, which denied every capability to `STUDY_CIRCLE_*` and `SQUAD_*` tiers
+    (drift 10) while the credit meter granted them millions of credits. Two reads, one prefix match,
+    and an answer that disagreed with three other mechanisms.
     """
-    from src.domains.personal_learning.repository import PersonalLearningRepository
+    from src.domains.billing.services import entitlement_service
 
-    repo = PersonalLearningRepository()
-
-    # Check subscription tier first
-    factory = get_session_factory()
-    async with factory() as session:
-        from sqlalchemy import select
-
-        from src.domains.identity.db_models import User
-
-        stmt = select(User.tier).where(User.id == user_id)
-        result = await session.execute(stmt)
-        row = result.scalar_one_or_none()
-
-    user_tier = str(row) if row else "FREE"
-
-    # PREMIUM subscribers get plus
-    if user_tier.startswith("PREMIUM"):
-        return "plus", False, None
-
-    # Check for active trial
-    profile = await repo.get_profile_by_user(user_id)
-    if profile and profile.trial_ends_at:
-        now = datetime.now(UTC)
-        if now < profile.trial_ends_at:
-            days_remaining = (profile.trial_ends_at - now).days
-            return "plus", True, max(0, days_remaining)
-
-    return "free", False, None
+    entitlement = await entitlement_service.resolve(user_id)
+    return entitlement.tier, entitlement.is_trial, entitlement.trial_days_remaining
 
 
 async def check_capability(

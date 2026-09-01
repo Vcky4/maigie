@@ -675,50 +675,44 @@ class TestEffectiveTierForRequest:
         )
 
     # --- Personal scope ---
+    #
+    # Personal scope no longer resolves a tier string here. It delegates to
+    # `billing.services.entitlement_service.resolve`, which sees trials and passes as well as tiers —
+    # the point of Decision B, and the fix for drift 11, where this method's tier-only read gave a
+    # trialling learner Plus capabilities and free-tier models in the same request.
+    #
+    # So these tests stub the resolver rather than passing `personal_tier`, which is gone from the
+    # signature. What each tier resolves *to* is asserted in `test_entitlement_service.py`, where the
+    # tier map lives; here the only question is whether this method returns what the resolver said.
+
+    @pytest.fixture
+    def stub_entitlement(self, monkeypatch):
+        from src.domains.billing.services import entitlement_service
+
+        def _stub(tier):
+            async def fake_resolve(user_id):
+                return entitlement_service._compose(
+                    subscription_tier="PREMIUM_MONTHLY" if tier == "plus" else "FREE",
+                    subscription_period_end=None,
+                    active_pass=None,
+                    active_trial=None,
+                )
+
+            monkeypatch.setattr(entitlement_service, "resolve", fake_resolve)
+
+        return _stub
 
     @pytest.mark.asyncio
-    async def test_personal_free_resolves_to_free(self, svc):
-        result = await svc.effective_tier_for_request(
-            user_id="u1", scope="personal", personal_tier="FREE"
-        )
+    async def test_personal_free_resolves_to_free(self, svc, stub_entitlement):
+        stub_entitlement("free")
+        result = await svc.effective_tier_for_request(user_id="u1", scope="personal")
         assert result == "free"
 
     @pytest.mark.asyncio
-    async def test_personal_premium_monthly_resolves_to_plus(self, svc):
-        result = await svc.effective_tier_for_request(
-            user_id="u1", scope="personal", personal_tier="PREMIUM_MONTHLY"
-        )
+    async def test_personal_plus_resolves_to_plus(self, svc, stub_entitlement):
+        stub_entitlement("plus")
+        result = await svc.effective_tier_for_request(user_id="u1", scope="personal")
         assert result == "plus"
-
-    @pytest.mark.asyncio
-    async def test_personal_premium_yearly_resolves_to_plus(self, svc):
-        result = await svc.effective_tier_for_request(
-            user_id="u1", scope="personal", personal_tier="PREMIUM_YEARLY"
-        )
-        assert result == "plus"
-
-    @pytest.mark.asyncio
-    async def test_personal_legacy_study_circle_resolves_to_plus(self, svc):
-        """Pre-migration STUDY_CIRCLE_* users keep Plus capabilities."""
-        result = await svc.effective_tier_for_request(
-            user_id="u1", scope="personal", personal_tier="STUDY_CIRCLE_MONTHLY"
-        )
-        assert result == "plus"
-
-    @pytest.mark.asyncio
-    async def test_personal_legacy_squad_resolves_to_plus(self, svc):
-        """Pre-migration SQUAD_* users keep Plus capabilities."""
-        result = await svc.effective_tier_for_request(
-            user_id="u1", scope="personal", personal_tier="SQUAD_YEARLY"
-        )
-        assert result == "plus"
-
-    @pytest.mark.asyncio
-    async def test_personal_none_tier_resolves_to_free(self, svc):
-        result = await svc.effective_tier_for_request(
-            user_id="u1", scope="personal", personal_tier=None
-        )
-        assert result == "free"
 
     # --- Circle scope ---
 
@@ -739,24 +733,40 @@ class TestEffectiveTierForRequest:
     # --- Scope isolation: Personal_Tier does not leak into Circle scope ---
 
     @pytest.mark.asyncio
-    async def test_personal_plus_user_with_free_seat_is_free_in_circle(self, svc):
-        """Req 7.3, 7.4: Personal_Tier is independent from Seat_Tier."""
+    async def test_plus_seat_decides_circle_scope_alone(self, svc, stub_entitlement):
+        """Req 7.3, 7.4: personal entitlement is independent from Seat_Tier.
+
+        Stronger than the assertion this replaces. That one passed a `personal_tier` and checked it
+        was ignored; this stubs the personal resolver to `plus` and checks the seat still decides —
+        so a subscriber, a pass holder and a trialling learner are all `free` on a `FREE_SEAT`.
+        """
+        stub_entitlement("plus")
         result = await svc.effective_tier_for_request(
-            user_id="u1",
-            scope="circle:c1",
-            personal_tier="PREMIUM_MONTHLY",  # ignored under circle scope
-            seat_tier="FREE_SEAT",
+            user_id="u1", scope="circle:c1", seat_tier="FREE_SEAT"
         )
         assert result == "free"
 
     @pytest.mark.asyncio
-    async def test_personal_free_user_with_plus_seat_is_plus_in_circle(self, svc):
-        """Req 7.3, 7.4: A FREE personal user with a PLUS_SEAT gets plus in Circle."""
+    async def test_free_personal_user_with_plus_seat_is_plus_in_circle(self, svc, stub_entitlement):
+        stub_entitlement("free")
         result = await svc.effective_tier_for_request(
-            user_id="u1",
-            scope="circle:c1",
-            personal_tier="FREE",  # ignored under circle scope
-            seat_tier="PLUS_SEAT",
+            user_id="u1", scope="circle:c1", seat_tier="PLUS_SEAT"
+        )
+        assert result == "plus"
+
+    @pytest.mark.asyncio
+    async def test_circle_scope_never_consults_the_personal_resolver(self, svc, monkeypatch):
+        """Decision F, asserted rather than assumed. `resolve()` is personal-scope by construction,
+        and the way that stops being true is a space-scoped request quietly starting to call it.
+        """
+        from src.domains.billing.services import entitlement_service
+
+        async def explode(user_id):
+            raise AssertionError("space scope must not resolve personal entitlement")
+
+        monkeypatch.setattr(entitlement_service, "resolve", explode)
+        result = await svc.effective_tier_for_request(
+            user_id="u1", scope="circle:c1", seat_tier="PLUS_SEAT"
         )
         assert result == "plus"
 
@@ -765,7 +775,7 @@ class TestEffectiveTierForRequest:
     @pytest.mark.asyncio
     async def test_invalid_scope_raises(self, svc):
         with pytest.raises(ValueError):
-            await svc.effective_tier_for_request(user_id="u1", scope="bogus", personal_tier="FREE")
+            await svc.effective_tier_for_request(user_id="u1", scope="bogus")
 
     @pytest.mark.asyncio
     async def test_circle_scope_without_id_raises(self, svc):

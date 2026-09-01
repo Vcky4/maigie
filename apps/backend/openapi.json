@@ -4044,6 +4044,90 @@
         "title": "DueReviewResponse",
         "type": "object"
       },
+      "EntitlementResponse": {
+        "description": "What the learner is entitled to in their personal workspace, right now.\n\nThe serialised form of `entitlement_service.Entitlement`. Clients read this instead of\ninferring entitlement from `User.tier`, which is what every hardcoded `tierLabel` and\n`currentTier=\"PREMIUM_MONTHLY\"` in the web app is currently doing.\n\n`source` is served rather than derived because the correct UI differs per source and the\ndifference is not cosmetic: a subscriber sees a renewal date and a manage-billing link, a pass\nholder sees a countdown and no billing relationship to manage, and a trialling learner sees a day\ncounter and a price. `expiresAt` alone cannot tell them apart.",
+        "properties": {
+          "expiresAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "isTrial": {
+            "default": false,
+            "title": "Istrial",
+            "type": "boolean"
+          },
+          "passId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passid"
+          },
+          "source": {
+            "enum": [
+              "none",
+              "subscription",
+              "pass",
+              "trial"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "subscriptionTier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subscriptiontier"
+          },
+          "tier": {
+            "enum": [
+              "free",
+              "plus"
+            ],
+            "title": "Tier",
+            "type": "string"
+          },
+          "trialDaysRemaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trialdaysremaining"
+          },
+          "windowAllowance": {
+            "title": "Windowallowance",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tier",
+          "source",
+          "windowAllowance"
+        ],
+        "title": "EntitlementResponse",
+        "type": "object"
+      },
       "EvidenceItem": {
         "description": "One dated thing the learner did, attributable to a course.\n\n**Not from the activity feed.** `ActivityFeedEntry` has no course column — `entityType`/`entityId`\nlive inside a nullable `context` JSON — and no writer has ever tagged an entry with `course` or\n`topic`, so a feed filter would return nothing for everyone (§7.2). These come from the tables that\nrecord the link.\n\n`value`/`unit` are numeric rather than pre-formatted prose. A number the client formats cannot\ndisagree with the figure beside it, and a string like `\"34 min\"` cannot be summed or compared.",
         "properties": {
@@ -21554,6 +21638,34 @@
           }
         ],
         "summary": "Get Purchase History",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/entitlement": {
+      "get": {
+        "description": "Resolve the caller's personal entitlement.\n\nOne endpoint over the one resolver, so a client never has to reconstruct entitlement from\n`User.tier` plus a trial field plus, later, a pass. Every gate on the server already reads\n`entitlement_service.resolve`; this is the same answer, so a locked panel and the screen that\nexplains why it is locked cannot disagree.\n\nPersonal scope only. A learner's seat in a Space is a different question with a different answer\nand is not served here (Decision F).",
+        "operationId": "entitlement_api_v1_billing_entitlement_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntitlementResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Entitlement",
         "tags": [
           "billing",
           "billing"

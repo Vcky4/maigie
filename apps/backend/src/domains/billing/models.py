@@ -70,6 +70,37 @@ class PlanCatalogResponse(BaseModel):
 
 
 # ===========================================================================
+# Entitlement
+# ===========================================================================
+
+
+class EntitlementResponse(CamelModel):
+    """What the learner is entitled to in their personal workspace, right now.
+
+    The serialised form of `entitlement_service.Entitlement`. Clients read this instead of
+    inferring entitlement from `User.tier`, which is what every hardcoded `tierLabel` and
+    `currentTier="PREMIUM_MONTHLY"` in the web app is currently doing.
+
+    `source` is served rather than derived because the correct UI differs per source and the
+    difference is not cosmetic: a subscriber sees a renewal date and a manage-billing link, a pass
+    holder sees a countdown and no billing relationship to manage, and a trialling learner sees a day
+    counter and a price. `expiresAt` alone cannot tell them apart.
+    """
+
+    tier: Literal["free", "plus"]
+    source: Literal["none", "subscription", "pass", "trial"]
+    expires_at: datetime | None = None
+    pass_id: str | None = None
+    subscription_tier: str | None = None
+    is_trial: bool = False
+    trial_days_remaining: int | None = None
+    # Deliberately not a unit count on screen (§6.3): the client renders a percentage and a reset
+    # time. It is served because the percentage is `used / allowance` and only the server knows the
+    # denominator, which changes the moment a pass is activated.
+    window_allowance: int
+
+
+# ===========================================================================
 # Subscriptions
 # ===========================================================================
 
