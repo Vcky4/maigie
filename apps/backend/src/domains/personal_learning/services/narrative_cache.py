@@ -215,7 +215,9 @@ async def _store(
         logger.warning("Narrative cache write failed for user %s kind %s: %s", user_id, kind, exc)
 
 
-async def compose_json(*, user_id: str, prompt: str, what: str) -> dict[str, Any] | None:
+async def compose_json(
+    *, user_id: str, prompt: str, what: str, max_tokens: int = 2048
+) -> dict[str, Any] | None:
     """One generation for a narrative panel, or `None` when it produced nothing usable.
 
     Lives here rather than in either composer because all three panels need identical failure
@@ -226,15 +228,32 @@ async def compose_json(*, user_id: str, prompt: str, what: str) -> dict[str, Any
     `fallback={}` rather than `None`, because passing `None` to `generate_content_json` means "raise",
     and two routes have already taken a `500` from the other reading of it.
 
-    8192 tokens. `max_tokens` budgets the whole generation and the configured models spend most of it on
-    reasoning before emitting a character — measured at roughly 0.8 characters of visible output per
-    token of budget, which is what Decision X recorded after an 800-token budget returned prose
-    truncated mid-sentence.
+    **`max_tokens` is a per-caller argument now, and reasoning is bounded rather than the ceiling
+    lowered.** This hardcoded 8192 for every panel, justified by an 800-token budget having returned
+    prose truncated mid-sentence — a real measurement, but the response overshot it tenfold and then
+    applied that one number to four panels of very different sizes. Goal insight, growth drivers and
+    subject insight are each 80-150 words over figures the service already computed; the reflection
+    narrative scales with signals by subjects and has its own measured truncation at 4096, so it
+    passes its own value.
+
+    Lowering a ceiling saves nothing by itself: `max_output_tokens` is a ceiling and unused headroom
+    is not billed. What the 8192 was compensating for is that these are thinking models and reasoning
+    is drawn from the same allowance — so the fix is `THINKING_BOUNDED`, enough to plan a sentence and
+    not enough to spend a budget on. 2048 then leaves ample room for output the prompts already cap at
+    eight-word headings and thirty-word sentences. Phase 0 Question 1.
     """
+    from src.domains.intelligence.reasoning.llm import THINKING_BOUNDED
+
     from .llm_resilient import generate_content_json
 
     try:
-        reply = await generate_content_json(prompt, max_tokens=8192, fallback={}, user_id=user_id)
+        reply = await generate_content_json(
+            prompt,
+            max_tokens=max_tokens,
+            fallback={},
+            user_id=user_id,
+            thinking=THINKING_BOUNDED,
+        )
     except Exception as exc:
         logger.warning("Narrative generation failed for %s (%s): %s", user_id, what, exc)
         return None

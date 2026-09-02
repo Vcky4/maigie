@@ -167,6 +167,26 @@ _CHARS_PER_TOKEN = 4
 _RESERVED_OUTPUT_TOKENS = 500
 
 
+#: Tokens sent on every turn that the message, context and history do not account for.
+#:
+#: Two blocks reach the provider without passing through this function's arguments, and together they
+#: are the largest fixed cost of a turn:
+#:
+#: - the **system instruction** (`llm/prompts.py`, ~1 200 tokens), and
+#: - the **tool declarations**, rebuilt from `skill_registry` on every call
+#:   (`gemini_chat_tools.py:109-131`) and sent whole.
+#:
+#: Omitting them meant the pre-flight check systematically under-stated a turn — so a learner near
+#: their cap was cleared to start a turn that could not fit, and the meter that decides whether they
+#: can afford a request reported less than the request costs. Phase 0 Question 2 found it; it is the
+#: same class of defect as the voice rate, and it is on the input side of the same meter.
+#:
+#: A constant rather than a measurement, deliberately: both blocks are static per deployment, so
+#: counting them per request would cost a tokenizer call to learn a number that does not move.
+#: Revisit when either the system instruction or the tool set changes materially.
+_FIXED_OVERHEAD_TOKENS = 2500
+
+
 def estimate_prompt_tokens(
     *,
     message: str,
@@ -175,13 +195,15 @@ def estimate_prompt_tokens(
 ) -> int:
     """Approximate the input size of a turn, for the pre-flight credit check.
 
-    Deliberately the same arithmetic the handler used, including its crudeness. Making the estimate
-    *better* here would change who gets refused, which is a product decision and not part of moving
-    code from one file to another.
+    Still crude — characters divided by four — because the real counts come back from the provider
+    and are what gets charged. What changed in Phase 0 is that it no longer omits the two largest
+    blocks of every prompt; see `_FIXED_OVERHEAD_TOKENS`. Erring high on a pre-flight check is the
+    safe direction: it refuses a turn that would not have fitted, rather than starting one that
+    cannot be paid for.
     """
     return (
         len(message or "") + len(str(context or "")) + len(str(history or ""))
-    ) // _CHARS_PER_TOKEN
+    ) // _CHARS_PER_TOKEN + _FIXED_OVERHEAD_TOKENS
 
 
 def estimate_turn_tokens(*, message: str, context: Any = None, history: Any = None) -> int:
@@ -382,6 +404,20 @@ def build_skill_badges(
 #: an old conversation does not dominate the token budget of a new question in it.
 HISTORY_LIMIT = 12
 
+#: Characters kept from each past message. `HISTORY_LIMIT` bounds the *count*; nothing bounded the
+#: size, so twelve messages went in whole and a thread containing one pasted document carried that
+#: document on every subsequent turn for the rest of the conversation.
+#:
+#: 4 000 ≈ 1 000 tokens, which is longer than almost any real chat message and short enough that
+#: twelve of them cannot dominate. Applied to the *oldest* first in effect, since recent turns are
+#: rarely the long ones — but deliberately applied uniformly rather than by position, because a rule
+#: that treats messages differently by age is one more thing to reason about when a follow-up
+#: question stops working.
+#:
+#: Phase 0 Question 2. `HISTORY_LIMIT` itself is left alone: it is correctly sized and it is what
+#: makes "what did you just say" work.
+HISTORY_MESSAGE_CHAR_LIMIT = 4000
+
 
 def format_history(records: list[Any]) -> list[dict[str, Any]]:
     """Turn `ChatMessage` rows, oldest first, into the provider's history shape.
@@ -389,10 +425,16 @@ def format_history(records: list[Any]) -> list[dict[str, Any]]:
     Images go in as extra parts on the message that carried them, so a follow-up like "what does the
     third line of that diagram say" still has the diagram. `image_url` is read as a fallback because
     rows written before `image_urls` existed only have the singular column.
+
+    Message bodies are clipped to `HISTORY_MESSAGE_CHAR_LIMIT`, and the clip is marked so the model
+    can tell a shortened message from a complete one.
     """
     history: list[dict[str, Any]] = []
     for record in records:
-        parts: list[Any] = [record.content]
+        content = record.content or ""
+        if len(content) > HISTORY_MESSAGE_CHAR_LIMIT:
+            content = content[:HISTORY_MESSAGE_CHAR_LIMIT] + "… [earlier message truncated]"
+        parts: list[Any] = [content]
         images = getattr(record, "image_urls", None) or []
         if not images and getattr(record, "image_url", None):
             images = [record.image_url]

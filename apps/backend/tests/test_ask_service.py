@@ -89,9 +89,26 @@ class TestTokenEstimation:
             ask_service.estimate_prompt_tokens(message=message) + 500
         )
 
-    def test_an_empty_message_costs_nothing(self):
-        assert ask_service.estimate_prompt_tokens(message="") == 0
-        assert ask_service.estimate_prompt_tokens(message=None) == 0
+    def test_an_empty_message_still_costs_the_fixed_overhead(self):
+        """An empty turn is not a free turn, and this test used to assert that it was.
+
+        Two blocks reach the provider on every request without passing through this function's
+        arguments: the system instruction, and the tool declarations rebuilt from `skill_registry`.
+        They are the largest fixed cost of a turn and they are sent whatever the learner typed, so a
+        turn with an empty message still costs a couple of thousand input tokens.
+
+        Asserting `== 0` encoded the opposite, and the estimate it was guarding is what decides
+        whether a learner may *start* a turn — so under-stating it cleared turns that could not be
+        paid for. Phase 0 Question 2.
+        """
+        overhead = ask_service._FIXED_OVERHEAD_TOKENS
+        assert ask_service.estimate_prompt_tokens(message="") == overhead
+        assert ask_service.estimate_prompt_tokens(message=None) == overhead
+
+    def test_the_fixed_overhead_is_not_zero(self):
+        """The guard on the guard. `_FIXED_OVERHEAD_TOKENS = 0` would silently restore the old
+        under-count while leaving every other assertion in this class green."""
+        assert ask_service._FIXED_OVERHEAD_TOKENS > 1000
 
     def test_the_estimate_is_the_same_arithmetic_in_both_places(self):
         """The pre-flight check and the fallback charge used to be two hand-written copies of this.

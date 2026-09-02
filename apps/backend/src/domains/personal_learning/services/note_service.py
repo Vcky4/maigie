@@ -219,7 +219,10 @@ async def get_summary(*, user_id: str, archived: bool = False) -> dict[str, Any]
     import asyncio
     from datetime import UTC, datetime, timedelta
 
-    from src.shared.time.learner_timezone import resolve_learner_timezone, to_learner_local
+    from src.shared.time.learner_timezone import (
+        resolve_learner_timezone,
+        to_learner_local,
+    )
 
     learner_timezone = await resolve_learner_timezone(user_id)
     local_now = to_learner_local(datetime.now(UTC), learner_timezone)
@@ -398,7 +401,10 @@ async def retake_note(*, user_id: str, note_id: str) -> Any:
                     context_parts.append(f"Course: {topic_course.title}")
 
     cleaned = re.sub(
-        r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*", "", note.content, flags=re.DOTALL
+        r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+        "",
+        note.content,
+        flags=re.DOTALL,
     ).strip()
 
     prompt = (
@@ -431,6 +437,8 @@ async def add_summary(*, user_id: str, note_id: str) -> Any:
     """Generate AI summary for a note."""
     import re
 
+    from src.domains.intelligence.reasoning.llm import THINKING_OFF
+
     note = await repo.find_note(note_id, user_id)
     if not note or not note.content:
         raise NotFoundError("Note", note_id)
@@ -438,7 +446,10 @@ async def add_summary(*, user_id: str, note_id: str) -> Any:
     from src.domains.intelligence.reasoning.llm import generate_content
 
     cleaned = re.sub(
-        r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*", "", note.content, flags=re.DOTALL
+        r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+        "",
+        note.content,
+        flags=re.DOTALL,
     ).strip()
 
     prompt = (
@@ -448,7 +459,10 @@ async def add_summary(*, user_id: str, note_id: str) -> Any:
         f"Return a clear, scannable summary in markdown (bullet points preferred)."
     )
 
-    summary = await generate_content(prompt, max_tokens=1000)
+    # `THINKING_OFF`: the note is in the prompt and the task is to condense it. There is nothing to
+    # reason about that is not already on the page, and reasoning tokens are billed at the output rate
+    # and drawn from this same 1000. Phase 0 Question 1.
+    summary = await generate_content(prompt, max_tokens=1000, thinking=THINKING_OFF)
     await repo.update_note(note_id, {"summary": summary})
     return await repo.find_note(note_id, user_id)
 

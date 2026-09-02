@@ -16,11 +16,58 @@ from .registry import LlmTask, default_model_for, gemini_api_key
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Thinking budgets
+# ---------------------------------------------------------------------------
+#
+# The configured models are **thinking models**: they emit hidden reasoning before the reply, and
+# those tokens are drawn from the same `max_output_tokens` allowance and billed at the same output
+# rate. That is the single fact behind five separate budget escalations in this codebase — diagram
+# 1200 → 2048 → 8192, grounded search 2048 → 8192, lesson 4096 → 8192, reflection title 800 → 2048,
+# home guidance 500 → 1200 — every one of them a visible reply cut off mid-string while the budget
+# looked generous.
+#
+# `max_output_tokens` is a **ceiling and not a charge**: unused headroom costs nothing. So raising it
+# was the right response to those truncations, and lowering it again would save nothing while
+# reopening all five. What was missing is the knob that bounds the *reasoning* rather than the
+# ceiling, which is this one. Nothing set it before Phase 0.
+#
+# `0` disables thinking, `-1` lets the model decide, a positive integer caps it.
+THINKING_OFF = 0
+"""No reasoning. For work with nothing to reason about — transcribing, reformatting, summarising a
+passage that is already in the prompt. Cheapest and fastest, and on these tasks no worse."""
+
+THINKING_BOUNDED = 512
+"""Enough to plan a short answer, not enough to spend a budget on. For prompts that supply every
+fact and bound the output — the narrative panels ask for ≤8-word headings and ≤30-word sentences
+over figures the service already computed, so the only open question is phrasing."""
+
+THINKING_DYNAMIC = -1
+"""Model's discretion. For genuinely open generation: lesson bodies, quiz sets, course outlines,
+reflection narratives, diagrams. These are the operations the escalations were about."""
+
+
+def thinking_config(budget: int | None):
+    """A `ThinkingConfig` for `budget`, or `None` to leave the provider default alone.
+
+    Returned rather than applied so both facades and the raw call sites can share one meaning of
+    each constant, and so passing `None` is distinguishable from passing `0` — "do not express an
+    opinion" and "do not think" are different instructions and only one of them is free.
+    """
+    if budget is None:
+        return None
+    return gemini_types.ThinkingConfig(thinking_budget=budget)
+
+
 __all__ = [
     "generate_content",
     "generate_grounded_content",
     "GroundedResult",
     "GroundingSource",
+    "THINKING_OFF",
+    "THINKING_BOUNDED",
+    "THINKING_DYNAMIC",
+    "thinking_config",
     "new_gemini_client",
     "gemini_types",
     "LlmTask",
@@ -33,8 +80,18 @@ __all__ = [
 ]
 
 
-async def generate_content(prompt: str, *, max_tokens: int = 2048, temperature: float = 0.7) -> str:
+async def generate_content(
+    prompt: str,
+    *,
+    max_tokens: int = 2048,
+    temperature: float = 0.7,
+    thinking: int | None = None,
+) -> str:
     """Generate text content using the default LLM provider.
+
+    `thinking` bounds hidden reasoning tokens — `THINKING_OFF`, `THINKING_BOUNDED`,
+    `THINKING_DYNAMIC`, or an explicit integer. `None` leaves the provider default, which is what
+    every caller got before Phase 0 and is dynamic in practice.
 
     This is the primary interface for domains that need simple text generation
     (topic explanations, quizzes, summaries, etc.).
@@ -55,6 +112,7 @@ async def generate_content(prompt: str, *, max_tokens: int = 2048, temperature: 
         config=gemini_types.GenerateContentConfig(
             max_output_tokens=max_tokens,
             temperature=temperature,
+            thinking_config=thinking_config(thinking),
         ),
     )
 
@@ -62,10 +120,12 @@ async def generate_content(prompt: str, *, max_tokens: int = 2048, temperature: 
     if not text:
         finish_reason = _extract_finish_reason(response)
         logger.warning(
-            "Gemini returned no text (finish_reason=%s). Prompt length=%d, max_tokens=%d.",
+            "Gemini returned no text (finish_reason=%s). Prompt length=%d, max_tokens=%d, "
+            "thinking=%s.",
             finish_reason,
             len(prompt),
             max_tokens,
+            thinking,
         )
         # `invalid_request` rather than `server_error`: the provider answered successfully and
         # produced nothing, which a retry of the same prompt will reproduce. Classifying it retriable
@@ -135,6 +195,7 @@ async def generate_grounded_content(
     # Costing nothing when unused: billing is on tokens actually produced, not on the ceiling.
     max_tokens: int = 8192,
     temperature: float = 0.3,
+    thinking: int | None = None,
 ) -> GroundedResult:
     """Generate text with Google Search grounding enabled.
 
@@ -163,6 +224,7 @@ async def generate_grounded_content(
         config=gemini_types.GenerateContentConfig(
             max_output_tokens=max_tokens,
             temperature=temperature,
+            thinking_config=thinking_config(thinking),
             tools=[gemini_types.Tool(google_search=gemini_types.GoogleSearch())],
         ),
     )

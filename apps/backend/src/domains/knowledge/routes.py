@@ -62,7 +62,9 @@ async def generate_course_outline(body: models.CourseOutlineRequest, current_use
     for a curriculum that may be rejected would waste eleven of them. The first lesson is written when the
     course is accepted, and the rest when they are opened.
     """
-    from src.domains.personal_learning.services.llm_resilient import generate_content_json
+    from src.domains.personal_learning.services.llm_resilient import (
+        generate_content_json,
+    )
 
     # Before generating, not after. A free-tier learner at their limit used to walk through four steps, wait
     # for a curriculum to be designed, review it, press Create — and only then be told they could not have it.
@@ -245,7 +247,11 @@ async def list_courses(
 
     skip = (page - 1) * pageSize
     courses, total = await knowledge_repo.list_courses(
-        current_user.id, where=where, skip=skip, take=pageSize, order={sortBy: sortOrder}
+        current_user.id,
+        where=where,
+        skip=skip,
+        take=pageSize,
+        order={sortBy: sortOrder},
     )
 
     items = await _to_list_items(courses)
@@ -519,9 +525,15 @@ async def _owned_section(section_id: str, user_id: str):
     return section
 
 
-@router.put("/topics/{topic_id}/sections/{section_id}", response_model=models.TopicSectionResponse)
+@router.put(
+    "/topics/{topic_id}/sections/{section_id}",
+    response_model=models.TopicSectionResponse,
+)
 async def update_topic_section(
-    topic_id: str, section_id: str, body: models.TopicSectionUpdate, current_user: CurrentUser
+    topic_id: str,
+    section_id: str,
+    body: models.TopicSectionUpdate,
+    current_user: CurrentUser,
 ):
     """Edit one section."""
     section = await _owned_section(section_id, current_user.id)
@@ -661,7 +673,11 @@ async def get_courses_dashboard(current_user: CurrentUser):
     )
 
 
-@router.post("/courses", response_model=models.CourseResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/courses",
+    response_model=models.CourseResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_course(body: models.CourseCreate, current_user: CurrentUser):
     """Create a course manually."""
     course = await course_service.create_course(
@@ -763,7 +779,9 @@ async def get_course(course_id: str, current_user: CurrentUser):
 async def update_course(course_id: str, body: models.CourseUpdate, current_user: CurrentUser):
     """Update course metadata."""
     await course_service.update_course(
-        course_id=course_id, user_id=current_user.id, data=body.model_dump(exclude_unset=True)
+        course_id=course_id,
+        user_id=current_user.id,
+        data=body.model_dump(exclude_unset=True),
     )
     return await get_course(course_id, current_user)
 
@@ -829,7 +847,9 @@ async def unarchive_course(course_id: str, current_user: CurrentUser):
 
 @router.post("/courses/{course_id}/outline-satisfaction", status_code=status.HTTP_201_CREATED)
 async def record_outline_satisfaction(
-    course_id: str, body: models.CourseOutlineSatisfactionCreate, current_user: CurrentUser
+    course_id: str,
+    body: models.CourseOutlineSatisfactionCreate,
+    current_user: CurrentUser,
 ):
     """Record learner reaction to AI-generated outline (KPI)."""
     await course_service.check_course_ownership(course_id, current_user.id)
@@ -849,7 +869,11 @@ async def record_outline_satisfaction(
 # ===========================================================================
 
 
-@router.post("/courses/{course_id}/modules", response_model=models.ModuleResponse, status_code=201)
+@router.post(
+    "/courses/{course_id}/modules",
+    response_model=models.ModuleResponse,
+    status_code=201,
+)
 async def create_module(course_id: str, body: models.ModuleCreate, current_user: CurrentUser):
     """Add a module to a course."""
     await course_service.check_course_ownership(course_id, current_user.id)
@@ -931,7 +955,10 @@ async def create_topic(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_topics_bulk(
-    course_id: str, module_id: str, body: models.TopicBulkCreate, current_user: CurrentUser
+    course_id: str,
+    module_id: str,
+    body: models.TopicBulkCreate,
+    current_user: CurrentUser,
 ):
     """Save a module's whole outline in one request.
 
@@ -980,7 +1007,10 @@ async def reorder_modules(course_id: str, body: models.ReorderRequest, current_u
     response_model=models.ReorderResponse,
 )
 async def reorder_topics(
-    course_id: str, module_id: str, body: models.ReorderRequest, current_user: CurrentUser
+    course_id: str,
+    module_id: str,
+    body: models.ReorderRequest,
+    current_user: CurrentUser,
 ):
     """Set topic order within a module. Same contract as module reorder."""
     module, course = await course_service.check_module_ownership(module_id, current_user.id)
@@ -1126,7 +1156,9 @@ async def generate_topic_content(
         )
 
     if body.type == "explain":
-        from src.domains.personal_learning.services.llm_resilient import generate_content_json
+        from src.domains.personal_learning.services.llm_resilient import (
+            generate_content_json,
+        )
 
         # Each phase records itself, so the reader can report what the server reached rather than
         # animating for the whole 8192-token call. The stage is observed through a concurrent read of
@@ -1182,10 +1214,13 @@ async def generate_topic_content(
         # reader briefly told a finished lesson was still saving.
         await lesson_service.set_stage(topic_id, None)
         return models.TopicGenerateResponse(
-            type=body.type, topicId=topic_id, content=markdown, persisted=f"{written} sections"
+            type=body.type,
+            topicId=topic_id,
+            content=markdown,
+            persisted=f"{written} sections",
         )
 
-    from src.domains.intelligence.reasoning.llm import generate_content
+    from src.domains.intelligence.reasoning.llm import THINKING_OFF, generate_content
 
     prompts = {
         "quiz": f'Create a 5-question quiz on "{topic.title}" with answers. Markdown.',
@@ -1195,7 +1230,10 @@ async def generate_topic_content(
     if topic.content:
         prompt += f"\n\nExisting context:\n{topic.content[:2000]}"
 
-    content = await generate_content(prompt)
+    # `THINKING_OFF`: both prompts are bounded formatting tasks over content already supplied — five
+    # questions, or a bullet summary of the topic body above. The default 2048 ceiling stays; what
+    # changes is that reasoning no longer competes with the output for it. Phase 0 Question 1.
+    content = await generate_content(prompt, thinking=THINKING_OFF)
     if not content:
         raise HTTPException(status_code=500, detail="AI returned empty content")
 
@@ -1267,7 +1305,10 @@ async def recommend_resources(
 ):
     """Get AI-recommended resources via RAG."""
     result = await resource_service.recommend_resources(
-        user_id=current_user.id, query=body.query, limit=body.limit, context=body.context
+        user_id=current_user.id,
+        query=body.query,
+        limit=body.limit,
+        context=body.context,
     )
     return result
 
@@ -1288,7 +1329,9 @@ async def record_interaction(
     already means.
     """
     await resource_service.record_interaction(
-        user_id=current_user.id, resource_id=resource_id, interaction_type=body.interactionType
+        user_id=current_user.id,
+        resource_id=resource_id,
+        interaction_type=body.interactionType,
     )
 
 

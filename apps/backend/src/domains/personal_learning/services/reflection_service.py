@@ -166,7 +166,9 @@ async def _compose_and_store(
     regenerated against the window it already describes. Deriving it here would mean
     regeneration silently retargeted the current week and left the old row untouched.
     """
-    from src.domains.personal_learning.services.llm_resilient import generate_content_json
+    from src.domains.personal_learning.services.llm_resilient import (
+        generate_content_json,
+    )
 
     from . import feature_tier_service, trial_service
 
@@ -274,7 +276,10 @@ async def _compose_narrative(
     **The service picks every action target** (Decision O). A model free to emit an `entityId` would
     eventually cite an entity the learner does not own.
     """
-    from src.domains.personal_learning.services.llm_resilient import generate_content_json
+    from src.domains.intelligence.reasoning.llm import THINKING_DYNAMIC
+    from src.domains.personal_learning.services.llm_resilient import (
+        generate_content_json,
+    )
 
     from . import growth_service, reflection_narrative
 
@@ -324,6 +329,11 @@ async def _compose_narrative(
                 # `assemble` now refuses a half-sentence, but a budget that lets the reply finish is
                 # the better half of the fix; refusing it only stops the damage showing.
                 max_tokens=8192,
+                # Explicitly dynamic rather than left to the provider default, so this reads as a
+                # decision beside the narrative panels that are now `THINKING_BOUNDED`. This is the
+                # one narrative whose length genuinely scales with the learner — a paragraph per
+                # signal and per subject — so it is the one that should be allowed to think.
+                thinking=THINKING_DYNAMIC,
                 fallback={},
                 user_id=user_id,
             )

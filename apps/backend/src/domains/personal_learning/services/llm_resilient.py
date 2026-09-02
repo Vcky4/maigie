@@ -103,11 +103,23 @@ def _record_failure(provider: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _call_gemini(prompt: str, *, max_tokens: int, temperature: float) -> str:
-    """Call Gemini via the existing intelligence domain interface."""
-    from src.domains.intelligence.reasoning.llm import generate_content as _gemini_generate
+async def _call_gemini(
+    prompt: str, *, max_tokens: int, temperature: float, thinking: int | None = None
+) -> str:
+    """Call Gemini via the existing intelligence domain interface.
 
-    return await _gemini_generate(prompt, max_tokens=max_tokens, temperature=temperature)
+    `thinking` is Gemini-only. OpenAI and Anthropic take no equivalent here, so a caller that bounds
+    reasoning gets that bound on the primary provider and the provider default on a fallback. Worth
+    knowing rather than hiding: a fallback is more expensive than the call it replaced, in tokens as
+    well as in latency.
+    """
+    from src.domains.intelligence.reasoning.llm import (
+        generate_content as _gemini_generate,
+    )
+
+    return await _gemini_generate(
+        prompt, max_tokens=max_tokens, temperature=temperature, thinking=thinking
+    )
 
 
 async def _call_openai(prompt: str, *, max_tokens: int, temperature: float) -> str:
@@ -221,8 +233,13 @@ async def generate_content(
     max_retries: int = _MAX_RETRIES,
     fallback: str | None = None,
     user_id: str | None = None,
+    thinking: int | None = None,
 ) -> str:
     """Generate text content with resilience and per-user provider routing.
+
+    `thinking` bounds hidden reasoning tokens on the Gemini path — see
+    `intelligence.reasoning.llm.THINKING_OFF` / `_BOUNDED` / `_DYNAMIC`. Ignored by the OpenAI and
+    Anthropic fallbacks, which take no equivalent parameter here.
 
     Features:
     - Per-user provider selection (from LearningProfile.preferred_llm_provider)
@@ -273,8 +290,12 @@ async def generate_content(
         # Try this provider with retries
         for attempt in range(max_retries + 1):
             try:
+                # `thinking` reaches Gemini only. The other two callables do not accept it, and
+                # inspecting the signature here rather than widening theirs keeps the parameter
+                # where it means something.
+                extra = {"thinking": thinking} if provider == "gemini" else {}
                 result = await asyncio.wait_for(
-                    call_fn(prompt, max_tokens=max_tokens, temperature=temperature),
+                    call_fn(prompt, max_tokens=max_tokens, temperature=temperature, **extra),
                     timeout=timeout_s,
                 )
                 # An empty reply is a failed attempt, not a successful one.
@@ -439,6 +460,7 @@ async def generate_content_json(
     max_retries: int = _MAX_RETRIES,
     fallback: Any = None,
     user_id: str | None = None,
+    thinking: int | None = None,
 ) -> Any:
     """Generate content and parse as JSON. Returns fallback on failure.
 
@@ -461,6 +483,7 @@ async def generate_content_json(
             max_retries=max_retries,
             fallback=None,  # We handle fallback ourselves after JSON parse
             user_id=user_id,
+            thinking=thinking,
         )
         # Strip markdown fences if present
         cleaned = response.strip()

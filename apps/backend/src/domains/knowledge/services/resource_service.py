@@ -238,6 +238,7 @@ async def recommend_resources(
     """
     from src.domains.intelligence.memory.memory_service import get_memory_context
     from src.domains.intelligence.reasoning.llm import (
+        THINKING_OFF,
         generate_content,
         generate_grounded_content,
     )
@@ -283,7 +284,12 @@ async def recommend_resources(
     found = await generate_grounded_content(search_prompt, temperature=0.3)
     if not found.text.strip():
         logger.warning("Recommendation search for %r came back empty.", query)
-        return {"recommendations": [], "query": query, "grounded": False, "discarded": 0}
+        return {
+            "recommendations": [],
+            "query": query,
+            "grounded": False,
+            "discarded": 0,
+        }
 
     # ---- Step 2: format. No tools attached, so an output contract is allowed again. ----
     #
@@ -301,7 +307,19 @@ async def recommend_resources(
         "- score: 0-1, how strongly the text recommends it\n\n"
         f"Resource list:\n{found.text}"
     )
-    formatted = await generate_content(format_prompt, max_tokens=8192, temperature=0.0)
+    # `thinking=THINKING_OFF` and a budget sized to the output rather than to a reasoning allowance.
+    #
+    # Step 1's budget is generous for a good reason, recorded above: it searches, and reasoning
+    # tokens compete with the reply. **Step 2 does not reason.** It copies titles, URLs and sentences
+    # that are already in `found.text`, at temperature 0.0, into a fixed schema. It inherited 8192
+    # from the same argument as step 1 without the argument applying — the only genuine
+    # over-provision the Phase 0 audit found.
+    #
+    # 4096 rather than 2048: the output is `limit` objects carrying a URL, a description and a
+    # sentence each, and a truncated array is one the parser drops entirely.
+    formatted = await generate_content(
+        format_prompt, max_tokens=4096, temperature=0.0, thinking=THINKING_OFF
+    )
 
     candidates = _parse_recommendation_payload(formatted)[:limit]
     if not candidates:
@@ -380,7 +398,7 @@ async def recommend_resources(
                 # Distinguishes a checked citation from a checked guess. The search tool is
                 # a request, so an ungrounded reply can still produce URLs that happen to
                 # resolve, and the row must not claim those were found by search.
-                "recommendationSource": "gemini_grounded" if found.grounded else "gemini",
+                "recommendationSource": ("gemini_grounded" if found.grounded else "gemini"),
                 "recommendationReason": item.get("relevance"),
             }
         )

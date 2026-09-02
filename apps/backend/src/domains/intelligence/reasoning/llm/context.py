@@ -62,6 +62,31 @@ async def mark_tool_side_effect_intent(tool_names: list[str], progress_callback:
             )
 
 
+#: Cap for context blocks rendered whole rather than field by field.
+#:
+#: Four blocks used to be `str(...)`'d with no bound — `topicResources`,
+#: `topicUploadedResources`, `knowledgeBaseContext` and `memory_context` — while every field in the
+#: learner-profile family beside them is carefully clipped to 120-600 characters. So the careful caps
+#: could be walked straight past by a topic with a long resource list, and the size of a prompt became
+#: a property of the learner's data rather than of this function.
+#:
+#: 2 000 characters is roughly 500 tokens per block: generous next to the 300-character topic-content
+#: cap, and bounded, which is the property that was missing. Phase 0 Question 2.
+_BLOCK_CHAR_LIMIT = 2000
+
+
+def _bounded(value: Any, limit: int = _BLOCK_CHAR_LIMIT) -> str:
+    """Render a context block as a string of at most `limit` characters.
+
+    The truncation is marked. A silently cut block reads to the model as a complete one, and a
+    resource list that stops mid-entry is worse than a short list that says it was shortened.
+    """
+    rendered = value if isinstance(value, str) else str(value)
+    if len(rendered) <= limit:
+        return rendered
+    return rendered[:limit] + f"... [truncated at {limit} characters]"
+
+
 def build_enhanced_chat_user_message(
     user_message: str, context: dict[str, Any] | None = None
 ) -> str:
@@ -97,10 +122,10 @@ def build_enhanced_chat_user_message(
                 context_parts.append(
                     "Topic Uploaded/Manual Resources (highest priority references):"
                 )
-                context_parts.append(str(context["topicUploadedResources"]))
+                context_parts.append(_bounded(context["topicUploadedResources"]))
             if context.get("topicResources"):
                 context_parts.append("Topic Resources:")
-                context_parts.append(str(context["topicResources"]))
+                context_parts.append(_bounded(context["topicResources"]))
         elif context.get("topicId"):
             context_parts.append(f"Current Topic ID: {context['topicId']}")
 
@@ -143,15 +168,27 @@ def build_enhanced_chat_user_message(
                     )
                     context_parts.append(f"{label}: {rendered[:600]}")
 
-        if context.get("learningRhythm"):
-            rhythm = context["learningRhythm"]
-            context_parts.append(
-                "Learning rhythm: "
-                f"average session {rhythm.get('avgSessionMinutes', 'unknown')} minutes; "
-                f"consistency {rhythm.get('consistencyScore', 'unknown')}; "
-                f"best day {rhythm.get('bestDayOfWeek', 'unknown')}."
-            )
-        if context.get("dueReviewCount") is not None:
+        # Both of the next two are set on **every** turn by `_read_learner_context`, so both were
+        # rendered on every turn whatever they held. `learningRhythm` is an empty dict for any learner
+        # without enough sessions to measure, and the `.get(..., "unknown")` defaults turned that into
+        # the literal line "average session unknown; consistency unknown; best day unknown" — three
+        # non-facts, in a prompt, on most turns. Emitted now only when a figure exists, and only the
+        # figures that do.
+        rhythm = context.get("learningRhythm") or {}
+        measured = []
+        if rhythm.get("avgSessionMinutes") is not None:
+            measured.append(f"average session {rhythm['avgSessionMinutes']} minutes")
+        if rhythm.get("consistencyScore") is not None:
+            measured.append(f"consistency {rhythm['consistencyScore']}")
+        if rhythm.get("bestDayOfWeek"):
+            measured.append(f"best day {rhythm['bestDayOfWeek']}")
+        if measured:
+            context_parts.append("Learning rhythm: " + "; ".join(measured) + ".")
+
+        # `is not None` meant "Flashcards due for review: 0" on every turn for every learner with an
+        # empty deck. Zero due cards is not context, it is the absence of it, and the model has a tool
+        # for asking.
+        if context.get("dueReviewCount"):
             context_parts.append(f"Flashcards due for review: {int(context['dueReviewCount'])}")
 
         for label, key in (
@@ -180,7 +217,7 @@ def build_enhanced_chat_user_message(
             )
 
         if context.get("knowledgeBaseContext"):
-            context_parts.append(f"\n{context['knowledgeBaseContext']}")
+            context_parts.append(f"\n{_bounded(context['knowledgeBaseContext'])}")
 
         if context.get("replyContext"):
             reply_context = context["replyContext"]
@@ -203,11 +240,14 @@ def build_enhanced_chat_user_message(
         if context.get("retrieved_items"):
             context_parts.append("\nPossibly Relevant Items found in Database:")
             for item in context["retrieved_items"]:
-                context_parts.append(str(item))
+                # `RETRIEVAL_LIMIT` bounds the *count* at three; nothing bounded the size of one. A
+                # retrieved document is whatever the learner wrote, so a single hit could outweigh
+                # the page context retrieval is meant to be supplementing.
+                context_parts.append(_bounded(item))
             context_parts.append("(Use these IDs if the user refers to these items)")
 
         if context.get("memory_context"):
-            context_parts.append(f"\n{context['memory_context']}")
+            context_parts.append(f"\n{_bounded(context['memory_context'])}")
 
     if context_parts:
         context_str = "\n".join(context_parts)
