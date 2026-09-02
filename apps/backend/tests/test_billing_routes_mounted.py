@@ -39,6 +39,11 @@ REACHABLE = [
     # The one resolver, served. Clients read this instead of inferring entitlement from
     # `User.tier`, which is what every hardcoded `tierLabel` in the web app does today.
     f"{PREFIX}/billing/entitlement",
+    # The NGN rail, mounted in Phase 2b once `paystack_service` was ported off Prisma. Nigeria is
+    # the launch market, so until these existed the money path was reachable everywhere except
+    # where we are launching.
+    f"{PREFIX}/billing/subscriptions/paystack/initialize",
+    f"{PREFIX}/billing/subscriptions/paystack/verify",
     # Stripe subscription lifecycle.
     f"{PREFIX}/billing/subscriptions/checkout",
     f"{PREFIX}/billing/subscriptions/sync-checkout",
@@ -94,27 +99,25 @@ class TestEndpointsThatCannotWorkAreNotServed:
             f"{PREFIX}/billing/referrals/stats",
             f"{PREFIX}/billing/referrals/claimable",
             f"{PREFIX}/billing/referrals/claim",
-            # `paystack_service` holds the same sentinel. This is the launch blocker:
-            # Paystack is the NGN rail and Nigeria is the launch market, so the money path
-            # is currently reachable everywhere except where we are launching.
-            f"{PREFIX}/billing/subscriptions/paystack/initialize",
-            f"{PREFIX}/billing/subscriptions/paystack/verify",
         ],
     )
     def test_endpoint_is_absent(self, path, paths):
         assert path not in paths
 
-    def test_the_paystack_sentinel_is_still_the_reason(self):
-        """If someone ports `paystack_service` and forgets to mount the two routes, this
-        fails and says so. The absence above is conditional on the port not having happened,
-        and a conditional absence needs its condition asserted or it becomes permanent.
+    def test_paystack_is_ported_and_holds_no_sentinel(self):
+        """The inverse of the guard this replaces, and it earned its keep.
+
+        Until Phase 2b this asserted `isinstance(paystack_service.db, PrismaClientRemoved)`, so that
+        porting the service without mounting its routes would fail loudly — a conditional absence
+        needs its condition asserted or it silently becomes permanent. The port happened, this test
+        failed, and the routes went up. Now it asserts the opposite: the sentinel is gone, so nothing
+        can quietly reintroduce a Prisma client here.
         """
         from src.domains.billing.services import paystack_service
-        from src.shared.infrastructure.unmigrated import PrismaClientRemoved
 
-        assert isinstance(paystack_service.db, PrismaClientRemoved), (
-            "paystack_service has been ported to SQLAlchemy — mount "
-            "/subscriptions/paystack/initialize and /verify and update this test"
+        assert not hasattr(paystack_service, "db"), (
+            "paystack_service has a `db` attribute again — it was ported to SQLAlchemy in "
+            "Phase 2b and reads through `billing_repo`"
         )
 
     def test_the_referral_sentinel_is_still_the_reason(self):

@@ -22,12 +22,38 @@ from src.domains.progress.services import schedule_reminders as sr  # noqa: E402
 from src.domains.progress.services import weekly_summary as ws  # noqa: E402
 
 
-def _user(tier="plus_monthly", email="a@b.c", name="Ada Lovelace", is_active=True):
-    return SimpleNamespace(tier=tier, email=email, name=name, is_active=is_active)
+def _user(tier="PREMIUM_MONTHLY", email="a@b.c", name="Ada Lovelace", is_active=True):
+    return SimpleNamespace(id="user_1", tier=tier, email=email, name=name, is_active=is_active)
+
+
+def _entitled(monkeypatch, tier):
+    """Stub the one resolver.
+
+    `_should_remind` used to compare `user.tier` to `"FREE"`, so these tests passed tier strings
+    and asserted on them. Reminder eligibility now goes through
+    `entitlement_service.resolve` (Decision B), because a tier string cannot see a trial or a
+    pass — the old comparison excluded every trialling learner and admitted five retired tiers.
+    Stubbing the resolver rather than the tier is the point: this function no longer has an
+    opinion about what "paid" means, and these tests should not either.
+    """
+    from src.domains.billing.services import entitlement_service
+
+    async def _resolve(user_id):
+        return entitlement_service._compose(
+            subscription_tier=tier,
+            subscription_period_end=None,
+            active_pass=None,
+            active_trial=None,
+        )
+
+    monkeypatch.setattr(entitlement_service, "resolve", _resolve)
 
 
 def _prefs(
-    notifications=True, email_schedule_reminder=True, email_weekly_tips=True, timezone="UTC"
+    notifications=True,
+    email_schedule_reminder=True,
+    email_weekly_tips=True,
+    timezone="UTC",
 ):
     return SimpleNamespace(
         notifications=notifications,
@@ -42,30 +68,55 @@ def _prefs(
 # ---------------------------------------------------------------------------
 
 
-def test_paying_user_with_defaults_is_reminded():
-    assert sr._should_remind(_user(), _prefs()) is True
+async def test_paying_user_with_defaults_is_reminded(monkeypatch):
+    _entitled(monkeypatch, "PREMIUM_MONTHLY")
+    assert await sr._should_remind(_user(), _prefs()) is True
 
 
-def test_missing_preferences_row_means_defaults_not_opted_out():
+async def test_missing_preferences_row_means_defaults_not_opted_out(monkeypatch):
     """Absence of a row must not read as a refusal; every column defaults to true."""
-    assert sr._should_remind(_user(), None) is True
+    _entitled(monkeypatch, "PREMIUM_MONTHLY")
+    assert await sr._should_remind(_user(), None) is True
 
 
-def test_free_tier_is_not_reminded():
-    assert sr._should_remind(_user(tier="FREE"), _prefs()) is False
+async def test_free_tier_is_not_reminded(monkeypatch):
+    _entitled(monkeypatch, "FREE")
+    assert await sr._should_remind(_user(tier="FREE"), _prefs()) is False
 
 
-@pytest.mark.parametrize("tier", ["plus_monthly", "plus_yearly", "circle_plan_monthly"])
-def test_current_paid_tier_names_are_eligible(tier):
-    """The original enumerated retired tier names, so these subscribers got nothing."""
-    assert sr._should_remind(_user(tier=tier), _prefs()) is True
+async def test_a_trialling_learner_is_reminded(monkeypatch):
+    """The case the tier comparison got wrong and nobody would have noticed.
+
+    A trial is supposed to be indistinguishable from a subscription — that is what makes it a
+    trial of the product rather than of a subset. Under `tier != "FREE"` a trialling learner's
+    row still says `FREE`, so they silently lost the one feature whose absence they cannot see:
+    a reminder that never arrives leaves no trace.
+    """
+    from datetime import timedelta
+
+    from src.domains.billing.services import entitlement_service
+
+    async def _resolve(user_id):
+        return entitlement_service._compose(
+            subscription_tier="FREE",
+            subscription_period_end=None,
+            active_pass=None,
+            active_trial=entitlement_service.ActiveTrial(
+                ends_at=datetime.now(UTC) + timedelta(days=2), days_remaining=2
+            ),
+        )
+
+    monkeypatch.setattr(entitlement_service, "resolve", _resolve)
+    assert await sr._should_remind(_user(tier="FREE"), _prefs()) is True
 
 
-def test_a_deactivated_account_is_not_reminded():
-    assert sr._should_remind(_user(is_active=False), _prefs()) is False
+async def test_a_deactivated_account_is_not_reminded(monkeypatch):
+    """Checked before the resolver, so a deactivated account costs no read."""
+    _entitled(monkeypatch, "PREMIUM_MONTHLY")
+    assert await sr._should_remind(_user(is_active=False), _prefs()) is False
 
 
-def test_channel_consent_is_no_longer_this_functions_business():
+async def test_channel_consent_is_no_longer_this_functions_business(monkeypatch):
     """Eligibility here decides whether the reminder *exists*, not how it is sent.
 
     These three used to assert that a missing address, the notification master switch, and the
@@ -79,8 +130,9 @@ def test_channel_consent_is_no_longer_this_functions_business():
     rather than disappeared — `tests/test_notification_email.py` asserts each of them at the
     point where they now decide something.
     """
-    assert sr._should_remind(_user(email=None), _prefs(notifications=False)) is True
-    assert sr._should_remind(_user(), _prefs(email_schedule_reminder=False)) is True
+    _entitled(monkeypatch, "PREMIUM_MONTHLY")
+    assert await sr._should_remind(_user(email=None), _prefs(notifications=False)) is True
+    assert await sr._should_remind(_user(), _prefs(email_schedule_reminder=False)) is True
 
 
 def test_unknown_timezone_falls_back_to_utc_rather_than_failing():
@@ -107,8 +159,14 @@ def test_naive_timestamps_are_treated_as_utc():
 
 def test_block_minutes_sums_durations():
     rows = [
-        (datetime(2026, 8, 9, 10, 0, tzinfo=UTC), datetime(2026, 8, 9, 11, 0, tzinfo=UTC)),
-        (datetime(2026, 8, 9, 12, 0, tzinfo=UTC), datetime(2026, 8, 9, 12, 30, tzinfo=UTC)),
+        (
+            datetime(2026, 8, 9, 10, 0, tzinfo=UTC),
+            datetime(2026, 8, 9, 11, 0, tzinfo=UTC),
+        ),
+        (
+            datetime(2026, 8, 9, 12, 0, tzinfo=UTC),
+            datetime(2026, 8, 9, 12, 30, tzinfo=UTC),
+        ),
     ]
     assert ws._block_minutes(rows) == 90
 
@@ -118,7 +176,10 @@ def test_block_minutes_ignores_incomplete_rows_and_negative_durations():
         (None, datetime(2026, 8, 9, 11, 0, tzinfo=UTC)),
         (datetime(2026, 8, 9, 12, 0, tzinfo=UTC), None),
         # end before start: clamped, not subtracted
-        (datetime(2026, 8, 9, 13, 0, tzinfo=UTC), datetime(2026, 8, 9, 12, 0, tzinfo=UTC)),
+        (
+            datetime(2026, 8, 9, 13, 0, tzinfo=UTC),
+            datetime(2026, 8, 9, 12, 0, tzinfo=UTC),
+        ),
     ]
     assert ws._block_minutes(rows) == 0
 

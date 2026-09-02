@@ -152,28 +152,57 @@ async def cancel_subscription(current_user: CurrentUser):
 
 
 # ===========================================================================
-# Subscriptions (Paystack) — written, not mounted
+# Subscriptions (Paystack) — the NGN rail
 # ===========================================================================
 #
-# `/subscriptions/paystack/initialize` and `/subscriptions/paystack/verify` are the single
-# largest gap between this phase and a working money path, and they are absent because they
-# cannot work yet.
-#
-# `paystack_service` holds a `PrismaClientRemoved` sentinel where its database used to be.
-# `initialize_paystack_subscription`, `verify_paystack_transaction`,
-# `cancel_paystack_subscription` and `handle_paystack_webhook` all reach it, so all four
-# fail. The webhook fails quietly — `webhooks.py` catches and answers 200 — but these two
-# routes would answer 500.
-#
-# That matters more than it first looks. Paystack is the NGN rail and Nigeria is the launch
-# market; the naira prices are set independently rather than converted precisely because FX
-# parity would price Maigie above Netflix Standard there. Mounting Stripe without Paystack
-# makes the money path reachable in the markets we are not launching in and unreachable in
-# the one we are. Porting `paystack_service` to SQLAlchemy is a launch blocker, not a later
-# phase.
-#
-# Absent rather than mounted-and-broken: a 404 tells a client the path does not exist yet,
-# which is true. A 500 tells it we are broken, and invites a retry.
+# Mounted in Phase 2b, once `paystack_service` was ported off Prisma. These two routes were the
+# single largest gap between a mounted router and a working money path: Paystack is the NGN rail and
+# Nigeria is the launch market, so Stripe alone made the money path reachable in the markets we are
+# not launching in and unreachable in the one we are.
+
+
+@router.post(
+    "/subscriptions/paystack/initialize",
+    response_model=models.PaystackInitializeResponse,
+)
+async def paystack_initialize(
+    body: models.PaystackInitializeRequest,
+    current_user: CurrentUser,
+    http_request: Request,
+    settings: Settings = Depends(get_settings),
+):
+    """Initialize a Paystack subscription (NGN)."""
+    base_url = settings.FRONTEND_URL or str(http_request.base_url).rstrip("/")
+    success_url = body.success_url or f"{base_url}/subscription/paystack/success"
+    cancel_url = body.cancel_url or f"{base_url}/subscription/cancel"
+
+    try:
+        result = await subscription_service.initialize_paystack(
+            user=current_user,
+            plan_id=body.plan_id,
+            success_url=success_url,
+            cancel_url=cancel_url,
+        )
+        return models.PaystackInitializeResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/subscriptions/paystack/verify", response_model=models.PaystackVerifyResponse)
+async def paystack_verify(reference: str, current_user: CurrentUser):
+    """Verify a Paystack transaction after the learner returns from the payment page."""
+    updated = await subscription_service.verify_paystack(
+        reference=reference, user_id=current_user.id
+    )
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not verify transaction",
+        )
+    return models.PaystackVerifyResponse(
+        tier=str(updated.tier),
+        paystack_subscription_code=updated.paystack_subscription_code,
+    )
 
 
 # ===========================================================================

@@ -66,6 +66,29 @@ class BillingRepository:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
+    async def find_user_by_paystack_subscription(self, subscription_code: str) -> User | None:
+        """The subscription-code counterpart to `find_user_by_paystack_customer`.
+
+        Added for the Phase 2b port: `subscription.disable` identifies the learner by subscription
+        code and by nothing else, so without this the only way to honour a cancellation was a raw
+        query in the service. The Stripe side has had both lookups since it was written.
+        """
+        async with await self._session() as session:
+            stmt = select(User).where(User.paystack_subscription_code == subscription_code)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+
+    async def find_user_by_email(self, email: str) -> User | None:
+        """Paystack webhooks identify a learner by the email on the customer record.
+
+        Not a duplicate of `IdentityRepository.find_by_email`: that one optionally joins
+        preferences, and a webhook wants the billing columns and nothing else.
+        """
+        async with await self._session() as session:
+            stmt = select(User).where(User.email == email)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+
     async def find_user_by_google_play_token(self, purchase_token: str) -> User | None:
         async with await self._session() as session:
             stmt = select(User).where(User.google_play_purchase_token == purchase_token)

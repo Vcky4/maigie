@@ -10,11 +10,17 @@ worker in ``src/workers/notification_tasks`` calls it.
 
 Two deliberate differences from the original:
 
-* **Eligibility is ``tier != "FREE"``, not an allowlist.** The original enumerated
-  ``PREMIUM_MONTHLY``, ``STUDY_CIRCLE_*`` and ``SQUAD_*``. Every one of those names is
-  retired, so that check would now silently exclude paying subscribers on
-  ``plus_monthly`` and ``plus_yearly``. The rest of the codebase treats "not FREE" as
-  paid, and so does this.
+* **Eligibility is ``entitlement_service.resolve``, not a tier comparison.** The original
+  enumerated ``PREMIUM_MONTHLY``, ``STUDY_CIRCLE_*`` and ``SQUAD_*``; this then replaced it
+  with ``tier != "FREE"``, reasoning that the rest of the codebase treated "not FREE" as
+  paid. That stopped being true in the same week: ``entitlement_service`` is now the one
+  resolver (MAIGIE_PLUS_COMMERCIAL_PLAN.md Decision B), and a tier string cannot answer this
+  question because it says nothing about a **trial** or a **pass**. The comparison was wrong
+  in both directions — it excluded every trialling learner, who is supposed to be
+  indistinguishable from a subscriber, and admitted five retired tiers the resolver denies.
+  A fifth mechanism deciding "is this learner paid" is exactly what Decision B exists to
+  prevent, and this one arrived inside notification plumbing where nobody was looking for a
+  commercial policy decision.
 * **No LLM-drafted copy.** A reminder has to arrive in the fifteen minutes before a block
   starts; making that wait on a model call adds a failure mode and a latency budget for no
   benefit the learner can perceive.
@@ -66,18 +72,23 @@ def _format_local_time(moment: datetime, tz: ZoneInfo) -> str:
     return moment.astimezone(tz).strftime("%I:%M %p on %A, %b %d")
 
 
-def _should_remind(user: Any, prefs: Any) -> bool:
+async def _should_remind(user: Any, prefs: Any) -> bool:
     """Whether a reminder should exist for this user at all.
 
     Only the plan gate and account state, not channel consent: whether the reminder becomes
     an email, a push, or stays in the app is the orchestrator's decision, made later and
     rechecked at send time.
+
+    Async because entitlement is a read now rather than a field comparison. One resolve per
+    eligible block-owner per run; the window is fifteen minutes wide, so the volume is small.
     """
     if not user or not user.is_active:
         return False
-    if str(getattr(user, "tier", "FREE") or "FREE") == "FREE":
-        return False
-    return True
+
+    from src.domains.billing.services import entitlement_service
+
+    entitlement = await entitlement_service.resolve(user.id)
+    return entitlement.tier == "plus"
 
 
 async def send_schedule_reminders() -> dict[str, int]:
@@ -113,7 +124,7 @@ async def send_schedule_reminders() -> dict[str, int]:
     failed = 0
 
     for block, user, prefs in rows:
-        if not _should_remind(user, prefs):
+        if not await _should_remind(user, prefs):
             skipped += 1
             continue
 
@@ -145,7 +156,12 @@ async def send_schedule_reminders() -> dict[str, int]:
             failed += 1
             logger.exception("Failed to create schedule reminder for block %s", block.id)
 
-    summary = {"considered": len(rows), "created": created, "skipped": skipped, "failed": failed}
+    summary = {
+        "considered": len(rows),
+        "created": created,
+        "skipped": skipped,
+        "failed": failed,
+    }
     if rows:
         logger.info("Schedule reminders: %s", summary)
     return summary

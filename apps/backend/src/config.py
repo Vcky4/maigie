@@ -237,6 +237,17 @@ class Settings(BaseSettings):
     # --- Paystack (Nigeria) ---
     PAYSTACK_SECRET_KEY: str = ""
     PAYSTACK_PUBLIC_KEY: str = ""
+    # NGN prices in kobo. Set for Nigeria, not converted from USD — at FX parity $4.99 is about
+    # ₦6 900, which would put Maigie Plus above Netflix Standard for a Nigerian student. See
+    # MAIGIE_PLUS_COMMERCIAL_PLAN.md §6.8.
+    #
+    # All three sit deliberately **under ₦2 500**, which is where Paystack's flat ₦100 fee starts
+    # applying on top of the 1.5%. Pricing the subscription at ₦2 500 would turn a ₦36 fee into
+    # ₦137 for one naira of extra revenue; at ₦900 the flat fee would have been 14% of a pass. Do
+    # not round any of these up without re-reading that.
+    PRICE_NGN_PLUS_PASS_5H: int = 70_000  # ₦700
+    PRICE_NGN_PLUS_PASS_7D: int = 180_000  # ₦1 800
+    PRICE_NGN_PLUS_MONTHLY: int = 240_000  # ₦2 400
     # Plan codes (create plans in Paystack Dashboard, amounts in NGN)
     PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY: str = ""
     PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY: str = ""
@@ -262,6 +273,15 @@ class Settings(BaseSettings):
     # Base plan IDs within the subscription
     GOOGLE_PLAY_BASE_PLAN_MONTHLY: str = "plus-monthly"
     GOOGLE_PLAY_BASE_PLAN_YEARLY: str = "plus-yearly"
+    #: Audience configured on the Pub/Sub push subscription that delivers Google Play RTDN.
+    #: Empty means RTDN ingestion is refused rather than trusted — the endpoint had no
+    #: authentication at all before Phase 2a, and it is unauthenticated by construction, so the
+    #: OIDC token Pub/Sub signs is the only thing distinguishing a notification from a `curl`.
+    GOOGLE_PUBSUB_AUDIENCE: str = ""
+    #: Service account email of that push subscription. A Google-signed token only proves Google
+    #: minted it; this proves it was *our* subscription. Optional but strongly recommended.
+    GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL: str = ""
+
     # Credit pack product IDs (in-app products, consumable)
     GOOGLE_PLAY_SKU_CREDIT_STARTER: str = "credit_pack_starter"
     GOOGLE_PLAY_SKU_CREDIT_VALUE: str = "credit_pack_value"

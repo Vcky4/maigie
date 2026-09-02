@@ -166,6 +166,10 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 "Hold it as long as you like; it does not renew."
             ),
             usage_note="About 17 chat turns and 15 minutes of live voice tutoring.",
+            # Listed so clients and generated types can be built against the real shape;
+            # the one-time checkout that sells it arrives in Phase 5. Until then a Buy
+            # button would answer 400.
+            purchasable=False,
         ),
         PlanItem(
             id="plus_pass_7d",
@@ -178,6 +182,7 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 "A study week. It does not renew."
             ),
             usage_note="About 57 chat turns and 50 minutes of live voice tutoring in total.",
+            purchasable=False,  # Phase 5, as above.
         ),
         PlanItem(
             id="plus_monthly",
@@ -278,29 +283,27 @@ def get_price_id_and_trial_days(plan_id: str, *, user: User | None = None) -> tu
 
 
 def _price_id_to_tier(price_id: str) -> str:
-    """Map Stripe price ID to tier enum value.
+    """Map a Stripe price ID to a tier enum value.
 
-    The active tiers are ``PREMIUM_MONTHLY`` / ``PREMIUM_YEARLY`` (the
-    storage representation of the user-facing ``PLUS_*`` aliases).
-    Deprecated ``STUDY_CIRCLE_*`` and ``SQUAD_*`` price IDs are still
-    mapped here so historical billing records and webhook events for
-    legacy subscriptions continue to resolve their source tier
-    (Requirement 2.8 retains historical billing for ≥24 months); the
-    active checkout surface rejects creation against them via
-    ``assert_plan_id_is_active`` and ``_assert_price_id_is_active``.
+    **Only tiers the resolver honours.** `PREMIUM_MONTHLY` is the one tier still on sale, and it is
+    the only one `entitlement_service.PLUS_TIERS` grants Plus for, so it is the only one this
+    function may produce for a paid price.
+
+    Until Phase 2b this also mapped the yearly price to ``PREMIUM_YEARLY`` and four retired price
+    ids to ``STUDY_CIRCLE_*`` / ``SQUAD_*``, on the reasoning that a webhook for a legacy
+    subscription should still resolve its source tier. That reasoning stopped holding when the
+    resolver narrowed: writing a tier string nothing grants Plus for means a renewal that bills a
+    learner and entitles them to nothing. A writer that can produce a value the resolver denies is
+    the defect, not the mapping table.
+
+    Safe because there is nothing left to map — `scripts/count_legacy_commercial_state.py` counted
+    zero users on those tiers and zero subscription identifiers of any kind on 2026-09-01, and all
+    five products are withdrawn from sale, so no renewal for one can arrive. An unrecognised price
+    id falls to ``FREE``, which is also what a withdrawn price now returns: refusing to invent an
+    entitlement is the conservative direction for an input we no longer expect.
     """
     if price_id == settings.STRIPE_PRICE_ID_MONTHLY:
         return "PREMIUM_MONTHLY"
-    if price_id == settings.STRIPE_PRICE_ID_YEARLY:
-        return "PREMIUM_YEARLY"
-    if price_id == settings.STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY:
-        return "STUDY_CIRCLE_MONTHLY"
-    if price_id == settings.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY:
-        return "STUDY_CIRCLE_YEARLY"
-    if price_id == settings.STRIPE_PRICE_ID_SQUAD_MONTHLY:
-        return "SQUAD_MONTHLY"
-    if price_id == settings.STRIPE_PRICE_ID_SQUAD_YEARLY:
-        return "SQUAD_YEARLY"
     return "FREE"
 
 

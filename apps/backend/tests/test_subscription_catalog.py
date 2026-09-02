@@ -29,6 +29,7 @@ from types import SimpleNamespace  # noqa: E402
 import pytest  # noqa: E402
 
 from src.config import get_settings  # noqa: E402
+from src.domains.billing import models as billing_models  # noqa: E402
 from src.domains.billing.services import paystack_service as paystack_svc  # noqa: E402
 from src.domains.billing.services import stripe_service as stripe_svc  # noqa: E402
 from src.domains.personal_learning.services import trial_service  # noqa: E402
@@ -225,16 +226,62 @@ class TestWithdrawnProductsAreRefusedSpecifically:
         finally:
             cfg.STRIPE_PRICE_ID_YEARLY = ""
 
-    def test_a_grandfathered_yearly_renewal_still_resolves_its_tier(self):
-        """Withdrawing a product must not orphan the people paying for it. Nothing here
-        runs on a renewal, which is why the yearly price id survives in config.
+    def test_a_withdrawn_price_no_longer_writes_a_tier_nothing_grants(self):
+        """A writer must not produce a tier the resolver denies.
+
+        This assertion has been both ways round, and the middle position was the broken one. It
+        first required `PREMIUM_YEARLY`, on the reasoning that withdrawing a product must not orphan
+        the people paying for it — correct, and it was the finding that made Phase 2a restore
+        `LEGACY_PLUS_TIERS`, because the resolver had narrowed while this had not.
+
+        Phase 2b resolved it in the other direction on a measurement rather than an argument:
+        `scripts/count_legacy_commercial_state.py` found zero users on any retired tier and zero
+        subscription identifiers of any kind. There is nobody to orphan, all five products are
+        withdrawn from sale so no renewal can arrive, and a paid price that maps to a tier
+        `entitlement_service.PLUS_TIERS` refuses would bill a learner for nothing.
+
+        If that count is ever non-zero, the fix is to restore the frozenset *and* this mapping
+        together — they were only ever wrong apart.
         """
         cfg = get_settings()
         cfg.STRIPE_PRICE_ID_YEARLY = "price_yearly_test"
         try:
-            assert stripe_svc._price_id_to_tier("price_yearly_test") == "PREMIUM_YEARLY"
+            assert stripe_svc._price_id_to_tier("price_yearly_test") == "FREE"
         finally:
             cfg.STRIPE_PRICE_ID_YEARLY = ""
+
+    def test_the_active_monthly_price_is_the_only_one_that_grants_plus(self):
+        cfg = get_settings()
+        cfg.STRIPE_PRICE_ID_MONTHLY = "price_monthly_test"
+        try:
+            assert stripe_svc._price_id_to_tier("price_monthly_test") == "PREMIUM_MONTHLY"
+        finally:
+            cfg.STRIPE_PRICE_ID_MONTHLY = ""
+
+    def test_every_tier_a_writer_can_produce_is_one_the_resolver_grants(self):
+        """The gap the grandfathering defect lived in, closed by an assertion.
+
+        Nothing previously checked that the tier strings `_price_id_to_tier` and
+        `_plan_code_to_tier` can emit are a subset of what `entitlement_service` treats as Plus, so
+        the two drifted silently and both sides' tests stayed green.
+        """
+        from src.domains.billing.services import entitlement_service
+
+        cfg = get_settings()
+        cfg.STRIPE_PRICE_ID_MONTHLY = "price_m"
+        cfg.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY = "PLN_m"
+        try:
+            produced = {
+                stripe_svc._price_id_to_tier("price_m"),
+                stripe_svc._price_id_to_tier("price_unknown"),
+                paystack_svc._plan_code_to_tier("PLN_m"),
+                paystack_svc._plan_code_to_tier("PLN_unknown"),
+            }
+        finally:
+            cfg.STRIPE_PRICE_ID_MONTHLY = ""
+            cfg.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY = ""
+
+        assert produced - {"FREE"} <= entitlement_service.PLUS_TIERS
 
     def test_active_plan_ids_are_accepted(self):
         for plan_id in (
@@ -270,6 +317,31 @@ class TestPassesAreNotSubscriptions:
         and display a pass before there is a rail to buy it on.
         """
         assert _by_id()[plan_id].interval == "one_time"
+
+    @pytest.mark.parametrize("plan_id", stripe_svc.PASS_PRODUCT_IDS)
+    def test_the_checkout_schema_accepts_a_pass_so_the_refusal_is_reachable(self, plan_id):
+        """The refusal above is only useful if a request carrying a pass id reaches the handler.
+
+        `CheckoutRequest.plan_id` is a `Literal`, and while the pass ids were omitted from it
+        FastAPI answered `422 not a valid plan` before `get_price_id_and_trial_days` ran — so the
+        carefully worded "use the pass checkout" message was unreachable and the test above passed
+        while the route behaved differently. This is the same argument the comment above `PlanId`
+        makes for keeping the six *withdrawn* ids in the Literal, applied to the two passes.
+        """
+        assert billing_models.CheckoutRequest(plan_id=plan_id).plan_id == plan_id
+
+    @pytest.mark.parametrize("plan_id", stripe_svc.PASS_PRODUCT_IDS)
+    def test_a_pass_is_not_advertised_as_purchasable_yet(self, plan_id):
+        """Listed, described, priced — and not offered, until Phase 5 builds the one-time rail.
+
+        Without this a client had no way to tell, and the honest reading of a catalogue entry is
+        "you can buy this", so it would have rendered a Buy button that answers 400.
+        """
+        assert _by_id()[plan_id].purchasable is False
+
+    def test_the_subscription_is_purchasable(self):
+        """The flag has to distinguish, or it is decoration."""
+        assert _by_id()["plus_monthly"].purchasable is True
 
 
 # ---------------------------------------------------------------------------
