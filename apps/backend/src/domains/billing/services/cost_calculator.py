@@ -59,6 +59,24 @@ _EXACT_MODEL_PRICING: dict[str, tuple[float, float]] = {
         GEMINI_15_FLASH_INPUT_COST_PER_MILLION,
         GEMINI_15_FLASH_OUTPUT_COST_PER_MILLION,
     ),
+    # OpenAI and Anthropic. Reachable and previously unpriced: `router._select_candidates` draws from
+    # `FALLBACK_CHAT_DEFAULT`, whose third entry is `openai:gpt-4o-mini`, and adapters for both
+    # OpenAI models are registered whenever `OPENAI_API_KEY` is set. A chat turn that fell through to
+    # OpenAI was priced by `_pricing_for_model`'s last resort — the legacy Pro tier at $1.25/$5.00 —
+    # so `gpt-4o-mini` was costed at **8× its real rate**.
+    #
+    # The fallback is deliberately the most expensive entry, which errs towards over-stating, and
+    # over-stating is the safe direction for a meter. It is still a guess, and Phase 3 bills units
+    # from these numbers.
+    #
+    # These values are the same ones `intelligence.reasoning.llm.cost_tracker.PROVIDER_PRICING`
+    # already held, and `test_cost_calculator` now asserts the two tables agree wherever they
+    # overlap — the last divergence between them was `gemini-3.5-flash` wrong in both, which is
+    # exactly the failure two tables of one fact produce.
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4o": (2.50, 10.00),
+    "claude-sonnet-4-20250514": (3.00, 15.00),
+    "claude-haiku-3-5": (0.80, 4.00),
 }
 
 # Premium value attributed per million tokens, used to express what a subscriber's

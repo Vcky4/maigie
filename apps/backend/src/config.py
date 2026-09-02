@@ -352,7 +352,23 @@ class Settings(BaseSettings):
     # Only ``free`` and ``plus`` exist after Circle Reimagining; Circle-scoped
     # AI capabilities are derived from Seat_Tier and resolve to one of these
     # two keys via FeatureFlagService.effective_tier_for_request.
-    LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite"
+    #
+    # **Free does not get `gemini-3.5-flash`, and used to.** It was listed here *and* sat first in
+    # `FALLBACK_CHAT_DEFAULT`, and `router._select_candidates` walks the chain in order keeping the
+    # first allowed pair — so every free chat turn ran on the most expensive model in the chain. With
+    # the corrected rate card that is $0.0174 a turn against $0.0029 on Flash-Lite: **6×**.
+    #
+    # It also meant the model allowlist gated nothing. MAIGIE_PLUS_COMMERCIAL_PLAN.md §6.3 argues the
+    # free tier is "starved of voice and of model quality" rather than of conversation, and sizes the
+    # Free window at 500 units on the strength of it. At the price actually being paid, 500 units
+    # bought ~3 chat turns, not the ~16 the plan claims — which is the failure the same section says
+    # the old design had and this one fixes.
+    #
+    # Scope worth knowing: this allowlist is consulted by `router.route_request`, whose only caller is
+    # the Ask/chat turn. The 26 other LLM call sites reach providers through
+    # `personal_learning.services.llm_resilient`, which selects a provider of its own and never asks
+    # this question — so model quality is tier-gated on chat and nowhere else. See drift item 23.
+    LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-3.1-flash-lite"
     LLM_TIER_ALLOWLIST_PLUS: str = (
         "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o-mini"
     )
