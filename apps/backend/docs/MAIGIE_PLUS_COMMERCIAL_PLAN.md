@@ -6,9 +6,11 @@
 >
 > **Two things block a learner paying us.** There is no rolling usage window yet — `CREDIT_LIMITS` still meters a monthly and a daily token cap, so no allowance in §6.3 is enforced (Phase 3). And there is no one-time checkout, so **no pass can be bought on any rail** (Phase 5), which is also why no store product exists yet. §5.7 is the provider-by-provider creation order and it has the longest external lead times in the plan.
 >
-> **The commercial model, current as of revision 9.** Six personal products — Free, a 5-hour pass, a 7-day pass, Plus Monthly, an NGN-only 4-month Term Pass, and a 30-minute voice pack. Prices are set per market rather than converted (§6.8). Usage is a 5-hour rolling window denominated in **cost units**, one unit being $0.0001 of measured COGS, with live voice on its own counter (§6.3). **Decision Q is the rule that holds the economics together**: COGS is quoted from the allowance cap, never from a per-operation estimate — a cap denominated in dollars cannot be wrong about what it costs, however wrong the rate card is. **Decision R is the rule that stops the catalogue growing**: voice is the only top-up, because the pass ladder already is the top-up for everything metered.
+> **The commercial model, current as of revision 10.** Six personal products — Free, a 5-hour pass, a 7-day pass, Plus Monthly at **$9.99**, an NGN-only 4-month Term Pass, and a 30-minute voice pack. Prices are set per market rather than converted (§6.8). Usage is a 5-hour rolling window denominated in **cost units**, one unit being $0.0001 of measured COGS, with live voice on its own counter (§6.3). **Decision Q is the rule that holds the economics together**: COGS is quoted from the allowance cap, never from a per-operation estimate — a cap denominated in dollars cannot be wrong about what it costs, however wrong the rate card is. **Decision R is the rule that stops the catalogue growing**: voice is the only top-up, because the pass ladder already is the top-up for everything metered.
 >
-> At 10 000 MAU the model returns **+$463 at 40% in Nigeria** and **+$1 340 at 56% globally** (§6.11). Contribution excludes infrastructure and salaries, so it is not profit. **The binding constraint is no longer pricing, it is distribution**: at these margins Nigeria needs on the order of 90 000 MAU to fund two engineers, and no further product would change that. Every payer rate in this document is a guess against zero payment history, and the first real number replaces all of them.
+> At 10 000 MAU the model returns **+$463 at 40% in Nigeria** and **+$2 367 at 72% globally** (§6.11). Contribution excludes infrastructure and salaries, so it is not profit. **The two markets do different jobs**: global buys runway at $0.237 contribution per MAU — a lean two-engineer team at ~17 000 MAU — while Nigeria buys product-market fit and needs ~87 000 MAU for the same team. Every payer rate in this document is a guess against zero payment history, and the first real number replaces all of them.
+>
+> **The one unexploited structural advantage is out of scope here and has its own document.** Nigeria's national syllabi (JAMB, WAEC, NECO) mean generated study content is near-identical across thousands of learners, so free-tier COGS could become a function of syllabus rather than of learner. That is the largest remaining cost lever in the business and it is designed in [`SHARED_CURRICULUM_CACHE_PLAN.md`](./SHARED_CURRICULUM_CACHE_PLAN.md), not here.
 >
 > Owners: Backend (catalogue, entitlement, usage windows, store verification) + Web client + Mobile client + Public site
 > Scope: the **personal** product catalogue, purchase rails on three surfaces, the pass activation model, the rolling usage window that replaces daily and monthly credit caps, the earned-points ledger that redeems into passes, and one entitlement resolver that every personal-scope gate reads.
@@ -20,6 +22,7 @@
 >
 > | Rev | Change | Where |
 > | --- | --- | --- |
+> | 10 | **Plus Monthly $4.99 → $9.99, 7-day pass $2.49 → $3.99.** The "decisive" argument for $4.99 was that no subscriber should see a price-increase flow, and Phase 2b proved there are no subscribers — the change costs nothing now and becomes permanently expensive at the first signup. Monthly backstop 20 000 → 36 000 units and 5-hour pass 3 000 → 2 000 to keep the per-unit ladder ordered. Payer rate assumption 8% → 6% as the elasticity cost. NGN prices unchanged. | §6.1, §6.3, §6.4, §6.7 |
 > | 9 | `plus_voice_30` added — the voice top-up that revision 8 promised in five places and never created, which left a subscriber out of voice minutes with nothing to buy (Decision D forbids activating a pass while Plus is active). Per-feature top-ups ruled out for everything else. The two Apple keys distinguished: the App Store Connect API key on the Expo account is not the In-App Purchase key the App Store Server API needs. | Decision R, §6.1, §6.3, §5.7.5 |
 > | 8 | COGS quoted from the allowance cap, not from operation estimates. Voice unbundled and removed from Free. Monthly backstop 30 000 → 20 000 units. NGN allowances derived from NGN net revenue after the Nigerian monthly was found to have a negative unit margin. §6.8's free COGS reconciled with §6.7's (+$518 → +$58 before fixes). 7-day pass ₦1 800 → ₦1 500. NGN-only ₦5 500 Term Pass added. | Decision Q, §6.3, §6.4, §6.8, §6.11 |
 > | 7 | Model-quality split confined to operations above 500 units; `gemini-3.5-flash-lite` as Free's second candidate. The Gemini 2.5 family shuts down October 2026, so the cheapest row in the price table was not a usable fallback. | Decision P |
@@ -29,11 +32,11 @@
 > | 3 | Phase 1: catalogue rewritten, credit packs deleted, billing router mounted. | Phase 1 |
 > | 2 | Trial shortened to 3 days; referral cap removed; rewarded ads withdrawn; points introduced as a pass-only currency. | §6.9, Decision O |
 >
-> Last reviewed: 2026-09-02 (revision 9)
+> Last reviewed: 2026-09-02 (revision 10)
 
 ## 1. Purpose
 
-Four products replace the current **personal** catalogue: three **consumable Plus passes** — 5-hour, 7-day, and an NGN-only 4-month Term Pass — and one **$4.99/month subscription**. Credit packs go, and the retired Study Circle and Squad personal tiers are finished off. Daily and monthly credit caps are replaced by a **rolling usage window** that resets on a clock the learner can see, with live voice metered separately.
+Four products replace the current **personal** catalogue: three **consumable Plus passes** — 5-hour, 7-day, and an NGN-only 4-month Term Pass — and one **$9.99/month subscription**. Credit packs go, and the retired Study Circle and Squad personal tiers are finished off. Daily and monthly credit caps are replaced by a **rolling usage window** that resets on a clock the learner can see, with live voice metered separately.
 
 Alongside the money path there is one earned path: **points**, granted for referring learners who actually stay, redeemable for passes and for nothing else. Rewarded ads are withdrawn.
 
@@ -77,7 +80,7 @@ The OpenAPI tag metadata for `billing` and `webhooks` is still declared (`app.py
 | iOS app | StoreKit 2 in-app purchase | 15–30% |
 | Android app | Google Play Billing | 15–30% |
 
-On a $0.99 pass the store keeps 15¢ (Small Business Program) to 30¢. Net is ~$0.69–0.84 versus ~$0.66 on Stripe after fixed fees — at $0.99 the 30¢ Stripe fixed fee makes web *worse* than the store. At $4.99/month web is clearly better ($4.55 vs $4.24). That inversion is worth knowing before anyone builds steering logic; it also means the $0.99 pass is the one product where store distribution costs nothing extra. Full table in §6.4.
+On a $0.99 pass the store keeps 15¢ (Small Business Program) to 30¢. Net is ~$0.69–0.84 versus ~$0.66 on Stripe after fixed fees — at $0.99 the 30¢ Stripe fixed fee makes web *worse* than the store. At $9.99/month web is clearly better ($9.40 vs $8.49). That inversion is worth knowing before anyone builds steering logic; it also means the $0.99 pass is the one product where store distribution costs nothing extra. Full table in §6.4.
 
 ## 3. Outcomes
 
@@ -285,8 +288,8 @@ Prices from §6.1 (USD) and §6.8 (NGN). **NGN is a set price, not a conversion*
 | Internal id | USD | NGN | Stripe | Paystack | Google Play | Apple |
 | --- | --- | --- | --- | --- | --- | --- |
 | `plus_pass_5h` | 0.99 | ₦700 | one-time price | one-off charge | `plus_pass_5h`, consumable | `com.maigie.plus.pass5h`, Consumable |
-| `plus_pass_7d` | 2.49 | ₦1 500 | one-time price | one-off charge | `plus_pass_7d`, consumable | `com.maigie.plus.pass7d`, Consumable |
-| `plus_monthly` | 4.99/mo | ₦2 400/mo | recurring price, 3-day trial | plan code, monthly | `maigie_plus` / base plan `plus-monthly` | `com.maigie.plus.monthly`, group `maigie_plus` |
+| `plus_pass_7d` | 3.99 | ₦1 500 | one-time price | one-off charge | `plus_pass_7d`, consumable | `com.maigie.plus.pass7d`, Consumable |
+| `plus_monthly` | 9.99/mo | ₦2 400/mo | recurring price, 3-day trial | plan code, monthly | `maigie_plus` / base plan `plus-monthly` | `com.maigie.plus.monthly`, group `maigie_plus` |
 | `plus_pass_term` | **—** | ₦5 500 | **not created** | one-off charge | `plus_pass_term`, consumable, **NG only** | `com.maigie.plus.passterm`, Consumable, **NG only** |
 | `plus_voice_30` | 1.49 | ₦1 500 | one-time price | one-off charge | `plus_voice_30`, consumable | `com.maigie.plus.voice30`, Consumable |
 | `free` | 0 | 0 | — | — | — | — |
@@ -299,9 +302,9 @@ Prices from §6.1 (USD) and §6.8 (NGN). **NGN is a set price, not a conversion*
 
 Three products, three prices, no review. Do this in the dashboard rather than the API so the ids are visible to whoever debugs a webhook later.
 
-- [ ] Product **Maigie Plus** → recurring price **$4.99/month**, `trial_period_days = 3`. Reuse the existing price if one exists: **do not create a new one**, because a new price id is a price migration and §6.1 explains why the amount must not move.
+- [ ] Product **Maigie Plus** → recurring price **$9.99/month**, `trial_period_days = 3`. **Create a new price and archive any existing $4.99 one.** §6.1 explains why this is free to do now and expensive later: with zero subscribers there is no migration, and the first subscriber makes this permanent.
 - [ ] Product **5-Hour Plus Pass** → one-time price **$0.99**. → `STRIPE_PRICE_ID_PLUS_PASS_5H`
-- [ ] Product **7-Day Plus Pass** → one-time price **$2.49**. → `STRIPE_PRICE_ID_PLUS_PASS_7D`
+- [ ] Product **7-Day Plus Pass** → one-time price **$3.99**. → `STRIPE_PRICE_ID_PLUS_PASS_7D`
 - [ ] Product **30 Voice Minutes** → one-time price **$1.49**. → `STRIPE_PRICE_ID_PLUS_VOICE_30`
 - [ ] Enable **Apple Pay, Google Pay and Link** as payment methods in the dashboard. This is a checkbox, not an integration, and it is the correct place for the wallet APIs — §2 explains why using them inside the iOS app would be a guideline 3.1.1 rejection.
 - [ ] **Archive** the yearly Plus price and the three credit-pack prices. Archive rather than delete: Stripe keeps them referenceable, and archiving is what stops them being selectable.
@@ -337,7 +340,7 @@ Play products go live from the console without review, so this is the fastest of
 - [ ] Create `plus_pass_5h`, `plus_pass_7d`, `plus_pass_term` and `plus_voice_30` as **in-app products of type consumable**. **Consumable is load-bearing and irreversible**: a non-consumable is permanently owned, restorable forever, and unbuyable a second time, which is the exact opposite of a pass. Getting this wrong means a new SKU, not an edit. `plus_voice_30` in particular is bought repeatedly by design (Decision R), so a non-consumable would break it on the second purchase.
 - [ ] Set the **NGN price for every product by hand** in the territory pricing table. Play's automatic conversion would apply FX parity, which §6.8 spends a section explaining is the thing that prices us out of the launch market.
 - [ ] Restrict `plus_pass_term` to **Nigeria only** in its availability settings.
-- [ ] On subscription `maigie_plus`, base plan `plus-monthly`: keep **$4.99**, set the NGN price to **₦2 400**, and set the **free-trial offer to 3 days**.
+- [ ] On subscription `maigie_plus`, base plan `plus-monthly`: set **$9.99** (raised from $4.99 — no 7-day price-change notice is owed because there are no subscribers), set the NGN price to **₦2 400**, and set the **free-trial offer to 3 days**.
 - [ ] **Delete, do not repurpose**: the `plus-yearly` base plan and the three `credit_pack_*` consumables, plus `GOOGLE_PLAY_BASE_PLAN_YEARLY` and the three `GOOGLE_PLAY_SKU_CREDIT_*` settings (`config.py:264-268`) and the branches reading them at `google_play_service.py:65, 191-193`. Nobody has bought any of them, so there is no RTDN history to decode. **Never rename an existing SKU into a new role** — a renamed SKU carries its old purchase history and its old type.
 - [ ] Point Real-Time Developer Notifications at the Pub/Sub topic feeding `POST /webhooks/google-play/rtdn`, and set `GOOGLE_PUBSUB_AUDIENCE` and `GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL`. The endpoint verifies the push OIDC token against Google's certs and checks the token's `email` — a Google-signed token proves Google minted it, not that our subscription sent it (Phase 2a).
 - [ ] Confirm the service account still has **View financial data** and Play Developer API access, which is what `purchases.products.get` and `purchases.subscriptions.get` authenticate as.
@@ -369,7 +372,7 @@ Nothing tests these, because nothing in the repo can read a console.
 
 - [ ] **The trial is 3 days in four places**: `config.TRIAL_DAYS_MAIGIE_PLUS`, the Stripe price's `trial_period_days`, the Play base-plan free trial, and the Apple introductory offer. Two of the four are consoles. `TRIAL_DAYS_CIRCLE_PLAN` stays at **7** — it is space-scoped (Decision F).
 - [ ] **Every NGN price matches §6.8** in Play, App Store Connect and `config.py`: ₦700 / ₦1 500 / ₦2 400 / ₦5 500, and ₦1 500 for the voice pack.
-- [ ] **Every USD price matches §6.1** in Stripe and both stores: $0.99 / $1.49 / $2.49 / $4.99.
+- [ ] **Every USD price matches §6.1** in Stripe and both stores: $0.99 / $1.49 / $3.99 / $9.99. **No console anywhere still reads $4.99 or $2.49.**
 - [ ] **The Term Pass is unavailable outside Nigeria** in both stores, and `PlanItem.availability` keeps it out of `GET /plans/catalog` elsewhere (§6.1). A catalogue that advertises an unbuyable product is a defect this plan has already recorded once.
 - [ ] **Every pass and the voice pack are consumable** in both stores. Check it before the first purchase, not after — it cannot be corrected by editing.
 - [ ] **The two Apple keys are not confused.** `APPLE_KEY_ID` belongs to the **In-App Purchase** key, not the App Store Connect API key on the Expo account. The symptom of getting this wrong is authentication failures on transaction lookup while builds upload perfectly.
@@ -393,8 +396,8 @@ Two products carry constraints the others do not, and `PlanItem` needs a field f
 | --- | --- | --- | --- | --- |
 | `free` | Free | — | 0 | baseline capabilities, Free window allowance |
 | `plus_pass_5h` | 5-Hour Plus Pass | **consumable product** | **0.99** | full Maigie Plus for 5 hours from activation, then nothing |
-| `plus_pass_7d` | 7-Day Plus Pass | **consumable product** | **2.49** | full Maigie Plus for 7 days from activation, then nothing |
-| `plus_monthly` | Maigie Plus | auto-renewing subscription | **4.99/mo** | full Maigie Plus while active, **3-day trial** on first purchase |
+| `plus_pass_7d` | 7-Day Plus Pass | **consumable product** | **3.99** | full Maigie Plus for 7 days from activation, then nothing |
+| `plus_monthly` | Maigie Plus | auto-renewing subscription | **9.99/mo** | full Maigie Plus while active, **3-day trial** on first purchase |
 | `plus_pass_term` | 4-Month Term Pass | **consumable product** | **NGN only — ₦5 500** | full Maigie Plus for 4 months from activation, then nothing |
 | `plus_voice_30` | 30 Voice Minutes | **consumable product** | **1.49** | 30 live-voice minutes added to the learner's voice balance. Not an entitlement |
 
@@ -402,9 +405,21 @@ These are **US/UK list prices**. The launch market is Nigeria, where FX parity w
 
 **The Term Pass exists only in Nigeria.** §6.8's argument is that Nigerians are practised buyers of discrete prepaid digital goods and that recurring card mandates fail often. A pass wallet honours that at the scale of one study week; nothing else in the catalogue honours it at the scale of a semester, which is the unit Nigerian students plan in. ₦5 500 for four months is one prepaid decision, aligned to an academic term, with **no renewal that can fail** — worth more than the ₦4 100 of nominal discount against four monthly charges, because a mandate that fails in month two collects nothing at all. It is a consumable like the other passes, so it adds no entitlement mechanics (Decision A, Decision E): the same inventory-then-activate path with a longer duration. It carries no USD price, and §5.7.1 says why creating one would be a mistake rather than an omission.
 
-**$4.99, not $5.00.** Identical revenue to the cent, better psychologically, an existing store price point, and — decisively — unchanged from today's price, so no subscriber ever sees a price-increase flow. A $0.01 rise would require a Stripe price migration, a mandatory 7-day Google Play notice, and on Apple an **explicit consent prompt where non-responders are cancelled at renewal**. Real churn risk for one cent of nothing.
+**$9.99, raised from $4.99, and the window to do it closes on the first subscriber.**
 
-**The trial is 3 days, not 7.** A free 7-day trial sitting beside a $2.49 7-day pass is the same product at two prices, and the one that costs money looks like a trick to anyone who remembers the free one. Three days separates them cleanly: the trial is a look, the pass is a study week. It costs nothing to shorten because **no trial has ever converted to a paying subscriber** — there has never been a reachable checkout to convert into. Three days is also long enough to be honest at a 5-hour window: ~14 windows, several study sessions, every Plus capability.
+Revisions 1–9 held the monthly at $4.99 on four arguments, one of which was labelled decisive: *unchanged from today's price, so no subscriber ever sees a price-increase flow.* **That argument is void and has been since Phase 2b took the count.** There are zero Stripe subscription ids, zero Paystack codes and zero Play tokens — there is no subscriber to protect, no Stripe price migration to perform, no mandatory Google Play notice to serve, and no Apple consent prompt where non-responders are cancelled at renewal. The entire cost of a price change is currently **zero**, and it becomes permanently non-zero the moment one person subscribes.
+
+The remaining three arguments were preferences for the digit 9, and $9.99 satisfies them equally.
+
+**What $4.99 was actually signalling.** ChatGPT Plus is $20/month, Course Hero around $40, Photomath around $10. At $4.99 Maigie was the cheapest thing in its category by a factor of two, which does not read as value — it reads as a toy, against a paid case (§6.8) that is specifically *not* "cheap AI access". $9.99 is still half of the nearest general-purpose comparison and buys something a general chatbot structurally cannot do.
+
+**The 7-day pass moves $2.49 → $3.99** to hold the ladder at roughly 40% of the monthly. The **5-hour pass stays at $0.99** — its job is the sub-$1 impulse and the first card on file, not revenue, and $0.99 is the price point that job requires. The **voice pack stays at $1.49**, because it is priced off marginal cost rather than willingness to pay (Decision R).
+
+**NGN prices do not move.** §6.8's market comparison is unaffected by any of this: ₦2 400 is set against Spotify at ₦1 600 and Netflix Mobile at ₦2 500, and raising it to chase the USD ratio is the one move guaranteed to make the launch market worse. **The gap between the two ladders widens from 35% to 17% of USD list, and that is correct** — regional pricing is a market fact, not a discount schedule, and a wider gap simply reflects that the US market was being under-charged rather than that Nigeria is now being over-served.
+
+**This must ship before the first subscriber exists.** It is the only item in this plan whose cost rises permanently with time rather than falling.
+
+**The trial is 3 days, not 7.** A free 7-day trial sitting beside a $3.99 7-day pass is the same product at two prices, and the one that costs money looks like a trick to anyone who remembers the free one. Three days separates them cleanly: the trial is a look, the pass is a study week. It costs nothing to shorten because **no trial has ever converted to a paying subscriber** — there has never been a reachable checkout to convert into. Three days is also long enough to be honest at a 5-hour window: ~14 windows, several study sessions, every Plus capability.
 
 `config.TRIAL_DAYS_MAIGIE_PLUS` is `3` as of Phase 1, but the number also lives in **three store configurations the server does not control** — the Stripe price's `trial_period_days`, the App Store Connect introductory offer, and the Play base-plan free trial. All four must agree, two of them are set by hand in a console, and nothing can test them; §5.7.6 is the parity check. `TRIAL_DAYS_CIRCLE_PLAN` stays at 7 — space-scoped (Decision F).
 
@@ -459,10 +474,16 @@ A **5-hour tumbling window**, started by the learner's first billable operation 
 | | Window (5h) | Monthly backstop | ≈ chat turns / window | ≈ voice minutes / window | Window COGS |
 | --- | --- | --- | --- | --- | --- |
 | Free | **500 units** | 5 000 | ~16 | **0 — unbundled** | $0.05 |
-| Plus — subscription or trial | **4 000 units** | **20 000** | ~23 | separate allowance | $0.40 |
-| 5-Hour Pass | **3 000 units** (one window) | — | ~17 | separate allowance | $0.30 |
+| Plus — subscription or trial | **4 000 units** | **36 000** | ~23 | separate allowance | $0.40 |
+| 5-Hour Pass | **2 000 units** (one window) | — | ~11 | separate allowance | $0.20 |
 | 7-Day Pass | 4 000 units/window | **10 000 total** | ~57 total | separate allowance | $1.00 total |
 | Term Pass (NGN) | 4 000 units/window | **20 000/month** | ~114/month | separate allowance | $2.00/month |
+
+**Two allowances moved with the $9.99 price rise, and they had to.** Raising the monthly's price without raising its allowance inverted the per-unit ladder: at $8.95 net for 20 000 units the subscription would have cost **more** per unit than a $0.99 pass, making the value product the worst deal and handing a learner doing arithmetic a reason to buy passes forever. So the monthly backstop goes **20 000 → 36 000** and the 5-hour pass goes **3 000 → 2 000**. §6.4 has the restored ladder.
+
+**A price rise that arrives with a larger allowance is defensible to a learner; a bare one is not.** 36 000 units is roughly 1 200 Flash-Lite chat turns a month, about 40 a day — genuinely generous rather than nominally so. The backstop is now ~9 windows of maximal draw per month rather than ~5, which is still far above what anyone reaches by studying and still an abuse bound rather than a product limit.
+
+**The Term Pass keeps 20 000 units/month** because its price did not change. NGN allowances are derived from NGN net revenue (§6.8) and NGN prices are unmoved, so nothing in the launch market shifts.
 
 **Live voice is not drawn from the usage window, and unbundling it is what makes NGN prices affordable.** At 200 units/minute (§6.2) voice is 40× a Flash-Lite chat turn, so it dominated every ceiling: a learner who spent an allowance on voice hit the COGS ceiling, and one who spent it on text did not come close. A single allowance covering both meant pricing for the voice case and serving mostly the text case — the worst of both, because the price had to be defensible against a cost almost nobody incurred.
 
@@ -513,21 +534,23 @@ Net revenue per sale, after store or processor cut. Apple and Google both take *
 | Product | List | Web (Stripe) | Store 15% | Store 30% | Blended assumption |
 | --- | --- | --- | --- | --- | --- |
 | 5-Hour Pass | $0.99 | $0.66 | $0.84 | $0.69 | **$0.75** |
-| 7-Day Pass | $2.49 | $2.12 | $2.12 | $1.74 | **$2.05** |
-| Plus Monthly | $4.99 | $4.55 | $4.24 | $3.49 | **$4.00** |
+| 7-Day Pass | $3.99 | $3.57 | $3.39 | $2.79 | **$3.48** |
+| Plus Monthly | $9.99 | $9.40 | $8.49 | $6.99 | **$8.95** |
 | 30 Voice Minutes | $1.49 | $1.15 | $1.27 | $1.04 | **$1.21** |
 
-Note the inversion: at $0.99 Stripe's 30¢ fixed fee makes **web the worst channel**, while at $4.99 web is the best. The $0.99 pass loses nothing to store distribution.
+Note the inversion: at $0.99 Stripe's 30¢ fixed fee makes **web the worst channel**, while at $9.99 web is clearly the best — a 91¢ advantage per subscriber per month, up from 31¢ at $4.99. **The price rise made web steering worth building** where previously it was worth a footnote.
 
 Margin at the allowance ceiling, which is the worst case rather than the expected case. **Every COGS figure here is the allowance cap × $0.0001, per Decision Q — not an operation estimate**, which is why revision 8 can state these without the "recompute before quoting" caveat that hung over the previous version of this table:
 
 | Product | Net | Allowance | Max COGS | Floor margin | Typical COGS | Typical margin |
 | --- | --- | --- | --- | --- | --- | --- |
-| 5-Hour Pass | $0.75 | 3 000 units | $0.30 | 60% | $0.18 | **76%** |
-| 7-Day Pass | $2.05 | 10 000 units | $1.00 | 51% | $0.60 | **71%** |
-| Plus Monthly | $4.00 | **20 000 units/mo** | **$2.00** | **50%** | $1.10 | **73%** |
+| 5-Hour Pass | $0.75 | 2 000 units | $0.20 | **73%** | $0.14 | **81%** |
+| 7-Day Pass | $3.48 | 10 000 units | $1.00 | **71%** | $0.60 | **83%** |
+| Plus Monthly | $8.95 | **36 000 units/mo** | $3.60 | **60%** | $1.40 | **84%** |
 | 30 Voice Minutes | $1.21 | 30 min = 6 000 units | $0.60 | **50%** | $0.48 | **60%** |
 | Free | $0.00 | 500 units/window | **$0.15** | — | $0.08 | — |
+
+**The monthly's true floor is 46%, not 60%, once its 60 included voice minutes are counted** — $3.60 of units plus $1.20 of voice against $8.95 net. That is the one place the two meters have to be added together, and it is worth stating because §6.3's voice table and this table each look complete on their own.
 
 **The voice pack is the one product whose ceiling is routinely reached**, which is why its floor and typical margins sit closer together than anything else here. A learner buys 30 minutes in order to use 30 minutes; nobody buys voice minutes speculatively. The $0.48 typical figure assumes 80% consumption, and if the real number is 100% the margin is 50% rather than 60% — the narrowest band in the catalogue, and deliberately so, because a pack sized to be under-consumed would be a pack that misleads.
 
@@ -535,7 +558,11 @@ Margin at the allowance ceiling, which is the worst case rather than the expecte
 
 **Free's ceiling drops $0.50 → $0.15** for the same reason plus voice removal: 500 units/window × 4.8 windows is the text bound, and the $0.50 figure was carrying voice exposure that no longer exists.
 
-The ladder stays coherent: **$0.00025/unit on the 5-hour pass, $0.00021 on the 7-day, $0.00020 on monthly.** Impulse buys still cost most per unit and the subscription is still the value choice, though the gap narrows — the previous spread (0.00031 / 0.00021 / 0.00013) was wider mainly because the monthly's allowance was oversized. There is no arbitrage: three 7-day passes ($7.47) cost more than a month and buy 30 000 units against 20 000, which is the correct direction — more money buys more units.
+The ladder is coherent again after the §6.3 allowance change: **$0.000375/unit on the 5-hour pass, $0.000348 on the 7-day, $0.000249 on monthly.** Impulse buys cost most per unit, the subscription is the value choice, and the ordering matches the per-day price ladder ($4.75 / $0.57 / $0.33).
+
+**No arbitrage, checked three ways.** Three 7-day passes cost $11.97 against $9.99 for a month and buy 30 000 units against 36 000 — more money for fewer units, which is the correct direction. Matching the monthly's 36 000 units with 5-hour passes takes 18 of them at $17.82. And a pass cannot be stacked to simulate a subscription anyway: Decision D allows one active at a time, so 18 passes are 18 separate five-hour sessions rather than a month of availability.
+
+**The margins improved substantially and that is a symptom, not a win.** Floor margins went 60% / 51% / 50% to **73% / 71% / 60%**, because the price rose faster than the allowance. A product whose floor margin jumps 20 points on a price change nobody was consulted about was under-priced, and this table is the clearest evidence in the document that $4.99 was the wrong number.
 
 ### 6.5 The whole AI cost surface — five operations are metered, thirty-one are not
 
@@ -643,17 +670,19 @@ Two operations are **never gated and never charged**, on principle rather than o
 
 ### 6.7 Revenue, with the whole cost surface in it
 
-Assumptions, all of which are guesses and are the first thing to replace with measurement: payer rate **8% of MAU** (2.75% subscribe, 3.25% buy 7-day passes at 1.3/month, 2.0% buy 5-hour passes at 2.0/month); **50%** of non-paying MAU are AI-active in a given month; net revenue per §6.4; COGS from allowance caps per Decision Q.
+Assumptions, all of which are guesses and are the first thing to replace with measurement: payer rate **6% of MAU** (2.0% subscribe, 2.5% buy 7-day passes at 1.3/month, 2.0% buy 5-hour passes at 2.0/month, 12% of payers buy a voice pack); **50%** of non-paying MAU are AI-active in a given month; net revenue per §6.4; COGS from allowance caps per Decision Q.
+
+**The payer rate is 6%, down from 8%, and that drop is deliberate.** It is the assumed elasticity cost of the $9.99 price rise — roughly a third of would-be subscribers and a quarter of 7-day buyers lost, with the $0.99 impulse pass unaffected because its price did not move. **The rise pays for itself anyway**, which is the whole argument: revenue goes up while the number of learners we have to serve goes down. The break-even is around a **4.5% payer rate**; below that the rise is wrong. Nothing in the repo can tell you which side of 4.5% reality sits on, so this is the assumption to instrument first after launch.
 
 Per-learner monthly COGS, before and after the §6.5 fixes:
 
 | | Free — as-is | Free — fixed | Plus — as-is | Plus — fixed |
 | --- | --- | --- | --- | --- |
-| Metered usage (window) | $0.25 | $0.05 | $1.80 | $0.80 |
+| Metered usage (window) | $0.25 | $0.05 | $1.80 | $1.10 |
 | Background tasks | $0.64 | $0.02 | $0.64 | $0.28 |
 | Home guidance (uncached) | $0.70 | $0.01 | $0.70 | $0.02 |
 | Unmetered generation | **unbounded** | in window | **unbounded** | in window |
-| **Total** | **$1.59+** | **$0.08** | **$3.14+** | **$1.10** |
+| **Total** | **$1.59+** | **$0.08** | **$3.14+** | **$1.40** |
 
 The "fixed" column assumes four changes, none of which a learner can perceive: meter every operation into the window (Decision L), gate background AI on engagement (Decision M), cache home guidance the way `narrative_cache` already caches narratives, and set `thinking_budget` per operation class. **Voice is not in this table** — it is separately allowanced (§6.3), which is what makes the Plus figure bounded rather than a guess.
 
@@ -661,16 +690,20 @@ At 8% payer rate, 50% of free MAU AI-active:
 
 | | 1 000 MAU | 10 000 MAU | 50 000 MAU |
 | --- | --- | --- | --- |
-| Subscribers | 28 | 275 | 1 375 |
-| 7-day passes sold | 42 | 423 | 2 113 |
+| Subscribers | 20 | 200 | 1 000 |
+| 7-day passes sold | 32 | 325 | 1 625 |
 | 5-hour passes sold | 40 | 400 | 2 000 |
-| Voice packs sold | 10 | 96 | 480 |
-| **Net revenue** | **$239** | **$2 383** | **$11 916** |
-| Paid COGS | $68 | $675 | $3 375 |
-| Free COGS | $37 | $368 | $1 840 |
-| **Contribution** | **$134** | **$1 340** | **$6 701** |
-| Margin | 56% | 56% | 56% |
-| Revenue per MAU | $0.239 | $0.238 | $0.238 |
+| Voice packs sold | 7 | 72 | 360 |
+| **Net revenue** | **$329** | **$3 308** | **$16 541** |
+| Paid COGS | $56 | $566 | $2 828 |
+| Free COGS | $38 | $376 | $1 880 |
+| **Contribution** | **$235** | **$2 367** | **$11 833** |
+| Margin | 71% | **72%** | 72% |
+| Revenue per MAU | $0.329 | **$0.331** | $0.331 |
+
+**The $9.99 rise is worth +77% contribution at 10 000 MAU** — $1 340 → $2 367 — on **a third fewer subscribers and a quarter fewer 7-day buyers.** Margin goes 56% → 72%. That is what correcting an under-price looks like: you serve fewer people, earn more, and spend less doing it.
+
+It also halves the growth requirement. At $0.237 contribution per MAU, a lean two-engineer team at ~$4k/month needs **17 000 MAU** rather than 30 000, and a $20k/month team needs **85 000** rather than 149 000. Nigeria at $0.046 needs 87 000 MAU for the same lean team, which is the clearest statement of why the two markets are not interchangeable: **global buys runway, Nigeria buys product-market fit.**
 
 **Voice packs assume a 12% monthly attach rate against payers, and it is the weakest assumption in the table.** Voice is the feature with the least usage data behind it and the highest unit cost, so the range that matters is wide: at 30% attach the pack is a significant product, at 2% it is a rounding error that still needs four store SKUs. Phase 3's instrumentation answers it. The pack is worth building at any of those numbers for the reason in Decision R — it closes an unbounded exposure rather than chasing the revenue — but **do not plan headcount against the +$70.**
 
@@ -694,7 +727,7 @@ Two things this model does not claim: it ignores infrastructure, storage, CDN, e
 
 ### 6.8 Nigeria is the launch market, and FX parity would price us out of it
 
-USD/NGN is around **₦1,380–1,390** ([Wise, week of 20–26 Aug 2026](https://wise.com/gb/currency-converter/usd-to-ngn-rate/history)). At parity, $4.99 is **₦6,900**. What that would mean next to what Nigerians actually pay for subscriptions:
+USD/NGN is around **₦1,380–1,390** ([Wise, week of 20–26 Aug 2026](https://wise.com/gb/currency-converter/usd-to-ngn-rate/history)). At parity, the $9.99 list is **₦13,800** — and even the old $4.99 list was ₦6,900. What parity would mean next to what Nigerians actually pay for subscriptions:
 
 | Product | NGN/month | ≈ USD |
 | --- | --- | --- |
@@ -702,19 +735,22 @@ USD/NGN is around **₦1,380–1,390** ([Wise, week of 20–26 Aug 2026](https:/
 | [Spotify Individual](https://www.spotify.com/ng/premium/) | ₦1 600 | $1.16 |
 | [Netflix Mobile](https://www.netflix.com/ng/) | ₦2 500 | $1.81 |
 | Netflix Standard | ₦6 500 | $4.69 |
-| **Maigie Plus at FX parity** | **₦6 900** | $4.99 |
+| Maigie Plus at parity with the old $4.99 | ₦6 900 | $4.99 |
+| **Maigie Plus at parity with the $9.99 list** | **₦13 800** | $9.99 |
 
 *Content was rephrased for compliance with licensing restrictions.*
 
-At parity we would charge a Nigerian student **more than Netflix Standard**, 4.3× Spotify Individual and 8.6× Spotify's student tier — for a study tool whose nearest substitute is free Gemini on the same phone. Netflix prices Nigeria [~76% below the US](https://www.aisubdeal.com/de/pricing/netflix/nigeria/) precisely because parity does not work here. Every platform that has succeeded in Nigeria puts its mass-market tier at ₦800–2 500.
+At parity we would charge a Nigerian student **more than twice Netflix Standard**, 8.6× Spotify Individual and 17× Spotify's student tier — for a study tool whose nearest substitute is free Gemini on the same phone. Netflix prices Nigeria [~76% below the US](https://www.aisubdeal.com/de/pricing/netflix/nigeria/) precisely because parity does not work here. Every platform that has succeeded in Nigeria puts its mass-market tier at ₦800–2 500.
 
-So **NGN is a set price, not a conversion.** Apple, Google and Paystack all support per-territory pricing; $4.99 stays the US/UK list.
+So **NGN is a set price, not a conversion.** Apple, Google and Paystack all support per-territory pricing; $9.99 stays the US/UK list.
+
+**The $9.99 rise made this section's argument stronger, not weaker.** The NGN ladder is now **17–24% of USD list** rather than 35–52%, and a reader could mistake that for Nigeria being subsidised more heavily. It is the opposite: the ratio moved because the US price was corrected upward, not because Nigeria was discounted downward. **Not one naira changed.** A regional price is set against local substitutes, and Spotify and Netflix did not move.
 
 | Product | NGN | ≈ USD | % of USD list |
 | --- | --- | --- | --- |
 | 5-Hour Plus Pass | **₦700** | $0.51 | 51% |
-| 7-Day Plus Pass | **₦1 500** | $1.08 | 43% |
-| Plus Monthly | **₦2 400** | $1.73 | 35% |
+| 7-Day Plus Pass | **₦1 500** | $1.08 | 27% |
+| Plus Monthly | **₦2 400** | $1.73 | 17% |
 | **4-Month Term Pass** | **₦5 500** | $3.97 | — (NGN only) |
 
 The ladder stays coherent: ₦3 360/day, ₦214/day, ₦80/day, ₦46/day, correctly ordered, and no arbitrage — two 7-day passes (₦3 000) cost more than a month (₦2 400) and buy fewer days; two months (₦4 800) cost less than the term pass but buy four fewer months.
@@ -849,18 +885,20 @@ Both at 10 000 MAU, with and without the §6.5 cost work. Nigeria's mix is prepa
 
 | | **Nigeria** | **Global** |
 | --- | --- | --- |
-| Net revenue | **$1 155** | **$2 383** |
-| — of which voice packs | $97 | $116 |
-| Paid COGS | $324 | $675 |
-| Free COGS | $368 | $368 |
-| Total COGS | **$692** | **$1 043** |
-| **Contribution** | **+$463** | **+$1 340** |
-| Margin | **40%** | **56%** |
-| Revenue per MAU | $0.116 | $0.238 |
+| Net revenue | **$1 155** | **$3 308** |
+| — of which voice packs | $97 | $87 |
+| Paid COGS | $324 | $566 |
+| Free COGS | $368 | $376 |
+| Total COGS | **$692** | **$942** |
+| **Contribution** | **+$463** | **+$2 367** |
+| Margin | **40%** | **72%** |
+| Revenue per MAU | $0.116 | **$0.331** |
 | Contribution without the §6.5 fixes | **−$1 188** | **−$270** |
-| At 1.5× usage overshoot | **+$117** | **+$818** |
+| At 1.5× usage overshoot | **+$117** | **+$1 896** |
 
-**Nigeria earns roughly half the revenue at a better margin.** The margin difference is not a pricing effect — it is the payer mix. Nigeria skews to passes, and passes carry the highest per-product margin in the catalogue because they are the products with the smallest allowances relative to price. The subscription is the value choice for the learner and the thinnest product for us, in both currencies.
+**Nigeria now earns about a third of global revenue at 40% margin against 72%, and the gap is mostly the price ladder rather than the product.** Before the $9.99 rise the two markets were much closer — $1 155 against $2 383, 40% against 56%. Correcting the US under-price widened the gap in both revenue and margin without changing anything a Nigerian learner sees.
+
+**That is the strategic shape worth naming: the two markets do different jobs.** Global buys runway — $0.237 contribution per MAU, a lean team at 17 000 MAU, and margin that survives a usage overshoot. Nigeria buys product-market fit — the standardised-syllabus market where the product's hardest claim (your syllabus, your weak areas, your exam date) is most testable and most differentiated from a general chatbot. **Neither market alone is the plan.** Funding a team from Nigeria alone needs ~87 000 MAU; global alone needs 17 000 but offers no structural cost advantage and much more competition.
 
 **The 1.5× overshoot row is the one that matters for confidence.** Under Decision Q there is no rate-card error left to absorb, because the caps are denominated in dollars. The residual risk is behavioural: learners drawing closer to their ceilings than the "typical" column assumes. At 1.5× typical draw both markets stay positive, and the shape of the risk is now a usage question that Phase 3's instrumentation answers directly rather than a rate question nobody could close.
 
@@ -1398,7 +1436,7 @@ Depends on Phase 4 and on Phase 3b, which is what makes "active" measurable.
 
 Server rails:
 
-- [ ] **Stripe**: one-time Checkout for the two USD passes and the voice pack (`mode: payment`), existing `$4.99` subscription price reused. `checkout.session.completed` → `PlusPurchase` → `pass_service.grant`, **or `voice_service.credit` for `plus_voice_30`**, which grants seconds and no entitlement (Decision R). **The Term Pass has no Stripe rail** and must not acquire one (§5.7.1).
+- [ ] **Stripe**: one-time Checkout for the two USD passes and the voice pack (`mode: payment`), the new `$9.99` subscription price. `checkout.session.completed` → `PlusPurchase` → `pass_service.grant`, **or `voice_service.credit` for `plus_voice_30`**, which grants seconds and no entitlement (Decision R). **The Term Pass has no Stripe rail** and must not acquire one (§5.7.1).
 - [ ] **Enforce `VOICE_PACK_REQUIRES_PLUS` at the checkout boundary on every rail**, not in the client. A cached catalogue can reach a Play or StoreKit purchase sheet, so a store purchase of `plus_voice_30` by a learner with no entitlement must be **verified, refunded-by-revocation and not credited** rather than silently banked — the one case in this plan where a valid store receipt is deliberately not honoured, and it needs a test.
 - [ ] **Paystack**: NGN one-time charges for **all three** passes including the Term Pass, from the `PRICE_NGN_*` settings; extend `handle_paystack_webhook` to attribute a one-off `charge.success` to a pass grant rather than a subscription. **Set `PRICE_NGN_PLUS_PASS_7D = 150_000` and add `PRICE_NGN_PLUS_PASS_TERM = 550_000` first** — the former still holds the retired ₦1 800 and the latter does not exist, and for a one-off charge nothing overrides a wrong amount (§5.7.3).
 - [ ] **Google Play**: `purchases.products.get` verification in `google_play_service.py` — `verify_product_purchase` is left in place from Phase 1 precisely as the basis for this, since the `purchases.products.get` call and the token-replay check are both reusable; extend RTDN for `SUBSCRIPTION_*` and voided-purchase revocation. Mount the replacement as `POST /billing/purchases/google-play/verify`.
@@ -1467,7 +1505,7 @@ Server rails:
 - [ ] Rewrite `PRICING_COMPARE_ROWS` against §5.3 — remove the five unenforced rows, state the window allowance instead of "unlimited", leave the three Circle rows alone.
 - [ ] Fix the duplicated credit-pack prices in `landing/Pricing.tsx`; rewrite `content/faq/pricing-and-plans.yaml`, which still sells Study Circle at $9.99 and Squad at $14.99 — both retired personal tiers, not the live Circle Plan.
 - [ ] Test asserting `plan-data.ts` matches `GET /plans/catalog` (Decision I).
-- **No price migration is needed.** `PREMIUM_MONTHLY` stays at $4.99, so no Stripe price migration, no mandatory Play notice, no Apple consent flow.
+- **No price migration is needed even though the price changed.** `PREMIUM_MONTHLY` goes $4.99 → $9.99, and with zero subscribers that is a new price rather than a migration: no Stripe price migration, no mandatory Play notice, no Apple consent flow. **This is only true until the first subscriber exists** (§6.1).
 - **No subscriber migration is needed either.** Phase 2b counted zero payment relationships, so there is nobody to move and no grandfathering machinery left to delete. If the count ever comes back non-zero, this step returns along with `LEGACY_PLUS_TIERS`.
 - [ ] **Public-site prices come from §6.1 and §6.8, and the NGN ladder is ₦700 / ₦1 500 / ₦2 400 / ₦5 500.** The consoles themselves are §5.7, not here — this item is copy only.
 - [ ] Add `PlanItem.availability` and make the public site respect it, so the Term Pass is not advertised outside Nigeria (§6.1). A catalogue that offers an unbuyable product is a defect this plan has already recorded once.
@@ -1481,7 +1519,7 @@ Still open, in rough order of what they cost:
 
 1. **Who owns setting `thinking_budget` per operation class?** Unowned. This is where the output money goes, nothing in the codebase sets it, and Phase 0 has the three-class split ready to apply. The largest unclaimed cost saving in the plan.
 2. **Who owns context-caching the chat prefix?** Also unowned, and likely the largest *input* saving — a 90% discount on the system instruction and tool declarations, both byte-stable across all learners. Requires splitting the prompt constant from its name suffix and moving the timestamp at `context.py:70` off the front, because Gemini caching is prefix-based.
-3. **Is the free tier affordable at scale?** Free inference is $368 of $2 383 revenue at 10 000 MAU after the §6.5 fixes — still the largest single line item. It rests on two unmeasured assumptions: 50% of free MAU AI-active, and typical consumption around half the allowance. If either is materially higher, contribution goes negative. **Instrument before tuning** (Phase 3, last item).
+3. **Is the free tier affordable at scale?** Free inference is $376 of $3 308 revenue at 10 000 MAU after the §6.5 fixes — still the largest single line item. It rests on two unmeasured assumptions: 50% of free MAU AI-active, and typical consumption around half the allowance. If either is materially higher, contribution goes negative. **Instrument before tuning** (Phase 3, last item).
 4. **Is 250 points the right price for the 7-day pass?** 100 and 250 mirror the cash ratio, which is tidy but arbitrary — nothing says an earned currency should price like a sold one. 200 would make two referrals buy the better product cleanly and push learners toward the pass that actually establishes a habit; 300 would make the 5-hour pass the default redemption and leave a remainder to expire. Recommend 250 for launch and watch which pass gets redeemed. Blocks Phase 4b only.
 5. **Refunds on an activated pass.** Apple and Google decide refunds unilaterally and neither asks first, so a learner can consume most of a pass and be refunded. Apple's `CONSUMPTION_REQUEST` lets us report usage and reduces this, but it is advisory. Recommend accepting the leakage and measuring it — a consumption cap that fires on a legitimate learner is worse than the loss.
 6. **Is a 5-hour window right for Free?** Five hours permits up to 4.8 allowances a day, which the monthly backstop bounds but does not prevent. The length is shared with Plus for explainability and because it is the pass duration. A 12-hour Free window (~2/day) tightens it at the cost of two numbers to explain. Recommend 5h for both and let question 3's instrumentation decide.
