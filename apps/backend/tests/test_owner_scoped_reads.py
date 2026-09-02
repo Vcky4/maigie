@@ -127,6 +127,16 @@ ALLOWED: dict[str, str] = {
         "outcome and its attempt row and returns nothing, so an owner filter would need an owner the "
         "worker does not have and does not act on behalf of."
     ),
+    "domains/notifications/repository.py::record_web_push_result": (
+        "The `delivery_id` is one this process claimed moments earlier in "
+        "`web_push_dispatcher.dispatch_due_web_push`, not one off a request — the only caller is "
+        "that dispatch loop, under the beat task `notifications.dispatch_web_push`. It writes the "
+        "push service outcome and its attempt row and returns nothing. Its one cross-table write, "
+        "pruning the `PushInstallation` after a 404 or 410, is reached through "
+        "`delivery.destination_id` on the locked row rather than through an identifier from "
+        "outside, and the claim query already required that delivery and installation share the "
+        "same `userId`."
+    ),
 }
 
 

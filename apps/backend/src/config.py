@@ -376,6 +376,42 @@ class Settings(BaseSettings):
     WEB_PUSH_ALLOWLIST: ListStr = []
     WEB_PUSH_INTERNAL_ALLOWLIST: ListStr = []
     WEB_PUSH_ROLLOUT_PERCENT: int = Field(default=0, ge=0, le=100)
+    #: VAPID identity for Web Push (RFC 8292). The public key is the `applicationServerKey`
+    #: a browser passes to `pushManager.subscribe`, as base64url of the raw 65-byte
+    #: uncompressed P-256 point; the private key is base64url of the raw 32-byte scalar.
+    #: Generate a pair with `scripts/generate_vapid_keys.py`.
+    #:
+    #: These keys are an identity, not a rotating secret. Every existing subscription is
+    #: bound to the public key it was created with, so replacing the pair silently
+    #: invalidates every subscription in the field — browsers reject the mismatch and the
+    #: only repair is for each learner to resubscribe. Rotate only with a resubscribe plan.
+    WEB_PUSH_VAPID_PUBLIC_KEY: str = ""
+    WEB_PUSH_VAPID_PRIVATE_KEY: str = ""
+    #: `mailto:` or `https:` contact a push service can use to reach us about our traffic.
+    #: RFC 8292 requires the claim, and some services drop pushes signed without it.
+    WEB_PUSH_VAPID_SUBJECT: str = ""
+    #: Hosts a Web Push endpoint may point at. An entry beginning with `.` matches any
+    #: subdomain of it; anything else must match exactly.
+    #:
+    #: This is an SSRF control, not a compatibility list. A subscription endpoint is a URL
+    #: chosen by the client, and a background worker POSTs to it, so without this an attacker
+    #: could register an internal address and use the worker as a request forwarder it cannot
+    #: see the response from. The default covers the push services of every browser Phase 4
+    #: targets — Chrome, Edge, Firefox, Safari — and an unusual browser is added here rather
+    #: than by allowing arbitrary hosts.
+    WEB_PUSH_ALLOWED_ENDPOINT_HOSTS: ListStr = [
+        "fcm.googleapis.com",  # Chrome, and Chromium forks
+        "android.googleapis.com",  # older Chrome endpoints still in the field
+        "web.push.apple.com",  # Safari, macOS and installed iOS PWAs
+        ".push.services.mozilla.com",  # Firefox
+        ".notify.windows.com",  # Edge, via Windows Notification Service
+    ]
+    WEB_PUSH_MAX_ATTEMPTS: int = Field(default=5, ge=1, le=10)
+    WEB_PUSH_BATCH: int = Field(default=50, ge=1, le=500)
+    #: How long a push service may hold an undelivered message, in seconds. Six hours:
+    #: long enough to survive a closed laptop, short enough that a study reminder does not
+    #: arrive after the session it was reminding about.
+    WEB_PUSH_TTL_SECONDS: int = Field(default=21600, ge=0, le=2419200)
 
     NOTIFICATION_INTELLIGENCE_ENABLED: bool = False
     NOTIFICATION_INTELLIGENCE_DENYLIST: ListStr = []

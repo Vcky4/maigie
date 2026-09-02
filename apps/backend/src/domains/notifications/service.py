@@ -32,8 +32,11 @@ from .models import (
     NotificationInteractionCreate,
     NotificationSettingsResponse,
     NotificationSettingsUpdate,
+    WebPushCapability,
+    WebPushSubscriptionUpsert,
 )
 from .repository import EmailPlan, notification_repo
+from .subscription_crypto import encrypt_subscription_secret
 from .taxonomy import (
     canonical_action_payload,
     notification_spec,
@@ -41,6 +44,7 @@ from .taxonomy import (
     validate_action_for_type,
 )
 from .unsubscribe import parse_unsubscribe_token
+from .web_push_delivery import vapid_public_key, web_push_configured
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +109,9 @@ def _effective_category_setting(
         category=key,
         in_app=enabled("IN_APP", _DEFAULT_IN_APP.get(key, False)),
         mobile_push=enabled("MOBILE_PUSH", mobile_default),
+        # Defaults off with no legacy fallback: there is no historical column that could
+        # express browser consent, so the only honest starting point is "not asked yet".
+        web_push=enabled("WEB_PUSH", False),
         email_frequency=email_frequency,
     )
 
@@ -158,6 +165,10 @@ async def get_notification_settings(*, user_id: str) -> NotificationSettingsResp
         digest_day_of_week=(
             policy.digest_day_of_week if policy and policy.digest_day_of_week is not None else 0
         ),
+        # No longer hard-coded false. This is what lets the settings screen stop saying "not
+        # available yet" and start reflecting whether this learner can actually turn web push
+        # on — browser support is the client's half of the question, and this is ours.
+        web_push_available=web_push_available_for(user_id),
         categories=[
             _effective_category_setting(key, preferences, legacy) for key in _SETTINGS_CATEGORIES
         ],
@@ -172,11 +183,34 @@ async def update_notification_settings(
     legacy = current["legacy"]
     preferences: list[dict[str, Any]] = []
     by_key = {item.category: item for item in request.categories}
+    existing_web_push = {
+        (row.category, row.notification_type): row
+        for row in current["preferences"]
+        if row.channel == "WEB_PUSH"
+    }
     for key, database_categories in _SETTINGS_CATEGORIES.items():
         item = by_key[key]
         email_enabled = item.email_frequency != "OFF"
         email_frequency = "DIGEST" if item.email_frequency == "WEEKLY" else item.email_frequency
         for category in database_categories:
+            if item.web_push is not None:
+                web_push_enabled: bool | None = item.web_push
+            else:
+                # Omitted by this client: preserve what is stored rather than deciding for the
+                # learner. A category with nothing stored stays absent, which the dispatcher
+                # already reads as consent not given.
+                stored = existing_web_push.get((category, None))
+                web_push_enabled = bool(stored.enabled) if stored is not None else None
+            if web_push_enabled is not None:
+                preferences.append(
+                    {
+                        "category": category,
+                        "channel": "WEB_PUSH",
+                        "enabled": web_push_enabled,
+                        "frequency": "IMMEDIATE" if web_push_enabled else "OFF",
+                        "digest_period": None,
+                    }
+                )
             preferences.extend(
                 [
                     {
@@ -413,6 +447,10 @@ async def create_notification(
         },
         group_window=spec.dedupe_window if spec.groupable else None,
         plan_mobile_push="MOBILE_PUSH" in spec.default_channels,
+        # Planned on the same terms as mobile push, with consent rechecked at dispatch. No
+        # rollout check here: a learner outside the cohort cannot subscribe in the first place,
+        # so there is no browser for a delivery to point at.
+        plan_web_push="WEB_PUSH" in spec.default_channels,
         plan_email=await _email_plan(user_id, type=type, spec=spec),
     )
     if mutation:
@@ -443,7 +481,64 @@ async def list_push_installations(*, user_id: str):
 
 
 async def upsert_mobile_push_installation(*, user_id: str, request: MobilePushInstallationUpsert):
-    return await notification_repo.upsert_mobile_installation(user_id, request.model_dump())
+    values = request.model_dump()
+    # The repository speaks in `address` because Expo's token and Web Push's endpoint are the
+    # same thing to it; the API keeps `token`, which is what the mobile client actually has.
+    values["address"] = values.pop("token")
+    return await notification_repo.upsert_push_installation(user_id, values, transport="EXPO")
+
+
+def web_push_available_for(user_id: str) -> bool:
+    """Whether this learner could receive a web push if they subscribed right now.
+
+    All three conditions have to hold, and they fail for different reasons: the kill switch is
+    a decision, missing VAPID keys are a mistake, and the cohort gate is a rollout stage.
+    """
+
+    return (
+        get_settings().WEB_PUSH_ENABLED
+        and web_push_configured()
+        and capability_enabled_for("WEB_PUSH", user_id)
+    )
+
+
+async def get_web_push_capability(*, user_id: str) -> WebPushCapability:
+    """Tell the client whether to offer web push, and the key it must subscribe with."""
+
+    if not web_push_available_for(user_id):
+        return WebPushCapability(available=False, vapid_public_key=None)
+    return WebPushCapability(available=True, vapid_public_key=vapid_public_key())
+
+
+async def upsert_web_push_subscription(*, user_id: str, request: WebPushSubscriptionUpsert):
+    """Store or rotate one browser subscription.
+
+    The two secrets are encrypted before they reach the repository, so no layer below this one
+    holds them in the clear and a query against `PushInstallation` cannot yield sending
+    authority over a learner's browser.
+    """
+
+    values = {
+        "installation_id": request.installation_id,
+        "platform": "WEB",
+        "address": request.endpoint,
+        "app_version": request.app_version,
+        "device_locale": request.device_locale,
+        "timezone": request.timezone,
+        # A `PushSubscription` cannot exist without permission, so its arrival is the grant.
+        "permission_state": "GRANTED",
+        "p256dh_encrypted": encrypt_subscription_secret(request.p256dh),
+        "auth_encrypted": encrypt_subscription_secret(request.auth),
+    }
+    return await notification_repo.upsert_push_installation(user_id, values, transport="WEB_PUSH")
+
+
+async def revoke_web_push_subscription(*, user_id: str, endpoint: str) -> bool:
+    """Disable the caller's subscription for `endpoint`, reporting whether one was active."""
+
+    return await notification_repo.disable_push_installation_by_address(
+        user_id, transport="WEB_PUSH", address=endpoint
+    )
 
 
 async def revoke_push_installation(*, installation_id: str, revocation_secret: str) -> None:

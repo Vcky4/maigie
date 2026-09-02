@@ -39,6 +39,9 @@ from .models import (
     PushInstallationResponse,
     PushInstallationRevoke,
     UnreadCountResponse,
+    WebPushCapability,
+    WebPushSubscriptionRevoke,
+    WebPushSubscriptionUpsert,
 )
 
 router = APIRouter()
@@ -73,6 +76,58 @@ async def upsert_mobile_push_installation(
     return PushInstallationResponse.model_validate(row).model_copy(
         update={"revocation_secret": revocation_secret}
     )
+
+
+@push_installations_router.get("/web/capability", response_model=WebPushCapability)
+async def web_push_capability(current_user: CurrentUser) -> WebPushCapability:
+    """Whether to offer web push to this learner, and the key their browser must use.
+
+    The client cannot work this out for itself: browser support is only half the question, and
+    the other half — kill switch, VAPID configuration, rollout cohort — lives here.
+    """
+
+    return await service.get_web_push_capability(user_id=current_user.id)
+
+
+@push_installations_router.post(
+    "/web", response_model=PushInstallationResponse, response_model_exclude_none=True
+)
+async def upsert_web_push_subscription(
+    body: WebPushSubscriptionUpsert, current_user: CurrentUser
+) -> PushInstallationResponse:
+    """Create or rotate this browser's subscription.
+
+    Refused when web push is not available for this learner rather than stored for later. A
+    stored subscription that nothing will ever send to would make the settings screen claim
+    web push is on while it is not, and the capability endpoint exists so the client knows
+    before asking.
+    """
+
+    if not service.web_push_available_for(current_user.id):
+        raise HTTPException(status_code=403, detail="Web push is not available for this account")
+    row, _revocation_secret = await service.upsert_web_push_subscription(
+        user_id=current_user.id, request=body
+    )
+    # No revocation secret is returned: unlike a mobile logout, a browser can only unsubscribe
+    # from a page that already holds a session, so there is nothing for the secret to solve.
+    return PushInstallationResponse.model_validate(row)
+
+
+@push_installations_router.post("/web/revoke", status_code=204)
+async def revoke_web_push_subscription(
+    body: WebPushSubscriptionRevoke, current_user: CurrentUser
+) -> Response:
+    """Disable this browser's subscription, named by endpoint.
+
+    Answers 204 whether or not a row was active. The client calls this on logout and on
+    permission withdrawal, and both are idempotent intentions rather than assertions that a
+    subscription exists — a 404 here would only teach the client to ignore the response.
+    """
+
+    await service.revoke_web_push_subscription(
+        user_id=current_user.id, endpoint=body.endpoint.strip()
+    )
+    return Response(status_code=204)
 
 
 @push_installations_router.post("/revoke", status_code=204)
