@@ -377,6 +377,62 @@ async def consume_credits(
     )
 
 
+async def record_units(user_id: str, units: int, operation: str = "unknown") -> None:
+    """Advance the window and month counters by `units`. **Accounts, never refuses.**
+
+    The distinction from `consume_credits` is deliberate and is the whole reason this exists as a
+    second function rather than a flag. `consume_credits` is a *gate*: it is called before an
+    operation, with an amount known in advance, and it raises when the window cannot fund it. This
+    is *accounting*: it is called after a generation that has already happened, with the amount it
+    actually cost, and there is nothing left to refuse — the money is spent and the artefact exists.
+
+    Decision L: **charge on success, absorb on failure.** A learner who has already received a
+    lesson must not have it taken away because the meter noticed afterwards that they were over
+    their allowance, so this records the overshoot and lets the *next* operation be refused by the
+    gate. The consequence is that a window can be exceeded by at most the cost of one operation in
+    flight, which is the price of measuring cost instead of estimating it.
+
+    Failures are swallowed and logged at `error`. Nothing a meter does is worth losing a
+    generation the learner already waited for.
+    """
+    if units <= 0:
+        return
+    try:
+        identity_repo = IdentityRepository()
+        fresh = await identity_repo.find_by_id(user_id)
+        if not fresh:
+            logger.error("usage: cannot record %d units, user %s not found", units, user_id)
+            return
+        state = window_state(fresh)
+        await identity_repo.update(
+            fresh.id,
+            {
+                "usageWindowStartedAt": state.started_at,
+                "usageWindowUnitsUsed": state.units_used + units,
+                "usageMonthStartedAt": state.month_started_at,
+                "usageMonthUnitsUsed": state.month_units_used + units,
+            },
+        )
+        logger.info(
+            "usage: user=%s operation=%s units=%d window=%d month=%d (recorded)",
+            fresh.id,
+            operation,
+            units,
+            state.units_used + units,
+            state.month_units_used + units,
+        )
+    except Exception:
+        # Deliberately broad. This runs after a successful generation, and every failure mode here
+        # — a lost connection, a row vanishing, a serialisation conflict — is a reason to
+        # under-charge rather than a reason to fail the caller.
+        logger.exception(
+            "usage: failed to record %d units for user=%s operation=%s",
+            units,
+            user_id,
+            operation,
+        )
+
+
 async def _consume_space_credits(
     user: User, units: int, operation: str, space_id: str
 ) -> CreditConsumptionResult:

@@ -19,9 +19,96 @@ import asyncio
 import json
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
+from src.domains.intelligence.reasoning.llm import GenerationUsage
+
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Metering (Decision L)
+# ---------------------------------------------------------------------------
+
+#: Operations that are never charged, on principle rather than on cost (§6.6).
+#:
+#: **Onboarding** is where "free should create real success" is either honoured or not; charging a
+#: learner before they have learned anything is the one place a meter is self-defeating.
+#: **Memory extraction** is what makes Maigie feel like it knows you, and a learner cannot be asked
+#: to pay for the product remembering them.
+#:
+#: Matched against the `operation` label a caller passes. An unlabelled call is charged — the
+#: default has to be "charge", or exemption becomes the thing that happens by forgetting.
+UNCHARGED_OPERATIONS = frozenset(
+    {
+        "onboarding_auto_setup",
+        "memory_extraction",
+        "memory_summarisation",
+    }
+)
+
+
+async def _meter(
+    *,
+    user_id: str | None,
+    operation: str,
+    usage: GenerationUsage | None,
+    attempt_of: str,
+) -> None:
+    """Charge one provider call to the learner's window.
+
+    **Called per attempt, not per operation, and that is deliberate** (Decision L). One logical
+    generation can bill up to nine provider calls — three attempts across three providers, with an
+    empty reply counted as a failure — and every one of them costs real money. Metering inside the
+    loop counts what was spent rather than what was delivered.
+
+    It will look unfair the first time a learner's allowance goes on our own instability, and the
+    honest response is to shorten the retry chain rather than to hide the charge.
+
+    **Never raises, and that is enforced here rather than assumed of the caller.** `record_units`
+    swallows its own database failures, but this function also prices the call — `units_for_tokens`
+    reaches the rate card, which can be handed a model name it has never seen — and an exception
+    escaping into the attempt loop is indistinguishable from a provider failure. It would be caught
+    by the loop's `except Exception`, counted as a failed attempt, retried, and could exhaust the
+    provider chain: **an accounting error would present as an outage.** A test pins this, because it
+    is the failure mode nobody would look for.
+    """
+    if user_id is None:
+        # A system-initiated generation with nobody to charge. Background tasks that should be
+        # attributed pass `user_id`; the ones that legitimately have no learner (warmups, health
+        # probes) are rare and small.
+        return
+    if operation in UNCHARGED_OPERATIONS:
+        logger.debug("usage: %s exempt from charging (user=%s)", operation, user_id)
+        return
+    if usage is None:
+        # Loudly, because this is the gap Decision L exists to close: a provider path that returns
+        # no token counts is an unmetered surface, and the only way that gets fixed is if it is
+        # visible in the logs rather than silently charged as zero.
+        logger.warning(
+            "usage: unmetered provider reply for user=%s operation=%s provider=%s",
+            user_id,
+            operation,
+            attempt_of,
+        )
+        return
+
+    try:
+        from src.domains.billing.services.credit_consumption_service import (
+            record_units,
+            units_for_tokens,
+        )
+
+        units = units_for_tokens(usage.input_tokens, usage.billable_output_tokens, usage.model)
+        await record_units(user_id, units, operation=operation)
+    except Exception:
+        logger.exception(
+            "usage: metering failed for user=%s operation=%s model=%s — generation kept",
+            user_id,
+            operation,
+            usage.model,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -103,9 +190,22 @@ def _record_failure(provider: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class ProviderReply:
+    """A provider's text plus what it consumed, so the attempt loop can charge for it.
+
+    Usage is optional because only Gemini reports it reliably through this path today. A `None` is
+    an *unmeasured* call rather than a free one — `_meter` logs the gap instead of charging zero
+    silently, because a provider that quietly costs nothing is how an unmetered surface returns.
+    """
+
+    text: str
+    usage: GenerationUsage | None = None
+
+
 async def _call_gemini(
     prompt: str, *, max_tokens: int, temperature: float, thinking: int | None = None
-) -> str:
+) -> ProviderReply:
     """Call Gemini via the existing intelligence domain interface.
 
     `thinking` is Gemini-only. OpenAI and Anthropic take no equivalent here, so a caller that bounds
@@ -113,16 +213,15 @@ async def _call_gemini(
     knowing rather than hiding: a fallback is more expensive than the call it replaced, in tokens as
     well as in latency.
     """
-    from src.domains.intelligence.reasoning.llm import (
-        generate_content as _gemini_generate,
-    )
+    from src.domains.intelligence.reasoning.llm import generate_content_with_usage
 
-    return await _gemini_generate(
+    text, usage = await generate_content_with_usage(
         prompt, max_tokens=max_tokens, temperature=temperature, thinking=thinking
     )
+    return ProviderReply(text=text, usage=usage)
 
 
-async def _call_openai(prompt: str, *, max_tokens: int, temperature: float) -> str:
+async def _call_openai(prompt: str, *, max_tokens: int, temperature: float) -> ProviderReply:
     """Call OpenAI directly."""
     import openai
 
@@ -142,10 +241,22 @@ async def _call_openai(prompt: str, *, max_tokens: int, temperature: float) -> s
     text = completion.choices[0].message.content or ""
     if not text.strip():
         raise RuntimeError("OpenAI returned empty response")
-    return text.strip()
+    usage = getattr(completion, "usage", None)
+    return ProviderReply(
+        text=text.strip(),
+        usage=(
+            GenerationUsage(
+                model=settings.OPENAI_DEFAULT_MODEL,
+                input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            )
+            if usage is not None
+            else None
+        ),
+    )
 
 
-async def _call_anthropic(prompt: str, *, max_tokens: int, temperature: float) -> str:
+async def _call_anthropic(prompt: str, *, max_tokens: int, temperature: float) -> ProviderReply:
     """Call Anthropic directly."""
     import anthropic
 
@@ -166,7 +277,19 @@ async def _call_anthropic(prompt: str, *, max_tokens: int, temperature: float) -
     text = "".join(block.text for block in message.content if hasattr(block, "text"))
     if not text.strip():
         raise RuntimeError("Anthropic returned empty response")
-    return text.strip()
+    usage = getattr(message, "usage", None)
+    return ProviderReply(
+        text=text.strip(),
+        usage=(
+            GenerationUsage(
+                model=settings.ANTHROPIC_DEFAULT_MODEL,
+                input_tokens=getattr(usage, "input_tokens", 0) or 0,
+                output_tokens=getattr(usage, "output_tokens", 0) or 0,
+            )
+            if usage is not None
+            else None
+        ),
+    )
 
 
 _PROVIDER_CALLABLES = {
@@ -234,12 +357,20 @@ async def generate_content(
     fallback: str | None = None,
     user_id: str | None = None,
     thinking: int | None = None,
+    operation: str = "unknown",
 ) -> str:
     """Generate text content with resilience and per-user provider routing.
 
     `thinking` bounds hidden reasoning tokens on the Gemini path — see
     `intelligence.reasoning.llm.THINKING_OFF` / `_BOUNDED` / `_DYNAMIC`. Ignored by the OpenAI and
     Anthropic fallbacks, which take no equivalent parameter here.
+
+    `operation` labels the call for the meter and for per-operation measurement. It defaults to
+    `"unknown"` rather than being required because 26 call sites reach this function and a required
+    argument would have meant changing all of them in the commit that introduced metering; the
+    labels arrive per call site, and `"unknown"` is visible in the logs until they do. **Passing
+    `user_id` is what makes a call chargeable at all** — a call without one is not charged, which is
+    correct for genuinely system-initiated work and a bug anywhere else.
 
     Features:
     - Per-user provider selection (from LearningProfile.preferred_llm_provider)
@@ -294,9 +425,20 @@ async def generate_content(
                 # inspecting the signature here rather than widening theirs keeps the parameter
                 # where it means something.
                 extra = {"thinking": thinking} if provider == "gemini" else {}
-                result = await asyncio.wait_for(
+                reply = await asyncio.wait_for(
                     call_fn(prompt, max_tokens=max_tokens, temperature=temperature, **extra),
                     timeout=timeout_s,
+                )
+                result = reply.text
+                # Charged before the empty-reply check below, because **an empty reply still
+                # consumed tokens.** The provider answered, billed us, and produced nothing usable,
+                # which is exactly the case where charging on delivery instead of on spend would
+                # leave real cost invisible. Decision L on retries is the same argument.
+                await _meter(
+                    user_id=user_id,
+                    operation=operation,
+                    usage=reply.usage,
+                    attempt_of=provider,
                 )
                 # An empty reply is a failed attempt, not a successful one.
                 #
@@ -461,6 +603,7 @@ async def generate_content_json(
     fallback: Any = None,
     user_id: str | None = None,
     thinking: int | None = None,
+    operation: str = "unknown",
 ) -> Any:
     """Generate content and parse as JSON. Returns fallback on failure.
 
@@ -484,6 +627,7 @@ async def generate_content_json(
             fallback=None,  # We handle fallback ourselves after JSON parse
             user_id=user_id,
             thinking=thinking,
+            operation=operation,
         )
         # Strip markdown fences if present
         cleaned = response.strip()

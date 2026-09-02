@@ -61,6 +61,8 @@ def thinking_config(budget: int | None):
 
 __all__ = [
     "generate_content",
+    "generate_content_with_usage",
+    "GenerationUsage",
     "generate_grounded_content",
     "GroundedResult",
     "GroundingSource",
@@ -80,27 +82,73 @@ __all__ = [
 ]
 
 
-async def generate_content(
+@dataclass(frozen=True)
+class GenerationUsage:
+    """What a completed generation actually consumed, and which model consumed it.
+
+    **This exists so a generation can be charged for what it cost rather than what it was
+    budgeted.** Every path to a provider used to return text and drop the response object, so no
+    caller could see `usage_metadata` and the only way to price an operation was a table of
+    estimates derived from `max_tokens` — which is a ceiling and not a charge (Phase 0). Decision L
+    calls this out as the actual work in Phase 3b: metering could not be added until the numbers
+    reached the place that charges.
+
+    `thoughts_tokens` is reported separately from `output_tokens` but **billed with it**: reasoning
+    tokens are drawn from the same output allowance and are charged at the output rate. It is broken
+    out because it is the number that explains a truncation — a reply cut short with a large
+    `thoughts_tokens` is a thinking budget problem, not a `max_tokens` problem, and the two have
+    opposite fixes.
+
+    `model` is carried rather than re-derived because a fallback can answer on a different model
+    than the one the caller asked for, and pricing the wrong model is a silent error.
+    """
+
+    model: str
+    input_tokens: int
+    output_tokens: int
+    thoughts_tokens: int = 0
+
+    @property
+    def billable_output_tokens(self) -> int:
+        """Output plus reasoning, which is what the provider charges at the output rate."""
+        return self.output_tokens + self.thoughts_tokens
+
+
+def _extract_usage(response: Any, model: str) -> GenerationUsage:
+    """Read token counts off a Gemini response, tolerating their absence.
+
+    Defensive on every field because `usage_metadata` is absent on some error and streaming shapes,
+    and a missing count must read as zero rather than raise: **failing to measure an operation is
+    not a reason to fail the operation.** A zero here undercharges, which is visible in aggregate
+    and recoverable; an exception here loses a generation the learner already waited for.
+    """
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        return GenerationUsage(model=model, input_tokens=0, output_tokens=0)
+    return GenerationUsage(
+        model=model,
+        input_tokens=getattr(usage, "prompt_token_count", 0) or 0,
+        output_tokens=getattr(usage, "candidates_token_count", 0) or 0,
+        thoughts_tokens=getattr(usage, "thoughts_token_count", 0) or 0,
+    )
+
+
+async def generate_content_with_usage(
     prompt: str,
     *,
     max_tokens: int = 2048,
     temperature: float = 0.7,
     thinking: int | None = None,
-) -> str:
-    """Generate text content using the default LLM provider.
+) -> tuple[str, GenerationUsage]:
+    """`generate_content`, plus what it consumed.
 
-    `thinking` bounds hidden reasoning tokens — `THINKING_OFF`, `THINKING_BOUNDED`,
-    `THINKING_DYNAMIC`, or an explicit integer. `None` leaves the provider default, which is what
-    every caller got before Phase 0 and is dynamic in practice.
-
-    This is the primary interface for domains that need simple text generation
-    (topic explanations, quizzes, summaries, etc.).
+    The metered entry point. `generate_content` delegates here and drops the usage, so the two
+    cannot diverge in behaviour — there is one implementation and one place a bug can live.
 
     Raises:
-        GeminiError: If Gemini returned no usable text (e.g. safety filter blocked
-            the response, MAX_TOKENS hit during thinking phase, or RECITATION).
-            The error message includes the ``finish_reason`` so callers can
-            decide whether to retry or fall back.
+        GeminiError: If Gemini returned no usable text (e.g. safety filter blocked the response,
+            MAX_TOKENS hit during the thinking phase, or RECITATION). The message includes the
+            ``finish_reason`` so callers can decide whether to retry or fall back.
     """
     client = new_gemini_client(gemini_api_key() or None)
     # Bound once so the error raised below can name the model that produced nothing. An error that
@@ -135,6 +183,36 @@ async def generate_content(
             category="invalid_request",
             message=f"empty response (finish_reason={finish_reason})",
         )
+    return text, _extract_usage(response, model)
+
+
+async def generate_content(
+    prompt: str,
+    *,
+    max_tokens: int = 2048,
+    temperature: float = 0.7,
+    thinking: int | None = None,
+) -> str:
+    """Generate text content using the default LLM provider.
+
+    `thinking` bounds hidden reasoning tokens — `THINKING_OFF`, `THINKING_BOUNDED`,
+    `THINKING_DYNAMIC`, or an explicit integer. `None` leaves the provider default, which is what
+    every caller got before Phase 0 and is dynamic in practice.
+
+    This is the primary interface for domains that need simple text generation
+    (topic explanations, quizzes, summaries, etc.). Callers that need to charge for what they used
+    want `generate_content_with_usage` instead; this drops the token counts on the floor, which is
+    the right default for the callers that have no meter to feed.
+
+    Raises:
+        GeminiError: If Gemini returned no usable text (e.g. safety filter blocked
+            the response, MAX_TOKENS hit during thinking phase, or RECITATION).
+            The error message includes the ``finish_reason`` so callers can
+            decide whether to retry or fall back.
+    """
+    text, _ = await generate_content_with_usage(
+        prompt, max_tokens=max_tokens, temperature=temperature, thinking=thinking
+    )
     return text
 
 

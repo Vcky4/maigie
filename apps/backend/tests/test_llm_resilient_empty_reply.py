@@ -41,9 +41,18 @@ def one_provider(monkeypatch):
     calls: list[str] = []
 
     def install(replies):
+        """`replies` are plain strings; the fake wraps each in the `ProviderReply` the loop expects.
+
+        Phase 3b changed the provider callables to return text *plus* token usage, because the
+        attempt loop cannot charge for what it cannot see (Decision L). The fake carries
+        `usage=None`, which is the "unmetered provider" path — these tests are about retry
+        behaviour, and a fixture that invented token counts would be asserting on fiction.
+        """
+
         async def call(prompt, **_kwargs):
             calls.append(prompt)
-            return replies[min(len(calls) - 1, len(replies) - 1)]
+            text = replies[min(len(calls) - 1, len(replies) - 1)]
+            return llm_resilient.ProviderReply(text=text)
 
         monkeypatch.setattr(llm_resilient, "_PROVIDER_CALLABLES", {"gemini": call})
 
@@ -71,7 +80,9 @@ async def test_whitespace_counts_as_blank(one_provider):
     assert len(one_provider.calls) == 2
 
 
-async def test_every_attempt_blank_falls_back_rather_than_returning_nothing(one_provider):
+async def test_every_attempt_blank_falls_back_rather_than_returning_nothing(
+    one_provider,
+):
     """A caller who asked for a fallback still gets it. Only the retry behaviour changed."""
     one_provider.install([""])
 
