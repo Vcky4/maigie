@@ -9070,6 +9070,17 @@
           "mobilePush": {
             "title": "Mobilepush",
             "type": "boolean"
+          },
+          "webPush": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webpush"
           }
         },
         "required": [
@@ -20869,6 +20880,121 @@
           "code"
         ],
         "title": "VerifyResetCodeRequest",
+        "type": "object"
+      },
+      "WebPushCapability": {
+        "description": "What the client needs in order to decide whether to offer web push at all.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "vapidPublicKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vapidpublickey"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "WebPushCapability",
+        "type": "object"
+      },
+      "WebPushSubscriptionRevoke": {
+        "description": "Withdrawal names the endpoint, because that is all a browser knows about itself.",
+        "properties": {
+          "endpoint": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Endpoint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint"
+        ],
+        "title": "WebPushSubscriptionRevoke",
+        "type": "object"
+      },
+      "WebPushSubscriptionUpsert": {
+        "description": "One browser subscription, exactly as `PushSubscription.toJSON()` reports it.\n\nThere is no `permissionState` field on purpose. A `PushSubscription` cannot exist unless\nthe learner granted permission, so its arrival *is* the grant; accepting a claimed state\nwould let a client assert consent it does not have. Withdrawal has its own route.",
+        "properties": {
+          "appVersion": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Appversion"
+          },
+          "auth": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Auth",
+            "type": "string"
+          },
+          "deviceLocale": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Devicelocale"
+          },
+          "endpoint": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "installationId": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Installationid",
+            "type": "string"
+          },
+          "p256Dh": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "P256Dh",
+            "type": "string"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          }
+        },
+        "required": [
+          "installationId",
+          "endpoint",
+          "p256Dh",
+          "auth"
+        ],
+        "title": "WebPushSubscriptionUpsert",
         "type": "object"
       },
       "src__domains__identity__models__MessageResponse": {
@@ -36539,6 +36665,120 @@
           }
         },
         "summary": "Revoke Push Installation",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/push-installations/web": {
+      "post": {
+        "description": "Create or rotate this browser's subscription.\n\nRefused when web push is not available for this learner rather than stored for later. A\nstored subscription that nothing will ever send to would make the settings screen claim\nweb push is on while it is not, and the capability endpoint exists so the client knows\nbefore asking.",
+        "operationId": "upsert_web_push_subscription_api_v1_push_installations_web_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebPushSubscriptionUpsert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushInstallationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Upsert Web Push Subscription",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/push-installations/web/capability": {
+      "get": {
+        "description": "Whether to offer web push to this learner, and the key their browser must use.\n\nThe client cannot work this out for itself: browser support is only half the question, and\nthe other half — kill switch, VAPID configuration, rollout cohort — lives here.",
+        "operationId": "web_push_capability_api_v1_push_installations_web_capability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebPushCapability"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Web Push Capability",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/push-installations/web/revoke": {
+      "post": {
+        "description": "Disable this browser's subscription, named by endpoint.\n\nAnswers 204 whether or not a row was active. The client calls this on logout and on\npermission withdrawal, and both are idempotent intentions rather than assertions that a\nsubscription exists — a 404 here would only teach the client to ignore the response.",
+        "operationId": "revoke_web_push_subscription_api_v1_push_installations_web_revoke_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebPushSubscriptionRevoke"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revoke Web Push Subscription",
         "tags": [
           "notifications"
         ]

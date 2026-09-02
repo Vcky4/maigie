@@ -113,6 +113,62 @@ class MobilePushInstallationUpsert(CamelModel):
         return value
 
 
+class WebPushSubscriptionUpsert(CamelModel):
+    """One browser subscription, exactly as `PushSubscription.toJSON()` reports it.
+
+    There is no `permissionState` field on purpose. A `PushSubscription` cannot exist unless
+    the learner granted permission, so its arrival *is* the grant; accepting a claimed state
+    would let a client assert consent it does not have. Withdrawal has its own route.
+    """
+
+    installation_id: str = Field(min_length=1, max_length=200)
+    endpoint: str = Field(min_length=1, max_length=2000)
+    #: Client public key, base64url of the raw uncompressed P-256 point.
+    p256dh: str = Field(min_length=1, max_length=200)
+    #: Shared authentication secret, base64url of 16 bytes.
+    auth: str = Field(min_length=1, max_length=64)
+    app_version: str | None = Field(default=None, max_length=100)
+    device_locale: str | None = Field(default=None, max_length=64)
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, value: str) -> str:
+        from .web_push_endpoint import validate_push_endpoint
+
+        return validate_push_endpoint(value)
+
+    @field_validator("p256dh")
+    @classmethod
+    def validate_p256dh_key(cls, value: str) -> str:
+        from .web_push_endpoint import validate_p256dh
+
+        return validate_p256dh(value)
+
+    @field_validator("auth")
+    @classmethod
+    def validate_auth_secret(cls, value: str) -> str:
+        from .web_push_endpoint import validate_auth
+
+        return validate_auth(value)
+
+
+class WebPushSubscriptionRevoke(CamelModel):
+    """Withdrawal names the endpoint, because that is all a browser knows about itself."""
+
+    endpoint: str = Field(min_length=1, max_length=2000)
+
+
+class WebPushCapability(CamelModel):
+    """What the client needs in order to decide whether to offer web push at all."""
+
+    #: False when the sender is off, unconfigured, or this learner is outside the cohort.
+    available: bool
+    #: The VAPID `applicationServerKey`, present only when `available`. A browser must pass
+    #: the key the server will sign with; a mismatch is rejected at subscribe time.
+    vapid_public_key: str | None = None
+
+
 class PushInstallationResponse(CamelModel):
     id: str
     installation_id: str
@@ -153,6 +209,15 @@ class NotificationCategorySetting(CamelModel):
     in_app: bool
     mobile_push: bool
     email_frequency: NotificationEmailFrequency
+    #: Browser push consent. Optional on write, where `None` means "leave unchanged", and
+    #: always a concrete boolean on read.
+    #:
+    #: Absent-means-unchanged rather than absent-means-off because this matrix is submitted by
+    #: whichever client the learner happens to be using. A mobile build that predates web push
+    #: sends no `webPush` field, and treating that as a decision would silently revoke a
+    #: consent the learner gave on their laptop — a change they never made, on a screen they
+    #: were not looking at.
+    web_push: bool | None = None
 
 
 class NotificationSettingsUpdate(CamelModel):

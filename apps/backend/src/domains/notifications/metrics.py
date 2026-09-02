@@ -29,3 +29,17 @@ EMAIL_CLAIMED = Counter(
     "notification_email_claimed_total",
     "Canonical notification email delivery rows claimed",
 )
+WEB_PUSH_OUTCOMES = Counter(
+    "notification_web_push_outcomes_total",
+    "Canonical web push lifecycle outcomes",
+    ("stage", "outcome"),
+)
+WEB_PUSH_CLAIMED = Counter(
+    "notification_web_push_claimed_total",
+    "Canonical web push delivery rows claimed",
+)
+WEB_PUSH_PRUNED = Counter(
+    "notification_web_push_pruned_total",
+    "Web push subscriptions pruned after the push service reported them gone",
+    ("reason",),
+)

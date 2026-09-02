@@ -31,6 +31,12 @@ from .db_models import (
     PushInstallation,
 )
 
+#: Which `PushInstallation` column carries the provider address for each transport. Expo
+#: addresses a device by opaque token; Web Push addresses a browser by endpoint URL. Both are
+#: globally unique and both are enforced by a partial unique index, so one rotation routine
+#: serves either — this map is the only place the difference lives.
+_ADDRESS_FIELD: dict[str, str] = {"EXPO": "token", "WEB_PUSH": "endpoint"}
+
 
 def active_unread_predicate(now: datetime) -> ColumnElement[bool]:
     """One predicate for visibility, badges, read-all, and grouping."""
@@ -66,6 +72,7 @@ class NotificationRepository:
         *,
         group_window: timedelta | None,
         plan_mobile_push: bool = False,
+        plan_web_push: bool = False,
         plan_email: EmailPlan | None = None,
     ) -> tuple[Notification, str | None, str | None]:
         """Insert, replay, or replace one active grouped row atomically."""
@@ -159,6 +166,40 @@ class NotificationRepository:
                                     next_attempt_at=values["eligible_at"],
                                     expires_at=values.get("expires_at"),
                                     max_attempts=get_settings().MOBILE_PUSH_MAX_ATTEMPTS,
+                                )
+                            )
+                        await session.flush()
+                    if plan_web_push:
+                        # One delivery per subscribed browser, the same shape as mobile: a
+                        # learner with a laptop and a desktop expects both to buzz, and each
+                        # has its own endpoint, its own failures, and its own revocation.
+                        subscriptions = list(
+                            (
+                                await session.execute(
+                                    select(PushInstallation).where(
+                                        PushInstallation.user_id == values["user_id"],
+                                        PushInstallation.transport == "WEB_PUSH",
+                                        PushInstallation.disabled_at.is_(None),
+                                        PushInstallation.endpoint.is_not(None),
+                                        PushInstallation.p256dh_encrypted.is_not(None),
+                                        PushInstallation.auth_encrypted.is_not(None),
+                                    )
+                                )
+                            ).scalars()
+                        )
+                        for subscription in subscriptions:
+                            session.add(
+                                NotificationDelivery(
+                                    notification_id=row.id,
+                                    user_id=row.user_id,
+                                    destination_id=subscription.id,
+                                    channel="WEB_PUSH",
+                                    provider="WEB_PUSH",
+                                    status="PLANNED",
+                                    eligible_at=values["eligible_at"],
+                                    next_attempt_at=values["eligible_at"],
+                                    expires_at=values.get("expires_at"),
+                                    max_attempts=get_settings().WEB_PUSH_MAX_ATTEMPTS,
                                 )
                             )
                         await session.flush()
@@ -415,20 +456,33 @@ class NotificationRepository:
                 ).scalars()
             )
 
-    async def upsert_mobile_installation(
-        self, user_id: str, values: dict[str, Any]
+    async def upsert_push_installation(
+        self, user_id: str, values: dict[str, Any], *, transport: str
     ) -> tuple[PushInstallation, str | None]:
-        """Rotate/reassign one Expo address and its scoped revocation authority."""
+        """Rotate/reassign one push address and its scoped revocation authority.
 
+        One routine serves Expo and Web Push because the problem is identical: a globally
+        unique provider address may migrate between installations, accounts, and reinstalls,
+        and whoever holds it now must be the only row that can be pushed to. The transports
+        differ only in which column carries the address, so that is the parameter.
+        """
+
+        address_field = _ADDRESS_FIELD[transport]
+        address_column = getattr(PushInstallation, address_field)
         now = datetime.now(UTC)
-        token = values["token"]
+        address = values["address"]
         installation_id = values["installation_id"]
         revocation_secret: str | None = None
         factory = get_session_factory()
         async with factory() as session, session.begin():
             # Serialize both address and stable installation identity, including
             # the no-row-yet case where row locks alone cannot protect us.
-            for key in sorted((f"push-token:{token}", f"push-install:{installation_id}")):
+            #
+            # The `push-token:` label is historical and deliberately unchanged: an Expo token
+            # and a Web Push endpoint URL can never be the same string, so one namespace is
+            # safe, and keeping the label means a rolling deploy cannot leave old and new
+            # workers locking different keys for the same installation.
+            for key in sorted((f"push-token:{address}", f"push-install:{installation_id}")):
                 await session.execute(
                     select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0)))
                 )
@@ -438,10 +492,10 @@ class NotificationRepository:
                         select(PushInstallation)
                         .where(
                             or_(
-                                PushInstallation.token == token,
+                                address_column == address,
                                 and_(
                                     PushInstallation.installation_id == installation_id,
-                                    PushInstallation.transport == "EXPO",
+                                    PushInstallation.transport == transport,
                                 ),
                             )
                         )
@@ -455,22 +509,22 @@ class NotificationRepository:
                     for row in rows
                     if row.user_id == user_id
                     and row.installation_id == installation_id
-                    and row.transport == "EXPO"
+                    and row.transport == transport
                 ),
                 None,
             )
-            previous_token = target.token if target is not None else None
+            previous_address = getattr(target, address_field) if target is not None else None
             was_disabled = target is not None and target.disabled_at is not None
             authority_reassigned = any(
                 row is not target
                 and row.installation_id == installation_id
-                and row.transport == "EXPO"
+                and row.transport == transport
                 for row in rows
             )
             for row in rows:
                 if row is target:
                     continue
-                row.token = None
+                setattr(row, address_field, None)
                 row.disabled_at = now
                 row.revocation_secret_hash = None
             # Release the globally unique address before assigning it to the
@@ -480,12 +534,12 @@ class NotificationRepository:
                 target = PushInstallation(
                     user_id=user_id,
                     installation_id=installation_id,
-                    transport="EXPO",
+                    transport=transport,
                 )
                 session.add(target)
             if (
                 target.revocation_secret_hash is None
-                or previous_token != token
+                or previous_address != address
                 or was_disabled
                 or authority_reassigned
             ):
@@ -494,11 +548,18 @@ class NotificationRepository:
                     revocation_secret.encode("utf-8")
                 ).hexdigest()
             target.platform = values["platform"]
-            target.token = token
+            setattr(target, address_field, address)
             target.app_version = values.get("app_version")
             target.device_locale = values.get("device_locale")
             target.timezone = values.get("timezone")
             target.permission_state = values.get("permission_state", "DEFAULT")
+            # Present only for Web Push, where the payload is encrypted to the browser's own
+            # key material. Assigned unconditionally for that transport so a resubscribe that
+            # produces fresh keys cannot leave the previous pair behind.
+            if "p256dh_encrypted" in values:
+                target.p256dh_encrypted = values["p256dh_encrypted"]
+            if "auth_encrypted" in values:
+                target.auth_encrypted = values["auth_encrypted"]
             target.last_seen_at = now
             target.last_registered_at = now
             target.disabled_at = (
@@ -510,6 +571,31 @@ class NotificationRepository:
             await session.flush()
             await session.refresh(target)
             return target, revocation_secret
+
+    async def disable_push_installation_by_address(
+        self, user_id: str, *, transport: str, address: str
+    ) -> bool:
+        """Disable the caller's own installation named by its provider address.
+
+        Web Push has no stable row id on the client: a browser knows its endpoint and nothing
+        else, so unsubscribing has to be expressed that way. Scoped to `user_id` so an
+        endpoint learned elsewhere cannot be used to silence another learner.
+        """
+
+        address_column = getattr(PushInstallation, _ADDRESS_FIELD[transport])
+        factory = get_session_factory()
+        async with factory() as session, session.begin():
+            result = await session.execute(
+                update(PushInstallation)
+                .where(
+                    PushInstallation.user_id == user_id,
+                    PushInstallation.transport == transport,
+                    address_column == address,
+                    PushInstallation.disabled_at.is_(None),
+                )
+                .values(disabled_at=datetime.now(UTC))
+            )
+            return bool(getattr(result, "rowcount", 0))
 
     async def disable_installation(self, user_id: str, installation_id: str) -> bool:
         factory = get_session_factory()
@@ -524,8 +610,17 @@ class NotificationRepository:
             )
             return bool(getattr(result, "rowcount", 0))
 
-    async def revoke_installation(self, installation_id: str, revocation_secret: str) -> None:
-        """Disable a matching installation without revealing whether it exists."""
+    async def revoke_installation(
+        self, installation_id: str, revocation_secret: str, *, transport: str = "EXPO"
+    ) -> None:
+        """Disable a matching installation without revealing whether it exists.
+
+        The secret exists because a mobile logout may happen with no usable session — offline,
+        or after the access token has already been discarded — so revocation authority has to
+        travel with the installation rather than with the account. Web Push does not need it:
+        a browser can only unsubscribe from a page that is already authenticated, which is why
+        the web route uses `disable_push_installation_by_address` instead.
+        """
 
         secret_hash = hashlib.sha256(revocation_secret.encode("utf-8")).hexdigest()
         factory = get_session_factory()
@@ -534,7 +629,7 @@ class NotificationRepository:
                 update(PushInstallation)
                 .where(
                     PushInstallation.installation_id == installation_id,
-                    PushInstallation.transport == "EXPO",
+                    PushInstallation.transport == transport,
                     PushInstallation.revocation_secret_hash == secret_hash,
                 )
                 .values(disabled_at=datetime.now(UTC))
@@ -877,6 +972,171 @@ class NotificationRepository:
                 delivery.failed_at = now
                 delivery.failure_code = error_code or "PROVIDER_ERROR"
                 delivery.failure_detail = (error_detail or "")[:500] or None
+
+    async def claim_due_web_push_deliveries(
+        self, *, limit: int, now: datetime
+    ) -> list[tuple[NotificationDelivery, Notification, PushInstallation]]:
+        """Claim due WEB_PUSH rows, marking them SENDING before any push service call.
+
+        The installation is joined and returned rather than looked up afterwards, so a
+        subscription revoked between claiming and sending is excluded by the same query that
+        locked the delivery. Both encrypted key fields are required to be present: a row
+        missing either cannot be encrypted to, and returning it would only produce a failed
+        attempt on every run.
+        """
+
+        factory = get_session_factory()
+        async with factory() as session, session.begin():
+            rows = list(
+                (
+                    await session.execute(
+                        select(NotificationDelivery, Notification, PushInstallation)
+                        .join(Notification, Notification.id == NotificationDelivery.notification_id)
+                        .join(
+                            PushInstallation,
+                            PushInstallation.id == NotificationDelivery.destination_id,
+                        )
+                        .where(
+                            NotificationDelivery.channel == "WEB_PUSH",
+                            NotificationDelivery.status.in_(["PLANNED", "QUEUED"]),
+                            NotificationDelivery.eligible_at <= now,
+                            or_(
+                                NotificationDelivery.next_attempt_at.is_(None),
+                                NotificationDelivery.next_attempt_at <= now,
+                            ),
+                            or_(
+                                NotificationDelivery.expires_at.is_(None),
+                                NotificationDelivery.expires_at > now,
+                            ),
+                            NotificationDelivery.attempt_count < NotificationDelivery.max_attempts,
+                            # Guards against a delivery pointing at another learner's
+                            # installation, which would be the worst possible bug here.
+                            NotificationDelivery.user_id == Notification.user_id,
+                            NotificationDelivery.user_id == PushInstallation.user_id,
+                            # An item already dealt with in the app is not worth interrupting for.
+                            Notification.read_at.is_(None),
+                            Notification.dismissed_at.is_(None),
+                            Notification.archived_at.is_(None),
+                            Notification.status.notin_(["READ", "DISMISSED", "EXPIRED"]),
+                            PushInstallation.transport == "WEB_PUSH",
+                            PushInstallation.disabled_at.is_(None),
+                            PushInstallation.endpoint.is_not(None),
+                            PushInstallation.p256dh_encrypted.is_not(None),
+                            PushInstallation.auth_encrypted.is_not(None),
+                            # A browser subscription only exists while permission is granted,
+                            # so unlike mobile there is no DEFAULT state worth sending to.
+                            PushInstallation.permission_state == "GRANTED",
+                        )
+                        .order_by(
+                            NotificationDelivery.next_attempt_at.asc().nullsfirst(),
+                            NotificationDelivery.created_at.asc(),
+                        )
+                        .with_for_update(of=NotificationDelivery, skip_locked=True)
+                        .limit(limit)
+                    )
+                ).all()
+            )
+            for delivery, _notification, _installation in rows:
+                delivery.status = "SENDING"
+                delivery.attempt_count += 1
+            await session.flush()
+            return rows
+
+    async def record_web_push_result(
+        self,
+        delivery_id: str,
+        *,
+        requested_at: datetime,
+        duration_ms: int,
+        accepted: bool,
+        provider_message_id: str | None,
+        retryable: bool,
+        expired: bool,
+        error_code: str | None,
+        error_detail: str | None,
+        next_attempt_at: datetime | None,
+    ) -> None:
+        """Append the attempt, settle the delivery, and prune a dead subscription.
+
+        Deliberately separate from `record_ticket_result` and `record_email_result` despite the
+        similar shape, because the three channels settle differently and collapsing them would
+        mean encoding all three exceptions in one branchy function. Expo keeps `nextAttemptAt`
+        after acceptance so the receipt reconciler revisits the row; email and web push clear it
+        because acceptance is as far as either can see. Only web push prunes its destination:
+        a push service answering 404 or 410 is stating that the subscription is gone, which is
+        authoritative in a way no email bounce is.
+
+        `ACCEPTED`, not `DELIVERED`. The push service took the message; whether the browser
+        was awake to receive it is not observable from here.
+        """
+
+        now = datetime.now(UTC)
+        factory = get_session_factory()
+        async with factory() as session, session.begin():
+            delivery = await session.scalar(
+                select(NotificationDelivery)
+                .where(NotificationDelivery.id == delivery_id)
+                .with_for_update()
+            )
+            if delivery is None or delivery.status != "SENDING":
+                return
+            session.add(
+                NotificationDeliveryAttempt(
+                    delivery_id=delivery.id,
+                    attempt_number=delivery.attempt_count,
+                    requested_at=requested_at,
+                    duration_ms=duration_ms,
+                    retryable=retryable,
+                    provider_message_id=provider_message_id,
+                    response_metadata={
+                        "outcome": "ACCEPTED" if accepted else "ERROR",
+                        "provider": "WEB_PUSH",
+                        "expired": expired,
+                    },
+                    error_code=error_code,
+                    error_detail=(error_detail or "")[:500] or None,
+                )
+            )
+            if accepted:
+                delivery.status = "ACCEPTED"
+                delivery.provider_message_id = provider_message_id
+                delivery.accepted_at = now
+                delivery.next_attempt_at = None
+                delivery.failure_code = None
+                delivery.failure_detail = None
+            elif (
+                retryable
+                and not expired
+                and next_attempt_at is not None
+                and (delivery.expires_at is None or next_attempt_at < delivery.expires_at)
+                and delivery.attempt_count < delivery.max_attempts
+            ):
+                delivery.status = "QUEUED"
+                delivery.next_attempt_at = next_attempt_at
+                delivery.failure_code = error_code
+                delivery.failure_detail = (error_detail or "")[:500] or None
+            else:
+                delivery.status = "FAILED"
+                delivery.failed_at = now
+                delivery.next_attempt_at = None
+                delivery.failure_code = error_code or "WEB_PUSH_ERROR"
+                delivery.failure_detail = (error_detail or "")[:500] or None
+            if expired and delivery.destination_id:
+                # Disabled, not deleted: the row is evidence that this browser was subscribed,
+                # and the learner resubscribing reuses it through `upsert_push_installation`.
+                # The endpoint is released so the globally unique index cannot block a new
+                # subscription that the push service hands out with the same URL.
+                await session.execute(
+                    update(PushInstallation)
+                    .where(PushInstallation.id == delivery.destination_id)
+                    .values(
+                        disabled_at=now,
+                        endpoint=None,
+                        p256dh_encrypted=None,
+                        auth_encrypted=None,
+                        failure_count=PushInstallation.failure_count + 1,
+                    )
+                )
 
     async def digest_subscriptions(self, *, limit: int) -> list[dict[str, Any]]:
         """Every learner/category pair whose email preference asks for a digest."""

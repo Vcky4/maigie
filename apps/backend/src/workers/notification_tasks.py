@@ -139,6 +139,16 @@ def dispatch_notification_email_task() -> int:
 
 
 @celery_app.task(
+    name="notifications.dispatch_web_push",
+    queue="default",
+    time_limit=120,
+    soft_time_limit=110,
+)
+def dispatch_web_push_task() -> int:
+    return _run_notification_coro("dispatch_due_web_push", module="web_push_dispatcher")
+
+
+@celery_app.task(
     name="notifications.plan_digests",
     queue="default",
     time_limit=300,
@@ -184,6 +194,14 @@ def get_beat_schedule() -> dict:
         },
         "notifications.dispatch_mobile_push": {
             "task": "notifications.dispatch_mobile_push",
+            "schedule": 60.0,
+            "options": {"queue": "default"},
+        },
+        "notifications.dispatch_web_push": {
+            "task": "notifications.dispatch_web_push",
+            # Same cadence as mobile push: both are interruption channels where a reminder that
+            # arrives late is worse than useless. Unlike Expo there is no receipt phase, so a
+            # push is settled by the end of the batch that sent it.
             "schedule": 60.0,
             "options": {"queue": "default"},
         },

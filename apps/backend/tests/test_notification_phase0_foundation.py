@@ -214,3 +214,166 @@ async def test_notification_settings_update_dual_writes_legacy_contract(
     policy = captured["policy_values"]
     assert policy["timezone"] == "Europe/London"
     assert policy["max_daily_notifications"] == 3
+
+
+def _matrix(**web_push_by_category: Any):
+    """Build a complete settings matrix, overriding `webPush` per category."""
+    from src.domains.notifications.models import (
+        NotificationCategorySetting,
+        NotificationSettingsUpdate,
+    )
+
+    return NotificationSettingsUpdate(
+        engagement_enabled=True,
+        quiet_hours_start=None,
+        quiet_hours_end=None,
+        max_daily_notifications=3,
+        digest_local_time="09:00",
+        digest_day_of_week=0,
+        categories=[
+            NotificationCategorySetting(
+                category=key,
+                in_app=True,
+                mobile_push=False,
+                email_frequency="OFF",
+                web_push=web_push_by_category.get(key, None),
+            )
+            for key in ("LEARNING", "PROGRESS", "SOCIAL_CLASSROOM", "PRODUCT_UPDATES")
+        ],
+    )
+
+
+def _settings_harness(monkeypatch: pytest.MonkeyPatch, preferences: list[Any]) -> dict[str, Any]:
+    from types import SimpleNamespace
+
+    captured: dict[str, Any] = {}
+
+    async def fake_snapshot(user_id: str) -> dict[str, Any]:
+        return {
+            "policy": SimpleNamespace(timezone="UTC", timezone_source="MANUAL"),
+            "preferences": preferences,
+            "legacy": None,
+            "profile": None,
+        }
+
+    async def fake_update(user_id: str, **values: Any) -> None:
+        captured.update(values)
+
+    async def fake_get(*, user_id: str) -> str:
+        return "updated"
+
+    monkeypatch.setattr(service.notification_repo, "notification_settings_snapshot", fake_snapshot)
+    monkeypatch.setattr(service.notification_repo, "update_notification_settings", fake_update)
+    monkeypatch.setattr(service, "get_notification_settings", fake_get)
+    return captured
+
+
+def _preference(category: str, channel: str, *, enabled: bool, frequency: str = "IMMEDIATE"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        category=category,
+        channel=channel,
+        notification_type=None,
+        enabled=enabled,
+        frequency=frequency,
+        digest_period=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_web_push_consent_is_written_per_database_category(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _settings_harness(monkeypatch, [])
+
+    await service.update_notification_settings(user_id="user-1", request=_matrix(LEARNING=True))
+
+    web_push_rows = [r for r in captured["preferences"] if r["channel"] == "WEB_PUSH"]
+    assert web_push_rows == [
+        {
+            "category": "LEARNING",
+            "channel": "WEB_PUSH",
+            "enabled": True,
+            "frequency": "IMMEDIATE",
+            "digest_period": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_client_that_omits_web_push_does_not_revoke_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mobile build predating web push must not switch off a consent given on a laptop."""
+
+    captured = _settings_harness(monkeypatch, [_preference("LEARNING", "WEB_PUSH", enabled=True)])
+
+    await service.update_notification_settings(user_id="user-1", request=_matrix())
+
+    web_push_rows = [r for r in captured["preferences"] if r["channel"] == "WEB_PUSH"]
+    assert web_push_rows == [
+        {
+            "category": "LEARNING",
+            "channel": "WEB_PUSH",
+            "enabled": True,
+            "frequency": "IMMEDIATE",
+            "digest_period": None,
+        }
+    ], "omitting webPush must preserve the stored consent, not clear it"
+
+
+@pytest.mark.asyncio
+async def test_omitting_web_push_writes_nothing_where_nothing_was_stored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Absent consent stays absent, which the dispatcher already reads as not given."""
+
+    captured = _settings_harness(monkeypatch, [])
+
+    await service.update_notification_settings(user_id="user-1", request=_matrix())
+
+    assert [r for r in captured["preferences"] if r["channel"] == "WEB_PUSH"] == []
+
+
+@pytest.mark.asyncio
+async def test_web_push_can_be_switched_off_explicitly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _settings_harness(monkeypatch, [_preference("LEARNING", "WEB_PUSH", enabled=True)])
+
+    await service.update_notification_settings(user_id="user-1", request=_matrix(LEARNING=False))
+
+    web_push_rows = [r for r in captured["preferences"] if r["channel"] == "WEB_PUSH"]
+    assert web_push_rows[0]["enabled"] is False
+    assert web_push_rows[0]["frequency"] == "OFF"
+
+
+@pytest.mark.asyncio
+async def test_web_push_consent_is_reported_back_from_stored_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    async def fake_snapshot(user_id: str) -> dict[str, Any]:
+        return {
+            "policy": None,
+            "preferences": [_preference("LEARNING", "WEB_PUSH", enabled=True)],
+            "legacy": SimpleNamespace(
+                notifications=True,
+                timezone="UTC",
+                timezone_source="MANUAL",
+                email_schedule_reminder=False,
+                email_weekly_tips=False,
+                push_schedule_reminder=False,
+                push_study_tips=False,
+            ),
+            "profile": None,
+        }
+
+    monkeypatch.setattr(service.notification_repo, "notification_settings_snapshot", fake_snapshot)
+
+    result = await service.get_notification_settings(user_id="user-1")
+    by_category = {item.category: item for item in result.categories}
+    assert by_category["LEARNING"].web_push is True
+    assert by_category["PROGRESS"].web_push is False, "consent is per category, never inherited"
