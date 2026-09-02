@@ -129,9 +129,19 @@ def _build_adapter_registry() -> dict[str, BaseProviderAdapter]:
             )
 
             safety_settings: list[Any] = []
+            # Verified against https://ai.google.dev/gemini-api/docs/models on 2026-09-02. All three
+            # are **stable**, not preview, which matters because the router treats an unregistered or
+            # shut-down model as simply absent from the chain — a silent narrowing rather than an error.
+            #
+            # `gemini-3.5-flash-lite` is here so the free tier has a second candidate. The obvious
+            # cheaper choice was `gemini-2.5-flash-lite` at $0.10/$0.40, and it is the wrong one: the
+            # whole Gemini 2.5 family shuts down in **October 2026**, so it would have been a fallback
+            # with a month to live. `gemini-2.0-flash` and `gemini-2.0-flash-lite` are already shut
+            # down and remain priced only for historical attribution.
             gemini_models = [
                 "gemini-3.5-flash",
                 "gemini-3.1-flash-lite",
+                "gemini-3.5-flash-lite",
             ]
             for model_id in gemini_models:
                 adapter = GeminiChatToolsAdapter(safety_settings=safety_settings, model_id=model_id)

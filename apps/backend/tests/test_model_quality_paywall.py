@@ -27,6 +27,7 @@ from src.domains.intelligence.reasoning.llm.feature_flags import (  # noqa: E402
 
 PLUS_MODEL = "gemini-3.5-flash"
 FREE_MODEL = "gemini-3.1-flash-lite"
+FREE_FALLBACK = "gemini-3.5-flash-lite"
 
 
 def _service() -> FeatureFlagService:
@@ -50,13 +51,15 @@ class TestTheAllowlistGatesModelQuality:
     def test_free_cannot_use_the_plus_model(self):
         assert _service().is_model_allowed("gemini", PLUS_MODEL, "free", "u1") is False
 
-    def test_free_can_use_flash_lite(self):
-        assert _service().is_model_allowed("gemini", FREE_MODEL, "free", "u1") is True
-
-    def test_plus_can_use_both(self):
+    def test_free_can_use_both_flash_lite_models(self):
         service = _service()
-        assert service.is_model_allowed("gemini", PLUS_MODEL, "plus", "u1") is True
-        assert service.is_model_allowed("gemini", FREE_MODEL, "plus", "u1") is True
+        assert service.is_model_allowed("gemini", FREE_MODEL, "free", "u1") is True
+        assert service.is_model_allowed("gemini", FREE_FALLBACK, "free", "u1") is True
+
+    def test_plus_can_use_all_three(self):
+        service = _service()
+        for model in (PLUS_MODEL, FREE_MODEL, FREE_FALLBACK):
+            assert service.is_model_allowed("gemini", model, "plus", "u1") is True
 
     def test_the_two_tiers_do_not_name_the_same_model_set(self):
         """If they match, the allowlist is not a paywall — it is a list."""
@@ -78,19 +81,58 @@ class TestTheChainOrderIsWhyThisMattered:
         chain = [p.strip() for p in get_settings().FALLBACK_CHAT_DEFAULT.split(",")]
         assert chain[0] == f"gemini:{PLUS_MODEL}"
 
-    def test_free_has_exactly_one_gemini_candidate_in_the_chain(self):
-        """Recorded rather than asserted as desirable.
+    def test_free_has_two_candidates_cheapest_first(self):
+        """Decision P. A single-candidate tier fails rather than degrades, and this is the tier
+        holding 1 205 of 1 206 accounts.
 
-        Narrowing Free to one model also narrows its chat fallback from two Gemini candidates to one,
-        for the tier holding almost every user. That is a real trade and the alternative was worse:
-        the previous "fallback" was a model six times the price, chosen first. Giving Free a genuine
-        second candidate needs a cheap model registered as an adapter, which is not a config change —
-        see drift item 23.
+        Order matters as much as membership: the chain is walked in order, so the cheaper model has to
+        come first or the fallback becomes the default — which is precisely how the original defect
+        worked, with the Plus model listed for Free and sitting first.
         """
         settings = get_settings()
         allowed = {p.strip() for p in settings.LLM_TIER_ALLOWLIST_FREE.split(",") if p.strip()}
         chain = [p.strip() for p in settings.FALLBACK_CHAT_DEFAULT.split(",")]
-        assert [pair for pair in chain if pair in allowed] == [f"gemini:{FREE_MODEL}"]
+        assert [pair for pair in chain if pair in allowed] == [
+            f"gemini:{FREE_MODEL}",
+            f"gemini:{FREE_FALLBACK}",
+        ]
+
+    def test_the_free_fallback_is_registered(self):
+        """An unregistered model is not an error, it is an absence — `_select_candidates` skips any
+        pair without an adapter. So a second candidate that was never registered would leave Free on
+        one model and nothing would say so.
+        """
+        from src.domains.intelligence.reasoning.llm.adapter_registry import (
+            _build_adapter_registry,
+        )
+
+        assert f"gemini:{FREE_FALLBACK}" in _build_adapter_registry()
+
+    def test_the_free_fallback_costs_a_third_more_not_six_times_more(self):
+        """What makes it a fallback rather than a cost leak.
+
+        `gemini-3.5-flash-lite` is *dearer* per token than the primary — newer, better per unit of
+        capability, $0.30/$2.50 against $0.25/$1.50. The comparison that earns it the slot is against
+        what Free used to fall back to, which was the Plus model at six times the primary.
+        """
+        primary = calculate_ai_cost(8000, 600, model_name=FREE_MODEL)
+        fallback = calculate_ai_cost(8000, 600, model_name=FREE_FALLBACK)
+        plus = calculate_ai_cost(8000, 600, model_name=PLUS_MODEL)
+        assert 1.2 < fallback / primary < 1.5
+        assert fallback < plus / 4
+
+    def test_no_shut_down_model_is_in_a_fallback_chain(self):
+        """The trap this fix nearly walked into.
+
+        `gemini-2.5-flash-lite` is the cheapest row in the pricing table at $0.10/$0.40, and an
+        earlier draft proposed it as Free's second candidate. The whole Gemini 2.5 family shuts down
+        in October 2026 and the 2.0 models already have — facts a price table does not carry, because
+        a price table records what things cost, not what you may still call.
+        """
+        settings = get_settings()
+        chains = f"{settings.FALLBACK_CHAT_DEFAULT},{settings.FALLBACK_CHAT_TOOLS}"
+        for retired in ("gemini-2.5-", "gemini-2.0-", "gemini-3.1-flash-lite-preview"):
+            assert retired not in chains, f"{retired} is shut down or shutting down"
 
 
 class TestTheCostDifferenceIsWhyItWasWorthFixing:

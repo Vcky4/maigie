@@ -211,11 +211,18 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
             interval="month",
             trial_days=cfg.TRIAL_DAYS_MAIGIE_PLUS,
             description=(
-                "Advanced models, adaptive practice and plans, deeper reflections, "
-                "and every document format, in your personal workspace."
+                "A stronger model for chat, quizzes, lessons and documents; adaptive "
+                "practice and plans; deeper reflections; and every document format, "
+                "in your personal workspace."
             ),
+            # Was "Advanced models throughout", which was unenforceable in both directions: the model
+            # allowlist let Free use the Plus model on chat, and on the other 26 call sites there is
+            # still no split at all. Decision P confines the split to operations above 500 units, so
+            # the honest claim names the surfaces rather than saying "throughout" — and the surfaces
+            # it names are the ones a learner would notice.
             usage_note=(
-                "Advanced models throughout, with a monthly allowance of live voice tutoring."
+                "A stronger model where it shows — chat, quizzes, lessons, documents "
+                "and your growth write-ups — plus a monthly allowance of live voice tutoring."
             ),
         ),
         PlanItem(

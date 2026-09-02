@@ -39,13 +39,22 @@ _EXACT_MODEL_PRICING: dict[str, tuple[float, float]] = {
     # Current models
     "gemini-3.5-flash": (1.50, 9.00),
     "gemini-3.1-flash-lite": (0.25, 1.50),
+    # The free tier's fallback. Note it is *dearer* than `gemini-3.1-flash-lite`, not cheaper —
+    # newer and better per unit of capability, but $0.30/$2.50 against $0.25/$1.50. It earns its
+    # place by being 5× cheaper on input and 3.6× cheaper on output than `gemini-3.5-flash`, which
+    # is what a free chat turn used to fall back to. Verified 2026-09-02.
+    "gemini-3.5-flash-lite": (0.30, 2.50),
     "gemini-embedding-001": (0.15, 0.0),
     # Live (voice). Audio tokens, not text — roughly $3.00/1M in and $12.00/1M out, which at the
     # ~1 500 audio tokens per minute per direction that native audio streams works out at about
     # $0.023 per conversational minute. `study_voice.billing` prices a voice minute from that
     # figure rather than from these rates directly, because voice is billed by time.
     "gemini-3.1-flash-live-preview": (3.00, 12.00),
-    # Legacy, kept for historical cost attribution
+    # Legacy, kept for historical cost attribution only. **None of these may be added to a fallback
+    # chain.** `gemini-2.0-flash` and `gemini-2.0-flash-lite` are already shut down, and the whole
+    # Gemini 2.5 family shuts down in October 2026 — so `gemini-2.5-flash-lite`, the cheapest row in
+    # this table, is the one model here that looks most attractive as a cost-saving candidate and has
+    # weeks to live. Checked against the published model list on 2026-09-02.
     "gemini-3-flash-preview": (0.50, 3.00),
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.5-flash-lite": (0.10, 0.40),

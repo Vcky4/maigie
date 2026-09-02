@@ -32,7 +32,7 @@
 > **Out of scope: Learning Spaces, entirely.** Not the Space feature, not Circle Plan, not the Plus Seat add-on, not `SpaceMember.seat_tier`, not `seat_impl.py`, not `Space.credits`, not the space branch of `consume_credits`, not the space branch of `feature_flags.effective_tier_for_request`. Nothing in this plan reads or writes anything space-scoped. See Decision F.
 > Companion documents: [`../../../maigie-client/docs/PREPARE_API_INTEGRATION_PLAN.md`](../../../maigie-client/docs/PREPARE_API_INTEGRATION_PLAN.md) (§4 defers checkout to this document), [`../../../maigie-client/docs/REFLECT_API_INTEGRATION_PLAN.md`](../../../maigie-client/docs/REFLECT_API_INTEGRATION_PLAN.md) (Decision Z, the locked-read convention)
 > Source of authority for pricing intent: the Maigie Book — `business/ch36-pricing-philosophy`, `business/ch37-personal-learning`, `philosophy/ch04-product-principles`. Where this plan and the book disagree, the book wins and this plan is wrong. Decision N and §6.7 are derived from them directly.
-> Last reviewed: 2026-09-02 (revision 6 — the model-quality paywall gated nothing: `LLM_TIER_ALLOWLIST_FREE` listed the Plus model and the chat chain put it first, so a free turn cost 6× what §6.3 assumed and 500 units bought ~3 turns rather than ~16. Free narrowed to Flash-Lite; §5.2 and §6.3 corrected; the 26 un-gated `llm_resilient` call sites recorded as drift 23 and scheduled with Phase 3b. Revision 5 — Phase 2 implemented: one resolver, `require_premium` deleted, `personal_tier` removed from the model router's signature, drift 10 and 11 closed. Revision 4 — Phase 0 verified open against code; Paystack port promoted to Phase 2b; iOS committed alongside Android and Open Question 6 resolved; store-product creation timeline consolidated into §5.7; all grandfathering machinery removed on the zero-subscriber fact. Revision 3 implemented Phase 1; revision 2 shortened the trial to 3 days, removed the referral cap, withdrew rewarded ads and introduced earned points as a pass-only currency: §6.9, Decision O)
+> Last reviewed: 2026-09-02 (revision 7 — Decision P: `gemini-3.5-flash-lite` registered as the free tier's second candidate, and the model-quality split confined to operations above 500 units. The cheapest model in the pricing table, `gemini-2.5-flash-lite`, was rejected because the Gemini 2.5 family shuts down in October 2026 — a price table records cost, not availability. Model roster in §6.10; Plus catalogue copy narrowed from "advanced models throughout" to the surfaces where the split is real. Revision 6 — the model-quality paywall gated nothing: `LLM_TIER_ALLOWLIST_FREE` listed the Plus model and the chat chain put it first, so a free turn cost 6× what §6.3 assumed and 500 units bought ~3 turns rather than ~16. Free narrowed to Flash-Lite; §5.2 and §6.3 corrected; the 26 un-gated `llm_resilient` call sites recorded as drift 23 and scheduled with Phase 3b. Revision 5 — Phase 2 implemented: one resolver, `require_premium` deleted, `personal_tier` removed from the model router's signature, drift 10 and 11 closed. Revision 4 — Phase 0 verified open against code; Paystack port promoted to Phase 2b; iOS committed alongside Android and Open Question 6 resolved; store-product creation timeline consolidated into §5.7; all grandfathering machinery removed on the zero-subscriber fact. Revision 3 implemented Phase 1; revision 2 shortened the trial to 3 days, removed the referral cap, withdrew rewarded ads and introduced earned points as a pass-only currency: §6.9, Decision O)
 
 ## 1. Purpose
 
@@ -246,7 +246,12 @@ Every item here is either enforced in Phase 5 or deleted from the copy in Phase 
 22. **`WEB/pages/settings/AiModelSettings.tsx:13-25` lets a learner pick a model from a hardcoded list**, while the backend allowlists models by tier (`config.py:310-315`, `feature_flags.is_model_allowed`). Nothing reconciles the two, so the picker can offer a model the server will refuse. Small, but it is a tier gate with a UI that does not know it exists. **Now larger than when written:** since Free is Flash-Lite only, the picker offers a free learner a model the server refuses on every option but one.
 23. **The model-quality paywall covers chat and nothing else.** `LLM_TIER_ALLOWLIST_*` is read only by `router.route_request`, whose single caller is the Ask/chat turn (`ask_service.py:2109`). The other 26 LLM call sites — quiz and question generation, lesson bodies, course outlines, documents, all four flashcard paths, every narrative panel, reflections, home guidance, memory extraction, discovery — go through `personal_learning.services.llm_resilient`, which resolves a provider from `["gemini", "openai", "anthropic"]` and a model from `registry._DEFAULTS`, and consults no allowlist and no entitlement. `_DEFAULTS` names `gemini-3.5-flash` for most of them.
 
-    So a free learner's quiz generation runs the Plus model, and the catalogue's Plus copy ("Advanced models throughout") is true of one surface out of twenty-seven. → **the fix belongs with Phase 3b, not before it.** Decision L already routes all 26 sites through one chokepoint in `llm_resilient` in order to meter them; a tier-aware model choice is the same plumbing and the same argument, and doing it twice would mean doing it wrong once. Two things to decide there rather than now: whether the quality split applies to every operation or only to the expensive ones, and what a *cheap* second Gemini candidate is, since narrowing Free to a single model also narrows its fallback to a single model. `gemini-2.5-flash-lite` is priced in both tables at $0.10/$0.40 but has no registered adapter, so that is a code change and not a config one.
+    So a free learner's quiz generation runs the Plus model, and the catalogue's Plus copy is true of one surface out of twenty-seven. → **the fix belongs with Phase 3b, not before it.** Decision L already routes all 26 sites through one chokepoint in `llm_resilient` in order to meter them; a tier-aware model choice is the same plumbing and the same argument, and doing it twice would mean doing it wrong once.
+
+    **Both sub-decisions are now made** — they were listed here as open and are resolved in Decision P.
+
+    - *What is the second free candidate?* `gemini-3.5-flash-lite`, registered and live (§6.10). Not `gemini-2.5-flash-lite`, which this item previously suggested: the whole Gemini 2.5 family shuts down in **October 2026**, so the cheapest row in the pricing table was a fallback with weeks to live. Checked against the published model list rather than the table.
+    - *Does the split cover every operation or only the expensive ones?* **Expensive only** — Decision P sets the threshold and says why.
 
 ### 5.5 Clients
 
@@ -501,7 +506,7 @@ So **cost control is the window, not the gate.** An operation is gated only when
 
 | Operation | Free | Plus | Metered | Gate shape |
 | --- | --- | --- | --- | --- |
-| Chat / Ask | ✓ | ✓, better model | ✓ today | window only |
+| Chat / Ask | ✓ | ✓, better model | ✓ today | window only — **the one surface where the model split is live** |
 | Live voice | ✓ | ✓, audio-only billing | ✓ today | window only |
 | Quiz generation | ✓ 3 modes | ✓ 5 modes | **add** | `403` on mode |
 | Lesson generation | ✓ | ✓ | **add** | window only |
@@ -511,7 +516,7 @@ So **cost control is the window, not the gate.** An operation is gated only when
 | Study plan | even split | adaptive | **add** | `200 + notice` (drift 9) |
 | Flashcards (×4) | 5/note, basic | 10/note, 4 types | **add** | silent depth |
 | Documents | pdf + academic | +docx, pptx, 3 styles | **add** | `403` on format |
-| Note AI action / summarise | ✓ | ✓, better model | **add** | window only |
+| Note AI action / summarise | ✓ | ✓, **same model** | **add** | window only — below Decision P's threshold (300 / 110 units) |
 | Note merge | ✓ | ✓ | ✓ today | window only |
 | Reflection — weekly | ✓ summary | ✓ deep | **add** | silent depth |
 | Reflection — monthly | ✗ | ✓ | **add** | `403` |
@@ -909,6 +914,30 @@ Mechanically: FIFO on redemption (oldest live grant first), expiry resolved lazi
 The redeemed pass is identical to a bought one in every respect except its provenance: `PlusPass.source = 'points'` alongside `'purchase'`, and no `PlusPurchase` row, since nothing was purchased. Decision G's "verify, persist, then grant" does not apply — there is no store transaction to verify — but Decision A, D, E and the sweep all apply unchanged. A points-redeemed pass sits in inventory indefinitely and the learner activates it when they want it, which is the whole reason points buy passes and not window units.
 
 **Rewarded ads are withdrawn, and the withdrawal is a decision rather than a deferral.** `claim_ad_reward` grants credits against a limit that no longer exists, no ad SDK is integrated on either client, and the two screens that call it (`WEB/features/credits/EarnPage`, `MOB/src/app/earn/watch-ad.tsx`) are already unrouted or standalone. Re-pointing it at the window would have shipped an earn mechanic nobody designed. When ads return, the question to answer first is what they buy — and if the answer is points, they arrive as one more `kind` on the ledger built here, which is a day of work. That is the argument for removing the code now and keeping the table.
+
+### Decision P: The model-quality split covers expensive operations only, and Free carries two cheap candidates.
+
+Two questions that drift 23 left open. Both are settled here because the answer to each constrains what the catalogue may claim, and copy that outruns the code is what §5.4 exists to catch.
+
+**Free gets two models, not one.** `gemini-3.1-flash-lite` primary, `gemini-3.5-flash-lite` fallback. Narrowing Free to a single model — which is what closing the allowlist hole did on its own — also narrowed its chat fallback to a single model, for the tier holding 1 205 of 1 206 accounts. The roster and the prices are in §6.10; the short version is that the fallback costs a third more than the primary rather than six times more, which is what it cost when the fallback was the Plus model.
+
+**The split applies to expensive operations only.** An operation picks its model by tier when it is above the threshold; below it, both tiers run the cheap model.
+
+The threshold is **500 units** — $0.05 of measured COGS — which from §6.5 selects: quiz and question generation (780), lesson bodies (780), the three narrative panels (770 each), resource recommendations (1 600), document generation (570), and chat itself. Everything below stays on Flash-Lite for everybody: note summarise (110), home guidance (140), discovery (150), memory extraction (100), conversation summarisation (100), the four flashcard paths (160–200), study plan and schedule generation (225).
+
+Four reasons, in descending order of how much they matter.
+
+**Spend is concentrated, so a universal split buys little.** The six operations above the line are most of the per-learner bill. Downgrading a 100-unit operation saves $0.008 and costs a perceptible quality drop on something a learner sees constantly — the worst available trade.
+
+**Two of the cheap operations must not be degraded at all, on principle rather than on cost.** §6.6 already exempts **onboarding auto-setup** and **memory extraction** from *charging*: onboarding is where the book's "free should create real success" is honoured or not, and memory extraction is what makes Maigie feel like it knows you (Principle Two). Exempting them from the meter and then quietly serving them a worse model would honour the letter and lose the point. A threshold covers this without a second exception list, which is the reason to prefer a threshold over an operation-by-operation table.
+
+**It makes the Plus claim checkable.** "Advanced models throughout" was unenforceable — and untrue in the other direction, since Free had the advanced model everywhere. A claim naming the surfaces where quality differs can be tested; §5.4's rule is that a price is a promise about behaviour, and this is the version of the promise the code can keep. The catalogue copy is narrowed accordingly.
+
+**It shrinks the blast radius of getting the split wrong.** Six operations reviewed properly beats twenty-seven reviewed by a rule nobody checked, and the twenty-one below the line keep behaviour identical for both tiers — so a mistake there is impossible rather than merely unlikely.
+
+Two consequences worth stating rather than discovering. Below the threshold there is **no quality difference at all**, so the honest Free-versus-Plus story on those surfaces is the window allowance and nothing else. And the threshold is denominated in the §6.2 unit, which means it moves when the rate card moves: it is a line on a cost table, not a property of an operation, and Phase 3's instrumentation is what makes it a measurement instead of an estimate.
+
+Implementation is Phase 3b, in the same chokepoint as the meter. `registry._DEFAULTS` already names Flash-Lite for `FACT_EXTRACTION_LITE`, `MINIMAL_RESPONSE`, `MEMORY_JSON` and `EMAIL_FALLBACK`, so several below-threshold operations are correct already and the work is smaller than the count of call sites suggests.
 
 ## 8. Data model
 

@@ -343,8 +343,19 @@ class Settings(BaseSettings):
     LLM_RETRY_BASE_DELAY_SECONDS: float = 1.0
 
     # Fallback chains (comma-separated provider:model pairs)
-    FALLBACK_CHAT_DEFAULT: str = "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o-mini,anthropic:claude-sonnet-4-20250514"
-    FALLBACK_CHAT_TOOLS: str = "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
+    # Chain order is shared across tiers; the allowlist is what turns it into a paywall. Plus starts
+    # at `gemini-3.5-flash`; Free's first *allowed* entry is `gemini-3.1-flash-lite`, and both tiers
+    # fall back to `gemini-3.5-flash-lite` after it.
+    FALLBACK_CHAT_DEFAULT: str = (
+        "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,"
+        "gemini:gemini-3.5-flash-lite,openai:gpt-4o-mini,"
+        "anthropic:claude-sonnet-4-20250514"
+    )
+    FALLBACK_CHAT_TOOLS: str = (
+        "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,"
+        "gemini:gemini-3.5-flash-lite,openai:gpt-4o,"
+        "anthropic:claude-sonnet-4-20250514"
+    )
 
     # Feature flags — enabled providers (comma-separated)
     LLM_ENABLED_PROVIDERS: str = "gemini,openai"
@@ -368,9 +379,13 @@ class Settings(BaseSettings):
     # the Ask/chat turn. The 26 other LLM call sites reach providers through
     # `personal_learning.services.llm_resilient`, which selects a provider of its own and never asks
     # this question — so model quality is tier-gated on chat and nowhere else. See drift item 23.
-    LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-3.1-flash-lite"
+    # Free carries **two** Flash-Lite models so a provider failure degrades rather than fails. The
+    # second is dearer than the first ($0.30/$2.50 against $0.25/$1.50) and still 5× cheaper on input
+    # than the Plus model, so the fallback costs a third more than the primary instead of six times.
+    LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-3.1-flash-lite,gemini:gemini-3.5-flash-lite"
     LLM_TIER_ALLOWLIST_PLUS: str = (
-        "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o-mini"
+        "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,"
+        "gemini:gemini-3.5-flash-lite,openai:gpt-4o-mini"
     )
 
     # --- Gemini Live (voice) — was scattered os.getenv reads; keep in Settings ---
