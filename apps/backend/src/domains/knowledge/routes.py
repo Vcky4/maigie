@@ -94,6 +94,7 @@ async def generate_course_outline(body: models.CourseOutlineRequest, current_use
         max_tokens=4096,
         fallback={},
         user_id=current_user.id,
+        operation="course_outline",
     )
     parsed = lesson_service.parse_outline(payload)
     if not parsed["modules"]:
@@ -1185,6 +1186,10 @@ async def generate_topic_content(
                 # dict reads as no sections, which the check below reports as a `502`.
                 fallback={},
                 user_id=current_user.id,
+                # The largest generation in the product, and above the quality threshold at ~780
+                # units: a Plus learner's lessons are written by `gemini-3.5-flash`, a free
+                # learner's by Flash-Lite.
+                operation="lesson_body",
             )
 
             await lesson_service.set_stage(topic_id, lesson_service.GenerationStage.STRUCTURING)
@@ -1220,7 +1225,12 @@ async def generate_topic_content(
             persisted=f"{written} sections",
         )
 
-    from src.domains.intelligence.reasoning.llm import THINKING_OFF, generate_content
+    from src.domains.intelligence.reasoning.llm import THINKING_OFF
+
+    # Through the chokepoint, not straight at Gemini. This called
+    # `intelligence.reasoning.llm.generate_content` — no meter, no gate, no tier, no retry — so it was
+    # generating quizzes and summaries on the Plus model for free learners and charging nobody.
+    from src.domains.personal_learning.services.llm_resilient import generate_content
 
     prompts = {
         "quiz": f'Create a 5-question quiz on "{topic.title}" with answers. Markdown.',
@@ -1233,7 +1243,14 @@ async def generate_topic_content(
     # `THINKING_OFF`: both prompts are bounded formatting tasks over content already supplied — five
     # questions, or a bullet summary of the topic body above. The default 2048 ceiling stays; what
     # changes is that reasoning no longer competes with the output for it. Phase 0 Question 1.
-    content = await generate_content(prompt, thinking=THINKING_OFF)
+    content = await generate_content(
+        prompt,
+        thinking=THINKING_OFF,
+        # Was unattributed, so this route was generating on someone's behalf and charging nobody.
+        # The learner is right here in the signature; it was simply never passed.
+        user_id=current_user.id,
+        operation="topic_markdown",
+    )
     if not content:
         raise HTTPException(status_code=500, detail="AI returned empty content")
 

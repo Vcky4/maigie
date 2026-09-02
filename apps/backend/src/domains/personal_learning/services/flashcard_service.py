@@ -204,7 +204,13 @@ async def generate_from_note(
         f"Return ONLY the JSON array, no other text."
     )
 
-    cards_data = await generate_content_json(prompt, max_tokens=2000, fallback=[], user_id=user_id)
+    cards_data = await generate_content_json(
+        prompt,
+        max_tokens=2000,
+        fallback=[],
+        user_id=user_id,
+        operation="flashcard_generation",
+    )
     if not cards_data:
         return []
 
@@ -297,7 +303,13 @@ async def generate_from_topic(
         f"Return ONLY the JSON array, no other text."
     )
 
-    cards_data = await generate_content_json(prompt, max_tokens=2000, fallback=[], user_id=user_id)
+    cards_data = await generate_content_json(
+        prompt,
+        max_tokens=2000,
+        fallback=[],
+        user_id=user_id,
+        operation="flashcard_generation",
+    )
     if not cards_data:
         return []
 
@@ -350,7 +362,13 @@ async def generate_from_plan_item(
         "itself.\n"
         "Return ONLY a JSON array of 3-6 objects with 'front' and 'back' fields."
     )
-    cards_data = await generate_content_json(prompt, max_tokens=1500, fallback=[], user_id=user_id)
+    cards_data = await generate_content_json(
+        prompt,
+        max_tokens=1500,
+        fallback=[],
+        user_id=user_id,
+        operation="flashcard_generation",
+    )
     if not cards_data:
         return []
 
@@ -401,7 +419,13 @@ async def generate_deck_starter_cards(*, user_id: str, deck_id: str) -> list[Any
         "Each card must test one specific idea, not a general prompt about the topic.\n"
         "Return ONLY a JSON array of 6 objects with 'front' and 'back' fields."
     )
-    cards_data = await generate_content_json(prompt, max_tokens=1500, fallback=[], user_id=user_id)
+    cards_data = await generate_content_json(
+        prompt,
+        max_tokens=1500,
+        fallback=[],
+        user_id=user_id,
+        operation="flashcard_generation",
+    )
     if not cards_data:
         return []
 
@@ -1293,7 +1317,7 @@ async def get_dashboard(
         learning_cards=max(0, int(stats.get("learningCount", 0))),
         new_cards=max(0, int(stats.get("newCount", 0))),
         average_ease=float(stats.get("averageEaseFactor", 2.5)),
-        mastered_percent=mastery_percent(mastered_cards, total_cards) if total_cards else None,
+        mastered_percent=(mastery_percent(mastered_cards, total_cards) if total_cards else None),
         unfiled_cards=max(0, unfiled_cards),
     )
 

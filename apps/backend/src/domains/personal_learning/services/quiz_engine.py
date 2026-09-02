@@ -450,7 +450,13 @@ async def _run_generation(
         if remaining > 0:
             try:
                 questions_data = await generate_content_json(
-                    prompt, max_tokens=8000, timeout_s=60, fallback=[], user_id=user_id
+                    prompt,
+                    max_tokens=8000,
+                    timeout_s=60,
+                    fallback=[],
+                    user_id=user_id,
+                    # Above the quality threshold at ~780 units.
+                    operation="quiz_generation",
                 )
             except Exception as e:
                 logger.warning(f"Failed to generate quiz questions for prep {prep_id}: {e}")
@@ -929,7 +935,7 @@ def _usable_question(candidate: Any) -> dict[str, Any] | None:
         "question_type": question_type,
         "options": options,
         "correct_answer": correct_answer,
-        "explanation": str(explanation).strip() or None if explanation is not None else None,
+        "explanation": (str(explanation).strip() or None if explanation is not None else None),
         "difficulty": difficulty,
         "exam_tip": exam_tip,
         "hint_nudge": hint,

@@ -49,6 +49,123 @@ UNCHARGED_OPERATIONS = frozenset(
 )
 
 
+# ---------------------------------------------------------------------------
+# The model-quality paywall (Decision P, drift 23)
+# ---------------------------------------------------------------------------
+
+#: Operations that pick their model by tier. Everything else runs the standard model for everybody.
+#:
+#: **Why a set of names and not a table of unit costs.** Decision P defines the line as 500 units of
+#: measured COGS, which reads like an invitation to write `{"quiz_generation": 780, ...}` and compare.
+#: The commit before this one deleted exactly that table — `ESTIMATED_OPERATION_UNITS` — because the
+#: numbers in it were estimates wearing the costume of measurements, and its ancestor priced a voice
+#: minute two orders of magnitude low for the life of the product. The threshold is a real decision
+#: about a real cost table; where it *lands* is a fact about six operations, and recording the
+#: landing instead of re-deriving it every call means there is nowhere to put a wrong number.
+#:
+#: The six above the line, with the §6.5 estimates that put them there (in this comment, where they
+#: cannot be arithmetic):
+#:
+#:   resource_recommendations  ~1 600     the most expensive operation in the product
+#:   course_outline            ~1 020
+#:   quiz_generation             ~780
+#:   lesson_body                 ~780
+#:   narrative_panel             ~770     three panels, one label
+#:   document_generation         ~570
+#:
+#: **`course_outline` is not in Decision P's enumeration and belongs there.** That paragraph lists
+#: quiz generation, lesson bodies, the narrative panels, resource recommendations, document
+#: generation "and chat itself" — but Decision R's own table prices course generation at 1 020 units,
+#: twice the threshold and dearer than four of the six that are listed. Included here on the
+#: threshold rather than on the enumeration, because the threshold is the rule and the list was
+#: meant to be its output.
+#:
+#: Everything absent is below the line and identical on both tiers: note summarise (~110), home
+#: guidance (~140), discovery (~150), memory extraction (~100), the four flashcard paths (~160–200),
+#: study plans and schedules (~225), note merges, study diagrams, voice session notes. Decision P's
+#: argument for the threshold is that downgrading a 100-unit operation saves $0.008 and costs a
+#: quality drop on something a learner sees constantly — the worst trade available.
+#:
+#: A consequence worth stating because it is load-bearing: `UNCHARGED_OPERATIONS` must never be
+#: degraded, and a threshold gets that for free rather than needing a second exception list.
+#: Onboarding auto-setup and memory extraction are both far below 500 units, so they are absent from
+#: this set for the same reason as everything else, and there is no rule to keep in sync.
+QUALITY_SPLIT_OPERATIONS = frozenset(
+    {
+        "resource_recommendations",
+        "course_outline",
+        "quiz_generation",
+        "lesson_body",
+        "narrative_panel",
+        "document_generation",
+    }
+)
+
+
+async def model_for_operation(*, user_id: str | None, operation: str) -> str:
+    """Which Gemini model this operation runs on for this learner.
+
+    **Public because one generation path cannot come through this module.**
+    `generate_grounded_content` attaches the search tool, which this wrapper's retry-across-providers
+    shape cannot host — OpenAI and Anthropic are not substitutes for a Gemini-grounded search — so
+    `resource_service`'s step 1 calls it directly. That is the single most expensive operation in the
+    product (~1 600 units), so leaving it on the Plus model for everybody would mean the split missed
+    the biggest thing it exists to cover. Exporting the decision is how it gets covered without
+    `resource_service` resolving an entitlement of its own, which is the "two places deciding what a
+    learner is entitled to" that drift 23 is a record of.
+
+    Below the threshold, both tiers get the standard model — so most calls never resolve an
+    entitlement at all, and the paywall costs nothing on the paths it does not apply to.
+
+    Above it, the tier decides. It comes from `entitlement_service.resolve`, the one resolver
+    (Decision B), which collapses subscription, pass and trial into `"free"` / `"plus"` — so a
+    trialling learner gets the Plus model here exactly as they get Plus quiz modes, which is the
+    pairing whose absence was drift 11. `resolve` is memoised per request, so above-threshold calls
+    in a request that was already gated add no read at all.
+
+    Asked of `entitlement_service` directly rather than through
+    `feature_flags.effective_tier_for_request`, which is what chat uses. That function's job is to
+    choose between personal and space scope, and this path is personal-only by Decision F — passing
+    it `PERSONAL_SCOPE` would be asking a scope question with the answer already written down, and
+    it would mean importing `adapter_registry` to reach the service singleton, which constructs the
+    provider adapters as a side effect of a tier lookup.
+
+    **No `user_id` means the standard model.** A system-initiated generation has no entitlement to
+    read, and the safe reading of "nobody in particular" is the cheap model — matching
+    `entitlement_service.FREE_ENTITLEMENT` and the fail-as-free posture everywhere else in the gate.
+    The opposite default would mean an unattributed call silently costs 6× and is charged to no one.
+
+    **Fails to standard, not to premium.** A resolver that cannot answer must not hand out the dear
+    model; unlike `_refuse_if_exhausted`, which fails open because refusing a paying learner is
+    worse than one unbilled call, the wrong answer here is not an outage but a cost, so it fails to
+    the cheap side.
+    """
+    from src.domains.intelligence.reasoning.llm.registry import (
+        LlmTask,
+        default_model_for,
+    )
+
+    standard = default_model_for(LlmTask.GENERATION_STANDARD)
+    if user_id is None or operation not in QUALITY_SPLIT_OPERATIONS:
+        return standard
+
+    try:
+        from src.domains.billing.services import entitlement_service
+
+        tier = (await entitlement_service.resolve(user_id)).tier
+    except Exception:
+        logger.exception(
+            "quality: tier resolution failed for user=%s operation=%s — using standard model",
+            user_id,
+            operation,
+        )
+        return standard
+
+    if tier == "plus":
+        return default_model_for(LlmTask.GENERATION_PREMIUM)
+    return standard
+
+
 async def _refuse_if_exhausted(*, user_id: str | None, operation: str) -> None:
     """Refuse a learner whose window is already spent, before a provider is called.
 
@@ -255,7 +372,12 @@ class ProviderReply:
 
 
 async def _call_gemini(
-    prompt: str, *, max_tokens: int, temperature: float, thinking: int | None = None
+    prompt: str,
+    *,
+    max_tokens: int,
+    temperature: float,
+    thinking: int | None = None,
+    model: str | None = None,
 ) -> ProviderReply:
     """Call Gemini via the existing intelligence domain interface.
 
@@ -263,11 +385,23 @@ async def _call_gemini(
     reasoning gets that bound on the primary provider and the provider default on a fallback. Worth
     knowing rather than hiding: a fallback is more expensive than the call it replaced, in tokens as
     well as in latency.
+
+    `model` is likewise Gemini-only, and the same caveat applies with money attached: **the quality
+    paywall exists on the Gemini path alone.** A free learner whose Gemini attempts all fail falls
+    through to `OPENAI_DEFAULT_MODEL`, which no allowlist has been consulted about and which may cost
+    more than the Plus model the split was avoiding. Building a second tier map for the fallback
+    providers would be two places deciding what a learner is entitled to, which is the mistake
+    drift 23 records; the honest bound is that a fallback is rare, and the fix if it stops being
+    rare is a cheaper fallback model rather than a second allowlist.
     """
     from src.domains.intelligence.reasoning.llm import generate_content_with_usage
 
     text, usage = await generate_content_with_usage(
-        prompt, max_tokens=max_tokens, temperature=temperature, thinking=thinking
+        prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        thinking=thinking,
+        model=model,
     )
     return ProviderReply(text=text, usage=usage)
 
@@ -454,8 +588,13 @@ async def generate_content(
 
     # Resolve preferred provider
     primary_provider = await _resolve_provider(user_id)
+    # Resolved once per logical operation, for the same reason the gate is: a retry must not be able
+    # to change which model the learner is on halfway through, or one operation could bill two
+    # different rates and the log would show the last one.
+    model = await model_for_operation(user_id=user_id, operation=operation)
     logger.info(
         f"LLM request: user_id={user_id}, resolved_provider={primary_provider}, "
+        f"operation={operation}, model={model}, "
         f"prompt_length={len(prompt)}, max_tokens={max_tokens}"
     )
 
@@ -478,10 +617,11 @@ async def generate_content(
         # Try this provider with retries
         for attempt in range(max_retries + 1):
             try:
-                # `thinking` reaches Gemini only. The other two callables do not accept it, and
-                # inspecting the signature here rather than widening theirs keeps the parameter
-                # where it means something.
-                extra = {"thinking": thinking} if provider == "gemini" else {}
+                # `thinking` and `model` reach Gemini only. The other two callables do not accept
+                # either, and passing them here rather than widening those signatures keeps both
+                # parameters where they mean something. See `_call_gemini` for what that costs on a
+                # fallback.
+                extra = {"thinking": thinking, "model": model} if provider == "gemini" else {}
                 reply = await asyncio.wait_for(
                     call_fn(prompt, max_tokens=max_tokens, temperature=temperature, **extra),
                     timeout=timeout_s,

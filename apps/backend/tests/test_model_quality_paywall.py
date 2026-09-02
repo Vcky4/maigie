@@ -17,6 +17,8 @@ import os
 
 os.environ.setdefault("SKIP_DB_FIXTURE", "1")
 
+from pathlib import Path  # noqa: E402
+
 import pytest  # noqa: E402
 
 from src.config import get_settings  # noqa: E402
@@ -28,6 +30,21 @@ from src.domains.intelligence.reasoning.llm.feature_flags import (  # noqa: E402
 PLUS_MODEL = "gemini-3.5-flash"
 FREE_MODEL = "gemini-3.1-flash-lite"
 FREE_FALLBACK = "gemini-3.5-flash-lite"
+
+_SRC = Path(__file__).resolve().parents[1] / "src"
+
+
+def _read_src() -> str:
+    """Every source file as one string, for the two tests that assert over the whole tree.
+
+    `subprocess.run(["grep", ...])` is what these used, and it cannot run on Windows — no `grep` on
+    the PATH, so the test raised `FileNotFoundError` rather than failing, and provided no signal at
+    all on a developer machine. `encoding="utf-8"` is not optional either: the default on Windows is
+    cp1252 and this tree is full of em-dashes.
+    """
+    return "\n".join(
+        path.read_text(encoding="utf-8", errors="replace") for path in _SRC.rglob("*.py")
+    )
 
 
 def _service() -> FeatureFlagService:
@@ -148,32 +165,254 @@ class TestTheCostDifferenceIsWhyItWasWorthFixing:
 
 class TestScope:
     def test_only_the_chat_router_consults_the_allowlist(self):
-        """Drift 23, asserted so it is not mistaken for solved.
+        """`route_request` still has exactly one caller, and that is now a statement about the
+        *allowlist* rather than about the paywall.
 
-        `route_request` is called from exactly one place — the Ask/chat turn. The other 26 LLM call
-        sites reach providers through `llm_resilient`, which picks a provider from its own list and
-        never asks about entitlement, so model quality is gated on chat and nowhere else. Quiz
-        generation, lesson bodies, documents and the narrative panels all run the Plus model for a
-        free learner.
+        This test was written to assert drift 23 was open: the allowlist gated chat, the other 26 call
+        sites went through `llm_resilient`, and nothing there asked about entitlement. Drift 23 is
+        closed, and it was closed without adding a second `route_request` caller — `llm_resilient`
+        chooses a model from `registry` against the entitlement resolver instead of routing through
+        the chain. So the two mechanisms remain separate, and this test guards the separation: a
+        second caller here would mean generation had been pushed through the chat router, which is a
+        design change worth noticing rather than a refactor.
 
-        This test fails if a second caller of `route_request` appears, which would mean the scope of
-        the gate changed and the plan's claim needs rechecking rather than re-reading.
+        What covers the paywall itself is `TestTheQualitySplitAtTheChokepoint` below.
         """
-        import subprocess
-
-        result = subprocess.run(
-            ["grep", "-rn", "route_request", "src/"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
         call_sites = [
-            line
-            for line in result.stdout.splitlines()
-            if ".py:" in line
-            and "def route_request" not in line
-            # Prose mentions in docstrings and comments, not calls.
-            and ".route_request(" in line
+            f"{path.name}:{number}"
+            for path in _SRC.rglob("*.py")
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+            )
+            # Calls, not the definition, and not prose mentions in docstrings.
+            if ".route_request(" in line and "def route_request" not in line
         ]
         assert len(call_sites) == 1, f"expected one caller, found: {call_sites}"
         assert "ask_service.py" in call_sites[0]
+
+
+# ---------------------------------------------------------------------------
+# Drift 23: the other 26 call sites
+# ---------------------------------------------------------------------------
+
+
+class TestTheQualitySplitAtTheChokepoint:
+    """`llm_resilient` now picks a model by entitlement, which is what closed drift 23.
+
+    The allowlist above gates chat. It is read by `router` alone and `router` is called from the Ask
+    turn alone, so for as long as it was the whole paywall, "Plus gets advanced models" was true of
+    one surface out of twenty-seven — a free learner's quizzes, lessons, documents and narrative
+    panels all ran `gemini-3.5-flash`.
+    """
+
+    @staticmethod
+    def _resolve_as(monkeypatch, tier):
+        """Stub the resolver, not the tier string.
+
+        `_compose` is the thing that knows a trial and a pass are Plus, so stubbing at
+        `entitlement_service.resolve` keeps that intact — a test that patched a `"FREE"` string in
+        would pass while a trialling learner got the wrong model, which is drift 11's shape.
+        """
+        from src.domains.billing.services import entitlement_service
+
+        async def fake_resolve(user_id):
+            return entitlement_service._compose(
+                subscription_tier="PREMIUM_MONTHLY" if tier == "plus" else "FREE",
+                subscription_period_end=None,
+                active_pass=None,
+                active_trial=None,
+            )
+
+        monkeypatch.setattr(entitlement_service, "resolve", fake_resolve)
+
+    @pytest.mark.asyncio
+    async def test_plus_gets_the_dear_model_above_the_threshold(self, monkeypatch):
+        from src.domains.personal_learning.services import llm_resilient
+
+        self._resolve_as(monkeypatch, "plus")
+        assert (
+            await llm_resilient.model_for_operation(user_id="u1", operation="lesson_body")
+            == PLUS_MODEL
+        )
+
+    @pytest.mark.asyncio
+    async def test_free_does_not_above_the_threshold(self, monkeypatch):
+        """The defect, in one assertion."""
+        from src.domains.personal_learning.services import llm_resilient
+
+        self._resolve_as(monkeypatch, "free")
+        assert (
+            await llm_resilient.model_for_operation(user_id="u1", operation="lesson_body")
+            == FREE_MODEL
+        )
+
+    @pytest.mark.asyncio
+    async def test_below_the_threshold_both_tiers_match(self, monkeypatch):
+        """Decision P's actual content. Downgrading a 100-unit operation saves $0.008 and costs a
+        visible quality drop on something a learner sees constantly, so below the line there is no
+        split at all — and the honest Free-versus-Plus story on those surfaces is the allowance.
+        """
+        from src.domains.personal_learning.services import llm_resilient
+
+        for tier in ("free", "plus"):
+            self._resolve_as(monkeypatch, tier)
+            assert (
+                await llm_resilient.model_for_operation(user_id="u1", operation="note_summary")
+                == FREE_MODEL
+            )
+
+    @pytest.mark.asyncio
+    async def test_an_unattributed_call_gets_the_cheap_model(self):
+        """`user_id=None` is a system-initiated generation with nobody to charge, and the safe
+        reading of "nobody in particular" is the cheap model. The opposite default would mean an
+        unattributed call silently costs 6× and is billed to no one — which is what every one of
+        these call sites was doing before this change.
+        """
+        from src.domains.personal_learning.services import llm_resilient
+
+        assert (
+            await llm_resilient.model_for_operation(user_id=None, operation="lesson_body")
+            == FREE_MODEL
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_failed_resolve_falls_to_the_cheap_model(self, monkeypatch):
+        """Note the direction, and that it differs from the gate beside it on purpose.
+
+        `_refuse_if_exhausted` fails **open**, because refusing a paying learner over a database blip
+        is worse than one unbilled call. This fails **closed on cost**: the wrong answer here is not
+        an outage, it is silently serving the expensive model, so it degrades instead.
+        """
+        from src.domains.billing.services import entitlement_service
+        from src.domains.personal_learning.services import llm_resilient
+
+        async def boom(user_id):
+            raise RuntimeError("no database")
+
+        monkeypatch.setattr(entitlement_service, "resolve", boom)
+        assert (
+            await llm_resilient.model_for_operation(user_id="u1", operation="lesson_body")
+            == FREE_MODEL
+        )
+
+    def test_the_exempt_operations_are_never_degraded(self):
+        """§6.6 exempts onboarding auto-setup and memory extraction from *charging*, and Decision P's
+        argument is that exempting them from the meter and then quietly serving them a worse model
+        would honour the letter and lose the point.
+
+        A threshold gets this without a second exception list, which is the reason to prefer a
+        threshold over an operation-by-operation table — so the property to assert is that the two
+        sets do not intersect, not that some rule keeps them apart.
+        """
+        from src.domains.personal_learning.services.llm_resilient import (
+            QUALITY_SPLIT_OPERATIONS,
+            UNCHARGED_OPERATIONS,
+        )
+
+        assert not (QUALITY_SPLIT_OPERATIONS & UNCHARGED_OPERATIONS)
+
+    def test_the_split_names_the_same_two_models_the_allowlist_does(self):
+        """Otherwise "Plus gets the better model" means two different things on two surfaces, and a
+        learner comparing a chat answer with a generated lesson would be comparing three models.
+        """
+        from src.domains.intelligence.reasoning.llm.registry import (
+            LlmTask,
+            default_model_for,
+        )
+
+        assert default_model_for(LlmTask.GENERATION_PREMIUM) == PLUS_MODEL
+        assert default_model_for(LlmTask.GENERATION_STANDARD) == FREE_MODEL
+
+    def test_the_standard_model_is_the_cheaper_of_free_two_candidates(self):
+        """§6.10's roster says under-500 operations run `gemini-3.5-flash-lite`, and that row is
+        wrong: it is the *dearer* of Free's two models ($0.30/$2.50 against $0.25/$1.50) and is
+        Free's chat fallback for exactly that reason. Picking it as the standard generation model
+        would raise the cost of twenty-odd operations by ~60% on output to no end.
+        """
+        from src.domains.intelligence.reasoning.llm.registry import (
+            LlmTask,
+            default_model_for,
+        )
+
+        standard = default_model_for(LlmTask.GENERATION_STANDARD)
+        assert calculate_ai_cost(8000, 600, model_name=standard) < calculate_ai_cost(
+            8000, 600, model_name=FREE_FALLBACK
+        )
+
+    def test_every_split_operation_is_emitted_by_a_call_site(self):
+        """A member nothing produces is not coverage, it is a comment that looks like code.
+
+        `resource_recommendations` is the one that makes this worth asserting: it is emitted from
+        `resource_service`'s grounded search step, which cannot go through `llm_resilient` at all, so
+        it reaches the split through the exported `model_for_operation` rather than through the
+        wrapper. If that call were removed the label would still be in the set and the most
+        expensive operation in the product would quietly stop being gated.
+        """
+        from src.domains.personal_learning.services.llm_resilient import (
+            QUALITY_SPLIT_OPERATIONS,
+        )
+
+        emitted = _read_src()
+        for operation in sorted(QUALITY_SPLIT_OPERATIONS):
+            assert (
+                f'operation="{operation}"' in emitted
+            ), f"{operation} is in the split but no call site passes it"
+
+    def test_no_per_operation_unit_table_has_come_back(self):
+        """The commit before this one deleted `ESTIMATED_OPERATION_UNITS`, and the reason it deleted
+        it rather than correcting it was that the numbers in it were estimates wearing the costume of
+        measurements — its ancestor priced a voice minute two orders of magnitude low for the life of
+        the product.
+
+        Decision P's threshold is denominated in those same units, so implementing it invites the
+        table straight back. The split is a set of names instead, and the estimates live in a comment
+        where they cannot be arithmetic. This fails if any module-level mapping from an operation name
+        to a number reappears in the chokepoint.
+        """
+        from src.domains.personal_learning.services import llm_resilient
+
+        for name in dir(llm_resilient):
+            value = getattr(llm_resilient, name)
+            if not isinstance(value, dict) or not value:
+                continue
+            assert not all(
+                isinstance(k, str) and isinstance(v, int | float) for k, v in value.items()
+            ), f"llm_resilient.{name} looks like a per-operation cost table"
+
+    @pytest.mark.asyncio
+    async def test_the_model_reaches_gemini_and_not_the_other_providers(self, monkeypatch):
+        """`model` and `thinking` are Gemini-only, and passing either to `_call_openai` would be a
+        `TypeError` presenting as a provider failure — caught by the attempt loop, retried, and
+        eventually reported as every provider being unavailable.
+
+        The honest consequence, recorded on `_call_gemini`: the paywall exists on the Gemini path
+        alone, so a free learner whose Gemini attempts all fail falls through to
+        `OPENAI_DEFAULT_MODEL`, which no allowlist has been consulted about.
+        """
+        import inspect
+
+        from src.domains.personal_learning.services import llm_resilient
+
+        assert "model" in inspect.signature(llm_resilient._call_gemini).parameters
+        for other in (llm_resilient._call_openai, llm_resilient._call_anthropic):
+            params = inspect.signature(other).parameters
+            assert "model" not in params
+            assert "thinking" not in params
+
+    def test_both_gemini_entry_points_accept_a_model_and_default_to_chat(self):
+        """`generate_grounded_content` is the one that matters. It is the only generation in the
+        product that cannot go through `llm_resilient` — the search tool has no OpenAI or Anthropic
+        equivalent — and it is also the most expensive one, so it was the last place that could afford
+        to keep serving the Plus model to everybody.
+        """
+        import inspect
+
+        from src.domains.intelligence.reasoning import llm as llm_module
+
+        for fn in (
+            llm_module.generate_content_with_usage,
+            llm_module.generate_grounded_content,
+        ):
+            parameter = inspect.signature(fn).parameters.get("model")
+            assert parameter is not None, f"{fn.__name__} takes no model"
+            assert parameter.default is None, f"{fn.__name__} should default to CHAT_DEFAULT"

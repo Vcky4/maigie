@@ -139,11 +139,19 @@ async def generate_content_with_usage(
     max_tokens: int = 2048,
     temperature: float = 0.7,
     thinking: int | None = None,
+    model: str | None = None,
 ) -> tuple[str, GenerationUsage]:
     """`generate_content`, plus what it consumed.
 
     The metered entry point. `generate_content` delegates here and drops the usage, so the two
     cannot diverge in behaviour — there is one implementation and one place a bug can live.
+
+    **`model` is how the quality paywall reaches this path (drift 23).** Until it existed this
+    function bound `CHAT_DEFAULT` unconditionally, so all 26 generation call sites behind
+    `llm_resilient` ran `gemini-3.5-flash` — the Plus model — for free learners as well. The
+    allowlist that gates chat is read by `router` alone and never reaches here, so the decision has
+    to arrive as an argument. `None` keeps the previous default, which is correct for the callers
+    that are genuinely chat-shaped and wrong for nobody: `llm_resilient` always passes one.
 
     Raises:
         GeminiError: If Gemini returned no usable text (e.g. safety filter blocked the response,
@@ -153,7 +161,7 @@ async def generate_content_with_usage(
     client = new_gemini_client(gemini_api_key() or None)
     # Bound once so the error raised below can name the model that produced nothing. An error that
     # says "gemini returned nothing" without saying which model is not actionable.
-    model = default_model_for(LlmTask.CHAT_DEFAULT)
+    model = model or default_model_for(LlmTask.CHAT_DEFAULT)
     response = await client.aio.models.generate_content(
         model=model,
         contents=prompt,
@@ -274,6 +282,7 @@ async def generate_grounded_content(
     max_tokens: int = 8192,
     temperature: float = 0.3,
     thinking: int | None = None,
+    model: str | None = None,
 ) -> GroundedResult:
     """Generate text with Google Search grounding enabled.
 
@@ -293,9 +302,21 @@ async def generate_grounded_content(
     Never raises for an ungrounded answer — it returns one with `grounded=False` and lets
     the caller decide. Refusing would turn a degraded result into a failed request, and for
     recommendations a smaller checked list beats an error.
+
+    **`model` carries the quality paywall onto this path (drift 23).** This is the only generation in
+    the product that cannot go through `llm_resilient` — the search tool has no OpenAI or Anthropic
+    equivalent, so there is nothing to fall back to — and it is also the most expensive one, so it is
+    the last place that should have kept serving the Plus model to everybody. Callers get the model
+    from `llm_resilient.model_for_operation` so there is still one decision. `None` keeps the previous
+    default.
+
+    **Still unmetered, and that is a separate gap.** `GroundedResult` carries no usage, so no caller
+    can charge for this call however it is modelled. Recorded as a Phase 3b straggler rather than
+    fixed here: metering it means changing the return shape, and the quality split does not need to
+    wait behind that.
     """
     client = new_gemini_client(gemini_api_key() or None)
-    model = default_model_for(LlmTask.CHAT_DEFAULT)
+    model = model or default_model_for(LlmTask.CHAT_DEFAULT)
     response = await client.aio.models.generate_content(
         model=model,
         contents=prompt,

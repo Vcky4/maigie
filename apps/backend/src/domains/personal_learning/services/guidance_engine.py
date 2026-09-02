@@ -271,6 +271,11 @@ Return ONLY valid JSON."""
             timeout_s=20,
             fallback=None,
             user_id=user_id,
+            # ~140 units, below the quality threshold, so both tiers run Flash-Lite. Worth noting
+            # rather than passing over: this is the operation that runs on every home load and is not
+            # cached, so it is the cheapest per call and among the dearest per learner per month.
+            # Caching it is the separate Phase 3b item.
+            operation="home_guidance",
         )
 
         return {

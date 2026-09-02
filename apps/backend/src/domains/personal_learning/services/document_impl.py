@@ -571,7 +571,11 @@ class DocumentGenerationService:
 
                 # Top accent bar
                 bar = slide.shapes.add_shape(
-                    MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), prs.slide_width, Inches(0.12)
+                    MSO_SHAPE.RECTANGLE,
+                    Inches(0),
+                    Inches(0),
+                    prs.slide_width,
+                    Inches(0.12),
                 )
                 bar.fill.solid()
                 bar.fill.fore_color.rgb = PRIMARY
@@ -579,7 +583,11 @@ class DocumentGenerationService:
 
                 # Left accent stripe
                 acc = slide.shapes.add_shape(
-                    MSO_SHAPE.RECTANGLE, Inches(0.8), Inches(2.0), Inches(0.08), Inches(2.5)
+                    MSO_SHAPE.RECTANGLE,
+                    Inches(0.8),
+                    Inches(2.0),
+                    Inches(0.08),
+                    Inches(2.5),
                 )
                 acc.fill.solid()
                 acc.fill.fore_color.rgb = PRIMARY
@@ -674,7 +682,13 @@ class DocumentGenerationService:
                     )
                 elif bullets:
                     self._pptx_add_bullets(
-                        slide, bullets, Inches(0.8), Inches(2.0), Inches(11.5), TEXT_DARK, PRIMARY
+                        slide,
+                        bullets,
+                        Inches(0.8),
+                        Inches(2.0),
+                        Inches(11.5),
+                        TEXT_DARK,
+                        PRIMARY,
                     )
 
             # Slide number
@@ -841,7 +855,9 @@ class DocumentGenerationService:
                     if "<div" in block:
                         # Extract inner text from nested divs
                         inner_texts = re.findall(
-                            r"<(?:span|b|p|h3)[^>]*>(.*?)</(?:span|b|p|h3)>", block, re.DOTALL
+                            r"<(?:span|b|p|h3)[^>]*>(.*?)</(?:span|b|p|h3)>",
+                            block,
+                            re.DOTALL,
                         )
                         combined = " ".join(
                             re.sub(r"<[^>]+>", "", t).strip() for t in inner_texts if t.strip()
@@ -1223,9 +1239,14 @@ async def create_from_prompt(
     FREE: PDF only, academic style only.
     PLUS: PDF/DOCX/PPTX, all styles (academic, report, minimal).
     """
-    from src.domains.intelligence.reasoning.llm import generate_content
     from src.domains.personal_learning.repository import personal_learning_repo as repo
     from src.domains.personal_learning.services import trial_service
+
+    # Through the chokepoint. This was a direct Gemini call, which is how the largest paid-feature
+    # generation in the product came to be both unmetered and served on the Plus model to free
+    # learners — a document is hard-gated on format and style and was not gated on cost at all.
+    from src.domains.personal_learning.services.llm_resilient import generate_content
+    from src.shared.exceptions import SubscriptionLimitError
 
     await ensure_document_capabilities(user_id=user_id, format=format, style=style)
 
@@ -1239,7 +1260,24 @@ async def create_from_prompt(
     max_tokens = _max_tokens_for_type(doc_type)
 
     try:
-        content = await generate_content(llm_prompt, max_tokens=max_tokens, temperature=0.7)
+        content = await generate_content(
+            llm_prompt,
+            max_tokens=max_tokens,
+            temperature=0.7,
+            user_id=user_id,
+            # Above the quality threshold at ~570 units, so a Plus learner's documents are written by
+            # `gemini-3.5-flash` — the same tier that can choose DOCX, PPTX and the non-academic
+            # styles. The format gate and the model now agree about what Plus means here.
+            operation="document_generation",
+        )
+    except SubscriptionLimitError:
+        # **Above the broad handler, and it has to be.** A refusal is not a generation failure: it is
+        # the answer that the learner is out of allowance, and it carries the window reset time. Caught
+        # by the `except Exception` below, it would have been reported as a `502` "the document could
+        # not be written — please try again", which is untrue in a way that costs money: trying again
+        # cannot work, and the one thing that would have helped is not mentioned. Same defect, and
+        # same fix, as `generate_content_json`'s refusal branch.
+        raise
     except Exception as e:
         # Reported as a failure. This used to substitute
         # `# {title}\n\n(Content generation failed. Please try again.)`, render *that* to a PDF,
@@ -1465,7 +1503,10 @@ async def get_summary(*, user_id: str) -> dict[str, Any]:
     from datetime import datetime as _datetime
 
     from src.domains.personal_learning.repository import personal_learning_repo as repo
-    from src.shared.time.learner_timezone import resolve_learner_timezone, to_learner_local
+    from src.shared.time.learner_timezone import (
+        resolve_learner_timezone,
+        to_learner_local,
+    )
 
     learner_timezone = await resolve_learner_timezone(user_id)
     local_now = to_learner_local(_datetime.now(_UTC), learner_timezone)
@@ -1808,7 +1849,11 @@ def _parse_markdown_to_slides(content: str, *, fallback_title: str) -> list[dict
         if m:
             in_preamble = False
             if current is None:
-                current = {"title": _clean_inline(m.group(1)), "bullets": [], "notes": ""}
+                current = {
+                    "title": _clean_inline(m.group(1)),
+                    "bullets": [],
+                    "notes": "",
+                }
                 continue
             # Attach as a sub-item
             current["bullets"].append(_clean_inline(m.group(1)))
@@ -1827,7 +1872,11 @@ def _parse_markdown_to_slides(content: str, *, fallback_title: str) -> list[dict
             in_preamble = False
             if current is None:
                 # Bullets before any H2 — attach to a synthetic first slide
-                current = {"title": deck_title or fallback_title, "bullets": [], "notes": ""}
+                current = {
+                    "title": deck_title or fallback_title,
+                    "bullets": [],
+                    "notes": "",
+                }
             current["bullets"].append(_clean_inline(m.group(1)))
             continue
 

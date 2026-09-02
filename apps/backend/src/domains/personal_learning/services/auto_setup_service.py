@@ -142,7 +142,11 @@ async def _generate_initial_flashcards(
     """
     import json
 
-    from src.domains.intelligence.reasoning.llm import generate_content
+    # Through the chokepoint, so the exemption is honoured by the same machinery that would
+    # otherwise charge. `onboarding_auto_setup` is in `llm_resilient.UNCHARGED_OPERATIONS`, so this is
+    # neither charged nor gated — and it is far below the quality threshold, so it is not degraded
+    # either, which is the pairing Decision P's threshold exists to get without a second list.
+    from src.domains.personal_learning.services.llm_resilient import generate_content
 
     from . import flashcard_service
 
@@ -160,7 +164,9 @@ async def _generate_initial_flashcards(
     )
 
     try:
-        response = await generate_content(prompt, max_tokens=1500)
+        response = await generate_content(
+            prompt, max_tokens=1500, user_id=user_id, operation="onboarding_auto_setup"
+        )
         cards_data = json.loads(response)
     except Exception as e:
         logger.warning(f"Failed to generate initial flashcards: {e}")

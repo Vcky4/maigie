@@ -362,7 +362,8 @@ def _current_phase(phases: list[dict[str, Any]], next_item: Any | None) -> dict[
         if matched:
             return matched
     unfinished = next(
-        (phase for phase in phases if phase["completed_items"] < phase["total_items"]), None
+        (phase for phase in phases if phase["completed_items"] < phase["total_items"]),
+        None,
     )
     return unfinished or phases[-1]
 
@@ -831,7 +832,10 @@ async def list_items_due_today(*, user_id: str) -> list[dict[str, Any]]:
 
     "Today" ends at the end of the learner's own day, not UTC's.
     """
-    from src.shared.time.learner_timezone import resolve_learner_timezone, to_learner_local
+    from src.shared.time.learner_timezone import (
+        resolve_learner_timezone,
+        to_learner_local,
+    )
 
     learner_timezone = await resolve_learner_timezone(user_id)
     local_now = to_learner_local(datetime.now(UTC), learner_timezone)
@@ -1520,7 +1524,12 @@ async def _generate_topics_from_goal(
 
     try:
         generated = await generate_content_json(
-            prompt, max_tokens=2000, fallback=None, user_id=user_id
+            prompt,
+            max_tokens=2000,
+            fallback=None,
+            user_id=user_id,
+            # ~225 units, below the threshold.
+            operation="study_plan",
         )
         # Tolerate the model returning a bare array, which is what the previous prompt
         # asked for and what it still sometimes produces.

@@ -253,6 +253,10 @@ async def compose_json(
             fallback={},
             user_id=user_id,
             thinking=THINKING_BOUNDED,
+            # Above the quality threshold at ~770 units each. One label for all three panels: they
+            # are the same operation at three prompts, and splitting the label would split the
+            # threshold decision three ways for no reason.
+            operation="narrative_panel",
         )
     except Exception as exc:
         logger.warning("Narrative generation failed for %s (%s): %s", user_id, what, exc)

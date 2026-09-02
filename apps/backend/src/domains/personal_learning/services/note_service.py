@@ -368,7 +368,10 @@ async def retake_note(*, user_id: str, note_id: str) -> Any:
     if not note or not note.content:
         raise NotFoundError("Note", note_id)
 
-    from src.domains.intelligence.reasoning.llm import generate_content
+    # Through the chokepoint: this was a direct Gemini call, so rewriting a note was unmetered and ran
+    # the Plus model whatever the learner was paying. Below the quality threshold, so both tiers get
+    # Flash-Lite; what changes is that it is charged and gated.
+    from src.domains.personal_learning.services.llm_resilient import generate_content
 
     # Build context
     context_parts = [f"Title: {note.title}"]
@@ -415,7 +418,9 @@ async def retake_note(*, user_id: str, note_id: str) -> Any:
         f"Return ONLY the improved note content in markdown. No meta-commentary."
     )
 
-    rewritten = await generate_content(prompt, max_tokens=3000)
+    rewritten = await generate_content(
+        prompt, max_tokens=3000, user_id=user_id, operation="note_rewrite"
+    )
     rewritten = re.sub(
         r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*", "", rewritten, flags=re.DOTALL
     ).strip()
@@ -443,7 +448,8 @@ async def add_summary(*, user_id: str, note_id: str) -> Any:
     if not note or not note.content:
         raise NotFoundError("Note", note_id)
 
-    from src.domains.intelligence.reasoning.llm import generate_content
+    # Through the chokepoint, for the same reason as the rewrite above.
+    from src.domains.personal_learning.services.llm_resilient import generate_content
 
     cleaned = re.sub(
         r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
@@ -462,7 +468,13 @@ async def add_summary(*, user_id: str, note_id: str) -> Any:
     # `THINKING_OFF`: the note is in the prompt and the task is to condense it. There is nothing to
     # reason about that is not already on the page, and reasoning tokens are billed at the output rate
     # and drawn from this same 1000. Phase 0 Question 1.
-    summary = await generate_content(prompt, max_tokens=1000, thinking=THINKING_OFF)
+    summary = await generate_content(
+        prompt,
+        max_tokens=1000,
+        thinking=THINKING_OFF,
+        user_id=user_id,
+        operation="note_summary",
+    )
     await repo.update_note(note_id, {"summary": summary})
     return await repo.find_note(note_id, user_id)
 

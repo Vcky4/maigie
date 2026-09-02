@@ -239,8 +239,18 @@ async def recommend_resources(
     from src.domains.intelligence.memory.memory_service import get_memory_context
     from src.domains.intelligence.reasoning.llm import (
         THINKING_OFF,
-        generate_content,
         generate_grounded_content,
+    )
+
+    # Step 2 moves onto the chokepoint. It used to call `intelligence.reasoning.llm.generate_content`
+    # directly, which meant no meter, no headroom gate, no retry and no tier — a direct line to
+    # `gemini-3.5-flash` for every learner. Going through `llm_resilient` gets all four from the one
+    # place that owns them. The only visible change on total failure is `LLMUnavailableError` in place
+    # of `GeminiError`, and neither was handled by the route, so both were the same `500`; the
+    # difference is that a transient blank is now retried instead of losing the recommendation.
+    from src.domains.personal_learning.services.llm_resilient import (
+        generate_content,
+        model_for_operation,
     )
 
     from .url_validator import check_urls
@@ -281,7 +291,15 @@ async def recommend_resources(
     # tokens come out of the same allowance. A measured run spent 1,067 of 2,000 on thought and
     # returned a reply cut off mid-string after 364 characters — the JSON never closed, the parse
     # produced nothing, and the learner was told no resources existed for a perfectly good query.
-    found = await generate_grounded_content(search_prompt, temperature=0.3)
+    # The tiered call. At ~1 600 units this is the most expensive operation in the product and the
+    # one the quality split most needs to reach, and it cannot reach it through `llm_resilient`
+    # because grounding has no fallback provider. The model comes from the chokepoint's own decision
+    # function so that "what is this learner entitled to" is still answered in one place.
+    found = await generate_grounded_content(
+        search_prompt,
+        temperature=0.3,
+        model=await model_for_operation(user_id=user_id, operation="resource_recommendations"),
+    )
     if not found.text.strip():
         logger.warning("Recommendation search for %r came back empty.", query)
         return {
@@ -317,8 +335,25 @@ async def recommend_resources(
     #
     # 4096 rather than 2048: the output is `limit` objects carrying a URL, a description and a
     # sentence each, and a truncated array is one the parser drops entirely.
+    #
+    # Labelled `resource_formatting` and **deliberately not** `resource_recommendations`, even though
+    # it is the second half of that operation. The label decides two things — what the meter records
+    # and which model runs — and those want different answers here. Step 1 is the reasoning half and
+    # earns the tier split; this is transcription at temperature 0.0 of text that is already in the
+    # prompt, and giving a Plus learner `gemini-3.5-flash` to copy strings is the trade Decision P
+    # exists to refuse. Only one of the two halves is worth a better model.
+    #
+    # This half is also the only one that is metered: step 1 returns a `GroundedResult`, which carries
+    # no token counts, so nothing can charge for it however the model is chosen. So the recorded cost
+    # of a recommendation is currently its cheaper half — recorded as a Phase 3b straggler, because
+    # fixing it means changing that return shape.
     formatted = await generate_content(
-        format_prompt, max_tokens=4096, temperature=0.0, thinking=THINKING_OFF
+        format_prompt,
+        max_tokens=4096,
+        temperature=0.0,
+        thinking=THINKING_OFF,
+        user_id=user_id,
+        operation="resource_formatting",
     )
 
     candidates = _parse_recommendation_payload(formatted)[:limit]

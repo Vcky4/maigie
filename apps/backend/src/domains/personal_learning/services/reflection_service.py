@@ -211,6 +211,7 @@ async def _compose_and_store(
             max_tokens=2048,
             fallback={},
             user_id=user_id,
+            operation="reflection_summary",
         )
         if isinstance(data, dict):
             title = (data.get("title") or title).strip()[:200]
@@ -336,6 +337,13 @@ async def _compose_narrative(
                 thinking=THINKING_DYNAMIC,
                 fallback={},
                 user_id=user_id,
+                # Deliberately below the split, despite being the largest budget in the file and the
+                # only `THINKING_DYNAMIC` call. The deep narrative is already a Plus-gated *feature* —
+                # a free learner does not reach this branch at all, since `deep or chosen` is the gate
+                # — so a tier split inside it would decide between Plus and Plus. Labelling it as
+                # expensive would put a member in `QUALITY_SPLIT_OPERATIONS` that can only ever
+                # resolve one way, which reads as coverage and is really a no-op.
+                operation="reflection_narrative",
             )
             if isinstance(reply, dict):
                 written = reply

@@ -73,15 +73,27 @@ class LlmService:
         temperature: float = 0.7,
         user_id: str | None = None,
         fallback: str | None = None,
+        operation: str = "unknown",
         **_kwargs: Any,
     ) -> str:
         """Generate text for a prompt.
+
+        ``operation`` is forwarded rather than assigned, because this method is a passthrough and
+        cannot know what it is generating. A caller that leaves it unset is metered as ``"unknown"``
+        and runs the standard model — see ``llm_resilient.QUALITY_SPLIT_OPERATIONS``.
+
+        **Nothing calls this today**, nor ``generate_json``; ``generate_course_outline`` is the only
+        method of this class with a caller. The parameter is added anyway rather than the methods
+        being deleted, because a passthrough that silently ran the Plus model is how drift 23 happened
+        and an unused one is a loaded gun. Deleting them is a separate question from this change.
 
         Raises:
             LLMUnavailableError: If every provider is unavailable and no ``fallback``
                 is supplied. Previously this returned ``""``.
         """
-        from src.domains.personal_learning.services.llm_resilient import generate_content
+        from src.domains.personal_learning.services.llm_resilient import (
+            generate_content,
+        )
 
         return await generate_content(
             prompt,
@@ -89,6 +101,7 @@ class LlmService:
             temperature=temperature,
             user_id=user_id,
             fallback=fallback,
+            operation=operation,
         )
 
     async def generate_course_outline(
@@ -115,7 +128,9 @@ class LlmService:
                 ``generate_course_content_task``, catches ``Exception`` and reports over
                 its websocket, which is why this has never leaked a ``500``.
         """
-        from src.domains.personal_learning.services.llm_resilient import generate_content_json
+        from src.domains.personal_learning.services.llm_resilient import (
+            generate_content_json,
+        )
 
         outline = await generate_content_json(
             _outline_prompt(topic, difficulty, user_message),
@@ -124,6 +139,9 @@ class LlmService:
             temperature=0.4,
             user_id=user_id,
             fallback=None,
+            # Above the quality threshold at ~1 020 units, so Plus generates outlines on
+            # `gemini-3.5-flash` and Free on Flash-Lite.
+            operation="course_outline",
         )
 
         if not isinstance(outline, dict):
@@ -165,9 +183,15 @@ class LlmService:
         temperature: float = 0.4,
         user_id: str | None = None,
         fallback: Any = None,
+        operation: str = "unknown",
     ) -> Any:
-        """Generate and parse a JSON response."""
-        from src.domains.personal_learning.services.llm_resilient import generate_content_json
+        """Generate and parse a JSON response.
+
+        ``operation`` is forwarded, not assigned; see ``generate``.
+        """
+        from src.domains.personal_learning.services.llm_resilient import (
+            generate_content_json,
+        )
 
         return await generate_content_json(
             prompt,
@@ -175,6 +199,7 @@ class LlmService:
             temperature=temperature,
             user_id=user_id,
             fallback=fallback,
+            operation=operation,
         )
 
 

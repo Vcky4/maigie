@@ -580,7 +580,7 @@ async def extract_topics(*, user_id: str, prep_id: str) -> list[Any]:
 
     try:
         topics_data = await llm_resilient.generate_content_json(
-            prompt, max_tokens=3000, user_id=user_id
+            prompt, max_tokens=3000, user_id=user_id, operation="exam_prep_topics"
         )
     except Exception as e:
         logger.warning(

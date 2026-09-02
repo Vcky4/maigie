@@ -51,7 +51,10 @@ async def generate_recommendations(*, user_id: str) -> int:
 
     Returns the count of new recommendations created.
     """
-    from src.domains.intelligence.reasoning.llm import generate_content
+    # Through the chokepoint: this was a direct Gemini call, so discovery recommendations were
+    # unmetered and ran the Plus model for everybody. Below the quality threshold at ~150 units, so
+    # both tiers get Flash-Lite; what changes is that it is now charged and gated.
+    from src.domains.personal_learning.services.llm_resilient import generate_content
 
     # Clean up old recommendations
     await repo.delete_old_recommendations(user_id)
@@ -81,9 +84,18 @@ async def generate_recommendations(*, user_id: str) -> int:
     )
 
     try:
-        response = await generate_content(prompt, max_tokens=1500)
+        response = await generate_content(
+            prompt,
+            max_tokens=1500,
+            user_id=user_id,
+            operation="discovery_recommendations",
+        )
         recs_data = json.loads(response)
     except Exception as e:
+        # A refusal lands here too, and being swallowed is the right outcome for once: this is a
+        # background sweep with nobody waiting on it, and an exhausted learner should not have their
+        # allowance spent on recommendations they did not ask for. It returns 0 and the next sweep
+        # tries again.
         logger.warning(f"Failed to generate recommendations for user {user_id}: {e}")
         return 0
 
