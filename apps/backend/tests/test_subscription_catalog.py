@@ -226,16 +226,62 @@ class TestWithdrawnProductsAreRefusedSpecifically:
         finally:
             cfg.STRIPE_PRICE_ID_YEARLY = ""
 
-    def test_a_grandfathered_yearly_renewal_still_resolves_its_tier(self):
-        """Withdrawing a product must not orphan the people paying for it. Nothing here
-        runs on a renewal, which is why the yearly price id survives in config.
+    def test_a_withdrawn_price_no_longer_writes_a_tier_nothing_grants(self):
+        """A writer must not produce a tier the resolver denies.
+
+        This assertion has been both ways round, and the middle position was the broken one. It
+        first required `PREMIUM_YEARLY`, on the reasoning that withdrawing a product must not orphan
+        the people paying for it — correct, and it was the finding that made Phase 2a restore
+        `LEGACY_PLUS_TIERS`, because the resolver had narrowed while this had not.
+
+        Phase 2b resolved it in the other direction on a measurement rather than an argument:
+        `scripts/count_legacy_commercial_state.py` found zero users on any retired tier and zero
+        subscription identifiers of any kind. There is nobody to orphan, all five products are
+        withdrawn from sale so no renewal can arrive, and a paid price that maps to a tier
+        `entitlement_service.PLUS_TIERS` refuses would bill a learner for nothing.
+
+        If that count is ever non-zero, the fix is to restore the frozenset *and* this mapping
+        together — they were only ever wrong apart.
         """
         cfg = get_settings()
         cfg.STRIPE_PRICE_ID_YEARLY = "price_yearly_test"
         try:
-            assert stripe_svc._price_id_to_tier("price_yearly_test") == "PREMIUM_YEARLY"
+            assert stripe_svc._price_id_to_tier("price_yearly_test") == "FREE"
         finally:
             cfg.STRIPE_PRICE_ID_YEARLY = ""
+
+    def test_the_active_monthly_price_is_the_only_one_that_grants_plus(self):
+        cfg = get_settings()
+        cfg.STRIPE_PRICE_ID_MONTHLY = "price_monthly_test"
+        try:
+            assert stripe_svc._price_id_to_tier("price_monthly_test") == "PREMIUM_MONTHLY"
+        finally:
+            cfg.STRIPE_PRICE_ID_MONTHLY = ""
+
+    def test_every_tier_a_writer_can_produce_is_one_the_resolver_grants(self):
+        """The gap the grandfathering defect lived in, closed by an assertion.
+
+        Nothing previously checked that the tier strings `_price_id_to_tier` and
+        `_plan_code_to_tier` can emit are a subset of what `entitlement_service` treats as Plus, so
+        the two drifted silently and both sides' tests stayed green.
+        """
+        from src.domains.billing.services import entitlement_service
+
+        cfg = get_settings()
+        cfg.STRIPE_PRICE_ID_MONTHLY = "price_m"
+        cfg.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY = "PLN_m"
+        try:
+            produced = {
+                stripe_svc._price_id_to_tier("price_m"),
+                stripe_svc._price_id_to_tier("price_unknown"),
+                paystack_svc._plan_code_to_tier("PLN_m"),
+                paystack_svc._plan_code_to_tier("PLN_unknown"),
+            }
+        finally:
+            cfg.STRIPE_PRICE_ID_MONTHLY = ""
+            cfg.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY = ""
+
+        assert produced - {"FREE"} <= entitlement_service.PLUS_TIERS
 
     def test_active_plan_ids_are_accepted(self):
         for plan_id in (

@@ -160,36 +160,31 @@ class TestTierMap:
             "PREMIUM_YEARLY",
         ],
     )
-    def test_retired_tiers_are_grandfathered(self, tier):
-        """Withdrawn from sale is not the same as withdrawn from the people who bought it.
+    def test_retired_tiers_resolve_to_free(self, tier):
+        """Nobody holds one, so a row that does is a data error rather than a subscriber.
 
-        This assertion has been both ways round. Revision 4 of the plan resolved all five to
-        `free` on the product fact that no such subscriber exists; Phase 2a put it back, because
-        dropping it changed nothing about what *writes* `User.tier`. `_price_id_to_tier` still
-        returns `PREMIUM_YEARLY` for the yearly price id, and the renewal path deliberately
-        bypasses the withdrawn-product check so existing subscriptions keep billing — so a yearly
-        renewal was charged, verified, written, and then entitled to nothing.
+        This assertion has been both ways round, and the history is the point. Revision 4 asserted
+        `free` on a remembered product fact; Phase 2a reverted it to `plus`, because the resolver had
+        narrowed while every *writer* still produced these five strings, so a renewal would have
+        billed a learner and entitled them to nothing. Phase 2b asserts `free` again — this time
+        with `scripts/count_legacy_commercial_state.py` run against production showing zero users on
+        any of these tiers and zero subscription identifiers of any kind, **and** with the writers
+        narrowed in the same change so the two cannot drift apart again.
 
-        The count is almost certainly zero and Phase 2b will record it. Until it does, the cost of
-        being wrong in this direction is a tidier frozenset; the cost of being wrong in the other
-        is charging someone for a product we then refuse to serve them.
+        The measurement is what makes this safe, not the tidiness. If the count is ever non-zero,
+        restore `LEGACY_PLUS_TIERS` *and* the writer mappings together.
         """
         result = compose(subscription_tier=tier, subscription_period_end=LATER)
-        assert result.tier == "plus"
-        assert result.source == "subscription"
-        # Reported raw, so display and history can name the actual product.
+        assert result.tier == "free"
+        assert result.source == "none"
+        # Still reported, because display and history need the raw value even when it grants nothing.
         assert result.subscription_tier == tier
 
-    def test_a_retired_tier_still_lapses_when_its_period_ends(self):
-        """Grandfathering honours the period paid for, not the tier string forever."""
-        result = compose(subscription_tier="PREMIUM_YEARLY", subscription_period_end=EARLIER)
-        assert result.tier == "free"
-
-    def test_legacy_tiers_are_separable_from_the_active_one(self):
-        """Two frozensets rather than one, so Phase 2b deletes a name instead of editing a set."""
+    def test_the_active_tier_is_the_only_member(self):
+        """One member, and no second set beside it — Phase 2b removed `LEGACY_PLUS_TIERS`."""
         assert svc.PLUS_TIERS == frozenset({"PREMIUM_MONTHLY"})
-        assert "PREMIUM_MONTHLY" not in svc.LEGACY_PLUS_TIERS
-        assert svc.ALL_PLUS_TIERS == svc.PLUS_TIERS | svc.LEGACY_PLUS_TIERS
+        assert not hasattr(svc, "LEGACY_PLUS_TIERS")
+        assert not hasattr(svc, "ALL_PLUS_TIERS")
 
     def test_a_prefix_match_would_have_passed_and_is_not_used(self):
         """`startswith("PREMIUM")` was the bug. An unknown PREMIUM-ish string must not be Plus."""

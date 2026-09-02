@@ -47,37 +47,34 @@ EntitlementSource = Literal["none", "subscription", "pass", "trial"]
 # that subscribers on withdrawn products were not denied what they were paying for. Revision 4
 # removed it on the product fact that there are no such subscribers.
 #
-# **Phase 2a restored it, and the reason is worth keeping.** Dropping it here changed nothing about
-# what *writes* `User.tier`: `stripe_service._price_id_to_tier` still returns `PREMIUM_YEARLY` for
-# the yearly price id, the renewal path deliberately bypasses the withdrawn-product check so
-# existing subscriptions keep billing, and config keeps that price id specifically so a renewal can
-# be identified. So a yearly renewal would have been charged, verified, written — and then resolved
-# to `free`, denying every capability and serving flash-lite models to someone who had just paid.
-# Worse, it was a regression: before this resolver existed, `feature_flags` mapped any non-`FREE`
-# tier to `plus`, so that learner used to be served correctly.
+# Phase 2a restored it, because dropping it changed nothing about what *writes* `User.tier` — a
+# yearly renewal would have been charged, verified, written, and then resolved to `free`. Phase 2b
+# removed it again, this time on a measurement rather than a recollection.
 #
-# The product fact is almost certainly right and the count is almost certainly zero. But the plan's
-# own rule is that breaking someone who is paying us is not a trade worth making, and the confidence
-# for that came from a count that Phase 2b has not taken yet. One frozenset is a cheap price for not
-# needing to be right about it.
+# `scripts/count_legacy_commercial_state.py`, run against production 2026-09-01:
 #
-# **Delete `LEGACY_PLUS_TIERS` when Phase 2b records the count as zero** — not before. At that point
-# these five strings become a data error rather than a supported state, and the writers should stop
-# producing them in the same change.
+#     users on a retired tier (PREMIUM_YEARLY / STUDY_CIRCLE_* / SQUAD_*)   0
+#     users with a Stripe subscription id                                    0
+#     users with a Paystack subscription code                                0
+#     users with a Google Play purchase token                                0
+#     users with a non-zero purchased credit balance                         0
+#     CreditPurchaseTransaction rows with status = 'completed'               0
+#     tiers: FREE 1205, PREMIUM_MONTHLY 1
+#
+# So there is nobody to grandfather, and no payment relationship exists anywhere in the database.
+# The single `PREMIUM_MONTHLY` row has no Stripe, Paystack or Play identifier against it, so it is a
+# tier set by hand rather than a subscription — it keeps Plus either way, since `PREMIUM_MONTHLY` is
+# the tier still on sale, and its null `subscriptionCurrentPeriodEnd` is why `_subscription_lapsed`
+# treats absent as "not lapsed" rather than as expired.
+#
+# The five retired strings now resolve to `free`, which is the correct answer rather than a defect:
+# a `User.tier` holding one is a data error. Phase 2b removes the writers that could produce them in
+# the same change, so the resolver and the writers stay in agreement — which is the property whose
+# absence made the first removal wrong.
+#
+# **If a live subscription on any of them is ever found, restore the frozenset.** Re-run the script
+# rather than re-deriving the argument.
 PLUS_TIERS = frozenset({"PREMIUM_MONTHLY"})
-
-LEGACY_PLUS_TIERS = frozenset(
-    {
-        "PREMIUM_YEARLY",
-        "STUDY_CIRCLE_MONTHLY",
-        "STUDY_CIRCLE_YEARLY",
-        "SQUAD_MONTHLY",
-        "SQUAD_YEARLY",
-    }
-)
-"""Withdrawn products whose subscribers, if any exist, keep what they are paying for."""
-
-ALL_PLUS_TIERS = PLUS_TIERS | LEGACY_PLUS_TIERS
 
 
 # ===========================================================================
@@ -157,7 +154,7 @@ def _compose(
     """
     raw_tier = subscription_tier or "FREE"
 
-    if raw_tier in ALL_PLUS_TIERS and not _subscription_lapsed(subscription_period_end):
+    if raw_tier in PLUS_TIERS and not _subscription_lapsed(subscription_period_end):
         return Entitlement(
             tier="plus",
             source="subscription",

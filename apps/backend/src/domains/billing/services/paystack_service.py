@@ -81,27 +81,22 @@ def _get_plan_code(plan_id: str) -> str:
 
 
 def _plan_code_to_tier(plan_code: str) -> str:
-    """Map Paystack plan code to tier.
+    """Map a Paystack plan code to a tier.
 
-    Deprecated ``STUDY_CIRCLE_*`` and ``SQUAD_*`` plan codes are still
-    mapped here so that webhook events for legacy subscriptions continue
-    to resolve their source tier (Requirement 2.8 retains historical
-    billing for ≥24 months). Active checkout flows reject creation
-    against these via ``_assert_plan_id_is_active``.
+    **Only tiers the resolver honours**, for the reason spelled out on
+    ``stripe_service._price_id_to_tier``: `entitlement_service.PLUS_TIERS` grants Plus for
+    `PREMIUM_MONTHLY` alone, so producing any other paid string here would write a tier that bills a
+    learner and entitles them to nothing.
+
+    This previously mapped the yearly plan code and four retired Study Circle / Squad codes, to keep
+    legacy webhooks resolving their source tier. Phase 2b removed them on a measurement —
+    `scripts/count_legacy_commercial_state.py` found zero users on those tiers and zero Paystack
+    subscription codes in the database — and because all five products are withdrawn, so no renewal
+    for one can arrive.
     """
     settings = get_settings()
     if plan_code == settings.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY:
         return "PREMIUM_MONTHLY"
-    if plan_code == settings.PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY:
-        return "PREMIUM_YEARLY"
-    if plan_code == settings.PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY:
-        return "STUDY_CIRCLE_MONTHLY"
-    if plan_code == settings.PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY:
-        return "STUDY_CIRCLE_YEARLY"
-    if plan_code == settings.PAYSTACK_PLAN_SQUAD_MONTHLY:
-        return "SQUAD_MONTHLY"
-    if plan_code == settings.PAYSTACK_PLAN_SQUAD_YEARLY:
-        return "SQUAD_YEARLY"
     return "FREE"
 
 
