@@ -2,6 +2,14 @@
 
 > Status: **Phases 1 and 2 done. Phase 0 open and verified open. The money path is reachable on Stripe and Google Play, and not on Paystack.**
 >
+> **Revision 8 — the rate-card exposure is closed by construction, not by recomputation, and the Nigerian subscription was losing money.** Every margin in revisions 1–7 was quoted from *estimated per-operation COGS*, which is why one wrong rate-card entry propagated into every figure in §6.4, §6.7 and §6.8 and why revision 4 had to mark them all stale. **Decision Q ends that: COGS is quoted from the allowance cap, never from an operation estimate.** A unit is defined as $0.0001 of measured cost, so an allowance cap is already a dollar cap — a 3 000-unit pass cannot cost more than $0.30 to serve however wrong the rate card is, because the meter stops. The tables below are therefore rate-card-independent, and the "recompute before quoting" instruction that has been outstanding since revision 4 is satisfied by deriving rather than re-estimating.
+>
+> Three findings forced the rest of the revision. **The Nigerian Plus Monthly had a negative unit margin and nobody had multiplied it out**: ₦2 400 nets $1.61 blended while §6.4 put typical monthly COGS at $1.80, so the launch market's subscription lost $0.19 a sale — the NGN price was set from the market (correctly, §6.8) while its allowance was inherited from the USD product (incorrectly). **§6.8's free COGS contradicted §6.7's**: $460 against $940 at the same 10 000 MAU and the same 8% payer rate, for learners running identical models. At $940 the launch market's contribution is **+$58, not +$518**, and its margin 5%, not 42%. And **live voice, at 200 units/minute, was the whole reason ceiling COGS was unaffordable** at NGN prices.
+>
+> So: voice is unbundled from every allowance (§6.3), the monthly backstop drops 30 000 → 20 000 units, NGN allowances are derived from NGN net revenue rather than inherited, the 7-day pass moves ₦1 800 → ₦1 500 to open a real gap to the monthly, and a **₦5 500 four-month Term Pass** is added because a recurring card mandate is the wrong instrument in a market the plan itself describes as practised prepaid buyers. Result at 10 000 MAU: Nigeria **+$412 at 39%** against the honest +$58, global **+$1 270 at 56%** against +$754. §6.11 is the comparison.
+>
+> **What this does not fix, and it is the larger problem: absolute scale.** $412/month funds nobody. The margin question is now answered and the distribution question is not — at these margins Nigeria needs roughly 100 000 MAU to fund two engineers, and that is the number worth arguing about rather than whether the 7-day pass is ₦1 500 or ₦1 800. Every payer rate here remains unvalidated against zero payment history.
+>
 > The `billing` router is mounted, the personal catalogue is the four new products, credit packs and rewarded ads are gone, and the trial is 3 days. **Entitlement is now one resolver**: `entitlement_service.resolve` is the only thing that decides whether a learner is Plus, `require_premium` is deleted, and the two defects the four disagreeing mechanisms were causing — retired tiers denied every capability while the meter granted them millions of credits (drift 10), and trials granted Plus features with free-tier models (drift 11) — are closed. Two blockers remain before this is a money path anyone can actually use: **`paystack_service` is Prisma-removed**, so the NGN rail — the launch market's rail — is still unreachable and its two routes are deliberately unmounted rather than serving 500s (Phase 2b, next); and there is still no way to buy a pass, which needs the one-time checkout in Phase 5.
 >
 > **Phase 0 is unstarted, not merely unmarked.** Checked in code on 2026-09-01: `cost_calculator._EXACT_MODEL_PRICING:26` still prices `gemini-3.5-flash` at `(0.50, 3.00)` (Question 3), `ask_service.HISTORY_LIMIT:383` is still `12` (Question 2), and `narrative_cache.py:237` still passes `max_tokens=8192` — as does the `generate_content_json` default at `llm/__init__.py:136` (Question 1). The unticked boxes were accurate. Every COGS figure below still rests on an unverified rate card, so **no allowance is tuned in Phase 3 until Question 3 is answered.**
@@ -32,7 +40,7 @@
 > **Out of scope: Learning Spaces, entirely.** Not the Space feature, not Circle Plan, not the Plus Seat add-on, not `SpaceMember.seat_tier`, not `seat_impl.py`, not `Space.credits`, not the space branch of `consume_credits`, not the space branch of `feature_flags.effective_tier_for_request`. Nothing in this plan reads or writes anything space-scoped. See Decision F.
 > Companion documents: [`../../../maigie-client/docs/PREPARE_API_INTEGRATION_PLAN.md`](../../../maigie-client/docs/PREPARE_API_INTEGRATION_PLAN.md) (§4 defers checkout to this document), [`../../../maigie-client/docs/REFLECT_API_INTEGRATION_PLAN.md`](../../../maigie-client/docs/REFLECT_API_INTEGRATION_PLAN.md) (Decision Z, the locked-read convention)
 > Source of authority for pricing intent: the Maigie Book — `business/ch36-pricing-philosophy`, `business/ch37-personal-learning`, `philosophy/ch04-product-principles`. Where this plan and the book disagree, the book wins and this plan is wrong. Decision N and §6.7 are derived from them directly.
-> Last reviewed: 2026-09-02 (revision 7 — Decision P: `gemini-3.5-flash-lite` registered as the free tier's second candidate, and the model-quality split confined to operations above 500 units. The cheapest model in the pricing table, `gemini-2.5-flash-lite`, was rejected because the Gemini 2.5 family shuts down in October 2026 — a price table records cost, not availability. Model roster in §6.10; Plus catalogue copy narrowed from "advanced models throughout" to the surfaces where the split is real. Revision 6 — the model-quality paywall gated nothing: `LLM_TIER_ALLOWLIST_FREE` listed the Plus model and the chat chain put it first, so a free turn cost 6× what §6.3 assumed and 500 units bought ~3 turns rather than ~16. Free narrowed to Flash-Lite; §5.2 and §6.3 corrected; the 26 un-gated `llm_resilient` call sites recorded as drift 23 and scheduled with Phase 3b. Revision 5 — Phase 2 implemented: one resolver, `require_premium` deleted, `personal_tier` removed from the model router's signature, drift 10 and 11 closed. Revision 4 — Phase 0 verified open against code; Paystack port promoted to Phase 2b; iOS committed alongside Android and Open Question 6 resolved; store-product creation timeline consolidated into §5.7; all grandfathering machinery removed on the zero-subscriber fact. Revision 3 implemented Phase 1; revision 2 shortened the trial to 3 days, removed the referral cap, withdrew rewarded ads and introduced earned points as a pass-only currency: §6.9, Decision O)
+> Last reviewed: 2026-09-02 (**revision 8 — Decision Q: COGS is quoted from the allowance cap, never from an operation estimate, which closes the rate-card exposure that has hung over §6.4, §6.7 and §6.8 since revision 4 by construction rather than by recomputation. Live voice unbundled into its own allowance and removed from Free entirely; monthly backstop 30 000 → 20 000 units; NGN allowances derived from NGN net revenue after finding the Nigerian Plus Monthly had a negative unit margin; §6.8's free COGS reconciled against §6.7's, which takes the launch market's stated contribution from +$518 to +$58 before the fixes and +$412 after; 7-day pass ₦1 800 → ₦1 500; NGN-only ₦5 500 four-month Term Pass added as a fifth personal product; §6.11 is the side-by-side. §6.10 recorded as referenced three times and never written.** Revision 7 — Decision P: `gemini-3.5-flash-lite` registered as the free tier's second candidate, and the model-quality split confined to operations above 500 units. The cheapest model in the pricing table, `gemini-2.5-flash-lite`, was rejected because the Gemini 2.5 family shuts down in October 2026 — a price table records cost, not availability. Model roster in §6.10; Plus catalogue copy narrowed from "advanced models throughout" to the surfaces where the split is real. Revision 6 — the model-quality paywall gated nothing: `LLM_TIER_ALLOWLIST_FREE` listed the Plus model and the chat chain put it first, so a free turn cost 6× what §6.3 assumed and 500 units bought ~3 turns rather than ~16. Free narrowed to Flash-Lite; §5.2 and §6.3 corrected; the 26 un-gated `llm_resilient` call sites recorded as drift 23 and scheduled with Phase 3b. Revision 5 — Phase 2 implemented: one resolver, `require_premium` deleted, `personal_tier` removed from the model router's signature, drift 10 and 11 closed. Revision 4 — Phase 0 verified open against code; Paystack port promoted to Phase 2b; iOS committed alongside Android and Open Question 6 resolved; store-product creation timeline consolidated into §5.7; all grandfathering machinery removed on the zero-subscriber fact. Revision 3 implemented Phase 1; revision 2 shortened the trial to 3 days, removed the referral cap, withdrew rewarded ads and introduced earned points as a pass-only currency: §6.9, Decision O)
 
 ## 1. Purpose
 
@@ -298,9 +306,9 @@ The dependency that decides the order is this: an in-app purchase product cannot
 | When | Google Play | App Store Connect | Blocks |
 | --- | --- | --- | --- |
 | **Now, in parallel with Phase 2b** | — | Create the app record for `com.maigie`; enable In-App Purchase on the App ID; generate the App Store Server API key; complete the Paid Apps agreement and banking/tax | Everything Apple. The agreement in particular: **no IAP product can even be created until Paid Apps is active**, and it involves banking details that are not an engineer's to supply |
-| **Phase 5, first task** | Create `plus_pass_5h` and `plus_pass_7d` as **consumable** in-app products; set the `plus-monthly` base plan free trial to **3 days**; set NGN prices per §6.8; **delete `plus-yearly` and the three `credit_pack_*` products** | Create `com.maigie.plus.pass5h` and `com.maigie.plus.pass7d` as **Consumable**; create `com.maigie.plus.monthly` in subscription group `maigie_plus` with a **3-day introductory free trial**; set NGN prices per §6.8 | Server verification work has nothing to verify against until the ids exist |
+| **Phase 5, first task** | Create `plus_pass_5h`, `plus_pass_7d` and **`plus_pass_term`** as **consumable** in-app products; set the `plus-monthly` base plan free trial to **3 days**; set NGN prices per §6.8; **restrict `plus_pass_term` to NGN territories only**; **delete `plus-yearly` and the three `credit_pack_*` products** | Create `com.maigie.plus.pass5h`, `com.maigie.plus.pass7d` and **`com.maigie.plus.passterm`** as **Consumable**, the last with **Nigeria-only availability**; create `com.maigie.plus.monthly` in subscription group `maigie_plus` with a **3-day introductory free trial**; set NGN prices per §6.8 | Server verification work has nothing to verify against until the ids exist |
 | **Phase 5, after the products exist** | `purchases.products.get` verification; RTDN voided-purchase revocation | `apple_service.py`, JWS verification, `POST /webhooks/apple` | Phase 7's client purchase flows |
-| **Phase 7, iOS** | — | Uncomment the iOS EAS jobs; add `submit.production.ios` (`appleId`, `ascAppId`, `appleTeamId`); submit the first build **with the three IAP products attached** | App Review, 1–2 weeks, first-submission rejection risk |
+| **Phase 7, iOS** | — | Uncomment the iOS EAS jobs; add `submit.production.ios` (`appleId`, `ascAppId`, `appleTeamId`); submit the first build **with the four IAP products attached** | App Review, 1–2 weeks, first-submission rejection risk |
 
 **Sandbox testing does not wait for review.** Both stores let you test purchases against products in a pre-approved state — Play from an internal-testing track, Apple with a StoreKit configuration file or a Sandbox Apple Account — so Phase 5's verification code and Phase 7's purchase flows can be built and tested end to end while the products are still unreviewed. Nothing in the engineering plan is blocked by review; only the public launch is.
 
@@ -310,7 +318,7 @@ The dependency that decides the order is this: an in-app purchase product cannot
 
 ### 6.1 The catalogue
 
-Four **personal** products. Two are **consumable, non-renewing products**. One is a subscription. One is Free. The catalogue also keeps its two space-scoped entries (`circle_plan_monthly`, `plus_seat_add_on_monthly`) unchanged — six entries in total, and the `scope` field already on `PlanItem` is what separates them.
+**Five personal products as of revision 8**, one of which is NGN-only. Three are **consumable, non-renewing products**. One is a subscription. One is Free. The catalogue also keeps its two space-scoped entries (`circle_plan_monthly`, `plus_seat_add_on_monthly`) unchanged — **seven entries in total**, and the `scope` field already on `PlanItem` is what separates them. `plus_pass_term` needs a further distinction the others do not: it must be absent from the catalogue outside Nigeria, which is the first product in this plan whose *availability* is regional rather than just its price. That is the `availability` field the revision-5 review already asked for on `PlanItem` and it is no longer optional.
 
 | Product id | Display | Type | USD | Grants |
 | --- | --- | --- | --- | --- |
@@ -318,8 +326,11 @@ Four **personal** products. Two are **consumable, non-renewing products**. One i
 | `plus_pass_5h` | 5-Hour Plus Pass | **consumable product** | **0.99** | full Maigie Plus for 5 hours from activation, then nothing |
 | `plus_pass_7d` | 7-Day Plus Pass | **consumable product** | **2.49** | full Maigie Plus for 7 days from activation, then nothing |
 | `plus_monthly` | Maigie Plus | auto-renewing subscription | **4.99/mo** | full Maigie Plus while active, **3-day trial** on first purchase |
+| `plus_pass_term` | 4-Month Term Pass | **consumable product** | **NGN only — ₦5 500** | full Maigie Plus for 4 months from activation, then nothing |
 
-These are **US/UK list prices**. The launch market is Nigeria, where FX parity would price the product above Netflix Standard; §6.8 sets NGN independently at ₦700 / ₦1 800 / ₦2 400 and is the table that matters for launch.
+These are **US/UK list prices**. The launch market is Nigeria, where FX parity would price the product above Netflix Standard; §6.8 sets NGN independently and is the table that matters for launch. **Revised in revision 8:** the NGN ladder is ₦700 / **₦1 500** / ₦2 400 / **₦5 500**, not ₦700 / ₦1 800 / ₦2 400.
+
+**The Term Pass is a fifth product and it exists only in Nigeria.** §6.8's own argument is that Nigerians are practised buyers of discrete prepaid digital goods and that recurring card mandates fail often. A pass wallet honours that at the scale of one study week; nothing in the catalogue honoured it at the scale of a semester, which is the unit Nigerian students actually plan in. ₦5 500 for four months is one prepaid decision, aligned to an academic term, with **no renewal that can fail** — which is worth more than the ₦4 100 of nominal discount against four monthly charges, because a mandate that fails in month two collects nothing at all. It is a consumable like the other passes, so it needs no new entitlement mechanics (Decision A, Decision E); it is the same inventory-then-activate path with a longer duration. It carries no USD price: at $3.97 it would undercut `plus_monthly` in the market where the monthly is the value product, and there is no evidence of the prepaid preference outside the launch market.
 
 **$4.99, not $5.00.** Identical revenue to the cent, better psychologically, an existing store price point, and — decisively — unchanged from today's price, so no subscriber ever sees a price-increase flow. A $0.01 rise would require a Stripe price migration, a mandatory 7-day Google Play notice, and on Apple an **explicit consent prompt where non-responders are cancelled at renewal**. Real churn risk for one cent of nothing.
 
@@ -344,6 +355,7 @@ Store product ids:
 | `plus_pass_5h` | one-time price, `mode: payment` | `com.maigie.plus.pass5h` (**consumable**) | `plus_pass_5h` (in-app, **consumable**) |
 | `plus_pass_7d` | one-time price, `mode: payment` | `com.maigie.plus.pass7d` (**consumable**) | `plus_pass_7d` (in-app, **consumable**) |
 | `plus_monthly` | recurring price, `mode: subscription` | `com.maigie.plus.monthly` (auto-renewable, group `maigie_plus`) | `maigie_plus` / base plan `plus-monthly` |
+| `plus_pass_term` | one-time price, `mode: payment`, **NGN only** | `com.maigie.plus.passterm` (**consumable**, NGN territory only) | `plus_pass_term` (in-app, **consumable**, NGN pricing only) |
 
 Consumable is the correct store type and not a detail: a non-consumable would be permanently owned, restorable forever, and unbuyable a second time — which is the opposite of a pass.
 
@@ -381,16 +393,32 @@ A **5-hour tumbling window**, started by the learner's first billable operation 
 
 | | Window (5h) | Monthly backstop | ≈ chat turns / window | ≈ voice minutes / window | Window COGS |
 | --- | --- | --- | --- | --- | --- |
-| Free | **500 units** | 5 000 | ~16 | 2.5 | $0.05 |
-| Plus — subscription or trial | **4 000 units** | 30 000 | ~23 | 20 | $0.40 |
-| 5-Hour Pass | **3 000 units** (one window) | — | ~17 | 15 | $0.30 |
-| 7-Day Pass | 4 000 units/window | **10 000 total** | ~57 total | 50 total | $1.00 total |
+| Free | **500 units** | 5 000 | ~16 | ~~2.5~~ **0 — unbundled** | $0.05 |
+| Plus — subscription or trial | **4 000 units** | ~~30 000~~ **20 000** | ~23 | ~~20~~ **see voice allowance** | $0.40 |
+| 5-Hour Pass | **3 000 units** (one window) | — | ~17 | ~~15~~ **see voice allowance** | $0.30 |
+| 7-Day Pass | 4 000 units/window | **10 000 total** | ~57 total | ~~50 total~~ **see voice allowance** | $1.00 total |
+
+**Revision 8 unbundles live voice from the usage window, and it is the change that makes NGN prices affordable.** At 200 units/minute (§6.2) voice is 40× a Flash-Lite chat turn, so it dominated every ceiling in the plan: a pass holder who spent their whole allowance on voice hit the COGS ceiling, and a pass holder who spent it on text did not come close. One allowance covering both meant pricing for the voice case and serving mostly the text case — the worst of both, because the price had to be defensible against a cost almost nobody incurred.
+
+So voice gets **its own stated allowance**, drawn from its own counter, and beyond it voice is a separate top-up purchase:
+
+| | Voice minutes included | Voice COGS at ceiling | Beyond it |
+| --- | --- | --- | --- |
+| Free | **0** | $0.00 | not available — Plus capability |
+| Plus Monthly | **60 / month** | $1.20 | voice top-up |
+| 5-Hour Pass | **10** | $0.20 | voice top-up |
+| 7-Day Pass | **25** | $0.50 | voice top-up |
+| Term Pass (NGN) | **60 / month** | $1.20 | voice top-up |
+
+**Free loses voice entirely, and that is the honest version of the paywall.** §6.3 already argued that Free is "starved of voice, not of conversation" — but 2.5 minutes a window is 4.8 windows a day, so a free learner could draw 12 minutes daily, $0.24/day, **$7.20/month at zero revenue**, from a tier whose entire target COGS is $0.20. A 2.5-minute allowance was not a small grant of voice; it was an unbounded one wearing a per-window label. Zero is defensible in a way that 2.5 is not: voice is the one capability a free learner is told plainly they do not have, which is also the clearest thing a pass can be sold on.
+
+**Two properties this buys.** The flat price no longer carries a volatile cost — text usage varies by maybe 3×, voice by 40×, and only one of them was ever priced. And the marketing claim gets *more* concrete rather than less: "5 hours of full Plus including 10 minutes of live voice tutoring" is checkable, where "including about 15 minutes" was an allowance-division artefact that no counter enforced.
 
 **Why there is a monthly backstop when §1 says there is no monthly limit.** A 5-hour tumbling window permits up to 4.8 windows/day, so monthly exposure is 144× the window allowance. No window number is simultaneously generous enough for one session and bounded enough for a month. Claude — the reference implementation — shipped 5-hour windows and then **added weekly limits in 2025** for exactly this reason.
 
 The resolution is that the backstop is not a product limit, it is an abuse limit. It is set at ~7.5 Plus windows/month, which is far above what any learner reaches by studying: 2 windows/day for 20 days is 40 windows, but a *typical* window consumes well under its allowance, so the backstop binds only on sustained maximal draw. It is not shown in the UI, not in the marketing, and not in `GET /billing/usage` until a learner is within 20% of it. Experientially there is no monthly limit. Financially there is a bound.
 
-**Why Free gets more chat turns than Plus.** 500 units buys ~16 Flash-Lite turns; 4 000 buys ~23 3.5-Flash turns. Free is not starved of conversation — it is starved of *voice* (2.5 minutes) and of *model quality*. That is the honest shape of the paywall, it matches what actually costs money, and it means the free tier stays useful enough to convert. The old design had this exactly backwards: free got 250 voice-minutes/day and 3–5 chat turns.
+**Why Free gets more chat turns than Plus.** 500 units buys ~16 Flash-Lite turns; 4 000 buys ~23 3.5-Flash turns. Free is not starved of conversation — it is starved of *voice* (~~2.5 minutes~~ **none at all, revision 8**) and of *model quality*. That is the honest shape of the paywall, it matches what actually costs money, and it means the free tier stays useful enough to convert. The old design had this exactly backwards: free got 250 voice-minutes/day and 3–5 chat turns.
 
 > **This paragraph was false when written, and the correction is the point of it.** The second half — "starved of model quality" — assumed Free ran Flash-Lite. It did not: `LLM_TIER_ALLOWLIST_FREE` listed `gemini-3.5-flash` and that model is first in the chat fallback chain, so a free turn cost $0.0174 rather than $0.0029. **500 units bought about 3 chat turns, not ~16** — which is the number this very paragraph cites as the failure of the old design. The allowlist has been narrowed to Flash-Lite, so the arithmetic above is now what the code does; before that it was what the code was assumed to do.
 >
@@ -422,16 +450,20 @@ Net revenue per sale, after store or processor cut. Apple and Google both take *
 
 Note the inversion: at $0.99 Stripe's 30¢ fixed fee makes **web the worst channel**, while at $4.99 web is the best. The $0.99 pass loses nothing to store distribution.
 
-Margin at the allowance ceiling, which is the worst case rather than the expected case:
+Margin at the allowance ceiling, which is the worst case rather than the expected case. **Every COGS figure here is the allowance cap × $0.0001, per Decision Q — not an operation estimate**, which is why revision 8 can state these without the "recompute before quoting" caveat that hung over the previous version of this table:
 
-| Product | Net | Max COGS | Floor margin | Typical COGS | Typical margin |
-| --- | --- | --- | --- | --- | --- |
-| 5-Hour Pass | $0.75 | $0.30 | 60% | $0.20 | 73% |
-| 7-Day Pass | $2.05 | $1.00 | 51% | $0.70 | 66% |
-| Plus Monthly | $4.00 | $3.00 | 25% | $1.80 | 55% |
-| Free | $0.00 | $0.50 | — | $0.18 | — |
+| Product | Net | Allowance | Max COGS | Floor margin | Typical COGS | Typical margin |
+| --- | --- | --- | --- | --- | --- | --- |
+| 5-Hour Pass | $0.75 | 3 000 units | $0.30 | 60% | $0.18 | **76%** |
+| 7-Day Pass | $2.05 | 10 000 units | $1.00 | 51% | $0.60 | **71%** |
+| Plus Monthly | $4.00 | **20 000 units/mo** | **$2.00** | **50%** | $1.10 | **73%** |
+| Free | $0.00 | 500 units/window | **$0.15** | — | $0.08 | — |
 
-The ladder is coherent: **$0.00031/unit on the 5-hour pass, $0.00021 on the 7-day, $0.00013 on monthly.** Impulse buys cost more per unit, the subscription is the value choice, and that ordering matches the per-day price ladder ($4.75/day, $0.36/day, $0.166/day). There is no arbitrage — three 7-day passes ($7.47) already cost more than a month.
+**The monthly's floor margin was 25% and is now 50%, from cutting the backstop 30 000 → 20 000 units.** §6.3 justifies the backstop as an abuse limit rather than a product limit, set "far above what any learner reaches by studying" — and a limit set that far above real usage was buying nothing except a worst case that halved the margin on the flagship product. 20 000 units is still ~5 Plus windows/month of maximal draw, which no studying learner reaches; the difference is only visible to the learner it was written to bound. With voice unbundled the backstop is also now a text budget, which is the thing that varies least.
+
+**Free's ceiling drops $0.50 → $0.15** for the same reason plus voice removal: 500 units/window × 4.8 windows is the text bound, and the $0.50 figure was carrying voice exposure that no longer exists.
+
+The ladder stays coherent: **$0.00025/unit on the 5-hour pass, $0.00021 on the 7-day, $0.00020 on monthly.** Impulse buys still cost most per unit and the subscription is still the value choice, though the gap narrows — the previous spread (0.00031 / 0.00021 / 0.00013) was wider mainly because the monthly's allowance was oversized. There is no arbitrage: three 7-day passes ($7.47) cost more than a month and buy 30 000 units against 20 000, which is the correct direction — more money buys more units.
 
 ### 6.5 The whole AI cost surface — five operations are metered, thirty-one are not
 
@@ -493,7 +525,9 @@ Deterministic, and therefore free to us as well as the learner: quiz grading, hi
 
 **Nothing outside chat is metered, and it cannot be without plumbing.** `LlmCostRecord` is written from exactly one place — `cost_tracker.record` at `router.py:308` — and `LLMRouter`'s only caller in the codebase is Ask/chat (`ask_service.py:2066`). Every operation in the tables above goes through `llm_resilient` or the raw `generate_content` helpers, **which discard the provider response and return text only**, so token counts do not reach the caller. Metering them is not a matter of adding a `consume_credits` call; usage metadata has to be plumbed through first (Decision L).
 
-One more thing to verify before trusting any of these figures: `cost_calculator._EXACT_MODEL_PRICING:31-52` prices `gemini-3.5-flash` at **$0.50/$3.00** per 1M, where published rates are around **$1.50/$9.00**. One of the two is wrong. If the codebase table is right, every COGS figure here falls ~3× and the margins get much easier; if it is stale, the meter would under-charge by 3× from day one. **Check this first** — it is a five-minute task that moves every number in this document.
+~~One more thing to verify before trusting any of these figures: `cost_calculator._EXACT_MODEL_PRICING:31-52` prices `gemini-3.5-flash` at **$0.50/$3.00** per 1M, where published rates are around **$1.50/$9.00**. One of the two is wrong. If the codebase table is right, every COGS figure here falls ~3× and the margins get much easier; if it is stale, the meter would under-charge by 3× from day one. **Check this first** — it is a five-minute task that moves every number in this document.~~
+
+**Answered in Phase 0, and revision 8 withdraws the framing.** The codebase table was the wrong one — published rates are $1.50/$9.00 — and it is corrected. But the closing claim, that this "moves every number in this document", was true only because the document was quoting margins from operation estimates. **Under Decision Q it moves no margin here.** What it moves is how much product an allowance buys, which is the §6.3 question of whether the offer is generous enough to sell, and the "typical COGS" columns, which are behavioural forecasts and labelled as such. The rate card is an input to sizing an allowance, not to costing one. Every estimate in the tables above stands as a sizing input at the corrected rates.
 
 ### 6.6 The gating and metering matrix
 
@@ -569,6 +603,24 @@ At 8% payer rate, 50% of free MAU AI-active:
 
 **Without the §6.5 fixes the same model returns roughly −$270 at 10 000 MAU.** The fixes are not optimisations; they are the difference between a business and a subsidy.
 
+> **Revision 8 restates this table under Decision Q.** The version above is kept because its revenue line is unchanged and correct — USD prices do not move — but its COGS line is an operation estimate and therefore carries the rate-card error that revision 4 flagged and nobody resolved. Restated from allowance caps and the §6.11 free-tier target, at the same 8% payer rate and the same 50% AI-active assumption:
+>
+> | | 1 000 MAU | 10 000 MAU | 50 000 MAU |
+> | --- | --- | --- | --- |
+> | Subscribers | 28 | 275 | 1 375 |
+> | 7-day passes sold | 42 | 423 | 2 113 |
+> | 5-hour passes sold | 40 | 400 | 2 000 |
+> | **Net revenue** | **$227** | **$2 267** | **$11 335** |
+> | Paid COGS | $63 | $629 | $3 145 |
+> | Free COGS | $37 | $368 | $1 840 |
+> | **Contribution** | **$127** | **$1 270** | **$6 350** |
+> | Margin | **56%** | **56%** | **56%** |
+> | Revenue per MAU | $0.227 | $0.227 | $0.227 |
+>
+> Contribution at 10 000 MAU goes $754 → **$1 270**, and essentially all of it comes from two places: free COGS $940 → $368 (drift 23, the engagement gate, guidance caching, and voice removal), and the monthly backstop cut. **No price changed.** The margin improvement is entirely a cost-surface result, which is the same conclusion the lever table below reaches — the two highest-value levers were never pricing decisions.
+>
+> The lever table below is left as written and is now partly historical: its baseline is $754, and three of its rows (`max_tokens`, free AI-active rate, context caching) are either withdrawn or already counted in the $368 free-COGS figure. Read it for the *ordering* of levers, not for the totals.
+
 **Free-tier inference is still the largest single line item** — $940 against $2 267 of revenue at 10 000 MAU. Levers, most powerful first:
 
 | Lever | Contribution at 10 000 MAU |
@@ -610,10 +662,13 @@ So **NGN is a set price, not a conversion.** Apple, Google and Paystack all supp
 | Product | NGN | ≈ USD | % of USD list |
 | --- | --- | --- | --- |
 | 5-Hour Plus Pass | **₦700** | $0.51 | 51% |
-| 7-Day Plus Pass | **₦1 800** | $1.30 | 52% |
+| 7-Day Plus Pass | ~~₦1 800~~ **₦1 500** | $1.08 | 43% |
 | Plus Monthly | **₦2 400** | $1.73 | 35% |
+| **4-Month Term Pass** | **₦5 500** | $3.97 | — (NGN only) |
 
-The ladder stays coherent: ₦3 360/day, ₦257/day, ₦80/day, correctly ordered, and two 7-day passes (₦3 600) still cost more than a month (₦2 400), so there is no arbitrage in either currency.
+The ladder stays coherent: ₦3 360/day, ₦214/day, ₦80/day, ₦46/day, correctly ordered, and no arbitrage — two 7-day passes (₦3 000) cost more than a month (₦2 400) and buy fewer days; two months (₦4 800) cost less than the term pass but buy four fewer months.
+
+> **Revision 8 moved the 7-day pass ₦1 800 → ₦1 500, and the reason is a cost-side arbitrage the price-side check missed.** At ₦1 800 the 7-day pass was 75% of the monthly price for 23% of the duration — which reads fine as a price ladder, and is exactly why it survived four revisions. But allowances are what cost money, and once NGN allowances are derived from NGN net revenue (below), ₦1 800 for 7 days against ₦2 400 for 30 days forced the monthly to be roughly 4× more generous per day at 1.33× the price. The NGN ladder was too compressed at the top to support a coherent allowance ladder underneath it. ₦1 500 opens the gap. It also stays under the ₦2 500 Paystack threshold, so the flat fee is still waived.
 
 **₦2 400 rather than ₦2 500 is deliberate.** [Paystack charges 1.5% + ₦100 on local cards, capped at ₦2 000, with the ₦100 waived below ₦2 500](https://paystack.com/pricing). Pricing at ₦2 500 triggers the flat fee: ₦137 instead of ₦36, turning a 1.5% cost into 5.5% for one naira of extra revenue. Every NGN price in this plan sits under that threshold, and the same logic is why ₦700 rather than ₦900 for the 5-hour pass — the flat fee would have been 14% of the sale. *Content was rephrased for compliance with licensing restrictions.*
 
@@ -622,28 +677,53 @@ Net per sale, blending 60% Paystack web and 40% Google Play at 15%:
 | Product | Paystack net | Play 15% net | Blended |
 | --- | --- | --- | --- |
 | 5-Hour Pass | $0.50 | $0.44 | **$0.48** |
-| 7-Day Pass | $1.28 | $1.11 | **$1.21** |
+| 7-Day Pass (₦1 500) | $1.07 | $0.92 | **$1.01** |
 | Plus Monthly | $1.71 | $1.47 | **$1.61** |
+| Term Pass (₦5 500) | $3.83 | $3.38 | **$3.65** |
+
+The Term Pass is the one NGN product **above** the ₦2 500 threshold, so it pays the ₦100 flat fee — ₦182 total against ₦82 at 1.5% alone. That is 3.3% of the sale rather than 1.5%, and it is accepted rather than designed around, because the alternative is pricing a four-month product under ₦2 500, which would undercut two months of the monthly.
+
+**Revision 8: NGN allowances are derived from NGN net revenue, not inherited from the USD product.** This is where the launch market's subscription was losing money. Applying Decision Q in reverse — pick a target floor margin, then let it set the cap — at a 60% floor:
+
+| Product | Blended net | Allowance | Max COGS | Floor margin | Typical COGS | Profit (typical) | Typical margin |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 5-Hour Pass | $0.48 | **1 800 units** | $0.18 | 63% | $0.11 | **$0.37** | 77% |
+| 7-Day Pass | $1.01 | **4 500 units** | $0.45 | 55% | $0.28 | **$0.73** | 72% |
+| Plus Monthly | $1.61 | **6 000 units/mo** | $0.60 | 63% | $0.36 | **$1.25** | 78% |
+| Term Pass | $3.65 | **20 000 units** | $2.00 | 45% | $1.20 | **$2.45** | 67% |
+| Free | $0.00 | 400 units/window | $0.12 | — | $0.08 | −$0.08 | — |
+
+**The Nigerian Plus Monthly was previously a loss-making product and the plan did not say so.** ₦2 400 nets $1.61; §6.4's typical monthly COGS was $1.80. Every sale lost $0.19, and at the allowance ceiling of $3.00 it lost $1.39. The error was structural rather than arithmetical: §6.8 set the NGN *price* from the Nigerian market, correctly and at length, and then left the NGN *allowance* at whatever the $4.99 product carried. A price cut of 65% with no allowance change is a margin inversion, and it was invisible because the two numbers live in different sections. **Deriving the allowance from the local net revenue is the general fix**, and it is why this table exists rather than a note saying "NGN margins are thinner".
+
+**6 000 units/month is a real product, not a token one.** Under Decision P chat runs Flash-Lite (~30 units/turn) for everyone, so 6 000 units is roughly **200 chat turns a month, 6–7 a day**, plus the 60 unbundled voice minutes. The figure only looks small against the USD product's 20 000, and a learner paying a third of the price receiving a third of the allowance is the honest shape of regional pricing — considerably more honest than the previous arrangement, where they received the same allowance and the company absorbed the difference as a loss.
+
+**Free is 400 units/window in Nigeria rather than 500.** Free COGS is the largest line item in the launch market by a wide margin and the local revenue per MAU is half the USD figure, so the free tier has to be tuned to the market it is subsidising. 400 units is ~13 Flash-Lite turns per 5-hour window.
 
 **Nigeria-first revenue at 10 000 MAU**, with the payer mix weighted toward passes as prepaid purchasing behaviour suggests — 1.5% subscribe, 4% buy 7-day passes (1.4/month), 2.5% buy 5-hour passes (2.5/month):
 
-| | Without the §6.5 fixes | With them |
-| --- | --- | --- |
-| Net revenue | $1 220 | $1 220 |
-| Paid COGS | $965 | $242 |
-| Free COGS | $1 472 | $460 |
-| **Contribution** | **−$182** | **+$518** |
-| Margin | negative | 42% |
+| | Without the §6.5 fixes | With them | **Free COGS corrected** |
+| --- | --- | --- | --- |
+| Net revenue | $1 220 | $1 220 | $1 220 |
+| Paid COGS | $965 | $242 | $242 |
+| Free COGS | $1 472 | $460 | **$920** |
+| **Contribution** | **−$182** | **+$518** | **+$58** |
+| Margin | negative | 42% | **5%** |
 
-**At Nigerian prices the cost work is not an optimisation, it is the precondition for the market existing.** Without it, unit economics are negative before a single dollar of infrastructure. With it, 42%.
+**At Nigerian prices the cost work is not an optimisation, it is the precondition for the market existing.** Without it, unit economics are negative before a single dollar of infrastructure.
 
-**These two columns are now stale in both directions and must be recomputed before either is quoted.** The rate-card correction raised the Plus model's cost 3×, which makes the "without" column worse. And the `max_tokens` audit that a large part of the saving was attributed to **saves nothing** — it rested on treating a ceiling as a charge (§6.5 item 3). The replacements are real but unquantified: `thinking_budget` per operation, and context-caching the stable prefix at a 90% discount. Recompute once, from measurement, after Phase 3 instruments units per operation — not from another round of estimates.
+> **The third column is revision 8's correction and it is the more important of the two findings in this section.** The `+$518` rested on a free COGS of $460, while §6.7 puts the same population at the same MAU and the same 8% payer rate at **$940**. A free Nigerian learner runs the same models as a free American one, so the two figures cannot both be right — and $940 is the one that reconciles: 9 200 free × 50% AI-active × $0.20/month. $460 implies either a 25% AI-active rate or half the per-learner cost, and §6.8 states neither and never did.
+>
+> **At the reconciled figure the launch market's contribution is $58, not $518, and its margin 5%, not 42%** — the difference between a viable market and a break-even one, resting on an assumption that was never written down. This is the same class of error as the monthly's negative margin: a number set correctly in one section and quietly re-derived in another.
+>
+> The "without the §6.5 fixes" column is left as written and remains understated — the rate-card correction makes it worse — but it is no longer load-bearing, because revision 8 does not quote operation-estimated COGS anywhere it makes a decision.
 
 Revenue per MAU is **$0.122**, roughly half the USD-priced figure — so Nigeria needs about twice the users for the same revenue. That is a planning input, not a problem: it is the normal shape of an emerging-market launch, and it is why §6.5's free-tier cost per learner is the number that decides whether this works.
 
 **Two consequences for product, not just price.**
 
-The **7-day pass is probably the lead product in Nigeria, not the subscription.** Recurring card mandates fail often, and Nigerians are practised buyers of discrete prepaid digital goods — data bundles, airtime. A ₦1 800 pass bought the week before an exam fits that behaviour; a ₦2 400/month standing charge fights it. Phase 7's client work should lead with the pass wallet and treat the subscription screen as secondary.
+The **passes are the lead products in Nigeria, not the subscription.** Recurring card mandates fail often, and Nigerians are practised buyers of discrete prepaid digital goods — data bundles, airtime. A ₦1 500 pass bought the week before an exam fits that behaviour; a ₦2 400/month standing charge fights it. Phase 7's client work should lead with the pass wallet and treat the subscription screen as secondary.
+
+**Revision 8 follows that argument one step further than revision 2 did, and gets the Term Pass out of it.** If the objection to the subscription is the mandate rather than the amount, then the answer is not only a smaller prepaid product but also a *longer* one — a learner who wants four months of Plus currently has no way to buy four months of Plus except by accepting four chances for their card to fail. ₦5 500 once, aligned to an academic term, is the same commitment with none of the fragility, and it is the only product in the catalogue that a Nigerian student can buy with cash-in-hand certainty for a period longer than a week. The margin arithmetic agrees independently: at $3.65 net it is the largest single transaction available in the market, and its 45% floor margin is the weakest in the NGN table only because its allowance is the most generous.
 
 And the paid case cannot be "AI access", because free Gemini is on the same phone and sets that price at zero. It has to be what a general chatbot structurally cannot do: your courses, your materials, your measured weak areas, your exam date, spaced repetition against what you actually forgot. That is the book's argument in `ch36` — capability, not AI — and here it is also the reason a price above zero is defensible at all.
 
@@ -695,6 +775,36 @@ Points therefore sit entirely inside the pass rails already being built: redempt
 **Expiry: 60 days per grant, FIFO, and the date is on screen.** The reasoning is in Decision O. Redemption always spends the oldest live grant first, so a learner who earns steadily never loses anything, and the wallet shows the next expiring batch with its date — the plan already forbids showing a learner a number about their own account that the server did not produce, and an expiry date is exactly such a number.
 
 **Not enabled at launch: earning by contribution.** `ResourceUploadReward` exists and `UploadResourceModal.tsx:298` already promises "1,500 credits" for an approved resource — a currency that will not exist, for an approval process that does not either. The copy is deleted in Phase 7. Resource contribution is the obvious second earn source and it is a moderation problem before it is a commercial one; Open Question 11.
+
+### 6.10 Model roster
+
+> **This section is referenced three times and was never written.** Revision 7's changelog cites "Model roster in §6.10" and drift item 23 resolves an open question with "registered and live (§6.10)". There is no §6.10 in the document. The facts it was meant to hold are recoverable from elsewhere — `gemini-3.5-flash-lite` as the free tier's second candidate, `gemini-3.5-flash` for operations above 500 units, `gemini-3.1-flash-live-preview` for voice, the Gemini 2.5 family shutting down October 2026 — but they are scattered across §6.2, §5.2 and drift 23 rather than tabulated anywhere. Recorded here rather than fabricated: whoever owns Decision P should write it, because two other sections currently promise a reader that it exists.
+
+### 6.11 Revision 8: the two models side by side
+
+Both markets, at 10 000 MAU, before and after revision 8. Nigeria's "before" column is the reconciled one from §6.8 — the `+$518` version is not a fair comparison because it rests on a free-COGS figure that contradicts §6.7.
+
+| | Nigeria — plan as written | Nigeria — free COGS reconciled | **Nigeria — revision 8** | Global — plan | **Global — revision 8** |
+| --- | --- | --- | --- | --- | --- |
+| Net revenue | $1 220 | $1 220 | **$1 058** | $2 267 | **$2 267** |
+| Paid COGS | $242 | $242 | $278 | $573 | $629 |
+| Free COGS | $460 | $920 | $368 | $940 | $368 |
+| Total COGS | $702 | $1 162 | **$646** | $1 513 | **$997** |
+| **Contribution** | +$518 | **+$58** | **+$412** | +$754 | **+$1 270** |
+| Margin | 42% | **5%** | **39%** | 33% | **56%** |
+| Revenue per MAU | $0.122 | $0.122 | $0.106 | $0.227 | $0.227 |
+| Rate-card exposure | 3× understated | 3× understated | **none — Decision Q** | 3× understated | **none — Decision Q** |
+| At 1.5× usage overshoot | negative | negative | **+$89** | negative | **+$772** |
+
+Nigerian payer mix assumed: **1.0% Plus Monthly, 1.0% Term Pass, 4.0% buy 7-day passes (1.4/month), 2.0% buy 5-hour passes (2.5/month)** — 8% in total, matching §6.7's rate but weighted to prepaid products, with Term Pass revenue and COGS recognised monthly across its four months rather than at purchase. Global keeps §6.7's mix unchanged so the revenue line is directly comparable.
+
+**Revision 8 earns less revenue in Nigeria than the plan claimed and roughly 7× the contribution.** The 7-day price cut and the smaller allowances take net revenue $1 220 → $1 058; reconciling free COGS and then fixing it takes total COGS $1 162 → $646. Both markets improve almost entirely on the cost side, and **no USD price moved at all** — which is the same finding §6.7's lever table reached and then buried: the two highest-value levers in this business were never pricing decisions.
+
+**The 1.5× overshoot row is the one that matters for confidence.** Under Decision Q there is no rate-card error left to absorb, because the caps are denominated in dollars; the residual risk is that learners draw closer to their ceilings than the "typical" column assumes. At 1.5× typical draw both markets stay positive. The previous model did not survive a 1.7× shock in either market, and it was already carrying a known 3× one.
+
+**What revision 8 does not fix, stated plainly because the margin tables invite the wrong conclusion.** $412/month at 10 000 MAU funds nobody. Contribution excludes infrastructure, storage, CDN, email and salaries, so it is not profit and never was. At a 39% contribution margin and $0.106 revenue per MAU, Nigeria needs on the order of **100 000 MAU to fund two engineers** — and that is now the binding constraint on this business, not pricing. The margin question is answered; the distribution question is open, and it is the harder one.
+
+**And every payer rate above is still a guess against zero payment history.** 1 205 free users, no payment relationship anywhere in the database (§ Phase 2b). The mix is a hypothesis for Phase 3 to instrument, not a forecast. The first real number replaces all of them.
 
 ## 7. Architecture decisions
 
@@ -939,6 +1049,24 @@ Two consequences worth stating rather than discovering. Below the threshold ther
 
 Implementation is Phase 3b, in the same chokepoint as the meter. `registry._DEFAULTS` already names Flash-Lite for `FACT_EXTRACTION_LITE`, `MINIMAL_RESPONSE`, `MEMORY_JSON` and `EMAIL_FALLBACK`, so several below-threshold operations are correct already and the work is smaller than the count of call sites suggests.
 
+### Decision Q: COGS is quoted from the allowance cap, never from an operation estimate. A price is a market fact; an allowance is derived from it.
+
+Two rules, and the first one retires a recurring failure in this document rather than adding a new constraint.
+
+**Rule one: the ceiling COGS of any product is its allowance cap × $0.0001.** §6.2 defines a usage unit as $0.0001 of *measured* cost, which means an allowance cap is already a dollar cap. A 3 000-unit pass cannot cost more than $0.30 to serve — not because the rate card says so, but because the meter stops. Yet every margin table in revisions 1–7 was built by estimating per-operation costs and summing them, which is how one wrong entry in `cost_calculator._EXACT_MODEL_PRICING` propagated into §6.4, §6.7 and §6.8 simultaneously and forced revision 4 to mark all three stale with an instruction to recompute that nobody could act on until Phase 3 lands.
+
+The instruction was the wrong response. **A cap does not need recomputing when a rate changes; it needs no computing at all.** The rate card determines how much *product* a cap buys — how many turns, how many minutes — and that is a §6.3 question about whether the offer is generous enough to sell. It does not determine what the cap costs us, which is the only input a margin needs. Revisions 1–7 conflated the two, and the tell is that §6.5 ends with "check this first — it is a five-minute task that moves every number in this document." Under this decision it moves no margin in this document. It moves the *value* of every allowance, which is a real question and a smaller one.
+
+So: margin tables quote caps. Operation estimates stay in §6.5 and §6.2 where they belong, as inputs to sizing an allowance and to the "typical COGS" column, which is a forecast of learner behaviour and is labelled as one.
+
+**Rule two: where a price is set by the market, the allowance is derived from the price. Never the reverse, and never inherited across markets.** §6.8 sets NGN prices from what Nigerians pay for subscriptions, at length and correctly, and this is not negotiable downward by a cost model — the market does not care what we spend. What *is* ours to set is what the price buys. Pick a target floor margin, and the cap follows: `cap = net_revenue × (1 − floor_margin) ÷ $0.0001`.
+
+The absence of this rule is what produced a loss-making product in the launch market. NGN prices were cut 65% from USD list and NGN allowances were left at the USD product's values, so Plus Monthly netted $1.61 against a $1.80 typical COGS and a $3.00 ceiling. **Nobody multiplied it out, because the price lived in §6.8 and the allowance lived in §6.3**, and each was defensible in isolation. A regional price without a derived allowance is not a discount, it is a subsidy with no stated size.
+
+Corollary, and it is the part that will feel wrong: **a learner paying a third of the price gets roughly a third of the allowance.** That is the honest shape of regional pricing and it is more honest than the alternative the plan had, which gave them the full allowance and absorbed the gap as an unrecorded loss. It also survives being said out loud to a learner, which the previous arrangement only survived by never being stated.
+
+**What this decision requires in code: nothing new.** Decision E already terminates a pass on `units_used >= units_allowance`, and §6.3's window already bounds a subscription. The caps are the enforcement. This decision only changes which number a margin table is allowed to cite — which is why it is a decision in this document rather than a phase item.
+
 ## 8. Data model
 
 Migration `063_add_plus_passes.py` — `062_chat_generation_attempt.py` is the current head. `060` and `061` are taken (`060_notification_phase1`, `061_notification_phase2`); do not reuse them.
@@ -995,6 +1123,10 @@ Indexes: `(userId, createdAt)`; `(userId, expiresAt)` for the sweep and for the 
 
 **`User`** — added: `activePlusPassId`, `activePlusPassExpiresAt`, `usageWindowStartedAt`, `usageWindowUnitsUsed`, `usageMonthStartedAt`, `usageMonthUnitsUsed` (the §6.3 backstop), `pointsBalance` (cache over `PointsLedgerEntry`, rebuildable), `appleOriginalTransactionId` (unique, nullable), `appleProductId`.
 
+**Added by revision 8: `voiceSecondsRemaining` (Integer) and `voiceAllowanceSourceId` (String, nullable).** Unbundling voice (§6.3) means it needs its own counter, and it has to be a counter rather than a derived value because the whole point is that voice draws down independently of the unit window. Seconds rather than minutes: a `study_voice` relay bills continuously and rounding a 40-second session up to a minute is a charge the learner did not incur. `voiceAllowanceSourceId` records which pass or subscription period granted the current balance, so the sweep in Decision E can zero it when that source ends rather than letting a pass's voice minutes outlive the pass — the same leak Decision C's denormalisation exists to prevent for entitlement.
+
+**This is the one place revision 8 adds mechanics rather than only changing numbers**, and it is worth being explicit that it is a second meter. §6.2's argument for a single cost-denominated unit was that one currency is comprehensible and two are not, and a voice counter is a partial retreat from that. The retreat is justified by the 40× cost ratio: a single currency means either pricing every product for the voice case, which makes text-only learners subsidise a feature they do not use, or pricing for the text case and losing money on voice users. It is not justified anywhere else, and no third meter should follow — if a future capability has voice-like cost asymmetry, it draws from `voiceSecondsRemaining`'s pattern rather than inventing its own.
+
 **`User`** — dropped in the same migration: `creditsUsed`, `creditsPeriodStart`, `creditsPeriodEnd`, `creditsSoftCap`, `creditsHardCap`, `creditsUsedToday`, `creditsDailyLimit`, `lastDailyReset`, `purchasedCreditsBalance`. One migration, not two. The earlier draft staged this over two releases to keep a rollback path; with **no paid users and no purchased balances to honour** there is nothing to roll back to and nothing to preserve.
 
 **Dropped tables**: `CreditPack`, `CreditPurchaseTransaction` — unconditionally, per Decision H as revised. The Phase 2b row count confirms they are empty before the Phase 4 migration drops them; it is a precondition check, not a decision point.
@@ -1009,7 +1141,7 @@ New, under `/api/v1/billing`:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/plans/catalog` | four products, reference USD prices, store product ids per platform |
+| GET | `/plans/catalog` | the personal products available **to this learner's territory** (five in NGN, four elsewhere), reference prices, store product ids per platform |
 | GET | `/passes` | `{active, inventory[], history[]}` — the source of truth for pass ownership |
 | POST | `/passes/{id}/activate` | `200` → `Entitlement`; `409 PASS_REDUNDANT` \| `PASS_ALREADY_ACTIVE` \| `PASS_CONSUMED` |
 | POST | `/passes/checkout` | web only — Stripe one-time session for a pass |
@@ -1354,7 +1486,7 @@ Server rails:
   - [ ] **Add the StoreKit branch to `useStoreBilling`.** This is the real iOS work and it was buried. `react-native-iap`'s iOS pod (`NitroIap`) is already linked in `ios/Podfile.lock`, so the native module is present and building — the only thing stopping iOS purchases is the `Platform.OS !== 'android'` early return at `usePlayBilling.ts:88-93`, which refuses the platform its own dependency supports.
   - [ ] **Add `submit.production.ios` to `eas.json`** (`appleId`, `ascAppId`, `appleTeamId`). The `submit.production` block currently holds `android` only.
   - [ ] Uncomment the iOS EAS jobs at `.eas/workflows/deploy-production.yml:72-108` (`get_ios_build`, `build_ios`, `submit_ios_build`, `publish_ios_update`).
-  - [ ] Submit the first iOS build **with the three IAP products attached** — Apple reviews in-app purchases against a build, and this is the highest rejection-risk submission the project will make. Budget 1–2 weeks and expect one rejection round.
+  - [ ] Submit the first iOS build **with the four IAP products attached** (the three global ones plus the NGN-only `com.maigie.plus.passterm`) — Apple reviews in-app purchases against a build, and this is the highest rejection-risk submission the project will make. Budget 1–2 weeks and expect one rejection round.
 
 ### Phase 8 — Copy, and existing customers
 
@@ -1367,7 +1499,8 @@ Server rails:
 - [ ] **No price migration is needed.** `PREMIUM_MONTHLY` stays at $4.99, so no Stripe price migration, no Play notice, no Apple consent flow.
 - [x] ~~Query for live `PREMIUM_*` / `STUDY_CIRCLE_*` / `SQUAD_*` subscriptions and non-zero `purchasedCreditsBalance`, and delete the grandfathering machinery if all are zero.~~ **Moved to Phase 2b, first item.** It was the precondition for decisions taken in Phases 2, 4 and 5, so running it in the final phase meant every earlier phase had to hedge against its answer. That hedging *was* the grandfathering machinery. `LEGACY_PLUS_TIERS` is now never written (Decision B), and `CreditPack` / `CreditPurchaseTransaction` are dropped in Phase 4 (Decision H) rather than conditionally surviving to here.
 - [ ] ~~Migrate grandfathered legacy subscribers onto `plus_monthly`.~~ **Deleted — there are none.** If Phase 2b's count comes back non-zero, this step returns along with `LEGACY_PLUS_TIERS`.
-- [ ] Set the **§6.8 NGN prices** on Play, App Store Connect and Paystack: ₦700 / ₦1 800 / ₦2 400. All three sit under Paystack's ₦2 500 flat-fee threshold, deliberately — do not round any of them up.
+- [ ] Set the **§6.8 NGN prices** on Play, App Store Connect and Paystack: **₦700 / ₦1 500 / ₦2 400 / ₦5 500** (revision 8 — the 7-day pass is ₦1 500, not ₦1 800). The first three sit under Paystack's ₦2 500 flat-fee threshold, deliberately — do not round any of them up. **₦5 500 is above it and pays the ₦100 flat fee knowingly** (§6.8); do not "fix" it by pricing the Term Pass under ₦2 500, which would undercut two months of the subscription.
+- [ ] Restrict `plus_pass_term` to **NGN territories** in all three consoles, and add the `availability` field to `PlanItem` so `GET /plans/catalog` does not advertise it elsewhere (§6.1). This is the first product in the catalogue whose availability is regional, and a catalogue that offers an unbuyable product is the failure the revision-5 review already recorded for the passes.
 - [x] ~~Fix the 100 NGN placeholder amount at `paystack_service.py:333`.~~ **Moved to Phase 2b**, and the line reference corrected to `:317-323` — `:333` is inside the `httpx` call, not the payload. It cannot wait until the copy phase: the placeholder is harmless for subscriptions (the plan overrides the amount) and becomes the actual price the moment Phase 5 adds one-time pass charges.
 - [x] ~~Add `PRICE_NGN_*` settings.~~ **Moved to Phase 2b**, for the same reason — the NGN rail needs them to charge correctly.
 - [ ] Make `GET /plans/catalog` currency-aware rather than USD-only, serving the `PRICE_NGN_*` values Phase 2b added. Store-purchased products display the store's own `displayPrice` regardless (Decision I); this is for the web rail and for copy.

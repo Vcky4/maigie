@@ -118,6 +118,37 @@ def _is_first_plus_purchase(user: User) -> bool:
     return not (user.stripe_subscription_id or user.paystack_subscription_code)
 
 
+def _voice_minutes(window_allowance: int) -> float:
+    """Minutes of live voice a window's allowance funds, at the configured rate.
+
+    Derived rather than tabulated so that changing an allowance or the voice rate changes the
+    catalogue copy in the same commit. The previous figures were typed by hand into a docstring and
+    a `usage_note`, and were wrong by 19× against the meter that was actually running.
+    """
+    from src.domains.study_voice.billing import units_per_minute
+
+    rate = units_per_minute()
+    if rate <= 0:  # pragma: no cover — a zero rate would mean voice is unmetered
+        return 0.0
+    return window_allowance / rate
+
+
+def _voice_minutes_note(window_allowance: int) -> str:
+    """The voice figure as a learner reads it: "about 15 minutes".
+
+    Rounded to whole minutes above two, and to a half below — 2.5 is a taster and saying "about 3"
+    would round a free learner's allowance up by 20%. Rounding is towards the smaller number
+    throughout, because this is a floor a learner will test.
+    """
+    minutes = _voice_minutes(window_allowance)
+    if minutes < 3:
+        halves = int(minutes * 2)
+        rendered = f"{halves / 2:g}"
+    else:
+        rendered = str(int(minutes))
+    return f"about {rendered} minutes of live voice tutoring"
+
+
 def get_active_plan_catalog() -> PlanCatalogResponse:
     """Return the active product catalog.
 
@@ -135,20 +166,26 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
     of live voice tutoring, which costs about $6.00 to serve against a pass that nets
     $0.75. Every note therefore says that voice is allowanced rather than unlimited.
 
-    **It says so without a number, and that is deliberate.** These notes shipped carrying
-    the §6.3 figures — "about 23 chat turns and 20 minutes of live voice per 5-hour
-    session" — which are the window allowances Phase 3 introduces. There is no window
-    today: `credit_consumption_service.CREDIT_LIMITS` still meters a monthly cap and a
-    daily cap in tokens, so the per-window promise was enforced by nothing and, for
-    `plus_monthly`, was roughly nineteen times more generous than what the live meter
-    actually permits per month. A customer-facing figure that no code can honour is worse
-    than no figure, because it reads as a commitment.
+    **The figures are back, and they are derived rather than typed.** Phase 2a stripped them
+    because they promised the §6.3 window allowances against a meter that implemented a
+    monthly token cap — for ``plus_monthly``, roughly nineteen times more than the live meter
+    funded. Phase 3 is the change that makes them true, so it is the change that restores
+    them: ``_voice_minutes_note`` computes each one from ``Entitlement.window_allowance`` and
+    the configured voice rate, so a note cannot outlive the allowance it describes. Retyping
+    the number is what let the last set drift, and a customer-facing figure no code can honour
+    reads as a commitment.
 
-    **Phase 3 puts the numbers back**, in the same change that makes them true: the window
-    exists, `Entitlement.window_allowance` is the allowance, and `GET /billing/usage`
-    reports against it. The checklist item is recorded there rather than here. Until then
-    the notes state the *shape* of the limit, which the resolver does enforce today.
+    **Only voice carries a count.** Voice is the scarce thing — a minute costs about 200 units
+    against a free window of 500 — and it is the promise a learner can check against a stopwatch.
+    Chat is described qualitatively on purpose, and not for lack of an allowance to quote from:
+    at the current rate card a free window funds about 12 chat turns on Flash-Lite while a Plus
+    window funds about 22 on Flash, because Plus buys a dearer model as well as a larger
+    allowance. Publishing both counts side by side would invite a comparison that understates
+    Plus by nearly the whole of what it sells, and answering it would mean either quoting Free's
+    figure against Plus's model or hiding the model difference. Recorded as Open Question 4.
     """
+    from src.domains.billing.services import entitlement_service as ent
+
     cfg = get_settings()
     plans = [
         PlanItem(
@@ -161,7 +198,11 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 "Everything Maigie does, at a standard level: notes, flashcards, "
                 "practice, study plans, courses and weekly reflections."
             ),
-            usage_note="Standard model quality, and a short daily taster of live voice tutoring.",
+            usage_note=(
+                "Standard model quality, and "
+                f"{_voice_minutes_note(ent.WINDOW_ALLOWANCE_FREE)} "
+                "per 5-hour session."
+            ),
         ),
         PlanItem(
             id="plus_pass_5h",
@@ -177,8 +218,9 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 "Hold it as long as you like; it does not renew."
             ),
             usage_note=(
-                "Every Plus feature for the 5 hours, with an allowance of live voice "
-                "tutoring inside it rather than 5 unbroken hours of voice."
+                "Every Plus feature for the 5 hours, including "
+                f"{_voice_minutes_note(ent.WINDOW_ALLOWANCE_PASS_5H)} — "
+                "an allowance inside the 5 hours, not 5 unbroken hours of voice."
             ),
             # Listed so clients and generated types can be built against the real shape;
             # the one-time checkout that sells it arrives in Phase 5. Until then a Buy
@@ -196,8 +238,9 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 "A study week. It does not renew."
             ),
             usage_note=(
-                "Every Plus feature for the 7 days, with an allowance of live voice "
-                "tutoring for the week."
+                "Every Plus feature for the 7 days, including "
+                f"{_voice_minutes_note(ent.WINDOW_ALLOWANCE_PASS_7D)} "
+                "per 5-hour session across the week."
             ),
             purchasable=False,  # Phase 5, as above.
         ),
@@ -220,7 +263,9 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
             # it names are the ones a learner would notice.
             usage_note=(
                 "A stronger model where it shows — chat, quizzes, lessons, documents "
-                "and your growth write-ups — plus a monthly allowance of live voice tutoring."
+                "and your growth write-ups — plus "
+                f"{_voice_minutes_note(ent.WINDOW_ALLOWANCE_PLUS)} "
+                "per 5-hour session."
             ),
         ),
         PlanItem(

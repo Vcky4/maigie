@@ -30,6 +30,7 @@ import pytest  # noqa: E402
 
 from src.config import get_settings  # noqa: E402
 from src.domains.billing import models as billing_models  # noqa: E402
+from src.domains.billing.services import entitlement_service  # noqa: E402
 from src.domains.billing.services import paystack_service as paystack_svc  # noqa: E402
 from src.domains.billing.services import stripe_service as stripe_svc  # noqa: E402
 from src.domains.personal_learning.services import trial_service  # noqa: E402
@@ -37,6 +38,19 @@ from src.shared.exceptions import DeprecatedPlanError  # noqa: E402
 
 PERSONAL_PRODUCT_IDS = {"free", "plus_pass_5h", "plus_pass_7d", "plus_monthly"}
 SPACE_PRODUCT_IDS = {"circle_plan_monthly", "plus_seat_add_on_monthly"}
+
+#: Which window allowance each personal product's voice figure is derived from.
+#:
+#: Written out here rather than read back from the same helper the catalogue uses, so that a product
+#: pointed at the wrong allowance fails rather than agreeing with itself. `plus_monthly` maps to the
+#: Plus window and not to the monthly backstop: what a subscriber gets is a Plus-sized window, and the
+#: backstop is an abuse limit they are not meant to plan around (§6.3).
+_ALLOWANCE_FOR_NOTE = {
+    "free": entitlement_service.WINDOW_ALLOWANCE_FREE,
+    "plus_pass_5h": entitlement_service.WINDOW_ALLOWANCE_PASS_5H,
+    "plus_pass_7d": entitlement_service.WINDOW_ALLOWANCE_PASS_7D,
+    "plus_monthly": entitlement_service.WINDOW_ALLOWANCE_PLUS,
+}
 
 WITHDRAWN = [
     ("plus_yearly", "PLUS_YEARLY_PLAN_REMOVED"),
@@ -169,36 +183,64 @@ class TestUsageEquivalents:
             assert by_id[plan_id].usage_note, f"{plan_id} must state its usage equivalent"
 
     @pytest.mark.parametrize("plan_id", sorted(PERSONAL_PRODUCT_IDS))
-    def test_voice_is_always_named_as_allowanced(self, plan_id):
+    def test_voice_is_always_named_as_bounded(self, plan_id):
         """ "5 hours of Plus" invites the reader to assume five hours of live voice tutoring.
         Five hours of tutoring costs about $6.00 to serve against a pass that nets $0.75, so
-        every note has to say that voice is allowanced rather than included without limit.
+        every note has to say that voice is bounded rather than included without limit.
+
+        The check used to look for the word "allowance" or "taster", which was the best available
+        signal while the notes carried no figures. Now that each states a minute count derived from
+        the window that funds it, the figure *is* the bound and it is a stronger one than the word:
+        "about 20 minutes" cannot be read as unlimited, whereas "an allowance of live voice" leaves a
+        reader guessing at the size. So the assertion moves to the figure.
         """
         note = _by_id()[plan_id].usage_note.lower()
         assert "voice" in note
-        assert "allowance" in note or "taster" in note
+        assert "minutes of live voice" in note, (
+            f"{plan_id} names voice without bounding it, which is how a taster reads as a service: "
+            f"{note!r}"
+        )
 
     @pytest.mark.parametrize("plan_id", sorted(PERSONAL_PRODUCT_IDS))
-    def test_no_note_promises_a_figure_the_meter_cannot_honour(self, plan_id):
-        """These notes shipped carrying the §6.3 window figures — "about 23 chat turns and
-        20 minutes of live voice per 5-hour session" — before the window existed.
-        `credit_consumption_service.CREDIT_LIMITS` still meters a monthly and a daily token
-        cap, so for `plus_monthly` that sentence was about 19× more generous than the live
-        meter allows per month. A number in customer-facing copy reads as a commitment.
+    def test_every_voice_figure_follows_from_the_allowance_that_funds_it(self, plan_id):
+        """This replaces `test_no_note_promises_a_figure_the_meter_cannot_honour`, and the swap is the
+        point of Phase 3.
 
-        **Phase 3 deletes this test** in the change that introduces the window,
-        `Entitlement.window_allowance` and `GET /billing/usage` — at which point the figures
-        are true and belong back in the copy.
+        That test forbade any consumption count in the copy, because the notes had shipped carrying the
+        §6.3 window figures before the window existed — for `plus_monthly`, a sentence about 19× more
+        generous than the meter then running. It said in its own docstring that Phase 3 should delete it
+        once the figures were true. They are now: the window exists, `Entitlement.window_allowance` is
+        the allowance, and `GET /billing/usage` reports against it.
 
-        The check is on the units rather than on digits, because the *durations* — 5 hours,
-        7 days — are real, sold, and enforced by pass expiry. It is the consumption counts
-        that nothing backs.
+        So the guard moves from "state no number" to "state a number that follows". Each note's voice
+        figure is recomputed here from the allowance and the configured rate, which is the only reason
+        it is safe to put a number in front of a customer: if either moves, this fails rather than the
+        copy quietly becoming false.
+        """
+        note = _by_id()[plan_id].usage_note
+        assert stripe_svc._voice_minutes_note(_ALLOWANCE_FOR_NOTE[plan_id]) in note
+
+    @pytest.mark.parametrize("plan_id", sorted(PERSONAL_PRODUCT_IDS))
+    def test_no_note_quotes_a_chat_turn_count(self, plan_id):
+        """Voice carries a figure; chat deliberately does not.
+
+        Not for want of an allowance to quote: a free window funds about 12 chat turns on Flash-Lite
+        and a Plus window about 22 on Flash, because Plus buys a dearer model as well as a larger
+        allowance. Printing both would invite a comparison that understates Plus by most of what it
+        sells, and there is no honest way to answer it in one sentence. Open Question 4.
         """
         note = _by_id()[plan_id].usage_note.lower()
-        for unit in ("turn", "minute", "message", "credit"):
-            assert (
-                unit not in note
-            ), f"{plan_id} states a {unit} count that nothing enforces until Phase 3: {note!r}"
+        for unit in ("turn", "message", "credit", "token"):
+            assert unit not in note, f"{plan_id} quotes a {unit} count: {note!r}"
+
+    def test_a_voice_figure_is_rounded_down_rather_than_up(self):
+        """A learner will test this with a stopwatch, so it has to be a floor.
+
+        2.5 minutes rendering as "about 3" would overstate the free allowance by 20%, which is exactly
+        the size of error that turns a reasonable limit into a complaint.
+        """
+        assert "2.5" in stripe_svc._voice_minutes_note(500)
+        assert stripe_svc._voice_minutes_note(3_580) == stripe_svc._voice_minutes_note(3_400)
 
 
 # ---------------------------------------------------------------------------
