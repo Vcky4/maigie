@@ -87,9 +87,14 @@ PLUS_TIERS = frozenset({"PREMIUM_MONTHLY"})
 # Charged units per 5-hour window. Phase 3 introduces the window itself and repoints
 # `credit_consumption_service` at `Entitlement.window_allowance` in place of `CREDIT_LIMITS[tier]`;
 # the numbers live here because the allowance is a property of the entitlement, not of the meter.
+# `WINDOW_ALLOWANCE_PASS_5H` is 2_000, down from 3_000, and it moved because the *monthly price*
+# moved. At $0.99 for 3 000 units a pass cost $0.00025/unit while the $9.99 subscription cost
+# $0.00045/unit — the value product was the worst deal per unit, and a learner doing arithmetic
+# would buy passes forever. The ladder now runs 5h $0.000375 > 7d $0.000348 > monthly $0.000249,
+# which is the intended order: impulse buys cost most per unit. See §6.4.
 WINDOW_ALLOWANCE_FREE = 500
 WINDOW_ALLOWANCE_PLUS = 4_000
-WINDOW_ALLOWANCE_PASS_5H = 3_000
+WINDOW_ALLOWANCE_PASS_5H = 2_000
 WINDOW_ALLOWANCE_PASS_7D = 4_000
 
 # Keyed by the catalogue product id a pass was bought as, so Phase 4 adds a pass product by adding
@@ -103,9 +108,16 @@ WINDOW_ALLOWANCE_BY_PASS_PRODUCT: dict[str, int] = {
 #
 # A 5-hour tumbling window permits up to 4.8 windows a day, so monthly exposure is 144× the window
 # allowance and no window figure is simultaneously generous enough for one session and bounded enough
-# for a month. The backstop is set at ~7.5 Plus windows a month, far above what studying reaches: two
+# for a month. The backstop is set at ~9 Plus windows a month, far above what studying reaches: two
 # windows a day for twenty days is forty windows, but a typical window consumes well under its
 # allowance, so this binds only on sustained maximal draw.
+#
+# `MONTHLY_BACKSTOP_PLUS` is 36_000, raised from 30_000 when the price went to $9.99. **A price rise
+# that arrives with a larger allowance is defensible to a learner; a bare one is not** — and the
+# arithmetic requires it too, or the subscription costs more per unit than a pass (see the note above
+# `WINDOW_ALLOWANCE_PASS_5H`). 36 000 units is roughly 1 200 Flash-Lite chat turns a month, about 40
+# a day, which is generous rather than nominally so. Floor margin at the ceiling is 60% on units, or
+# 46% once the 60 included voice minutes are counted with them.
 #
 # It is not shown in the UI, not in the marketing, and not in `GET /billing/usage` until a learner is
 # within 20% of it. Experientially there is no monthly limit; financially there is a bound.
@@ -115,7 +127,7 @@ WINDOW_ALLOWANCE_BY_PASS_PRODUCT: dict[str, int] = {
 # then the pass branch reports `None` and the meter reads it as unbounded, which is correct: nothing
 # can hold a pass yet.
 MONTHLY_BACKSTOP_FREE = 5_000
-MONTHLY_BACKSTOP_PLUS = 30_000
+MONTHLY_BACKSTOP_PLUS = 36_000
 
 
 # ===========================================================================

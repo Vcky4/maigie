@@ -215,8 +215,14 @@ class TestWindowAllowance:
 
     def test_five_hour_pass_carries_its_own_allowance(self):
         """$0.99 buys full capabilities and a bounded amount of the expensive ones, not a
-        subscriber's allowance. §6.1 is explicit that the two are different promises."""
-        assert compose(active_pass=A_PASS).window_allowance == 3_000
+        subscriber's allowance. §6.1 is explicit that the two are different promises.
+
+        2 000 rather than 3 000 since the subscription went to $9.99: the pass allowance is
+        set by the *ladder*, not in isolation, and at 3 000 units a $0.99 pass was cheaper
+        per unit than the subscription. `test_the_subscription_is_the_best_value_per_unit`
+        in `test_subscription_catalog.py` is the invariant that governs this number.
+        """
+        assert compose(active_pass=A_PASS).window_allowance == 2_000
 
     def test_seven_day_pass(self):
         seven_day = svc.ActivePass(pass_id="p2", product_id="plus_pass_7d", expires_at=PASS_ENDS)
@@ -227,7 +233,11 @@ class TestWindowAllowance:
         largest allowance by default. Under-granting is a support ticket; over-granting is COGS.
         """
         mystery = svc.ActivePass(pass_id="p3", product_id="plus_pass_30d", expires_at=PASS_ENDS)
-        assert compose(active_pass=mystery).window_allowance == 3_000
+        # Asserted against the map's minimum rather than a literal, so adding a cheaper pass
+        # product cannot leave this test passing while the fallback silently over-grants.
+        assert compose(active_pass=mystery).window_allowance == min(
+            svc.WINDOW_ALLOWANCE_BY_PASS_PRODUCT.values()
+        )
 
 
 # ---------------------------------------------------------------------------

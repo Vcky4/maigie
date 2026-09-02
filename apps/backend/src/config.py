@@ -217,16 +217,27 @@ class Settings(BaseSettings):
     # Space-scoped and deliberately unchanged at 7.
     TRIAL_DAYS_CIRCLE_PLAN: int = 7
     # Catalog prices (cents, USD). Source of truth for `GET /plans/catalog`.
-    # Personal: 5-hour pass $0.99, 7-day pass $2.49, Plus $4.99/mo.
+    # Personal: 5-hour pass $0.99, 7-day pass $3.99, Plus $9.99/mo.
     # Space-scoped: Circle Plan $14.99/mo, Plus Seat add-on $4.99/seat/mo.
     #
-    # `PRICE_CENTS_PLUS_MONTHLY` stays at 499. A one-cent rise would require a Stripe
-    # price migration, a mandatory 7-day Google Play notice, and on Apple an explicit
-    # consent prompt whose non-responders are cancelled at renewal — real churn for
-    # nothing.
+    # `PRICE_CENTS_PLUS_MONTHLY` was 499 for four revisions, held there by one argument:
+    # that raising it would force a Stripe price migration, a mandatory 7-day Google Play
+    # notice, and on Apple an explicit consent prompt whose non-responders are cancelled at
+    # renewal. **All three of those costs are borne by existing subscribers, and there are
+    # none.** Phase 2b counted zero Stripe subscription ids, zero Paystack codes and zero
+    # Play tokens, so this is a new price rather than a price change, and it costs nothing.
+    #
+    # It stops costing nothing the moment one person subscribes, which is why it moved now.
+    # At $4.99 Maigie was the cheapest thing in its category by 2× against ChatGPT Plus at
+    # $20 — a signal of "toy" rather than "value", against a paid case that is specifically
+    # not cheap AI access. See MAIGIE_PLUS_COMMERCIAL_PLAN.md §6.1.
+    #
+    # The allowances moved with the price, in `entitlement_service`: raising the price
+    # without raising the allowance would have made the subscription cost *more per unit*
+    # than a $0.99 pass, inverting the value ladder. Do not change one without the other.
     PRICE_CENTS_PLUS_PASS_5H: int = 99
-    PRICE_CENTS_PLUS_PASS_7D: int = 249
-    PRICE_CENTS_PLUS_MONTHLY: int = 499
+    PRICE_CENTS_PLUS_PASS_7D: int = 399
+    PRICE_CENTS_PLUS_MONTHLY: int = 999
     # DEPRECATED alongside `STRIPE_PRICE_ID_YEARLY`: retained for grandfathered
     # subscribers' billing records, excluded from the catalog.
     PRICE_CENTS_PLUS_YEARLY: int = 3900
@@ -237,16 +248,29 @@ class Settings(BaseSettings):
     # --- Paystack (Nigeria) ---
     PAYSTACK_SECRET_KEY: str = ""
     PAYSTACK_PUBLIC_KEY: str = ""
-    # NGN prices in kobo. Set for Nigeria, not converted from USD — at FX parity $4.99 is about
-    # ₦6 900, which would put Maigie Plus above Netflix Standard for a Nigerian student. See
-    # MAIGIE_PLUS_COMMERCIAL_PLAN.md §6.8.
+    # NGN prices in kobo. Set for Nigeria, not converted from USD — at FX parity the $9.99 list is
+    # about ₦13 800, twice Netflix Standard, for a study tool whose nearest substitute is free
+    # Gemini on the same phone. See MAIGIE_PLUS_COMMERCIAL_PLAN.md §6.8.
+    #
+    # **These did not move when the USD prices rose**, and the widening ratio is correct rather than
+    # a mistake to reconcile: a regional price is set against local substitutes, and Spotify at
+    # ₦1 600 and Netflix Mobile at ₦2 500 did not change. The NGN ladder is now 17–27% of USD list
+    # instead of 35–52% because the US price was corrected upward, not because Nigeria was
+    # discounted downward.
     #
     # All three sit deliberately **under ₦2 500**, which is where Paystack's flat ₦100 fee starts
     # applying on top of the 1.5%. Pricing the subscription at ₦2 500 would turn a ₦36 fee into
     # ₦137 for one naira of extra revenue; at ₦900 the flat fee would have been 14% of a pass. Do
     # not round any of these up without re-reading that.
+    #
+    # `PRICE_NGN_PLUS_PASS_7D` was 180_000 (₦1 800) and is 150_000 (₦1 500). ₦1 800 was 75% of the
+    # monthly price for 23% of the duration, which reads fine as a price ladder and is why it
+    # survived four revisions — but allowances are what cost money, and once NGN allowances are
+    # derived from NGN net revenue it forced the monthly to be ~4× more generous per day at 1.33×
+    # the price. **Nothing overrides a wrong amount on a one-off charge**: for a subscription the
+    # Paystack plan supplies the amount, but a pass charge sends this value.
     PRICE_NGN_PLUS_PASS_5H: int = 70_000  # ₦700
-    PRICE_NGN_PLUS_PASS_7D: int = 180_000  # ₦1 800
+    PRICE_NGN_PLUS_PASS_7D: int = 150_000  # ₦1 500
     PRICE_NGN_PLUS_MONTHLY: int = 240_000  # ₦2 400
     # Plan codes (create plans in Paystack Dashboard, amounts in NGN)
     PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY: str = ""

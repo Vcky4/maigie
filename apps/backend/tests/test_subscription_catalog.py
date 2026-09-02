@@ -118,19 +118,68 @@ class TestCataloguePrices:
         cfg = get_settings()
         by_id = _by_id()
         assert by_id["plus_pass_5h"].price_cents == cfg.PRICE_CENTS_PLUS_PASS_5H == 99
-        assert by_id["plus_pass_7d"].price_cents == cfg.PRICE_CENTS_PLUS_PASS_7D == 249
-        assert by_id["plus_monthly"].price_cents == cfg.PRICE_CENTS_PLUS_MONTHLY == 499
+        assert by_id["plus_pass_7d"].price_cents == cfg.PRICE_CENTS_PLUS_PASS_7D == 399
+        assert by_id["plus_monthly"].price_cents == cfg.PRICE_CENTS_PLUS_MONTHLY == 999
         assert by_id["free"].price_cents == 0
 
-    def test_the_subscription_price_has_not_moved(self):
-        """$4.99, not $5.00, and pinned here on purpose.
+    def test_the_subscription_price_is_pinned_at_999(self):
+        """$9.99, raised from $4.99 while it was still free to do.
 
-        A one-cent rise costs a Stripe price migration, a mandatory 7-day Google Play
-        notice, and on Apple an explicit consent prompt whose non-responders are cancelled
-        at renewal. Real churn for a rounding difference. Anyone who changes this number
-        should have to change this test and read this comment.
+        The old version of this test pinned 499 and argued that any rise costs a Stripe
+        price migration, a mandatory 7-day Google Play notice, and on Apple a consent
+        prompt whose non-responders are cancelled at renewal. **Every one of those costs
+        is borne by an existing subscriber, and the count came back zero** — no Stripe
+        subscription ids, no Paystack codes, no Play tokens. So this was a new price, not
+        a price change, and it cost nothing.
+
+        It will not be free next time. Anyone raising this again is doing it to people who
+        are paying us, and owes them the notice periods the old comment described.
         """
-        assert get_settings().PRICE_CENTS_PLUS_MONTHLY == 499
+        assert get_settings().PRICE_CENTS_PLUS_MONTHLY == 999
+
+    def test_the_subscription_is_the_best_value_per_unit(self):
+        """The invariant the price rise nearly broke, and the reason the allowances moved
+        with it.
+
+        A price is only half of a ladder — the other half is what the price buys. At $9.99
+        for the old 30 000-unit backstop the subscription cost more per unit than a $0.99
+        pass, which makes the value product the worst deal and hands anyone doing
+        arithmetic a reason to buy passes forever. Raising a price without raising its
+        allowance is not a pricing change, it is a ladder inversion.
+
+        This asserts the ordering rather than the numbers, so a future price or allowance
+        change is free to move both as long as it keeps them consistent.
+        """
+        by_id = _by_id()
+        per_unit_5h = (
+            by_id["plus_pass_5h"].price_cents / entitlement_service.WINDOW_ALLOWANCE_PASS_5H
+        )
+        per_unit_7d = (
+            by_id["plus_pass_7d"].price_cents / entitlement_service.WINDOW_ALLOWANCE_PASS_7D
+        )
+        per_unit_month = (
+            by_id["plus_monthly"].price_cents / entitlement_service.MONTHLY_BACKSTOP_PLUS
+        )
+        assert per_unit_5h > per_unit_month, (
+            "the 5-hour pass must cost more per unit than the subscription, or the "
+            "subscription is the wrong choice for everyone"
+        )
+        assert per_unit_7d > per_unit_month
+
+    def test_stacking_passes_never_beats_the_subscription(self):
+        """Buying a month's worth of units as passes must cost more than the month.
+
+        The per-day ladder below and the per-unit ladder above can both hold while this
+        one fails, because this compares *quantity bought* rather than rate: enough
+        5-hour passes to match the monthly backstop.
+        """
+        by_id = _by_id()
+        passes_needed = (
+            entitlement_service.MONTHLY_BACKSTOP_PLUS / entitlement_service.WINDOW_ALLOWANCE_PASS_5H
+        )
+        assert passes_needed * by_id["plus_pass_5h"].price_cents > (
+            by_id["plus_monthly"].price_cents
+        )
 
     def test_there_is_no_pass_and_subscription_arbitrage(self):
         """The per-day ladder has to run one way: impulse dearest, subscription cheapest.
