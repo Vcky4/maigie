@@ -14,8 +14,12 @@ from src.domains.intelligence.reasoning.llm.registry import LlmTask, default_mod
 @pytest.mark.parametrize(
     "model_name,input_t,output_t,expected_min,expected_max",
     [
-        # 1M in + 1M out at listed rate should land on exact sum for exact ids
-        ("gemini-3.5-flash", 1_000_000, 1_000_000, 0.50 + 3.00, 0.50 + 3.00),
+        # 1M in + 1M out at listed rate should land on exact sum for exact ids.
+        #
+        # `gemini-3.5-flash` was asserted at 0.50 + 3.00 here, matching a table that was wrong.
+        # Published rates are $1.50 / $9.00, so the meter under-stated the cost of the model Plus
+        # learners use by 3× and this test agreed with it — Phase 0 Question 3.
+        ("gemini-3.5-flash", 1_000_000, 1_000_000, 1.50 + 9.00, 1.50 + 9.00),
         ("gemini-3.1-flash-lite", 1_000_000, 1_000_000, 0.25 + 1.50, 0.25 + 1.50),
         ("gemini-embedding-001", 1_000_000, 0, 0.15, 0.15),
     ],
@@ -27,7 +31,7 @@ def test_calculate_ai_cost_exact_models(model_name, input_t, output_t, expected_
 
 def test_calculate_ai_cost_models_prefix_stripped():
     cost = calculate_ai_cost(1_000_000, 0, model_name="models/gemini-3.5-flash")
-    assert abs(cost - 0.50) < 1e-9
+    assert abs(cost - 1.50) < 1e-9
 
 
 def test_calculate_ai_cost_none_model_uses_registry_default():

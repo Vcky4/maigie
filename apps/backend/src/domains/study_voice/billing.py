@@ -18,8 +18,18 @@ logic is, because the eight `GEMINI_LIVE_*` settings look self-explanatory and a
 
 All figures here are **pre-multiplier**. `consume_credits` applies `TOKEN_MULTIPLIER` itself, so a caller
 passing 100 credits charges 20. That is the existing convention for every other operation and voice
-follows it rather than being special — but it does mean `GEMINI_LIVE_CREDITS_PER_MINUTE = 100` bills 20
-effective credits per minute, which is a pricing question flagged in the design document, not a bug here.
+follows it rather than being special.
+
+**The rate itself was the bug, and this docstring used to say otherwise.** It read: "it does mean
+`GEMINI_LIVE_CREDITS_PER_MINUTE = 100` bills 20 effective credits per minute, which is a pricing question
+flagged in the design document, not a bug here." The question was never answered, and 100 priced a voice
+minute as though it were 100 tokens of text when it costs about what 11 400 tokens cost — so a free
+learner, under a 5 000/day cap and with no tier gate anywhere in `study_voice`, could run roughly 250
+minutes of live voice a day at around $170/month to us and nothing to them. The rate is now 10 000; see
+`Settings.GEMINI_LIVE_CREDITS_PER_MINUTE` for the arithmetic.
+
+Worth keeping as a lesson about where cost bugs hide: nothing was broken, no test failed, and the comment
+that noticed the problem also gave the reader permission to move on.
 """
 
 from __future__ import annotations

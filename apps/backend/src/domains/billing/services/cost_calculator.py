@@ -26,11 +26,25 @@ GEMINI_15_FLASH_INPUT_COST_PER_MILLION = 0.075
 GEMINI_15_FLASH_OUTPUT_COST_PER_MILLION = 0.30
 
 # USD per 1M tokens (input, output).
+#
+# Verified against published rates 2026-09-01 — Phase 0 Question 3 of
+# MAIGIE_PLUS_COMMERCIAL_PLAN.md, which gates every allowance number in Phase 3 because a meter
+# that under-states cost prices the whole product wrong.
+#
+# `gemini-3.5-flash` was `(0.50, 3.00)`. It is $1.50 / $9.00, so this table under-stated the cost
+# of the model **Plus learners actually use** by 3× on both sides. The same wrong pair was in
+# `intelligence.reasoning.llm.cost_tracker.PROVIDER_PRICING`; two tables, one number, both wrong.
+# `gemini-3.1-flash-lite` was already right, which is what made the other look plausible.
 _EXACT_MODEL_PRICING: dict[str, tuple[float, float]] = {
     # Current models
-    "gemini-3.5-flash": (0.50, 3.00),
+    "gemini-3.5-flash": (1.50, 9.00),
     "gemini-3.1-flash-lite": (0.25, 1.50),
     "gemini-embedding-001": (0.15, 0.0),
+    # Live (voice). Audio tokens, not text — roughly $3.00/1M in and $12.00/1M out, which at the
+    # ~1 500 audio tokens per minute per direction that native audio streams works out at about
+    # $0.023 per conversational minute. `study_voice.billing` prices a voice minute from that
+    # figure rather than from these rates directly, because voice is billed by time.
+    "gemini-3.1-flash-live-preview": (3.00, 12.00),
     # Legacy, kept for historical cost attribution
     "gemini-3-flash-preview": (0.50, 3.00),
     "gemini-2.5-flash": (0.30, 2.50),
@@ -54,7 +68,10 @@ PREMIUM_TOKEN_VALUE_PER_MILLION = 10.0
 
 @lru_cache(maxsize=1)
 def _default_model() -> str:
-    from src.domains.intelligence.reasoning.llm.registry import LlmTask, default_model_for
+    from src.domains.intelligence.reasoning.llm.registry import (
+        LlmTask,
+        default_model_for,
+    )
 
     return default_model_for(LlmTask.CHAT_DEFAULT)
 

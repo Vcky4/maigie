@@ -42,7 +42,7 @@ def test_cost_is_not_zero_for_real_usage():
     cost = cc.calculate_ai_cost(
         input_tokens=1_000_000, output_tokens=1_000_000, model_name="gemini-3.5-flash"
     )
-    assert cost == pytest.approx(0.50 + 3.00)
+    assert cost == pytest.approx(1.50 + 9.00)
 
 
 def test_zero_tokens_costs_nothing():
@@ -52,9 +52,10 @@ def test_zero_tokens_costs_nothing():
 @pytest.mark.parametrize(
     "model,expected",
     [
-        ("gemini-3.5-flash", (0.50, 3.00)),
-        ("models/gemini-3.5-flash", (0.50, 3.00)),
-        ("  GEMINI-3.5-FLASH  ", (0.50, 3.00)),
+        # $1.50 / $9.00, corrected in Phase 0 — the table said 0.50 / 3.00 and this agreed with it.
+        ("gemini-3.5-flash", (1.50, 9.00)),
+        ("models/gemini-3.5-flash", (1.50, 9.00)),
+        ("  GEMINI-3.5-FLASH  ", (1.50, 9.00)),
         ("gemini-3.1-flash-lite", (0.25, 1.50)),
         ("gemini-embedding-001", (0.15, 0.0)),
         ("text-embedding-anything", (0.15, 0.0)),
@@ -179,7 +180,13 @@ def test_log_admin_action_signature_matches_its_caller():
     ``resource_type``, ``resource_id`` and ``details`` were silently swallowed.
     """
     params = inspect.signature(audit_service.log_admin_action).parameters
-    for expected in ("admin_user_id", "action", "resource_type", "resource_id", "details"):
+    for expected in (
+        "admin_user_id",
+        "action",
+        "resource_type",
+        "resource_id",
+        "details",
+    ):
         assert expected in params
 
 

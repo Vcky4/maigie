@@ -78,9 +78,10 @@ class TestComputeCost:
 
     def test_known_model_computes_correctly(self, tracker):
         """Cost for a known model uses the pricing formula."""
-        # gemini:gemini-3.5-flash has rates (0.50e-6, 3.00e-6)
+        # gemini:gemini-3.5-flash has rates (1.50e-6, 9.00e-6). Corrected in Phase 0 — the table
+        # said (0.50e-6, 3.00e-6) and this test asserted the same wrong pair.
         cost = tracker.compute_cost("gemini", "gemini-3.5-flash", 1000, 500)
-        expected = round((1000 * 0.50e-6) + (500 * 3.00e-6), 6)
+        expected = round((1000 * 1.50e-6) + (500 * 9.00e-6), 6)
         assert cost == expected
 
     def test_openai_model_computes_correctly(self, tracker):
@@ -177,7 +178,7 @@ class TestRecord:
         )
         stored = session.added[0].cost_usd
         assert isinstance(stored, Decimal)
-        assert stored == Decimal(str(round(10 * 0.50e-6, 6)))
+        assert stored == Decimal(str(round(10 * 1.50e-6, 6)))
 
     @pytest.mark.asyncio
     async def test_record_returns_cost_record(self, tracker):
@@ -215,7 +216,7 @@ class TestRecord:
         assert result.input_tokens == 0
         assert result.output_tokens == 50
         # Cost is computed with 0 input tokens but 50 output tokens
-        expected_cost = round(50 * 3.00e-6, 6)
+        expected_cost = round(50 * 9.00e-6, 6)
         assert result.cost_usd == expected_cost
 
     @pytest.mark.asyncio

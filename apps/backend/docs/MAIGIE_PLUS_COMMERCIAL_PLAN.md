@@ -10,6 +10,8 @@
 >
 > **iOS ships with Android.** Open Question 6 is resolved: there is no Android-first phase and the Apple work in Phase 5 does not defer. §5.6 and Phase 5 are rewritten accordingly, and the store-product creation timeline — the thing with the longest external lead time in this plan — is now stated in one place, §5.7.
 >
+> **Phase 0 Question 3 is answered and the live money leak is closed.** The rate card was wrong: `gemini-3.5-flash` — the model Plus learners use — was priced at $0.50/$3.00 against a published $1.50/$9.00, **3× low**, in *two* tables, with five tests agreeing with it. And live voice was priced at 100 credits/minute for something that costs what ~11 400 text tokens cost, so a free learner under a 5 000/day cap and no tier gate could run **250 minutes of Gemini Live a day at roughly $170/month, at zero revenue**. Both corrected. **Every COGS figure in §6.7 is now understated by 3× and needs recomputing before it is quoted** — the direction of the error strengthens the case for the `max_tokens` audit rather than weakening it. Phase 2b is complete: the NGN rail is open.
+>
 > **The subscriber count is in, and it is stronger than the claim it was checking: there is no payment relationship anywhere in the database.** Zero Stripe subscription ids, zero Paystack codes, zero Play tokens, zero users on a retired tier, zero completed credit purchases; 1 205 `FREE` users and one hand-set `PREMIUM_MONTHLY` with no subscription id against it. Recorded in Phase 2b with the read-only script that produced it, so it is re-runnable rather than remembered. `LEGACY_PLUS_TIERS` is therefore deleted again — and this time the writers were narrowed in the same commit, because the resolver and the writers were only ever wrong apart.
 >
 > **Phase 2a is done: the four findings below are closed, plus three of the smaller ones.** All three webhooks fail closed and are covered by a new `tests/test_billing_webhook_auth.py`; `LEGACY_PLUS_TIERS` is restored so the resolver and the writers agree; `schedule_reminders` reads the one resolver, so a trialling learner gets reminders; and a subscription now expires lazily on read like a pass and a trial. Remaining in Phase 2a: the `usage_note` figures, the drift-10 wording, and memoising `resolve()`. **587 focused tests pass; the full suite's 17 failures are pre-existing and byte-identical before and after** (verified by stashing). `openapi.json` regenerated for `PlanItem.purchasable` and the two pass ids — **the clients need a types regen.**
@@ -994,7 +996,19 @@ Question 1 is worse than §11 described. The 8 192 budget is not three call site
 
 **Scope correction: Phase 0 does not block everything.** Revision 3's heading said it did, which is part of why nothing moved — it made three unowned research questions look like a gate on the whole plan, and they are not. Nothing in Phase 2, 2b, 4, 4b or 5 depends on the rate card: entitlement resolution, the Paystack port, pass lifecycle, points and the purchase rails are all correct whatever a token costs. What Phase 0 genuinely blocks is **allowance tuning** — the window sizes in §6.3, the COGS and contribution figures in §6.7 and §6.8, and any decision that the free tier is affordable.
 
-- [ ] **Answer Question 3 first.** Verify `_EXACT_MODEL_PRICING:26-38` against the live Gemini rate card. Five minutes of work; every COGS figure in this document moves up to ~3× on the answer. **No allowance in Phase 3 is tuned until this is answered** — ship Phase 3 with today's effective limits carried across to the new window mechanism, and tune once the rate card is trustworthy.
+- [x] **Question 3 answered, 2026-09-01: the rate card was wrong, in the direction that under-states cost.**
+
+  | Model | Table said | Published | Verdict |
+  | --- | --- | --- | --- |
+  | `gemini-3.5-flash` (what Plus uses) | $0.50 / $3.00 | **$1.50 / $9.00** | **wrong, 3× low on both sides** |
+  | `gemini-3.1-flash-lite` (what Free uses) | $0.25 / $1.50 | $0.25 / $1.50 | correct |
+
+  Checked against several independent trackers. The correct entry for Flash-Lite is what made the wrong one look plausible — one right row is enough to stop a reader checking the next.
+
+  **The same wrong pair was in two tables**: `cost_calculator._EXACT_MODEL_PRICING` and `intelligence.reasoning.llm.cost_tracker.PROVIDER_PRICING`, the two cost paths §6.5 records as hanging off the chat path only. Both corrected, and five tests that asserted the wrong figures updated — they were agreeing with the table rather than checking it.
+
+  **Consequence for this document: every COGS figure that used the Plus model is understated by 3×, and the §6.7 tables have not yet been recomputed.** They are now conservative in the wrong direction. Nigeria's contribution at 10 000 MAU was already negative without the §6.5 fixes; correcting the rate card makes the case for the `max_tokens` audit and the context trim stronger, not weaker. Recompute before quoting §6.7 at anyone.
+  Added while confirming: `gemini-3.1-flash-live-preview` at $3.00/$12.00 per 1M audio tokens, which is where the voice figure below comes from.
 - [ ] Answer Questions 1 and 2 (the `max_tokens` default and the chat context size). Both are pure cost work, invisible to learners, and neither blocks a phase — but §6.8's Nigeria economics are negative without them, so they block *launch* in the launch market. Assign an owner; that, and not the analysis, is what has been missing.
 - [ ] Answer Open Question 10 (points price for the 7-day pass) before Phase 4b. Unlike a store price it is cheap to change later, so it should not block anything else.
 
@@ -1121,7 +1135,17 @@ Checklist:
 
 **Runs first among the implementation phases.** The free-voice exposure in §6.2 is live and costs roughly $150/month per free user who finds it. The one-line mitigation — raise the voice price — can ship ahead of everything else in this phase.
 
-- [ ] **Immediate:** reprice live voice against measured cost. This is the single highest-value line in the plan and does not depend on anything else in it.
+- [x] **Live voice repriced, 2026-09-01. `GEMINI_LIVE_CREDITS_PER_MINUTE: 100.0 → 10_000.0`.**
+
+  The arithmetic: a conversational minute of `gemini-3.1-flash-live-preview` costs about **$0.023** ($0.005/min audio in, $0.018/min out). A text token on `gemini-3.5-flash` at the now-verified $1.50/$9.00 costs about **$0.0000020** at a realistic 8 000-in / 600-out mix. So a voice minute costs what **~11 400 text tokens** cost, and was billed as 100 — **under-priced by about 100×**. 10 000 is set slightly under the arithmetic deliberately: err towards the learner, keep the order of magnitude.
+
+  What it was costing: free tier is 5 000 charged credits/day and `study_voice` has no tier gate at all (drift 5), so at 20 effective credits/minute a free learner could run **250 minutes of live voice a day** — roughly $5.75/day, **$170/month, at zero revenue**. At the corrected rate that is ~2.5 minutes/day, and a `PREMIUM_MONTHLY` allowance is ~150 minutes/month, which is close to what $4.99 can actually fund.
+
+  `GEMINI_LIVE_MIN_SESSION_CREDITS: 500 → 10_000`, because 500 was five minutes at the old rate and would have been **three seconds** at the new one — the wall-clock minimum charge would have silently stopped existing, and it doubles as the pre-start check, so too low also lets a learner begin a session they cannot afford a minute of.
+
+  **How this survived: nothing was broken and no test looked at the number.** `study_voice/billing.py`'s docstring described the 100 figure and called it "a pricing question flagged in the design document, not a bug here" — a comment that noticed the problem and gave the reader permission to move on. Two tests now check the *configured* rate rather than the arithmetic: one asserts it stays within an order of magnitude of the cost basis, one that the session floor is at least a minute. Both deliberately loose, to catch drift rather than pin a figure Google will move.
+
+  **This is a real product change and it is not a tuning decision, so it is not gated on Phase 0's allowance freeze** — the meter was lying, and the freeze exists to stop allowances being set against a lie. Free voice goes from effectively unlimited to a taster. Worth a deliberate look before launch: ~2.5 min/day may be too tight to demonstrate the feature, and the right fix is a larger free allowance set knowingly, not a meter that under-charges by 100×.
 - [ ] Migration `063` part one: `usageWindowStartedAt`, `usageWindowUnitsUsed`, `usageMonthStartedAt`, `usageMonthUnitsUsed` on `User`; drop the nine retired credit columns.
 - [ ] Introduce the cost-denominated `usage_unit` (§6.2). Deduct **measured** COGS from `cost_calculator.py` rather than a fixed per-operation table. Delete `TOKEN_MULTIPLIER`, `apply_token_multiplier`, `CREDIT_COSTS` and `CREDIT_LIMITS`.
 - [ ] Rewrite the **non-space path** of `check_credit_availability` and `consume_credits` against window + monthly backstop. Delete `initialize_user_credits`, `reset_daily_credits_if_needed`, `ensure_credit_period`, `reset_credits_for_period_start`. **Leave the `space_id` early-return at `:334-343` and the space branch of `consume_credits` exactly as they are** — both return before any of the deleted machinery is reached, which is what makes this separable.

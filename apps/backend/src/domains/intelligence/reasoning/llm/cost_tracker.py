@@ -46,7 +46,16 @@ logger = logging.getLogger(__name__)
 # Format: "provider:model" -> (input_rate_per_token, output_rate_per_token)
 PROVIDER_PRICING: dict[str, tuple[float, float]] = {
     # Gemini (current)
-    "gemini:gemini-3.5-flash": (0.50e-6, 3.00e-6),
+    #
+    # `gemini-3.5-flash` was `(0.50e-6, 3.00e-6)` here and in
+    # `billing.services.cost_calculator._EXACT_MODEL_PRICING` — the same wrong number in two tables.
+    # Published rates are $1.50 / $9.00 per 1M, so both under-stated cost by 3×, and every COGS
+    # figure in MAIGIE_PLUS_COMMERCIAL_PLAN.md rested on them. Verified 2026-09-01 against several
+    # independent trackers; that check is Phase 0 Question 3 and it gates the Phase 3 allowances.
+    #
+    # `gemini-3.1-flash-lite` was already correct at $0.25 / $1.50, which is what made the other
+    # entry look plausible.
+    "gemini:gemini-3.5-flash": (1.50e-6, 9.00e-6),
     "gemini:gemini-3.1-flash-lite": (0.25e-6, 1.50e-6),
     # Gemini (legacy — kept for historical cost records)
     "gemini:gemini-2.5-flash": (0.30e-6, 2.50e-6),

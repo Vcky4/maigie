@@ -34,6 +34,55 @@ def settings(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# The rate itself
+# ---------------------------------------------------------------------------
+#
+# Everything below this section uses the fixed fixture above, deliberately: the arithmetic should not
+# move when pricing does. These two tests are the exception — they check the *real* configured rate,
+# because the defect Phase 0 found was not in the arithmetic. The arithmetic was correct and the rate
+# was wrong by about 100×, the module docstring said so and called it "a pricing question flagged in
+# the design document, not a bug here", and no test looked at the number.
+
+
+def test_a_voice_minute_is_priced_near_what_a_voice_minute_costs():
+    """The rate must stay within an order of magnitude of the provider bill.
+
+    A conversational minute of `gemini-3.1-flash-live-preview` costs about $0.023. A text token on
+    `gemini-3.5-flash` ($1.50/$9.00 per 1M) costs about $0.0000020 at a realistic 8 000-in / 600-out
+    mix, so a voice minute is worth roughly 11 400 credits if a credit is to mean one token of cost.
+    A rate of 100 made a free learner's daily cap worth 250 minutes of live voice at roughly
+    $170/month to us, and nothing failed.
+
+    Deliberately a loose band rather than an equality. The point is to catch a rate that has drifted
+    an order of magnitude away from its cost basis — which is what happened — not to pin a figure
+    that legitimately moves when Google reprices. Phase 3 replaces this with measured cost per
+    operation, at which point the band can go.
+    """
+    from src.config import get_settings
+
+    rate = float(get_settings().GEMINI_LIVE_CREDITS_PER_MINUTE)
+    assert 3_000 <= rate <= 40_000, (
+        f"GEMINI_LIVE_CREDITS_PER_MINUTE is {rate}, which is not within an order of magnitude of "
+        f"the ~11 400 credits a voice minute costs. If Google's pricing moved, move the band and "
+        f"say so; if this drifted, it is the 2026-09-01 defect returning."
+    )
+
+
+def test_the_session_floor_is_at_least_a_minute_of_voice():
+    """A floor below one minute is not a floor.
+
+    `GEMINI_LIVE_MIN_SESSION_CREDITS` was 500 against a rate of 100 — five minutes, which was
+    coherent. At the corrected rate the same 500 would have been three seconds, so the wall-clock
+    minimum charge would have silently stopped existing. It doubles as the pre-start availability
+    check, so too low also means a learner can begin a session they cannot afford a minute of.
+    """
+    from src.config import get_settings
+
+    cfg = get_settings()
+    assert cfg.GEMINI_LIVE_MIN_SESSION_CREDITS >= cfg.GEMINI_LIVE_CREDITS_PER_MINUTE
+
+
+# ---------------------------------------------------------------------------
 # Billing mode
 # ---------------------------------------------------------------------------
 
@@ -133,7 +182,11 @@ def test_the_snapshot_carries_what_settlement_needs():
     state.billable_seconds = 42.0
     state.consumed_credits = 60
     snapshot = state.snapshot()
-    assert (snapshot.billing_mode, snapshot.billable_seconds, snapshot.consumed_credits) == (
+    assert (
+        snapshot.billing_mode,
+        snapshot.billable_seconds,
+        snapshot.consumed_credits,
+    ) == (
         billing.BILLING_ACTIVE_AUDIO,
         42.0,
         60,
@@ -179,7 +232,11 @@ async def test_a_session_can_be_read_back_by_id():
     created = await session_store.create("user-1", system_instruction="brief", topic_id="t1")
     found = await session_store.get(created.session_id)
     assert found is not None
-    assert (found.user_id, found.topic_id, found.system_instruction) == ("user-1", "t1", "brief")
+    assert (found.user_id, found.topic_id, found.system_instruction) == (
+        "user-1",
+        "t1",
+        "brief",
+    )
 
 
 @pytest.mark.asyncio

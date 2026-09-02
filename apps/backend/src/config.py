@@ -358,8 +358,33 @@ class Settings(BaseSettings):
     )
 
     # --- Gemini Live (voice) — was scattered os.getenv reads; keep in Settings ---
-    GEMINI_LIVE_CREDITS_PER_MINUTE: float = 100.0
-    GEMINI_LIVE_MIN_SESSION_CREDITS: int = 500
+    #
+    #: Pre-multiplier credits charged per minute of billable voice. **Was 100.0**, which priced a
+    #: voice minute as if it were 100 tokens of text.
+    #:
+    #: A conversational minute of `gemini-3.1-flash-live-preview` costs about **$0.023** — roughly
+    #: $0.005/min of audio in and $0.018/min out. A token of text on the model Plus learners use
+    #: (`gemini-3.5-flash`, $1.50/$9.00 per 1M) costs about $0.0000020 at a realistic 8 000-in /
+    #: 600-out mix. So a voice minute costs what ~11 400 text tokens cost, and was billed as 100:
+    #: **under-priced by about 100×.**
+    #:
+    #: `study_voice/billing.py` had flagged this as "a pricing question flagged in the design
+    #: document, not a bug here" and nobody answered it. What it cost in the meantime: free tier is
+    #: 5 000 charged credits/day, so at 20 effective credits/minute a free learner could run **250
+    #: minutes of live voice per day** — about $5.75/day, $170/month, at zero revenue, with no tier
+    #: gate on `study_voice` at all.
+    #:
+    #: 10 000 is deliberately a little under the ~11 400 the arithmetic gives: the figure should
+    #: err towards the learner while remaining the right order of magnitude. At this rate a
+    #: `PREMIUM_MONTHLY` allowance of 300 000 charged credits is ~150 minutes of voice per month,
+    #: which is close to what $4.99 can actually fund, and a free learner gets ~2.5 minutes/day —
+    #: a taster rather than a service. Phase 3 replaces both caps with the §6.3 windows.
+    GEMINI_LIVE_CREDITS_PER_MINUTE: float = 10_000.0
+    #: Wall-clock session floor, pre-multiplier, charged at settlement for FREE sessions only. Was
+    #: 500, which at the corrected rate is three seconds — the floor has to be at least a minute or
+    #: it stops being a floor. Also the pre-start availability check, so it doubles as "can this
+    #: learner afford to begin at all".
+    GEMINI_LIVE_MIN_SESSION_CREDITS: int = 10_000
     GEMINI_LIVE_STANDBY_IDLE_SECONDS: float = 2.5
     GEMINI_LIVE_BILLING_TICK_SECONDS: float = 2.0
     GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK: int = 50
