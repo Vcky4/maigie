@@ -1,50 +1,39 @@
 # Maigie Plus Commercial Plan
 
-> Status: **Phases 1 and 2 done. Phase 0 open and verified open. The money path is reachable on Stripe and Google Play, and not on Paystack.**
+> Status: **Phases 0–2b done. Phase 3 part-done — live voice is repriced, the window is not built yet. No product is buyable by anyone.**
 >
-> **Revision 8 — the rate-card exposure is closed by construction, not by recomputation, and the Nigerian subscription was losing money.** Every margin in revisions 1–7 was quoted from *estimated per-operation COGS*, which is why one wrong rate-card entry propagated into every figure in §6.4, §6.7 and §6.8 and why revision 4 had to mark them all stale. **Decision Q ends that: COGS is quoted from the allowance cap, never from an operation estimate.** A unit is defined as $0.0001 of measured cost, so an allowance cap is already a dollar cap — a 3 000-unit pass cannot cost more than $0.30 to serve however wrong the rate card is, because the meter stops. The tables below are therefore rate-card-independent, and the "recompute before quoting" instruction that has been outstanding since revision 4 is satisfied by deriving rather than re-estimating.
+> Where the money path actually stands. The `billing` router is mounted and all three rails are reachable: Stripe, Google Play and — since Phase 2b — Paystack, which is the launch market's rail. **Entitlement is one resolver**: `entitlement_service.resolve` is the only thing that decides whether a learner is Plus. All three webhooks fail closed. **There is no payment relationship anywhere in the database** — zero Stripe subscription ids, zero Paystack codes, zero Play tokens, 1 205 `FREE` users and one hand-set `PREMIUM_MONTHLY` (Phase 2b, re-runnable via `scripts/count_legacy_commercial_state.py`). Nothing is grandfathered because there is nobody to grandfather.
 >
-> Three findings forced the rest of the revision. **The Nigerian Plus Monthly had a negative unit margin and nobody had multiplied it out**: ₦2 400 nets $1.61 blended while §6.4 put typical monthly COGS at $1.80, so the launch market's subscription lost $0.19 a sale — the NGN price was set from the market (correctly, §6.8) while its allowance was inherited from the USD product (incorrectly). **§6.8's free COGS contradicted §6.7's**: $460 against $940 at the same 10 000 MAU and the same 8% payer rate, for learners running identical models. At $940 the launch market's contribution is **+$58, not +$518**, and its margin 5%, not 42%. And **live voice, at 200 units/minute, was the whole reason ceiling COGS was unaffordable** at NGN prices.
+> **Two things block a learner paying us.** There is no rolling usage window yet — `CREDIT_LIMITS` still meters a monthly and a daily token cap, so no allowance in §6.3 is enforced (Phase 3). And there is no one-time checkout, so **no pass can be bought on any rail** (Phase 5), which is also why no store product exists yet. §5.7 is the provider-by-provider creation order and it has the longest external lead times in the plan.
 >
-> So: voice is unbundled from every allowance (§6.3), the monthly backstop drops 30 000 → 20 000 units, NGN allowances are derived from NGN net revenue rather than inherited, the 7-day pass moves ₦1 800 → ₦1 500 to open a real gap to the monthly, and a **₦5 500 four-month Term Pass** is added because a recurring card mandate is the wrong instrument in a market the plan itself describes as practised prepaid buyers. Result at 10 000 MAU: Nigeria **+$412 at 39%** against the honest +$58, global **+$1 270 at 56%** against +$754. §6.11 is the comparison.
+> **The commercial model, current as of revision 9.** Six personal products — Free, a 5-hour pass, a 7-day pass, Plus Monthly, an NGN-only 4-month Term Pass, and a 30-minute voice pack. Prices are set per market rather than converted (§6.8). Usage is a 5-hour rolling window denominated in **cost units**, one unit being $0.0001 of measured COGS, with live voice on its own counter (§6.3). **Decision Q is the rule that holds the economics together**: COGS is quoted from the allowance cap, never from a per-operation estimate — a cap denominated in dollars cannot be wrong about what it costs, however wrong the rate card is. **Decision R is the rule that stops the catalogue growing**: voice is the only top-up, because the pass ladder already is the top-up for everything metered.
 >
-> **What this does not fix, and it is the larger problem: absolute scale.** $412/month funds nobody. The margin question is now answered and the distribution question is not — at these margins Nigeria needs roughly 100 000 MAU to fund two engineers, and that is the number worth arguing about rather than whether the 7-day pass is ₦1 500 or ₦1 800. Every payer rate here remains unvalidated against zero payment history.
->
-> The `billing` router is mounted, the personal catalogue is the four new products, credit packs and rewarded ads are gone, and the trial is 3 days. **Entitlement is now one resolver**: `entitlement_service.resolve` is the only thing that decides whether a learner is Plus, `require_premium` is deleted, and the two defects the four disagreeing mechanisms were causing — retired tiers denied every capability while the meter granted them millions of credits (drift 10), and trials granted Plus features with free-tier models (drift 11) — are closed. Two blockers remain before this is a money path anyone can actually use: **`paystack_service` is Prisma-removed**, so the NGN rail — the launch market's rail — is still unreachable and its two routes are deliberately unmounted rather than serving 500s (Phase 2b, next); and there is still no way to buy a pass, which needs the one-time checkout in Phase 5.
->
-> **Phase 0 is unstarted, not merely unmarked.** Checked in code on 2026-09-01: `cost_calculator._EXACT_MODEL_PRICING:26` still prices `gemini-3.5-flash` at `(0.50, 3.00)` (Question 3), `ask_service.HISTORY_LIMIT:383` is still `12` (Question 2), and `narrative_cache.py:237` still passes `max_tokens=8192` — as does the `generate_content_json` default at `llm/__init__.py:136` (Question 1). The unticked boxes were accurate. Every COGS figure below still rests on an unverified rate card, so **no allowance is tuned in Phase 3 until Question 3 is answered.**
->
-> **The Paystack port is now Phase 2b**, an explicit phase with its own checklist, rather than a paragraph inside Phase 1's list of deliberate absences. It was a launch blocker recorded as prose, which is how launch blockers get missed.
->
-> **iOS ships with Android.** Open Question 6 is resolved: there is no Android-first phase and the Apple work in Phase 5 does not defer. §5.6 and Phase 5 are rewritten accordingly, and the store-product creation timeline — the thing with the longest external lead time in this plan — is now stated in one place, §5.7.
->
-> **Phase 0 Question 3 is answered and the live money leak is closed.** The rate card was wrong: `gemini-3.5-flash` — the model Plus learners use — was priced at $0.50/$3.00 against a published $1.50/$9.00, **3× low**, in *two* tables, with five tests agreeing with it. And live voice was priced at 100 credits/minute for something that costs what ~11 400 text tokens cost, so a free learner under a 5 000/day cap and no tier gate could run **250 minutes of Gemini Live a day at roughly $170/month, at zero revenue**. Both corrected. **Every COGS figure in §6.7 is now understated by 3× and needs recomputing before it is quoted** — the direction of the error strengthens the case for the `max_tokens` audit rather than weakening it. Phase 2b is complete: the NGN rail is open.
->
-> **The subscriber count is in, and it is stronger than the claim it was checking: there is no payment relationship anywhere in the database.** Zero Stripe subscription ids, zero Paystack codes, zero Play tokens, zero users on a retired tier, zero completed credit purchases; 1 205 `FREE` users and one hand-set `PREMIUM_MONTHLY` with no subscription id against it. Recorded in Phase 2b with the read-only script that produced it, so it is re-runnable rather than remembered. `LEGACY_PLUS_TIERS` is therefore deleted again — and this time the writers were narrowed in the same commit, because the resolver and the writers were only ever wrong apart.
->
-> **Phase 2a is closed, all eleven items.** All three webhooks fail closed and are covered by a new `tests/test_billing_webhook_auth.py`; `schedule_reminders` reads the one resolver, so a trialling learner gets reminders; a subscription expires lazily on read like a pass and a trial; `resolve()` is memoised per HTTP request by `EntitlementScopeMiddleware`, with websockets deliberately excluded because a `study_voice` relay must notice a pass expiring underneath it; and the `usage_note` counts are out until Phase 3 can honour them — checked rather than assumed, and `plus_monthly` turned out to be promising ~19× the voice minutes the live meter funds. Drift 10 is recorded as half-closed: the resolver half is done, the `CREDIT_LIMITS` half is dead weight that Phase 3 deletes. **4 057 tests pass; the full suite's 17 failures are pre-existing and byte-identical before and after** (verified by stashing). Their causes were sampled rather than assumed and are three, none of them billing: `path.read_text()` without `encoding=` in the test file itself, which cannot pass on a Windows cp1252 default against a source tree full of em-dashes; a `strftime` format string Windows rejects; and a genuine assertion failure in `test_goal_lifecycle`'s `{'extended': n}` counts. The first two are environment, the third is a real bug in goals and belongs to whoever owns that. `openapi.json` is unchanged by 2a's second half, so no client regen.
->
-> **Reviewed 2026-09-01, verdict NEEDS_CHANGES, and Phase 2a is the response.** Phases 1 and 2 were reviewed behaviourally against this plan. The entitlement collapse is structurally sound — `_compose` is pure, precedence is tested before `PlusPass` exists, the deletions are asserted rather than assumed — and **Decision F holds without qualification**: the diff over `learning_spaces/**`, `credit_consumption_service.py`, `test_circle_billing.py` and `test_seat_service.py` is empty, and in `feature_flags.py` only the personal branch moved. 177 tests pass, Ruff is clean, `openapi.json` is current. Four findings needed action and are now Phase 2a, which **runs before Phase 2b** because two of them are live defects rather than gaps:
->
-> 1. **Mounting the billing router mounted `webhooks.py` too, turning three unauthenticated endpoints live for the first time, and all three fail open.** `webhooks.py:40-42` parses an unverified Stripe body when `STRIPE_WEBHOOK_SECRET` is empty — and that handler writes `User.tier`, so an unset secret lets any caller grant themselves `PREMIUM_MONTHLY`. `:87` skips Paystack HMAC when the key is empty rather than refusing. `:113` verifies nothing on the Google Play RTDN endpoint under any configuration. All three swallow exceptions into a `200`. The notification work merged in the same range chose the opposite default for `RESEND_WEBHOOK_SECRET` and said so in a comment. **This is the most urgent item in the plan**, ahead of the voice repricing.
-> 2. **Grandfathering was dropped in one decider and kept in every writer.** `entitlement_service.PLUS_TIERS` resolves `PREMIUM_YEARLY` to `free`, while `stripe_service._price_id_to_tier:294-295` still writes it on renewals, `:975` uses it in the webhook handler, and `:70` states in prose that yearly subscribers "are grandfathered and keep renewing". A yearly renewal would be charged and entitled to nothing — a fail-open→fail-closed flip on a payer, since `_personal_tier_to_effective` previously mapped any non-FREE tier to `plus`. Two green tests encode opposite intentions.
-> 3. **A fifth entitlement decider arrived in the same range.** `schedule_reminders.py:78` gates on `tier != "FREE"`, admitting the five tiers the resolver denies and excluding the trialling and pass-holding learners it grants; its docstring cites `plus_yearly` as a live plan. It came in with the notification merge at `ecaa81b`, so a commercial policy decision shipped inside notification plumbing. It also enforces drift item 4's reminder gate early, with the wrong decider.
-> 4. **Subscription entitlement never expires while pass and trial do.** `_compose` grants `plus` on `PREMIUM_MONTHLY` without comparing `subscription_period_end` to now, though it already holds the value. Defensible only if webhooks are reliable, and the Paystack handler currently converts failures into a `200`.
->
-> Also recorded, lower severity: the catalogue advertises both passes with no purchase rail and no availability field on `PlanItem`; `CheckoutRequest.plan_id` omits the pass ids so the hand-written "a pass is not a subscription" refusal is unreachable behind a `422`, which is the exact failure the comment at `models.py:22` says the Literal exists to prevent; and every `usage_note` ships chat-turn and voice-minute promises derived from the rate card Phase 0 records as wrong by ~3×, enforced by nothing until Phase 3 — §1's rule pointing back at this plan for the first time.
->
-> **There are no paying subscribers, so nothing is grandfathered.** Confirmed as a product fact by the owner, to be confirmed against the database by the first item of Phase 2b. Consequences throughout: `LEGACY_PLUS_TIERS` is never written, `PREMIUM_YEARLY` is removed rather than carried, the retired `STUDY_CIRCLE_*` / `SQUAD_*` price and plan settings are deleted rather than kept for webhook archaeology, and `CreditPack` / `CreditPurchaseTransaction` are dropped rather than kept as read-only history. Store-side, the existing `plus-yearly` base plan and the three `credit_pack_*` consumables are deleted rather than left in place for RTDN lookups that can no longer arrive. New products are created clean; nothing is repurposed.
+> At 10 000 MAU the model returns **+$463 at 40% in Nigeria** and **+$1 340 at 56% globally** (§6.11). Contribution excludes infrastructure and salaries, so it is not profit. **The binding constraint is no longer pricing, it is distribution**: at these margins Nigeria needs on the order of 90 000 MAU to fund two engineers, and no further product would change that. Every payer rate in this document is a guess against zero payment history, and the first real number replaces all of them.
 >
 > Owners: Backend (catalogue, entitlement, usage windows, store verification) + Web client + Mobile client + Public site
 > Scope: the **personal** product catalogue, purchase rails on three surfaces, the pass activation model, the rolling usage window that replaces daily and monthly credit caps, the earned-points ledger that redeems into passes, and one entitlement resolver that every personal-scope gate reads.
 > **Out of scope: Learning Spaces, entirely.** Not the Space feature, not Circle Plan, not the Plus Seat add-on, not `SpaceMember.seat_tier`, not `seat_impl.py`, not `Space.credits`, not the space branch of `consume_credits`, not the space branch of `feature_flags.effective_tier_for_request`. Nothing in this plan reads or writes anything space-scoped. See Decision F.
 > Companion documents: [`../../../maigie-client/docs/PREPARE_API_INTEGRATION_PLAN.md`](../../../maigie-client/docs/PREPARE_API_INTEGRATION_PLAN.md) (§4 defers checkout to this document), [`../../../maigie-client/docs/REFLECT_API_INTEGRATION_PLAN.md`](../../../maigie-client/docs/REFLECT_API_INTEGRATION_PLAN.md) (Decision Z, the locked-read convention)
 > Source of authority for pricing intent: the Maigie Book — `business/ch36-pricing-philosophy`, `business/ch37-personal-learning`, `philosophy/ch04-product-principles`. Where this plan and the book disagree, the book wins and this plan is wrong. Decision N and §6.7 are derived from them directly.
-> Last reviewed: 2026-09-02 (**revision 8 — Decision Q: COGS is quoted from the allowance cap, never from an operation estimate, which closes the rate-card exposure that has hung over §6.4, §6.7 and §6.8 since revision 4 by construction rather than by recomputation. Live voice unbundled into its own allowance and removed from Free entirely; monthly backstop 30 000 → 20 000 units; NGN allowances derived from NGN net revenue after finding the Nigerian Plus Monthly had a negative unit margin; §6.8's free COGS reconciled against §6.7's, which takes the launch market's stated contribution from +$518 to +$58 before the fixes and +$412 after; 7-day pass ₦1 800 → ₦1 500; NGN-only ₦5 500 four-month Term Pass added as a fifth personal product; §6.11 is the side-by-side. §6.10 recorded as referenced three times and never written.** Revision 7 — Decision P: `gemini-3.5-flash-lite` registered as the free tier's second candidate, and the model-quality split confined to operations above 500 units. The cheapest model in the pricing table, `gemini-2.5-flash-lite`, was rejected because the Gemini 2.5 family shuts down in October 2026 — a price table records cost, not availability. Model roster in §6.10; Plus catalogue copy narrowed from "advanced models throughout" to the surfaces where the split is real. Revision 6 — the model-quality paywall gated nothing: `LLM_TIER_ALLOWLIST_FREE` listed the Plus model and the chat chain put it first, so a free turn cost 6× what §6.3 assumed and 500 units bought ~3 turns rather than ~16. Free narrowed to Flash-Lite; §5.2 and §6.3 corrected; the 26 un-gated `llm_resilient` call sites recorded as drift 23 and scheduled with Phase 3b. Revision 5 — Phase 2 implemented: one resolver, `require_premium` deleted, `personal_tier` removed from the model router's signature, drift 10 and 11 closed. Revision 4 — Phase 0 verified open against code; Paystack port promoted to Phase 2b; iOS committed alongside Android and Open Question 6 resolved; store-product creation timeline consolidated into §5.7; all grandfathering machinery removed on the zero-subscriber fact. Revision 3 implemented Phase 1; revision 2 shortened the trial to 3 days, removed the referral cap, withdrew rewarded ads and introduced earned points as a pass-only currency: §6.9, Decision O)
+>
+> **Revision log.** Only decisions that still bind are listed; the reasoning for each lives in the section or Decision it names, not here.
+>
+> | Rev | Change | Where |
+> | --- | --- | --- |
+> | 9 | `plus_voice_30` added — the voice top-up that revision 8 promised in five places and never created, which left a subscriber out of voice minutes with nothing to buy (Decision D forbids activating a pass while Plus is active). Per-feature top-ups ruled out for everything else. The two Apple keys distinguished: the App Store Connect API key on the Expo account is not the In-App Purchase key the App Store Server API needs. | Decision R, §6.1, §6.3, §5.7.5 |
+> | 8 | COGS quoted from the allowance cap, not from operation estimates. Voice unbundled and removed from Free. Monthly backstop 30 000 → 20 000 units. NGN allowances derived from NGN net revenue after the Nigerian monthly was found to have a negative unit margin. §6.8's free COGS reconciled with §6.7's (+$518 → +$58 before fixes). 7-day pass ₦1 800 → ₦1 500. NGN-only ₦5 500 Term Pass added. | Decision Q, §6.3, §6.4, §6.8, §6.11 |
+> | 7 | Model-quality split confined to operations above 500 units; `gemini-3.5-flash-lite` as Free's second candidate. The Gemini 2.5 family shuts down October 2026, so the cheapest row in the price table was not a usable fallback. | Decision P |
+> | 6 | The model-quality paywall gated nothing — `LLM_TIER_ALLOWLIST_FREE` listed the Plus model and the chat chain put it first. Free narrowed to Flash-Lite; the 26 un-gated `llm_resilient` call sites recorded as drift 23. | §5.2, drift 23 |
+> | 5 | Phase 2: one resolver; `require_premium` deleted; `personal_tier` removed from the model router's signature. | Decision B |
+> | 4 | Paystack port promoted to its own phase; iOS committed alongside Android; store-product creation consolidated into one section; all grandfathering machinery removed on the zero-subscriber fact. | §5.7, Phase 2b |
+> | 3 | Phase 1: catalogue rewritten, credit packs deleted, billing router mounted. | Phase 1 |
+> | 2 | Trial shortened to 3 days; referral cap removed; rewarded ads withdrawn; points introduced as a pass-only currency. | §6.9, Decision O |
+>
+> Last reviewed: 2026-09-02 (revision 9)
 
 ## 1. Purpose
 
-Three products replace the current **personal** catalogue: two **consumable Plus passes** and one **$5/month subscription**. Credit packs go, and the retired Study Circle and Squad personal tiers are finished off. Daily and monthly credit caps are replaced by a **rolling usage window** that resets on a clock the learner can see.
+Four products replace the current **personal** catalogue: three **consumable Plus passes** — 5-hour, 7-day, and an NGN-only 4-month Term Pass — and one **$4.99/month subscription**. Credit packs go, and the retired Study Circle and Squad personal tiers are finished off. Daily and monthly credit caps are replaced by a **rolling usage window** that resets on a clock the learner can see, with live voice metered separately.
 
 Alongside the money path there is one earned path: **points**, granted for referring learners who actually stay, redeemable for passes and for nothing else. Rewarded ads are withdrawn.
 
@@ -76,22 +65,7 @@ Four findings, in descending order of how much they cost.
 
 The OpenAPI tag metadata for `billing` and `webhooks` is still declared (`app.py:254-266`), so `/docs` advertises endpoints that are not served. Meanwhile `credit_consumption_service` — imported directly by `study_voice`, `personal_learning` and `knowledge` — *is* running, and enforces caps. So today's production state is: **the meter runs, and there is no way to pay it.** A learner who exhausts 15 000 credits has no reachable endpoint that would sell them more.
 
-**There is no entitlement layer. There are four, and they disagree.** ✅ **Closed by Phase 2.** The finding is kept as written because it is the argument for Decision B and the reason `resolve()` has the shape it does; what follows describes the state before Phase 2, not the state now. Three of the four mechanisms are thin callers of `entitlement_service.resolve`, the fourth (`require_premium`) is deleted, and the credit meter is repointed in Phase 3 — the last of the four, and the only one still reading `CREDIT_LIMITS[User.tier]`.
-
-| Mechanism | Where | Reads | Knows about trials? |
-| --- | --- | --- | --- |
-| `feature_tier_service` | `personal_learning/services/feature_tier_service.py:190-226` | `User.tier.startswith("PREMIUM")`, else `LearningProfile.trial_ends_at` | yes |
-| `require_premium` / `PremiumUser` | `shared/auth/dependencies.py:229-239` | `User.tier in PAID_TIERS` (6 tiers) | no |
-| Credits | `billing/services/credit_consumption_service.py:74-107` | `CREDIT_LIMITS[User.tier]` (7 tiers) | no |
-| LLM tier resolver | `intelligence/reasoning/llm/feature_flags.py:455-501` | `personal_tier` + `SpaceMember.seat_tier` | **no** |
-
-Consequences already live in the code:
-
-- A `STUDY_CIRCLE_*` or `SQUAD_*` subscriber does not match `startswith("PREMIUM")`, so `feature_tier_service` resolves them to **`"free"`** and denies every matrix capability — while `CREDIT_LIMITS` grants them 500k–12M credits and `PAID_TIERS` would have admitted them. Three incompatible notions of "paid".
-- A learner **on a trial** gets Plus quiz modes and Plus documents, and free-tier LLM models, because the model router never consults the trial.
-- `require_premium` and `PremiumUser` are wired to **zero endpoints**. A working gate that gates nothing.
-
-Adding passes to this is not viable. A pass is a fifth notion of "paid", and it is the one that changes minute to minute.
+**There was no entitlement layer — there were four, and they disagreed.** Closed by Phase 2 and recorded here in one line because it is the argument for Decision B and the reason `resolve()` has the shape it does. `feature_tier_service`, `require_premium`, the credit meter and the LLM tier resolver each held their own notion of "paid": a retired-tier subscriber was denied every capability while the meter granted them millions of credits, a trialling learner got Plus features with free-tier models, and `require_premium` was a working gate wired to zero endpoints. A pass would have been a fifth notion, and the one that changes minute to minute. **One decider now**, and the credit meter is the last mechanism still reading `CREDIT_LIMITS[User.tier]` — Phase 3 repoints it.
 
 **The credit meter measures the wrong period.** Today: a monthly hard cap (`creditsUsed` vs `creditsHardCap`), plus a daily cap for FREE only, plus an 80%-of-month soft warning, plus a purchased-balance fallback, plus a referral daily-limit increase. Five interacting quantities across `check_credit_availability:319-455`. The failure mode a learner actually hits is "I ran out on the 9th and have three weeks of nothing", and the message they get is a wall of formatted numbers. Section 6.2 replaces all of it with one window and one reset time.
 
@@ -109,7 +83,7 @@ On a $0.99 pass the store keeps 15¢ (Small Business Program) to 30¢. Net is ~$
 
 When complete:
 
-- `GET /api/v1/billing/plans/catalog` returns exactly four `scope: "personal"` products — Free, the 5-hour pass, the 7-day pass, Plus Monthly — alongside the two existing `scope: "circle"` / `scope: "add_on"` entries, unchanged. It is the only place any client learns what exists or what it costs.
+- `GET /api/v1/billing/plans/catalog` returns the `scope: "personal"` products available to the caller's territory — Free, the 5-hour pass, the 7-day pass, Plus Monthly everywhere, plus the Term Pass in Nigeria — alongside the two existing `scope: "circle"` / `scope: "add_on"` entries, unchanged. It is the only place any client learns what exists or what it costs.
 - A learner can buy any pass or the subscription on web, iOS and Android, and the purchase is verified server-side before anything is granted.
 - Buying a pass grants an **inactive** pass. A learner can hold as many as they like, indefinitely. Exactly one runs at a time, and only when they say so.
 - An activated pass grants **full Maigie Plus** — every capability, every quality tier, the Plus usage allowance — for its duration, and nothing after it. It does not renew. It is a product, not a subscription.
@@ -133,7 +107,7 @@ When complete:
 - **Referral reward mechanics are in scope, not deferred**, because a currency that redeems into a sellable product is a commercial design and not a bonus. §6.9 and Decision O replace `referral_rewards_service`'s token grants outright rather than re-pointing them.
 - **Learning Spaces, in every respect.** See Decision F for the full boundary and for the one place the boundary is load-bearing rather than merely respected.
 - **Circle Plan and the Plus Seat add-on.** Space-scoped products. They keep their catalogue entries, Stripe prices, Paystack plan codes, config settings, seat pool accounting and marketing sections exactly as they are.
-- ~~**Migrating legacy tiers off their grandfathered subscriptions in this phase.**~~ **Withdrawn — there is nobody to migrate.** Earlier revisions carried `LEGACY_PLUS_TIERS` so that live `STUDY_CIRCLE_*` / `SQUAD_*` / `PREMIUM_YEARLY` subscribers kept Plus until Phase 8 moved them. There are none. The frozenset is therefore never written, drift 10 is closed by deleting the tiers rather than by admitting them, and the Phase 8 migration step is deleted. **This is the one assumption in the plan that must be checked against the database before any of it is acted on** — it is the first item of Phase 2b, and if it turns out to be false the correct response is to restore `LEGACY_PLUS_TIERS`, not to break a payer.
+- **Migrating legacy tiers off grandfathered subscriptions.** Withdrawn: there is nobody to migrate. Phase 2b counted, against production, zero users on any retired tier and zero payment identifiers of any kind. `LEGACY_PLUS_TIERS` is therefore never written, drift 10's resolver half closes by deleting the tiers rather than admitting them, and the Phase 8 migration step is gone. The count is re-runnable (`scripts/count_legacy_commercial_state.py`), so if it ever comes back non-zero the correct response is to restore the frozenset, not to break a payer.
 
 ## 5. Current state
 
@@ -168,7 +142,7 @@ Untouched, per Decision F: `POST /billing/subscriptions/checkout` keeps acceptin
 
 Deleted with the retired *personal* tiers: `TRIAL_DAYS_STUDY_CIRCLE`, `TRIAL_DAYS_SQUAD` (done in Phase 1).
 
-**Also deleted, revised in revision 4:** `STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY` / `_YEARLY`, `STRIPE_PRICE_ID_SQUAD_MONTHLY` / `_YEARLY` (`config.py:198-203`) and `PAYSTACK_PLAN_STUDY_CIRCLE_*` / `_SQUAD_*` (`config.py:248-251`). Revision 3 kept all eight so that Phase 8 could identify a grandfathered subscriber's source tier from an incoming webhook. With no subscribers on those tiers, no such webhook can arrive, and eight empty-string settings whose only purpose is to decode events that will never be received are exactly the kind of workaround this revision removes. `_price_id_to_tier` and `_assert_price_id_is_active` (`stripe_service.py:214-266`) lose their Study Circle and Squad branches with them; `DEPRECATED_PLAN_IDS` keeps the six ids, because a learner or a stale client presenting a retired plan id still deserves `410` rather than `422` (Phase 1 established this and it does not change).
+**Also deleted:** `STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY` / `_YEARLY`, `STRIPE_PRICE_ID_SQUAD_MONTHLY` / `_YEARLY` (`config.py:198-203`) and `PAYSTACK_PLAN_STUDY_CIRCLE_*` / `_SQUAD_*` (`config.py:248-251`). All eight existed so a webhook could identify a grandfathered subscriber's source tier; with no subscribers on those tiers no such webhook can arrive, and eight empty-string settings that decode events which cannot be received are not history, they are clutter. `_price_id_to_tier` and `_assert_price_id_is_active` (`stripe_service.py:214-266`) lose their Study Circle and Squad branches with them. **`DEPRECATED_PLAN_IDS` keeps all six ids**, because a learner or a stale client presenting a retired plan id still deserves `410` rather than `422`.
 
 ### 5.2 What is actually enforced today, by surface
 
@@ -194,14 +168,11 @@ Read this before deciding what a pass should unlock. The response convention, st
 | Voice | billing mode | `study_voice/billing.py:34-39` | **billed for silence**; paid billed for audio only | silent |
 | Ask | 30 turns / 60s, tier-blind | `ask_service.py:582-584, 605-660` | same as paid | **429** |
 | Ask | credit caps | `ask_service.py:882-924` | 5k/day, 15k/month | in-band refusal |
-| ~~Everywhere~~ **Chat only** | LLM model allowlist | `feature_flags.is_model_allowed`, `config.LLM_TIER_ALLOWLIST_FREE` | ~~flash-lite~~ **3.5-flash — the Plus model** | silent |
+| **Chat only** | LLM model allowlist | `feature_flags.is_model_allowed`, `config.LLM_TIER_ALLOWLIST_FREE` | **flash-lite** (narrowed in revision 6) | silent |
 
 `check_capability` — the function the whole matrix is built around — is called from **exactly two places**: `quiz_engine.py` and `document_impl.py`. Everything else reads `get_quality_tier` and degrades silently.
 
-**Two corrections to the model-allowlist row, both found after Phase 2.** The row said "Everywhere" and "flash-lite" and was wrong twice over:
-
-- **Free was allowed the Plus model, and got it.** `LLM_TIER_ALLOWLIST_FREE` listed `gemini:gemini-3.5-flash` alongside Flash-Lite, and that model is also *first* in `FALLBACK_CHAT_DEFAULT`. `router._select_candidates` walks the chain in order and keeps the first allowed pair, so listing the expensive model for Free did not make it a fallback — it made it the default. At the corrected rate card that is **$0.0174 a chat turn against $0.0029**, six times over, and it means the model allowlist gated nothing at all. Fixed: Free is Flash-Lite only, asserted in `test_model_quality_paywall.py`.
-- **The scope is chat, not "everywhere".** `route_request` — the only thing that consults this allowlist — has exactly one caller, the Ask/chat turn. The other 26 LLM call sites reach providers through `llm_resilient`, which picks from its own `["gemini", "openai", "anthropic"]` order and never asks about entitlement. So quiz generation, lesson bodies, documents, flashcards and every narrative panel run the Plus model for a free learner, and still do. That is drift item 23.
+**The model allowlist is chat-scoped, and that is the one row worth reading twice.** `route_request` is the only thing that consults it and has exactly one caller, the Ask/chat turn. The other 26 LLM call sites reach providers through `llm_resilient`, which resolves a provider from its own `["gemini", "openai", "anthropic"]` order and a model from `registry._DEFAULTS`, and asks about neither allowlist nor entitlement. So quiz generation, lesson bodies, documents, flashcards and every narrative panel still run the Plus model for a free learner. That is drift 23, and it means the model-quality half of the paywall is true of one surface out of twenty-seven. Free's chat allowlist was itself listing the Plus model until revision 6 — and since that model is first in `FALLBACK_CHAT_DEFAULT`, listing it did not make it a fallback, it made it the default. Now Flash-Lite only, asserted in `test_model_quality_paywall.py`.
 
 ### 5.3 What the marketing says is premium
 
@@ -237,10 +208,10 @@ Every item here is either enforced in Phase 5 or deleted from the copy in Phase 
 5. **AI Voice Assistant / Live voice tutor as Plus-only.** `study_voice` contains no `check_capability`, no `require_premium`, no tier read except `billing_mode_for_tier`. Free gets the whole feature. → **delete the ✗**; the real difference is wall-clock versus audio-only billing plus the window allowance, which is worth stating plainly because it is genuine and defensible.
 6. **Exam Prep mode as Plus-only.** Prepare is entirely free apart from two quiz modes. → **delete the ✗**, replace with "3 of 5 practice modes".
 7. **"Unlimited" AI.** Plus was 300 000 credits/month and is now a window allowance. → **stop saying unlimited**; state the window and the allowance, which §6.2 makes possible to state honestly for the first time.
-8. ✅ **Closed in Phase 2 — deleted.** **`require_premium` / `PremiumUser`.** A gate with no callers. → **delete**, replaced by Decision B.
+8. ✅ **Closed in Phase 2.** `require_premium` / `PremiumUser` — a gate with no callers, deleted and replaced by Decision B.
 9. **`check_capability("study_plan", "adaptive")`.** The branch exists at `feature_tier_service.py:322-333`; nothing calls it. → **wire it** so a Free learner asking for an adaptive plan gets a truthful `200 + notice` instead of a silently different plan.
-10. ✅ **Closed in Phase 2.** **`STUDY_CIRCLE_*` / `SQUAD_*` tiers resolve to `"free"`.** `startswith("PREMIUM")` at `feature_tier_service.py:216`. These are personal `User.tier` values, so this is in scope. → **revised in revision 4: fixed by deleting the four tier values, not by admitting them.** Revision 3 fixed this with a `LEGACY_PLUS_TIERS` frozenset so grandfathered subscribers kept what they paid for until Phase 8 moved them. There are no subscribers on these tiers, so the bug has no victim and the fix has no beneficiary — Decision B resolves them to `free`, which is now the correct answer rather than a bug. Precondition checked in Phase 2b.
-11. ✅ **Closed in Phase 2.** **Trials invisible to the LLM router.** `feature_flags.py:455-501`. → fixed by Decision B.
+10. ⚠️ **Half-closed.** `STUDY_CIRCLE_*` / `SQUAD_*` tiers resolved to `"free"` while the meter granted them millions of credits. The **resolver half is done**: Phase 2b deleted the writers that could produce those strings, so resolving them to `free` is now the correct answer rather than a defect. The **meter half is not**: `CREDIT_LIMITS` still holds rows granting `SQUAD_YEARLY` 12M credits and `STUDY_CIRCLE_YEARLY` 6M, keyed by strings nothing can write. Dead weight, not a live grant — **Phase 3 deletes the whole table**, so narrowing it now would be a second edit to something being removed.
+11. ✅ **Closed in Phase 2.** Trials were invisible to the LLM router (`feature_flags.py:455-501`), so a trialling learner got Plus features with free-tier models. Fixed by Decision B.
 12. **Value summary is the only outright-locked read** (`routes.py:2694-2698`), with a plain-string `403`. It contradicts both the "no feature is entirely locked" principle at `feature_tier_service.py:6-9` and the locked-read convention. → **convert to `200 + LockedNotice`**.
 13. **`progress.daily_credit_reset` is registered and never scheduled** (`workers/progress_tasks.py:182-185`). → **delete it.** §6.2 removes the daily counter it was written to reset, and `billing.reset_credit_periods` (`workers/billing_tasks.py:15`) goes with it for the same reason. The pass sweep (Decision E) replaces both.
 14. **`WEB/features/classrooms` is mock end to end**, with no entitlement check anywhere in it. Noted, not fixed — classrooms are not a commercial surface yet. (`MOB/src/app/circles/settings.tsx:430`, a hardcoded `Upgrade — $14.99/mo` button, is space-scoped and out of scope per Decision F.)
@@ -254,12 +225,7 @@ Every item here is either enforced in Phase 5 or deleted from the copy in Phase 
 22. **`WEB/pages/settings/AiModelSettings.tsx:13-25` lets a learner pick a model from a hardcoded list**, while the backend allowlists models by tier (`config.py:310-315`, `feature_flags.is_model_allowed`). Nothing reconciles the two, so the picker can offer a model the server will refuse. Small, but it is a tier gate with a UI that does not know it exists. **Now larger than when written:** since Free is Flash-Lite only, the picker offers a free learner a model the server refuses on every option but one.
 23. **The model-quality paywall covers chat and nothing else.** `LLM_TIER_ALLOWLIST_*` is read only by `router.route_request`, whose single caller is the Ask/chat turn (`ask_service.py:2109`). The other 26 LLM call sites — quiz and question generation, lesson bodies, course outlines, documents, all four flashcard paths, every narrative panel, reflections, home guidance, memory extraction, discovery — go through `personal_learning.services.llm_resilient`, which resolves a provider from `["gemini", "openai", "anthropic"]` and a model from `registry._DEFAULTS`, and consults no allowlist and no entitlement. `_DEFAULTS` names `gemini-3.5-flash` for most of them.
 
-    So a free learner's quiz generation runs the Plus model, and the catalogue's Plus copy is true of one surface out of twenty-seven. → **the fix belongs with Phase 3b, not before it.** Decision L already routes all 26 sites through one chokepoint in `llm_resilient` in order to meter them; a tier-aware model choice is the same plumbing and the same argument, and doing it twice would mean doing it wrong once.
-
-    **Both sub-decisions are now made** — they were listed here as open and are resolved in Decision P.
-
-    - *What is the second free candidate?* `gemini-3.5-flash-lite`, registered and live (§6.10). Not `gemini-2.5-flash-lite`, which this item previously suggested: the whole Gemini 2.5 family shuts down in **October 2026**, so the cheapest row in the pricing table was a fallback with weeks to live. Checked against the published model list rather than the table.
-    - *Does the split cover every operation or only the expensive ones?* **Expensive only** — Decision P sets the threshold and says why.
+    So a free learner's quiz generation runs the Plus model, and the catalogue's Plus copy is true of one surface out of twenty-seven. → **the fix belongs with Phase 3b, not before it.** Decision L already routes all 26 sites through one chokepoint in `llm_resilient` in order to meter them; a tier-aware model choice is the same plumbing and the same argument, and doing it twice would mean doing it wrong once. Both sub-decisions it once left open — Free's second candidate, and whether the split covers every operation — are settled in **Decision P**.
 
 ### 5.5 Clients
 
@@ -284,41 +250,144 @@ A second sweep of the personal-learning surfaces found four things the first pas
 | Server notifications | RTDN endpoint written (`webhooks.py`) | none |
 | EAS submit config | `eas.json` `submit.production.android.track: production` | **absent** — no `appleId`, `ascAppId` or `appleTeamId` |
 
-**iOS is less greenfield than revision 3 claimed, and the correction changes the estimate.** Revision 3 said "there is no `ios/` directory". There is: `expo prebuild` has been run and `ios/` contains `Maigie.xcodeproj`, `Maigie.xcworkspace`, a `Podfile.lock` and installed `Pods`. It is **gitignored** (`.gitignore:12`, alongside `android/` at `:11`), which is the normal Expo CBA arrangement and the reason a source-only reading missed it — the directory is a build artifact regenerated from `app.config.js`, not committed state.
+**iOS is less greenfield than it looks, and two things that read like tasks are not.**
 
-More usefully: **`react-native-iap`'s iOS pod is already linked.** `ios/Podfile.lock` carries `NitroIap` from `../node_modules/react-native-iap`, so the StoreKit native module is present and building. The iOS purchase gap is JavaScript and console configuration, not native integration — `usePlayBilling.ts:88-93` early-returns on `Platform.OS !== 'android'` before `initConnection`, so the hook refuses the platform its own dependency already supports.
+`ios/` **exists**: `expo prebuild` has been run and the directory holds `Maigie.xcodeproj`, `Maigie.xcworkspace`, a `Podfile.lock` and installed `Pods`. It is gitignored (`.gitignore:12`, alongside `android/` at `:11`), which is the normal Expo CBA arrangement and the reason a source-only reading misses it — a build artifact regenerated from `app.config.js`, not committed state. So `expo prebuild` is not a task, and there is nothing to commit.
 
-Two further corrections to revision 3's Phase 7 checklist:
+**`react-native-iap`'s iOS pod is already linked.** `ios/Podfile.lock` carries `NitroIap`, so the StoreKit native module is present and building. The iOS purchase gap is JavaScript and console configuration, not native integration — `usePlayBilling.ts:88-93` early-returns on `Platform.OS !== 'android'` before `initConnection`, so the hook refuses the platform its own dependency supports.
 
-- **`expo prebuild` is not a task.** It has been run and it will be re-run by EAS on every build. What is actually missing from version control is nothing; what is missing from EAS is the `submit.production.ios` block.
-- **"StoreKit capability" is not an entitlements change.** `ios/Maigie/Maigie.entitlements` carries `aps-environment` and `applinks:app.maigie.com`, and correctly carries nothing for in-app purchase: In-App Purchase is enabled on the **App ID in the Apple Developer portal**, and modern StoreKit adds no entitlement key. The checklist item was asking for a file edit that would be wrong to make. What is required is the App ID capability plus the App Store Connect records in §5.7.
+**"StoreKit capability" is not an entitlements change.** `ios/Maigie/Maigie.entitlements` carries `aps-environment` and `applinks:app.maigie.com`, and correctly carries nothing for in-app purchase: In-App Purchase is enabled on the **App ID in the Apple Developer portal**, and modern StoreKit adds no entitlement key. Editing the entitlements file would be wrong.
 
-What genuinely does not exist for iOS: the App Store Connect app record, the three in-app purchase products, the App Store Server API key (`APPLE_ISSUER_ID` / `APPLE_KEY_ID` / `APPLE_PRIVATE_KEY`), the `POST /webhooks/apple` endpoint and its JWS verification, the StoreKit branch of the purchase hook, and the EAS iOS submit configuration. That is Phase 5 and §5.7, and none of it is deferred.
+What genuinely does not exist for iOS: the App Store Connect app record, the in-app purchase products, the App Store Server API key (`APPLE_ISSUER_ID` / `APPLE_KEY_ID` / `APPLE_PRIVATE_KEY`), the `POST /webhooks/apple` endpoint and its JWS verification, the StoreKit branch of the purchase hook, and the EAS iOS submit configuration. That is §5.7 and Phase 5, and none of it is deferred.
 
-### 5.7 Store product creation: the longest lead time in the plan
+### 5.7 Creating the products, provider by provider
 
-The question "at what point do we create the Play and App Store products" was not answered in one place in revision 3 — Google Play products sat in Phase 5 and Apple products sat in a Phase 7 mobile bullet, which is both a split ownership and the wrong order, because the store consoles are the only part of this plan with an external dependency measured in days.
+**Nothing in this plan can take money until the products exist in four places, and none of the four is a code change.** This section is the authoritative creation order. It exists because the consoles are the only part of the plan with external dependencies measured in days rather than hours, and because an earlier draft split the work across two phases and two owners, which is how a launch blocker becomes a surprise.
 
-**Answer: create every store product at the start of Phase 5, and create the App Store Connect app record before that — it gates everything else on iOS and it costs nothing to do early.**
+**The rule that sets the order:** an in-app purchase product cannot be reviewed on its own. Apple reviews IAP products **attached to a build**, and the first submission of an app with IAP is the most rejection-prone submission a project makes. Google is more forgiving — Play in-app products go live from the console without review — but a Play subscription needs an active app with a published build on some track before purchases can be tested. Stripe and Paystack have no review at all and can be done in an afternoon, which is exactly why they should not be done first: they are not the critical path and doing them first creates the impression of progress.
 
-The dependency that decides the order is this: an in-app purchase product cannot be submitted for review on its own. Apple reviews IAP products **attached to a build**, and the first submission of a paid app with IAP is the single most rejection-prone submission a project makes. Google is more forgiving — Play in-app products go live from the console without review — but a Play subscription still needs an **active** app with a published build on some track before purchases can be tested, and Play's 7-day price-change notice applies later.
-
-| When | Google Play | App Store Connect | Blocks |
+| Order | What | Owner | Lead time |
 | --- | --- | --- | --- |
-| **Now, in parallel with Phase 2b** | — | Create the app record for `com.maigie`; enable In-App Purchase on the App ID; generate the App Store Server API key; complete the Paid Apps agreement and banking/tax | Everything Apple. The agreement in particular: **no IAP product can even be created until Paid Apps is active**, and it involves banking details that are not an engineer's to supply |
-| **Phase 5, first task** | Create `plus_pass_5h`, `plus_pass_7d` and **`plus_pass_term`** as **consumable** in-app products; set the `plus-monthly` base plan free trial to **3 days**; set NGN prices per §6.8; **restrict `plus_pass_term` to NGN territories only**; **delete `plus-yearly` and the three `credit_pack_*` products** | Create `com.maigie.plus.pass5h`, `com.maigie.plus.pass7d` and **`com.maigie.plus.passterm`** as **Consumable**, the last with **Nigeria-only availability**; create `com.maigie.plus.monthly` in subscription group `maigie_plus` with a **3-day introductory free trial**; set NGN prices per §6.8 | Server verification work has nothing to verify against until the ids exist |
-| **Phase 5, after the products exist** | `purchases.products.get` verification; RTDN voided-purchase revocation | `apple_service.py`, JWS verification, `POST /webhooks/apple` | Phase 7's client purchase flows |
-| **Phase 7, iOS** | — | Uncomment the iOS EAS jobs; add `submit.production.ios` (`appleId`, `ascAppId`, `appleTeamId`); submit the first build **with the four IAP products attached** | App Review, 1–2 weeks, first-submission rejection risk |
+| 1 | Apple prerequisites — app record, Paid Apps agreement, banking and tax | **Finance + Apple account holder** | **Days to weeks.** Not an engineer's to supply |
+| 2 | Google Play prerequisites — merchant account, tax and payout profile | **Finance** | Hours to days |
+| 3 | Stripe products and prices | Backend | Under an hour |
+| 4 | Paystack plan and price constants | Backend | Under an hour |
+| 5 | Play products | Backend | Under an hour, live immediately |
+| 6 | Apple products | Backend | Created immediately, **reviewed with the first build** |
+| 7 | First iOS submission with all four IAPs attached | Mobile | **1–2 weeks, expect one rejection round** |
 
-**Sandbox testing does not wait for review.** Both stores let you test purchases against products in a pre-approved state — Play from an internal-testing track, Apple with a StoreKit configuration file or a Sandbox Apple Account — so Phase 5's verification code and Phase 7's purchase flows can be built and tested end to end while the products are still unreviewed. Nothing in the engineering plan is blocked by review; only the public launch is.
+Steps 3–6 are all "Phase 5, first task". Step 1 should start **now**, in parallel with whatever else is in flight, because it gates everything Apple and costs nothing to hold open.
 
-**Deleting rather than repurposing is the rule here too.** The live Play catalogue holds a `plus-yearly` base plan and three `credit_pack_*` consumables. Revision 3 kept `GOOGLE_PLAY_BASE_PLAN_YEARLY` and the three `GOOGLE_PLAY_SKU_CREDIT_*` settings (`config.py:264-268`) so historical RTDN events could still be decoded, and `google_play_service.py:65, 191-193` reads all four. With nobody having bought any of them, there is no history: the four settings, both `google_play_service` branches, and the four store products are deleted. A new `plus_pass_5h` is created as a new consumable — no existing SKU is renamed into the role, because a renamed SKU carries its old purchase history and its old type, and a non-consumable repurposed as a pass is unbuyable twice.
+#### 5.7.1 The product matrix — the one table every console is filled in from
+
+Prices from §6.1 (USD) and §6.8 (NGN). **NGN is a set price, not a conversion**, so every console needs the NGN figure entered by hand as a territory price rather than left to the store's FX table.
+
+| Internal id | USD | NGN | Stripe | Paystack | Google Play | Apple |
+| --- | --- | --- | --- | --- | --- | --- |
+| `plus_pass_5h` | 0.99 | ₦700 | one-time price | one-off charge | `plus_pass_5h`, consumable | `com.maigie.plus.pass5h`, Consumable |
+| `plus_pass_7d` | 2.49 | ₦1 500 | one-time price | one-off charge | `plus_pass_7d`, consumable | `com.maigie.plus.pass7d`, Consumable |
+| `plus_monthly` | 4.99/mo | ₦2 400/mo | recurring price, 3-day trial | plan code, monthly | `maigie_plus` / base plan `plus-monthly` | `com.maigie.plus.monthly`, group `maigie_plus` |
+| `plus_pass_term` | **—** | ₦5 500 | **not created** | one-off charge | `plus_pass_term`, consumable, **NG only** | `com.maigie.plus.passterm`, Consumable, **NG only** |
+| `plus_voice_30` | 1.49 | ₦1 500 | one-time price | one-off charge | `plus_voice_30`, consumable | `com.maigie.plus.voice30`, Consumable |
+| `free` | 0 | 0 | — | — | — | — |
+
+**The Term Pass is deliberately absent from Stripe.** It is NGN-only (§6.1), the NGN web rail is Paystack, and creating a USD price for a product with no USD market would put an unbuyable product one API call away from being sold. Its two rails are Paystack on web and the stores on mobile, with Nigeria-only availability set in both consoles.
+
+**`plus_voice_30` is the same price in both markets and that is not an oversight.** ₦1 500 is $1.08 against a $1.49 USD list — a smaller discount than any other product, because a voice minute costs the same in Lagos as in London. Voice is the one line where the market cannot be discounted into, only sized around, which is why the pack is 30 minutes rather than 60: a 60-minute pack needs roughly ₦2 800 to clear a 40% margin, and that crosses the ₦2 500 flat-fee threshold. Same reason ₦2 400 is not ₦2 500.
+
+#### 5.7.2 Stripe
+
+Three products, three prices, no review. Do this in the dashboard rather than the API so the ids are visible to whoever debugs a webhook later.
+
+- [ ] Product **Maigie Plus** → recurring price **$4.99/month**, `trial_period_days = 3`. Reuse the existing price if one exists: **do not create a new one**, because a new price id is a price migration and §6.1 explains why the amount must not move.
+- [ ] Product **5-Hour Plus Pass** → one-time price **$0.99**. → `STRIPE_PRICE_ID_PLUS_PASS_5H`
+- [ ] Product **7-Day Plus Pass** → one-time price **$2.49**. → `STRIPE_PRICE_ID_PLUS_PASS_7D`
+- [ ] Product **30 Voice Minutes** → one-time price **$1.49**. → `STRIPE_PRICE_ID_PLUS_VOICE_30`
+- [ ] Enable **Apple Pay, Google Pay and Link** as payment methods in the dashboard. This is a checkbox, not an integration, and it is the correct place for the wallet APIs — §2 explains why using them inside the iOS app would be a guideline 3.1.1 rejection.
+- [ ] **Archive** the yearly Plus price and the three credit-pack prices. Archive rather than delete: Stripe keeps them referenceable, and archiving is what stops them being selectable.
+- [ ] Set the webhook endpoint to `POST /webhooks/stripe` for `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `charge.refunded`. **Copy the signing secret into `STRIPE_WEBHOOK_SECRET`** — an unset secret now refuses ingestion with a `503` rather than trusting the body (Phase 2a), so a missing secret fails loudly instead of granting tiers to anyone who posts.
+
+Passes are charged with `mode: payment`, the subscription with `mode: subscription`. One endpoint each; a pass is not a subscription and the catalogue refuses the confusion explicitly.
+
+#### 5.7.3 Paystack
+
+Paystack has two shapes and the passes use the simpler one. **A subscription needs a Plan object with a plan code; a one-off charge does not** — it is `/transaction/initialize` with an amount, which is why the three passes need no console object at all and exist purely as price constants.
+
+- [ ] Create the **Plus Monthly plan**: interval `monthly`, amount **₦2 400**. → `PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY`
+- [ ] **No plan object for any pass.** All three are one-off charges. What they need is the amount, in **kobo**, in `config.py`:
+
+  | Setting | Value (kobo) | Naira |
+  | --- | --- | --- |
+  | `PRICE_NGN_PLUS_PASS_5H` | `70_000` | ₦700 |
+  | `PRICE_NGN_PLUS_PASS_7D` | **`150_000`** | ₦1 500 |
+  | `PRICE_NGN_PLUS_MONTHLY` | `240_000` | ₦2 400 |
+  | `PRICE_NGN_PLUS_PASS_TERM` | **`550_000`** | ₦5 500 |
+  | `PRICE_NGN_PLUS_VOICE_30` | **`150_000`** | ₦1 500 |
+
+  **Three of these five are wrong or missing in the code today.** Phase 2b added `PRICE_NGN_PLUS_PASS_7D = 180_000` for the retired ₦1 800; `PRICE_NGN_PLUS_PASS_TERM` and `PRICE_NGN_PLUS_VOICE_30` do not exist. All must be set before any one-off charge is initialised, because `_plan_amount_kobo` is the only thing standing between a learner and being charged the wrong amount — for a subscription the plan overrides the amount, but **for a one-off charge nothing does.**
+- [ ] Verify the **flat-fee boundary** on each amount: [Paystack charges 1.5% + ₦100 on local cards, with the ₦100 waived below ₦2 500](https://paystack.com/pricing). The first three sit under it deliberately; **₦5 500 sits above it and pays the ₦100 knowingly** (§6.8). Do not round any of the first three up, and do not "fix" the Term Pass by pricing it under ₦2 500 — that would undercut two months of the subscription. *Content was rephrased for compliance with licensing restrictions.*
+- [ ] Set the webhook to `POST /webhooks/paystack` and **copy the secret into `PAYSTACK_WEBHOOK_SECRET`**. The handler HMACs the body and now refuses an empty key rather than skipping the check.
+- [ ] **Delete** the Study Circle and Squad plan codes (§5.1) — four settings and their `_plan_code_to_tier` branches.
+
+#### 5.7.4 Google Play
+
+Play products go live from the console without review, so this is the fastest of the four consoles and the one most worth getting exactly right, because a wrong product **type** cannot be corrected later.
+
+- [ ] Confirm the merchant account, tax and payout profile are complete. Without them the in-app products section is read-only.
+- [ ] Create `plus_pass_5h`, `plus_pass_7d`, `plus_pass_term` and `plus_voice_30` as **in-app products of type consumable**. **Consumable is load-bearing and irreversible**: a non-consumable is permanently owned, restorable forever, and unbuyable a second time, which is the exact opposite of a pass. Getting this wrong means a new SKU, not an edit. `plus_voice_30` in particular is bought repeatedly by design (Decision R), so a non-consumable would break it on the second purchase.
+- [ ] Set the **NGN price for every product by hand** in the territory pricing table. Play's automatic conversion would apply FX parity, which §6.8 spends a section explaining is the thing that prices us out of the launch market.
+- [ ] Restrict `plus_pass_term` to **Nigeria only** in its availability settings.
+- [ ] On subscription `maigie_plus`, base plan `plus-monthly`: keep **$4.99**, set the NGN price to **₦2 400**, and set the **free-trial offer to 3 days**.
+- [ ] **Delete, do not repurpose**: the `plus-yearly` base plan and the three `credit_pack_*` consumables, plus `GOOGLE_PLAY_BASE_PLAN_YEARLY` and the three `GOOGLE_PLAY_SKU_CREDIT_*` settings (`config.py:264-268`) and the branches reading them at `google_play_service.py:65, 191-193`. Nobody has bought any of them, so there is no RTDN history to decode. **Never rename an existing SKU into a new role** — a renamed SKU carries its old purchase history and its old type.
+- [ ] Point Real-Time Developer Notifications at the Pub/Sub topic feeding `POST /webhooks/google-play/rtdn`, and set `GOOGLE_PUBSUB_AUDIENCE` and `GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL`. The endpoint verifies the push OIDC token against Google's certs and checks the token's `email` — a Google-signed token proves Google minted it, not that our subscription sent it (Phase 2a).
+- [ ] Confirm the service account still has **View financial data** and Play Developer API access, which is what `purchases.products.get` and `purchases.subscriptions.get` authenticate as.
+
+#### 5.7.5 Apple App Store Connect
+
+The longest lead time in the plan, and most of it is not engineering.
+
+- [ ] **Create the app record for `com.maigie`.** It does not exist. Everything below is blocked on it.
+- [ ] **Complete the Paid Applications agreement**, with banking and tax. **No in-app purchase product can be created until this is active**, and it needs details an engineer cannot supply. This is the single item most likely to add a week to the schedule, which is why it is step 1 rather than a Phase 5 task.
+- [ ] Enable **In-App Purchase on the App ID** in the Apple Developer portal. This is a portal capability, **not** an entitlements-file edit — §5.6 says why editing `Maigie.entitlements` would be wrong.
+- [ ] Create `com.maigie.plus.pass5h`, `com.maigie.plus.pass7d`, `com.maigie.plus.passterm` and `com.maigie.plus.voice30` as **Consumable**. Same irreversibility as Play.
+- [ ] Create `com.maigie.plus.monthly` as **auto-renewable** in subscription group `maigie_plus`, with a **3-day introductory free trial**.
+- [ ] Set NGN prices per territory via each product's **price schedule**, and restrict `com.maigie.plus.passterm` to **Nigeria** in its availability. Apple's default is to derive every territory from the base price, which is FX parity again.
+- [ ] **Generate the In-App Purchase key — not the App Store Connect API key.** There are two Apple keys with nearly the same name, both issuing an issuer ID, a key ID and a `.p8`, and **they are not interchangeable**:
+
+  | Key | Generated where | Used for |
+  | --- | --- | --- |
+  | **App Store Connect API** key | Users and Access → Integrations → **App Store Connect API** tab | EAS Submit uploading builds, fastlane |
+  | **In-App Purchase** key | Users and Access → Integrations → **Keys**, key type **In-App Purchase** | **App Store Server API** — the server-side transaction lookup this plan needs |
+
+  The App Store Connect API key is already on the Expo account, which unblocks submission and **nothing in `apple_service.py`**. `APPLE_ISSUER_ID`, `APPLE_KEY_ID` and `APPLE_PRIVATE_KEY` must come from the **In-App Purchase** key, alongside `APPLE_BUNDLE_ID` and `APPLE_ENVIRONMENT`. Both `.p8` files download exactly once — put them in the secret store rather than the repo, and do not paste either into a ticket. Distinction per [Adapty's StoreKit 2 walkthrough](https://adapty.io/blog/storekit-2-api-tutorial/); *content was rephrased for compliance with licensing restrictions.*
+- [ ] Set the **App Store Server Notifications V2** URL to `POST /webhooks/apple`.
+- [ ] Each product needs a **screenshot and review notes** before it can be reviewed. Trivial work that reliably surprises people on submission day.
+
+#### 5.7.6 Parity checks, by hand, recorded with a date
+
+Nothing tests these, because nothing in the repo can read a console.
+
+- [ ] **The trial is 3 days in four places**: `config.TRIAL_DAYS_MAIGIE_PLUS`, the Stripe price's `trial_period_days`, the Play base-plan free trial, and the Apple introductory offer. Two of the four are consoles. `TRIAL_DAYS_CIRCLE_PLAN` stays at **7** — it is space-scoped (Decision F).
+- [ ] **Every NGN price matches §6.8** in Play, App Store Connect and `config.py`: ₦700 / ₦1 500 / ₦2 400 / ₦5 500, and ₦1 500 for the voice pack.
+- [ ] **Every USD price matches §6.1** in Stripe and both stores: $0.99 / $1.49 / $2.49 / $4.99.
+- [ ] **The Term Pass is unavailable outside Nigeria** in both stores, and `PlanItem.availability` keeps it out of `GET /plans/catalog` elsewhere (§6.1). A catalogue that advertises an unbuyable product is a defect this plan has already recorded once.
+- [ ] **Every pass and the voice pack are consumable** in both stores. Check it before the first purchase, not after — it cannot be corrected by editing.
+- [ ] **The two Apple keys are not confused.** `APPLE_KEY_ID` belongs to the **In-App Purchase** key, not the App Store Connect API key on the Expo account. The symptom of getting this wrong is authentication failures on transaction lookup while builds upload perfectly.
+
+#### 5.7.7 Testing does not wait for review
+
+Play's internal-testing track and an Apple Sandbox Apple Account or a local StoreKit configuration file both exercise unapproved products end to end. Stripe and Paystack both have test modes. So every server rail in Phase 5 and every client flow in Phase 7 can be built and verified before the first submission. **Review gates the launch, not the work.**
 
 ## 6. The new model
 
 ### 6.1 The catalogue
 
-**Five personal products as of revision 8**, one of which is NGN-only. Three are **consumable, non-renewing products**. One is a subscription. One is Free. The catalogue also keeps its two space-scoped entries (`circle_plan_monthly`, `plus_seat_add_on_monthly`) unchanged — **seven entries in total**, and the `scope` field already on `PlanItem` is what separates them. `plus_pass_term` needs a further distinction the others do not: it must be absent from the catalogue outside Nigeria, which is the first product in this plan whose *availability* is regional rather than just its price. That is the `availability` field the revision-5 review already asked for on `PlanItem` and it is no longer optional.
+**Six personal products.** Four are **consumable, non-renewing products** — three passes and one voice pack. One is a subscription. One is Free. The catalogue also keeps its two space-scoped entries (`circle_plan_monthly`, `plus_seat_add_on_monthly`) unchanged — **eight entries in total**, and the `scope` field already on `PlanItem` is what separates them.
+
+Two products carry constraints the others do not, and `PlanItem` needs a field for each:
+
+- **`plus_pass_term` must be absent from the catalogue outside Nigeria**, which makes it the first product here whose *availability* is regional rather than just its price. `PlanItem.availability` is no longer optional.
+- **`plus_voice_30` must be absent unless the learner already holds Plus.** It is the only product that is useless on its own — voice is a Plus capability, so 30 minutes sold to a free learner buys nothing they can use. `PlanItem.requiresEntitlement` gates it, and Decision R explains why this is a purchase refusal rather than a UI hint.
 
 | Product id | Display | Type | USD | Grants |
 | --- | --- | --- | --- | --- |
@@ -327,16 +396,17 @@ The dependency that decides the order is this: an in-app purchase product cannot
 | `plus_pass_7d` | 7-Day Plus Pass | **consumable product** | **2.49** | full Maigie Plus for 7 days from activation, then nothing |
 | `plus_monthly` | Maigie Plus | auto-renewing subscription | **4.99/mo** | full Maigie Plus while active, **3-day trial** on first purchase |
 | `plus_pass_term` | 4-Month Term Pass | **consumable product** | **NGN only — ₦5 500** | full Maigie Plus for 4 months from activation, then nothing |
+| `plus_voice_30` | 30 Voice Minutes | **consumable product** | **1.49** | 30 live-voice minutes added to the learner's voice balance. Not an entitlement |
 
-These are **US/UK list prices**. The launch market is Nigeria, where FX parity would price the product above Netflix Standard; §6.8 sets NGN independently and is the table that matters for launch. **Revised in revision 8:** the NGN ladder is ₦700 / **₦1 500** / ₦2 400 / **₦5 500**, not ₦700 / ₦1 800 / ₦2 400.
+These are **US/UK list prices**. The launch market is Nigeria, where FX parity would price the product above Netflix Standard; §6.8 sets the NGN ladder independently at **₦700 / ₦1 500 / ₦2 400 / ₦5 500** and is the table that matters for launch.
 
-**The Term Pass is a fifth product and it exists only in Nigeria.** §6.8's own argument is that Nigerians are practised buyers of discrete prepaid digital goods and that recurring card mandates fail often. A pass wallet honours that at the scale of one study week; nothing in the catalogue honoured it at the scale of a semester, which is the unit Nigerian students actually plan in. ₦5 500 for four months is one prepaid decision, aligned to an academic term, with **no renewal that can fail** — which is worth more than the ₦4 100 of nominal discount against four monthly charges, because a mandate that fails in month two collects nothing at all. It is a consumable like the other passes, so it needs no new entitlement mechanics (Decision A, Decision E); it is the same inventory-then-activate path with a longer duration. It carries no USD price: at $3.97 it would undercut `plus_monthly` in the market where the monthly is the value product, and there is no evidence of the prepaid preference outside the launch market.
+**The Term Pass exists only in Nigeria.** §6.8's argument is that Nigerians are practised buyers of discrete prepaid digital goods and that recurring card mandates fail often. A pass wallet honours that at the scale of one study week; nothing else in the catalogue honours it at the scale of a semester, which is the unit Nigerian students plan in. ₦5 500 for four months is one prepaid decision, aligned to an academic term, with **no renewal that can fail** — worth more than the ₦4 100 of nominal discount against four monthly charges, because a mandate that fails in month two collects nothing at all. It is a consumable like the other passes, so it adds no entitlement mechanics (Decision A, Decision E): the same inventory-then-activate path with a longer duration. It carries no USD price, and §5.7.1 says why creating one would be a mistake rather than an omission.
 
 **$4.99, not $5.00.** Identical revenue to the cent, better psychologically, an existing store price point, and — decisively — unchanged from today's price, so no subscriber ever sees a price-increase flow. A $0.01 rise would require a Stripe price migration, a mandatory 7-day Google Play notice, and on Apple an **explicit consent prompt where non-responders are cancelled at renewal**. Real churn risk for one cent of nothing.
 
 **The trial is 3 days, not 7.** A free 7-day trial sitting beside a $2.49 7-day pass is the same product at two prices, and the one that costs money looks like a trick to anyone who remembers the free one. Three days separates them cleanly: the trial is a look, the pass is a study week. It costs nothing to shorten because **no trial has ever converted to a paying subscriber** — there has never been a reachable checkout to convert into. Three days is also long enough to be honest at a 5-hour window: ~14 windows, several study sessions, every Plus capability.
 
-The number lives in `config.TRIAL_DAYS_MAIGIE_PLUS` (currently `7`) **and in three store configurations that the server does not control** — the Stripe price's `trial_period_days`, the App Store Connect introductory offer, and the Play Console base-plan free-trial period. All four must agree, and the two store values are set by hand in a console. `TRIAL_DAYS_CIRCLE_PLAN` stays at 7; it is space-scoped (Decision F).
+`config.TRIAL_DAYS_MAIGIE_PLUS` is `3` as of Phase 1, but the number also lives in **three store configurations the server does not control** — the Stripe price's `trial_period_days`, the App Store Connect introductory offer, and the Play base-plan free trial. All four must agree, two of them are set by hand in a console, and nothing can test them; §5.7.6 is the parity check. `TRIAL_DAYS_CIRCLE_PLAN` stays at 7 — space-scoped (Decision F).
 
 A pass is a product. It does not renew, it cannot be cancelled, there is no billing relationship to manage, and it has no grace period. It is bought, it is held, it is activated, it runs out. That is the entire lifecycle, and it is the reason passes are cheap: nothing about them has to be serviced.
 
@@ -350,16 +420,11 @@ Not retired, not in scope: `circle_plan_monthly`, `plus_seat_add_on_monthly`.
 
 Store product ids:
 
-| Internal | Stripe | Apple | Google Play |
-| --- | --- | --- | --- |
-| `plus_pass_5h` | one-time price, `mode: payment` | `com.maigie.plus.pass5h` (**consumable**) | `plus_pass_5h` (in-app, **consumable**) |
-| `plus_pass_7d` | one-time price, `mode: payment` | `com.maigie.plus.pass7d` (**consumable**) | `plus_pass_7d` (in-app, **consumable**) |
-| `plus_monthly` | recurring price, `mode: subscription` | `com.maigie.plus.monthly` (auto-renewable, group `maigie_plus`) | `maigie_plus` / base plan `plus-monthly` |
-| `plus_pass_term` | one-time price, `mode: payment`, **NGN only** | `com.maigie.plus.passterm` (**consumable**, NGN territory only) | `plus_pass_term` (in-app, **consumable**, NGN pricing only) |
+**§5.7.1 is the product matrix** — every id, every price, every provider, in one table, and it is what the four consoles are filled in from. Two properties of it are decisions rather than details:
 
-Consumable is the correct store type and not a detail: a non-consumable would be permanently owned, restorable forever, and unbuyable a second time — which is the opposite of a pass.
+**Consumable is the correct store type and it is irreversible.** A non-consumable is permanently owned, restorable forever, and unbuyable a second time, which is the opposite of a pass. Getting it wrong means creating a new SKU, not editing one.
 
-**Revised in revision 4:** `GOOGLE_PLAY_BASE_PLAN_YEARLY` and the three `GOOGLE_PLAY_SKU_CREDIT_*` settings (`config.py:264-268`) are **deleted**, along with the branches that read them at `google_play_service.py:65` and `:191-193`, and the four corresponding Play products are deleted from the console. Revision 3 kept them for historical RTDN lookups by analogy with the deprecated Stripe price ids; with zero purchases behind them there is no history to look up, and an RTDN for a product nobody owns cannot arrive. The deprecated Stripe price ids go the same way for the same reason (§5.1). Every one of the six store products in the table above is **created new**, and none is a rename of an existing SKU — a renamed SKU keeps its purchase history and its store type, and repurposing a non-consumable as a pass would produce a pass that can only ever be bought once.
+**Every store product is created new; none is a rename.** A renamed SKU carries its old purchase history and its old type. The live Play catalogue holds a `plus-yearly` base plan and three `credit_pack_*` consumables, and all four are **deleted** rather than repurposed — along with `GOOGLE_PLAY_BASE_PLAN_YEARLY`, the three `GOOGLE_PLAY_SKU_CREDIT_*` settings (`config.py:264-268`) and the branches reading them at `google_play_service.py:65, 191-193`. With zero purchases behind them there is no history to preserve, and an RTDN for a product nobody owns cannot arrive.
 
 ### 6.2 The unit is cost, not tokens
 
@@ -393,36 +458,39 @@ A **5-hour tumbling window**, started by the learner's first billable operation 
 
 | | Window (5h) | Monthly backstop | ≈ chat turns / window | ≈ voice minutes / window | Window COGS |
 | --- | --- | --- | --- | --- | --- |
-| Free | **500 units** | 5 000 | ~16 | ~~2.5~~ **0 — unbundled** | $0.05 |
-| Plus — subscription or trial | **4 000 units** | ~~30 000~~ **20 000** | ~23 | ~~20~~ **see voice allowance** | $0.40 |
-| 5-Hour Pass | **3 000 units** (one window) | — | ~17 | ~~15~~ **see voice allowance** | $0.30 |
-| 7-Day Pass | 4 000 units/window | **10 000 total** | ~57 total | ~~50 total~~ **see voice allowance** | $1.00 total |
+| Free | **500 units** | 5 000 | ~16 | **0 — unbundled** | $0.05 |
+| Plus — subscription or trial | **4 000 units** | **20 000** | ~23 | separate allowance | $0.40 |
+| 5-Hour Pass | **3 000 units** (one window) | — | ~17 | separate allowance | $0.30 |
+| 7-Day Pass | 4 000 units/window | **10 000 total** | ~57 total | separate allowance | $1.00 total |
+| Term Pass (NGN) | 4 000 units/window | **20 000/month** | ~114/month | separate allowance | $2.00/month |
 
-**Revision 8 unbundles live voice from the usage window, and it is the change that makes NGN prices affordable.** At 200 units/minute (§6.2) voice is 40× a Flash-Lite chat turn, so it dominated every ceiling in the plan: a pass holder who spent their whole allowance on voice hit the COGS ceiling, and a pass holder who spent it on text did not come close. One allowance covering both meant pricing for the voice case and serving mostly the text case — the worst of both, because the price had to be defensible against a cost almost nobody incurred.
+**Live voice is not drawn from the usage window, and unbundling it is what makes NGN prices affordable.** At 200 units/minute (§6.2) voice is 40× a Flash-Lite chat turn, so it dominated every ceiling: a learner who spent an allowance on voice hit the COGS ceiling, and one who spent it on text did not come close. A single allowance covering both meant pricing for the voice case and serving mostly the text case — the worst of both, because the price had to be defensible against a cost almost nobody incurred.
 
-So voice gets **its own stated allowance**, drawn from its own counter, and beyond it voice is a separate top-up purchase:
+So voice has **its own stated allowance**, drawn from its own counter, and beyond it voice is a separate top-up purchase:
 
 | | Voice minutes included | Voice COGS at ceiling | Beyond it |
 | --- | --- | --- | --- |
 | Free | **0** | $0.00 | not available — Plus capability |
-| Plus Monthly | **60 / month** | $1.20 | voice top-up |
-| 5-Hour Pass | **10** | $0.20 | voice top-up |
-| 7-Day Pass | **25** | $0.50 | voice top-up |
-| Term Pass (NGN) | **60 / month** | $1.20 | voice top-up |
+| Plus Monthly | **60 / month** | $1.20 | `plus_voice_30` |
+| 5-Hour Pass | **10** | $0.20 | `plus_voice_30` |
+| 7-Day Pass | **25** | $0.50 | `plus_voice_30` |
+| Term Pass (NGN) | **60 / month** | $1.20 | `plus_voice_30` |
 
-**Free loses voice entirely, and that is the honest version of the paywall.** §6.3 already argued that Free is "starved of voice, not of conversation" — but 2.5 minutes a window is 4.8 windows a day, so a free learner could draw 12 minutes daily, $0.24/day, **$7.20/month at zero revenue**, from a tier whose entire target COGS is $0.20. A 2.5-minute allowance was not a small grant of voice; it was an unbounded one wearing a per-window label. Zero is defensible in a way that 2.5 is not: voice is the one capability a free learner is told plainly they do not have, which is also the clearest thing a pass can be sold on.
+**`plus_voice_30` is a real product, and it has to be, because of Decision D.** A subscriber who exhausts 60 minutes cannot activate a pass to get more — Decision D refuses activation while Plus is already active — so without a voice pack the catalogue has **no answer at all** for the learner using the product most. The only outcomes available are serving the minutes free, which is COGS at zero revenue, or refusing with nothing to buy. $1.49 is better than either. Decision R covers why this is the *only* top-up in the plan.
 
-**Two properties this buys.** The flat price no longer carries a volatile cost — text usage varies by maybe 3×, voice by 40×, and only one of them was ever priced. And the marketing claim gets *more* concrete rather than less: "5 hours of full Plus including 10 minutes of live voice tutoring" is checkable, where "including about 15 minutes" was an allowance-division artefact that no counter enforced.
+**Free gets no voice at all, and that is the honest version of the paywall.** An earlier design gave Free 2.5 minutes *per window* — but a 5-hour window permits 4.8 windows a day, so that is 12 minutes daily, $0.24/day, **$7.20/month at zero revenue**, from a tier whose entire target COGS is $0.20. It was not a small grant of voice; it was an unbounded one wearing a per-window label. Zero is defensible in a way that 2.5 is not: voice becomes the one capability a free learner is told plainly they do not have, which is also the clearest thing a pass can be sold on.
+
+**Two properties this buys.** The flat price no longer carries a volatile cost — text usage varies by maybe 3×, voice by 40×, and only one of them was ever priced. And the marketing claim gets *more* concrete: "5 hours of full Plus including 10 minutes of live voice tutoring" is checkable, where "about 15 minutes" was an allowance-division artefact that no counter enforced.
 
 **Why there is a monthly backstop when §1 says there is no monthly limit.** A 5-hour tumbling window permits up to 4.8 windows/day, so monthly exposure is 144× the window allowance. No window number is simultaneously generous enough for one session and bounded enough for a month. Claude — the reference implementation — shipped 5-hour windows and then **added weekly limits in 2025** for exactly this reason.
 
 The resolution is that the backstop is not a product limit, it is an abuse limit. It is set at ~7.5 Plus windows/month, which is far above what any learner reaches by studying: 2 windows/day for 20 days is 40 windows, but a *typical* window consumes well under its allowance, so the backstop binds only on sustained maximal draw. It is not shown in the UI, not in the marketing, and not in `GET /billing/usage` until a learner is within 20% of it. Experientially there is no monthly limit. Financially there is a bound.
 
-**Why Free gets more chat turns than Plus.** 500 units buys ~16 Flash-Lite turns; 4 000 buys ~23 3.5-Flash turns. Free is not starved of conversation — it is starved of *voice* (~~2.5 minutes~~ **none at all, revision 8**) and of *model quality*. That is the honest shape of the paywall, it matches what actually costs money, and it means the free tier stays useful enough to convert. The old design had this exactly backwards: free got 250 voice-minutes/day and 3–5 chat turns.
+**Why Free gets more chat turns than Plus.** 500 units buys ~16 Flash-Lite turns; 4 000 buys ~23 3.5-Flash turns. Free is not starved of conversation — it is starved of *voice*, which it no longer gets at all, and of *model quality*. That is the honest shape of the paywall, it matches what actually costs money, and it keeps the free tier useful enough to convert.
 
-> **This paragraph was false when written, and the correction is the point of it.** The second half — "starved of model quality" — assumed Free ran Flash-Lite. It did not: `LLM_TIER_ALLOWLIST_FREE` listed `gemini-3.5-flash` and that model is first in the chat fallback chain, so a free turn cost $0.0174 rather than $0.0029. **500 units bought about 3 chat turns, not ~16** — which is the number this very paragraph cites as the failure of the old design. The allowlist has been narrowed to Flash-Lite, so the arithmetic above is now what the code does; before that it was what the code was assumed to do.
+> **Two caveats on the numbers in that paragraph, both live.** The ~16 figure holds only because revision 6 narrowed `LLM_TIER_ALLOWLIST_FREE` to Flash-Lite — before that Free ran the Plus model, first in the chat fallback chain, and 500 units bought about **3** turns rather than 16. The figure has still never been observed, only derived, which is why §6.7's typical-consumption column stays a forecast until Phase 3 instruments units per operation.
 >
-> Two things follow. The ~16 figure was never observed, only derived, which is why §6.7's cost model is marked stale pending Phase 3's instrumentation rather than recomputed here. And the "model quality" half of the paywall holds **for chat only** until drift 23 is closed — `llm_resilient` serves the other 26 call sites and consults no allowlist, so a free learner's quizzes, lessons, documents and narrative panels all still run the Plus model.
+> And the **model-quality half of the paywall holds for chat only** until drift 23 is closed. `llm_resilient` serves the other 26 call sites and consults no allowlist, so a free learner's quizzes, lessons, documents and narrative panels all still run the Plus model.
 
 **Three properties make the window worth the migration:**
 
@@ -447,6 +515,7 @@ Net revenue per sale, after store or processor cut. Apple and Google both take *
 | 5-Hour Pass | $0.99 | $0.66 | $0.84 | $0.69 | **$0.75** |
 | 7-Day Pass | $2.49 | $2.12 | $2.12 | $1.74 | **$2.05** |
 | Plus Monthly | $4.99 | $4.55 | $4.24 | $3.49 | **$4.00** |
+| 30 Voice Minutes | $1.49 | $1.15 | $1.27 | $1.04 | **$1.21** |
 
 Note the inversion: at $0.99 Stripe's 30¢ fixed fee makes **web the worst channel**, while at $4.99 web is the best. The $0.99 pass loses nothing to store distribution.
 
@@ -457,7 +526,10 @@ Margin at the allowance ceiling, which is the worst case rather than the expecte
 | 5-Hour Pass | $0.75 | 3 000 units | $0.30 | 60% | $0.18 | **76%** |
 | 7-Day Pass | $2.05 | 10 000 units | $1.00 | 51% | $0.60 | **71%** |
 | Plus Monthly | $4.00 | **20 000 units/mo** | **$2.00** | **50%** | $1.10 | **73%** |
+| 30 Voice Minutes | $1.21 | 30 min = 6 000 units | $0.60 | **50%** | $0.48 | **60%** |
 | Free | $0.00 | 500 units/window | **$0.15** | — | $0.08 | — |
+
+**The voice pack is the one product whose ceiling is routinely reached**, which is why its floor and typical margins sit closer together than anything else here. A learner buys 30 minutes in order to use 30 minutes; nobody buys voice minutes speculatively. The $0.48 typical figure assumes 80% consumption, and if the real number is 100% the margin is 50% rather than 60% — the narrowest band in the catalogue, and deliberately so, because a pack sized to be under-consumed would be a pack that misleads.
 
 **The monthly's floor margin was 25% and is now 50%, from cutting the backstop 30 000 → 20 000 units.** §6.3 justifies the backstop as an abuse limit rather than a product limit, set "far above what any learner reaches by studying" — and a limit set that far above real usage was buying nothing except a worst case that halved the margin on the flagship product. 20 000 units is still ~5 Plus windows/month of maximal draw, which no studying learner reaches; the difference is only visible to the learner it was written to bound. With voice unbundled the backstop is also now a text budget, which is the thing that varies least.
 
@@ -517,17 +589,15 @@ Deterministic, and therefore free to us as well as the learner: quiz grading, hi
 
 1. **Retry fan-out.** `llm_resilient.generate_content` retries 3× per provider and then falls through `gemini → openai → anthropic` (`llm_resilient.py:200, 249-320`), treating an empty reply as a failure (`:290`). One logical operation can bill **up to nine provider calls**. Nothing counts them.
 2. **`guidance_engine` has no cache.** `growth_service` and `goal_insight_service` go through `narrative_cache` and its `inputs_hash` fingerprint, so reopening a panel is free. Home guidance does not — it is **an LLM call on every home load** that gets past the deterministic ladder (`guidance_engine.py:231`). Five home opens a day is $2.10/month, which exceeds the entire margin on a Plus subscription.
-3. ~~**`max_tokens` looks like an unreviewed default.** Growth narrative, growth drivers and goal insight each budget 8 192 output tokens to write a paragraph. At $9.00/1M output that is 89% of each operation's cost. Setting those three to 1 500 is a ~5× reduction on the most-opened panels in Reflect, and no learner can tell.~~
+3. **Withdrawn: the `max_tokens` audit.** It was scoped on the belief that an 8 192-token output budget was 89% of an operation's cost. `max_output_tokens` is a **ceiling, not a charge** — billing is on tokens produced — so lowering it saves nothing, and lowering these three would have re-opened five separately-diagnosed truncation bugs. The knob that does cap reasoning spend is **`thinking_budget`**, which nothing in the codebase set; that is the audit worth doing and Decision P's threshold work is where it landed.
 
-   **Corrected 2026-09-01 — this was wrong, and it was the plan's own error.** `max_output_tokens` is a **ceiling, not a charge**: billing is on tokens actually produced, which `llm/__init__.py:137` states in as many words. 8 192 unused costs nothing, so "89% of each operation's cost" was fiction and "a ~5× reduction" would have reduced nothing. Lowering these would only have re-opened the truncation bugs that five separate escalations in this codebase already diagnosed — because these are **thinking models and reasoning tokens draw from the same allowance**, so the visible reply is cut off while the budget looks generous.
-
-   The genuine finding underneath it survives, in a different shape: **nothing sets `thinking_budget`**, which is the knob that actually caps reasoning spend. Phase 0 has the three-class split, and the two real over-provisions (`narrative_cache`'s single hardcoded budget shared by four panels of very different sizes, and `resource_service.py:304` at 8 192 to transcribe text it was just handed).
+   Two real over-provisions survive the withdrawal: `narrative_cache`'s single hardcoded budget shared by four panels of very different sizes, and `resource_service.py:304` at 8 192 to transcribe text it was just handed. Phase 0 holds the three-class `thinking_budget` split.
 
 **Nothing outside chat is metered, and it cannot be without plumbing.** `LlmCostRecord` is written from exactly one place — `cost_tracker.record` at `router.py:308` — and `LLMRouter`'s only caller in the codebase is Ask/chat (`ask_service.py:2066`). Every operation in the tables above goes through `llm_resilient` or the raw `generate_content` helpers, **which discard the provider response and return text only**, so token counts do not reach the caller. Metering them is not a matter of adding a `consume_credits` call; usage metadata has to be plumbed through first (Decision L).
 
-~~One more thing to verify before trusting any of these figures: `cost_calculator._EXACT_MODEL_PRICING:31-52` prices `gemini-3.5-flash` at **$0.50/$3.00** per 1M, where published rates are around **$1.50/$9.00**. One of the two is wrong. If the codebase table is right, every COGS figure here falls ~3× and the margins get much easier; if it is stale, the meter would under-charge by 3× from day one. **Check this first** — it is a five-minute task that moves every number in this document.~~
+**The rate card these estimates rest on was wrong and is now corrected.** `cost_calculator._EXACT_MODEL_PRICING` priced `gemini-3.5-flash` at $0.50/$3.00 against a published $1.50/$9.00 — 3× low, in two tables, with five tests agreeing with it. Fixed in Phase 0.
 
-**Answered in Phase 0, and revision 8 withdraws the framing.** The codebase table was the wrong one — published rates are $1.50/$9.00 — and it is corrected. But the closing claim, that this "moves every number in this document", was true only because the document was quoting margins from operation estimates. **Under Decision Q it moves no margin here.** What it moves is how much product an allowance buys, which is the §6.3 question of whether the offer is generous enough to sell, and the "typical COGS" columns, which are behavioural forecasts and labelled as such. The rate card is an input to sizing an allowance, not to costing one. Every estimate in the tables above stands as a sizing input at the corrected rates.
+**It does not move any margin in this document, and that is Decision Q's point.** Margins are quoted from allowance caps, which are denominated in dollars and cannot be wrong about what they cost. What the rate card moves is how much *product* an allowance buys — the §6.3 question of whether the offer is generous enough to sell — and the "typical COGS" columns, which are behavioural forecasts and labelled as such. Every estimate above stands as a sizing input at the corrected rates.
 
 ### 6.6 The gating and metering matrix
 
@@ -573,19 +643,19 @@ Two operations are **never gated and never charged**, on principle rather than o
 
 ### 6.7 Revenue, with the whole cost surface in it
 
-Assumptions, all of which are guesses and are the first thing to replace with measurement: payer rate **8% of MAU** (2.75% subscribe, 3.25% buy 7-day passes at 1.3/month, 2.0% buy 5-hour passes at 2.0/month); **50%** of non-paying MAU are AI-active in a given month; net revenue per §6.4.
+Assumptions, all of which are guesses and are the first thing to replace with measurement: payer rate **8% of MAU** (2.75% subscribe, 3.25% buy 7-day passes at 1.3/month, 2.0% buy 5-hour passes at 2.0/month); **50%** of non-paying MAU are AI-active in a given month; net revenue per §6.4; COGS from allowance caps per Decision Q.
 
 Per-learner monthly COGS, before and after the §6.5 fixes:
 
 | | Free — as-is | Free — fixed | Plus — as-is | Plus — fixed |
 | --- | --- | --- | --- | --- |
-| Metered usage (window) | $0.25 | $0.11 | $1.80 | $0.90 |
-| Background tasks | $0.64 | $0.07 | $0.64 | $0.30 |
-| Home guidance (uncached) | $0.70 | $0.02 | $0.70 | $0.02 |
+| Metered usage (window) | $0.25 | $0.05 | $1.80 | $0.80 |
+| Background tasks | $0.64 | $0.02 | $0.64 | $0.28 |
+| Home guidance (uncached) | $0.70 | $0.01 | $0.70 | $0.02 |
 | Unmetered generation | **unbounded** | in window | **unbounded** | in window |
-| **Total** | **$1.59+** | **$0.20** | **$3.14+** | **$1.22** |
+| **Total** | **$1.59+** | **$0.08** | **$3.14+** | **$1.10** |
 
-The "fixed" column assumes four changes, none of which a learner can perceive: meter every operation into the window (Decision L), gate background AI on engagement (Decision M), cache home guidance the way `narrative_cache` already caches narratives, and set the three 8 192-token narrative budgets to 1 500.
+The "fixed" column assumes four changes, none of which a learner can perceive: meter every operation into the window (Decision L), gate background AI on engagement (Decision M), cache home guidance the way `narrative_cache` already caches narratives, and set `thinking_budget` per operation class. **Voice is not in this table** — it is separately allowanced (§6.3), which is what makes the Plus figure bounded rather than a guess.
 
 At 8% payer rate, 50% of free MAU AI-active:
 
@@ -594,50 +664,31 @@ At 8% payer rate, 50% of free MAU AI-active:
 | Subscribers | 28 | 275 | 1 375 |
 | 7-day passes sold | 42 | 423 | 2 113 |
 | 5-hour passes sold | 40 | 400 | 2 000 |
-| **Net revenue** | **$227** | **$2 267** | **$11 335** |
-| Paid COGS | $57 | $573 | $2 865 |
-| Free COGS | $94 | $940 | $4 700 |
-| **Contribution** | **$76** | **$754** | **$3 770** |
-| Margin | 33% | 33% | 33% |
-| Revenue per MAU | $0.227 | $0.227 | $0.227 |
+| Voice packs sold | 10 | 96 | 480 |
+| **Net revenue** | **$239** | **$2 383** | **$11 916** |
+| Paid COGS | $68 | $675 | $3 375 |
+| Free COGS | $37 | $368 | $1 840 |
+| **Contribution** | **$134** | **$1 340** | **$6 701** |
+| Margin | 56% | 56% | 56% |
+| Revenue per MAU | $0.239 | $0.238 | $0.238 |
 
-**Without the §6.5 fixes the same model returns roughly −$270 at 10 000 MAU.** The fixes are not optimisations; they are the difference between a business and a subsidy.
+**Voice packs assume a 12% monthly attach rate against payers, and it is the weakest assumption in the table.** Voice is the feature with the least usage data behind it and the highest unit cost, so the range that matters is wide: at 30% attach the pack is a significant product, at 2% it is a rounding error that still needs four store SKUs. Phase 3's instrumentation answers it. The pack is worth building at any of those numbers for the reason in Decision R — it closes an unbounded exposure rather than chasing the revenue — but **do not plan headcount against the +$70.**
 
-> **Revision 8 restates this table under Decision Q.** The version above is kept because its revenue line is unchanged and correct — USD prices do not move — but its COGS line is an operation estimate and therefore carries the rate-card error that revision 4 flagged and nobody resolved. Restated from allowance caps and the §6.11 free-tier target, at the same 8% payer rate and the same 50% AI-active assumption:
->
-> | | 1 000 MAU | 10 000 MAU | 50 000 MAU |
-> | --- | --- | --- | --- |
-> | Subscribers | 28 | 275 | 1 375 |
-> | 7-day passes sold | 42 | 423 | 2 113 |
-> | 5-hour passes sold | 40 | 400 | 2 000 |
-> | **Net revenue** | **$227** | **$2 267** | **$11 335** |
-> | Paid COGS | $63 | $629 | $3 145 |
-> | Free COGS | $37 | $368 | $1 840 |
-> | **Contribution** | **$127** | **$1 270** | **$6 350** |
-> | Margin | **56%** | **56%** | **56%** |
-> | Revenue per MAU | $0.227 | $0.227 | $0.227 |
->
-> Contribution at 10 000 MAU goes $754 → **$1 270**, and essentially all of it comes from two places: free COGS $940 → $368 (drift 23, the engagement gate, guidance caching, and voice removal), and the monthly backstop cut. **No price changed.** The margin improvement is entirely a cost-surface result, which is the same conclusion the lever table below reaches — the two highest-value levers were never pricing decisions.
->
-> The lever table below is left as written and is now partly historical: its baseline is $754, and three of its rows (`max_tokens`, free AI-active rate, context caching) are either withdrawn or already counted in the $368 free-COGS figure. Read it for the *ordering* of levers, not for the totals.
+**Without the §6.5 fixes the same model returns roughly −$270 at 10 000 MAU.** The fixes are not optimisations; they are the difference between a business and a subsidy — and note that **no price appears in that sentence.** The margin here is a cost-surface result, not a pricing one.
 
-**Free-tier inference is still the largest single line item** — $940 against $2 267 of revenue at 10 000 MAU. Levers, most powerful first:
+**Free-tier inference is still the largest single line item** — $368 against $2 383 of revenue at 10 000 MAU, and that is *after* the fixes; before them it was $940. Remaining levers, most powerful first:
 
-| Lever | Contribution at 10 000 MAU |
+| Lever | Status |
 | --- | --- |
-| Baseline (fixed) | $754 |
-| ~~Audit `max_tokens` across all 26 operations~~ — **withdrawn, saves nothing** (item 3 above) | ~~$1 100–1 300~~ **$754** |
-| Set `thinking_budget` per operation class (the real knob) | **not yet estimated** |
-| Context-cache the system instruction + tool declarations, at a 90% cached-token discount | **not yet estimated; likely the largest single input saving** |
-| Trim chat context 8 000 → 4 000 input tokens | **$1 197** |
-| Free AI-active rate 50% → 30% | **$1 130** |
-| Payer rate 8% → 12% | **$1 448** |
-| Gemini context caching on the enrichment block | **$1 000–1 250** |
-| `cost_calculator` pricing table turns out to be correct | **~$2 000** |
+| Set `thinking_budget` per operation class | **the real knob, not yet estimated.** Open Question 1 |
+| Context-cache the system instruction + tool declarations at a 90% cached-token discount | **not yet estimated; likely the largest single input saving.** Open Question 2 |
+| Trim chat context 8 000 → 4 000 input tokens | worth roughly +$400 at 10 000 MAU |
+| Free AI-active rate 50% → 30% | worth roughly +$150; a retention question, not a cost one |
+| Payer rate 8% → 12% | worth roughly +$700, and the only lever here that is a growth question |
 
-**The two highest-value levers are not pricing decisions.** Auditing `max_tokens` and trimming chat context together roughly double contribution, cost the learner nothing perceptible, and belong to nobody today — which is why they are Open Questions 1 and 2 rather than phase items someone will pick up by accident.
+**The two highest-value levers are not pricing decisions and belong to nobody today**, which is why they are Open Questions 1 and 2 rather than phase items someone picks up by accident.
 
-Two things this model does not claim: it ignores infrastructure, storage, CDN, email and salaries, so contribution is not profit; and the 8% payer rate is unvalidated, with passes plausibly pushing it above what a subscription-only product would reach, since $0.99 is an impulse rather than a commitment.
+Two things this model does not claim: it ignores infrastructure, storage, CDN, email and salaries, so **contribution is not profit**; and the 8% payer rate is unvalidated against zero payment history, with passes plausibly pushing it above what a subscription-only product would reach, since $0.99 is an impulse rather than a commitment.
 
 **And it is the wrong model for launch.** The first market is Nigerian students, where the USD list price is unpayable. §6.8 is the one that matters.
 
@@ -662,15 +713,15 @@ So **NGN is a set price, not a conversion.** Apple, Google and Paystack all supp
 | Product | NGN | ≈ USD | % of USD list |
 | --- | --- | --- | --- |
 | 5-Hour Plus Pass | **₦700** | $0.51 | 51% |
-| 7-Day Plus Pass | ~~₦1 800~~ **₦1 500** | $1.08 | 43% |
+| 7-Day Plus Pass | **₦1 500** | $1.08 | 43% |
 | Plus Monthly | **₦2 400** | $1.73 | 35% |
 | **4-Month Term Pass** | **₦5 500** | $3.97 | — (NGN only) |
 
 The ladder stays coherent: ₦3 360/day, ₦214/day, ₦80/day, ₦46/day, correctly ordered, and no arbitrage — two 7-day passes (₦3 000) cost more than a month (₦2 400) and buy fewer days; two months (₦4 800) cost less than the term pass but buy four fewer months.
 
-> **Revision 8 moved the 7-day pass ₦1 800 → ₦1 500, and the reason is a cost-side arbitrage the price-side check missed.** At ₦1 800 the 7-day pass was 75% of the monthly price for 23% of the duration — which reads fine as a price ladder, and is exactly why it survived four revisions. But allowances are what cost money, and once NGN allowances are derived from NGN net revenue (below), ₦1 800 for 7 days against ₦2 400 for 30 days forced the monthly to be roughly 4× more generous per day at 1.33× the price. The NGN ladder was too compressed at the top to support a coherent allowance ladder underneath it. ₦1 500 opens the gap. It also stays under the ₦2 500 Paystack threshold, so the flat fee is still waived.
+> **Why the 7-day pass is ₦1 500 rather than ₦1 800: a cost-side arbitrage that a price-side check does not catch.** At ₦1 800 the pass was 75% of the monthly price for 23% of the duration, which reads fine as a price ladder — and is why it survived four revisions. But allowances are what cost money, and once they are derived from local net revenue (below), ₦1 800 for 7 days against ₦2 400 for 30 days forces the monthly to be roughly 4× more generous per day at 1.33× the price. The ladder was too compressed at the top to support a coherent allowance ladder underneath it. ₦1 500 opens the gap and still sits under the ₦2 500 Paystack threshold, so the flat fee is still waived.
 
-**₦2 400 rather than ₦2 500 is deliberate.** [Paystack charges 1.5% + ₦100 on local cards, capped at ₦2 000, with the ₦100 waived below ₦2 500](https://paystack.com/pricing). Pricing at ₦2 500 triggers the flat fee: ₦137 instead of ₦36, turning a 1.5% cost into 5.5% for one naira of extra revenue. Every NGN price in this plan sits under that threshold, and the same logic is why ₦700 rather than ₦900 for the 5-hour pass — the flat fee would have been 14% of the sale. *Content was rephrased for compliance with licensing restrictions.*
+**₦2 400 rather than ₦2 500 is deliberate.** [Paystack charges 1.5% + ₦100 on local cards, capped at ₦2 000, with the ₦100 waived below ₦2 500](https://paystack.com/pricing). Pricing at ₦2 500 triggers the flat fee: ₦137 instead of ₦36, turning a 1.5% cost into 5.5% for one naira of extra revenue. **The three recurring-scale prices all sit under that threshold**, and the same logic is why ₦700 rather than ₦900 for the 5-hour pass — the flat fee would have been 14% of the sale. Only the Term Pass crosses it, knowingly, for the reason below. *Content was rephrased for compliance with licensing restrictions.*
 
 Net per sale, blending 60% Paystack web and 40% Google Play at 15%:
 
@@ -680,10 +731,11 @@ Net per sale, blending 60% Paystack web and 40% Google Play at 15%:
 | 7-Day Pass (₦1 500) | $1.07 | $0.92 | **$1.01** |
 | Plus Monthly | $1.71 | $1.47 | **$1.61** |
 | Term Pass (₦5 500) | $3.83 | $3.38 | **$3.65** |
+| 30 Voice Minutes (₦1 500) | $1.07 | $0.92 | **$1.01** |
 
 The Term Pass is the one NGN product **above** the ₦2 500 threshold, so it pays the ₦100 flat fee — ₦182 total against ₦82 at 1.5% alone. That is 3.3% of the sale rather than 1.5%, and it is accepted rather than designed around, because the alternative is pricing a four-month product under ₦2 500, which would undercut two months of the monthly.
 
-**Revision 8: NGN allowances are derived from NGN net revenue, not inherited from the USD product.** This is where the launch market's subscription was losing money. Applying Decision Q in reverse — pick a target floor margin, then let it set the cap — at a 60% floor:
+**NGN allowances are derived from NGN net revenue, not inherited from the USD product.** This is where the launch market's subscription was losing money. Applying Decision Q's second rule — pick a target floor margin, then let it set the cap — at a 60% floor:
 
 | Product | Blended net | Allowance | Max COGS | Floor margin | Typical COGS | Profit (typical) | Typical margin |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -691,39 +743,41 @@ The Term Pass is the one NGN product **above** the ₦2 500 threshold, so it pay
 | 7-Day Pass | $1.01 | **4 500 units** | $0.45 | 55% | $0.28 | **$0.73** | 72% |
 | Plus Monthly | $1.61 | **6 000 units/mo** | $0.60 | 63% | $0.36 | **$1.25** | 78% |
 | Term Pass | $3.65 | **20 000 units** | $2.00 | 45% | $1.20 | **$2.45** | 67% |
+| 30 Voice Minutes | $1.01 | 30 min | $0.60 | **41%** | $0.48 | **$0.53** | 52% |
 | Free | $0.00 | 400 units/window | $0.12 | — | $0.08 | −$0.08 | — |
 
-**The Nigerian Plus Monthly was previously a loss-making product and the plan did not say so.** ₦2 400 nets $1.61; §6.4's typical monthly COGS was $1.80. Every sale lost $0.19, and at the allowance ceiling of $3.00 it lost $1.39. The error was structural rather than arithmetical: §6.8 set the NGN *price* from the Nigerian market, correctly and at length, and then left the NGN *allowance* at whatever the $4.99 product carried. A price cut of 65% with no allowance change is a margin inversion, and it was invisible because the two numbers live in different sections. **Deriving the allowance from the local net revenue is the general fix**, and it is why this table exists rather than a note saying "NGN margins are thinner".
+**The voice pack is the thinnest product in the NGN table and it cannot be made thicker.** 41% at the ceiling against 50% globally, because a voice minute costs $0.02 in Lagos exactly as it does in London while the price is a third lower. Every other product absorbed the NGN discount by cutting its allowance; voice cannot, because the allowance *is* the minutes and cutting them below 30 makes the pack not worth buying. This is the one place in the plan where regional pricing has no lever left, and 41% is the honest floor rather than a target.
+
+**Why this table exists: the Nigerian Plus Monthly used to be a loss-making product, and nothing here said so.** ₦2 400 nets $1.61 against a typical monthly COGS of $1.80, so every sale lost $0.19 and a ceiling draw lost $1.39. The error was structural rather than arithmetical — this section set the NGN *price* from the Nigerian market, correctly and at length, and left the NGN *allowance* at whatever the $4.99 product carried. **A 65% price cut with no allowance change is a margin inversion**, and it stayed invisible because the price and the allowance lived in different sections. Deriving the allowance from local net revenue is the general fix, which is why this is a table rather than a note reading "NGN margins are thinner".
 
 **6 000 units/month is a real product, not a token one.** Under Decision P chat runs Flash-Lite (~30 units/turn) for everyone, so 6 000 units is roughly **200 chat turns a month, 6–7 a day**, plus the 60 unbundled voice minutes. The figure only looks small against the USD product's 20 000, and a learner paying a third of the price receiving a third of the allowance is the honest shape of regional pricing — considerably more honest than the previous arrangement, where they received the same allowance and the company absorbed the difference as a loss.
 
 **Free is 400 units/window in Nigeria rather than 500.** Free COGS is the largest line item in the launch market by a wide margin and the local revenue per MAU is half the USD figure, so the free tier has to be tuned to the market it is subsidising. 400 units is ~13 Flash-Lite turns per 5-hour window.
 
-**Nigeria-first revenue at 10 000 MAU**, with the payer mix weighted toward passes as prepaid purchasing behaviour suggests — 1.5% subscribe, 4% buy 7-day passes (1.4/month), 2.5% buy 5-hour passes (2.5/month):
+**Nigeria-first revenue at 10 000 MAU.** Payer mix weighted to prepaid products, which is what §6.8's own behavioural argument implies: **1.0% Plus Monthly, 1.0% Term Pass, 4.0% buy 7-day passes (1.4/month), 2.0% buy 5-hour passes (2.5/month)** — 8% in total, matching §6.7's rate — plus **96 voice packs/month at a 12% attach against payers**. Term Pass revenue and COGS are recognised monthly across its four months rather than at purchase.
 
-| | Without the §6.5 fixes | With them | **Free COGS corrected** |
-| --- | --- | --- | --- |
-| Net revenue | $1 220 | $1 220 | $1 220 |
-| Paid COGS | $965 | $242 | $242 |
-| Free COGS | $1 472 | $460 | **$920** |
-| **Contribution** | **−$182** | **+$518** | **+$58** |
-| Margin | negative | 42% | **5%** |
+| | Without the §6.5 fixes | **With them** |
+| --- | --- | --- |
+| Net revenue | $1 155 | **$1 155** |
+| Paid COGS | $880 | **$324** |
+| Free COGS | $1 463 | **$368** |
+| **Contribution** | **−$1 188** | **+$463** |
+| Margin | negative | **40%** |
+| Revenue per MAU | $0.116 | **$0.116** |
 
-**At Nigerian prices the cost work is not an optimisation, it is the precondition for the market existing.** Without it, unit economics are negative before a single dollar of infrastructure.
+**At Nigerian prices the cost work is not an optimisation, it is the precondition for the market existing.** Without it, unit economics are negative before a single dollar of infrastructure is paid for.
 
-> **The third column is revision 8's correction and it is the more important of the two findings in this section.** The `+$518` rested on a free COGS of $460, while §6.7 puts the same population at the same MAU and the same 8% payer rate at **$940**. A free Nigerian learner runs the same models as a free American one, so the two figures cannot both be right — and $940 is the one that reconciles: 9 200 free × 50% AI-active × $0.20/month. $460 implies either a 25% AI-active rate or half the per-learner cost, and §6.8 states neither and never did.
->
-> **At the reconciled figure the launch market's contribution is $58, not $518, and its margin 5%, not 42%** — the difference between a viable market and a break-even one, resting on an assumption that was never written down. This is the same class of error as the monthly's negative margin: a number set correctly in one section and quietly re-derived in another.
->
-> The "without the §6.5 fixes" column is left as written and remains understated — the rate-card correction makes it worse — but it is no longer load-bearing, because revision 8 does not quote operation-estimated COGS anywhere it makes a decision.
+> **One correction worth keeping visible, because it is the class of error this section kept making.** An earlier version of this table claimed **+$518 at 42%** on a free COGS of $460 — while §6.7 put the same population, at the same MAU and the same payer rate, at $940. A free Nigerian learner runs the same models as a free American one, so both could not be right, and $460 implied either a 25% AI-active rate or half the per-learner cost, neither of which was ever stated. **At the reconciled figure that version of the model returns +$58 at 5%, not +$518 at 42%** — the difference between a viable market and a break-even one, resting on an assumption nobody had written down. Same shape as the monthly's negative margin: a number set correctly in one section and quietly re-derived in another. The table above is derived once, from allowance caps, for both markets.
 
-Revenue per MAU is **$0.122**, roughly half the USD-priced figure — so Nigeria needs about twice the users for the same revenue. That is a planning input, not a problem: it is the normal shape of an emerging-market launch, and it is why §6.5's free-tier cost per learner is the number that decides whether this works.
+Revenue per MAU is **$0.116**, under half the USD-priced $0.238 — so Nigeria needs roughly twice the users for the same revenue. That is a planning input rather than a problem: it is the normal shape of an emerging-market launch, and it is why free-tier cost per learner is the number that decides whether this works.
+
+**The voice pack is worth more here than globally, proportionally.** It adds $51 of contribution against $412, or 12%, where globally it adds $70 against $1 270, or 5.5% — because NGN revenue per payer is lower, so any product priced near parity carries more weight in the mix. It is the one product in the catalogue that does *not* discount into the market, and in a market this thin that is a feature of the revenue line even though it is a constraint on the margin line.
 
 **Two consequences for product, not just price.**
 
 The **passes are the lead products in Nigeria, not the subscription.** Recurring card mandates fail often, and Nigerians are practised buyers of discrete prepaid digital goods — data bundles, airtime. A ₦1 500 pass bought the week before an exam fits that behaviour; a ₦2 400/month standing charge fights it. Phase 7's client work should lead with the pass wallet and treat the subscription screen as secondary.
 
-**Revision 8 follows that argument one step further than revision 2 did, and gets the Term Pass out of it.** If the objection to the subscription is the mandate rather than the amount, then the answer is not only a smaller prepaid product but also a *longer* one — a learner who wants four months of Plus currently has no way to buy four months of Plus except by accepting four chances for their card to fail. ₦5 500 once, aligned to an academic term, is the same commitment with none of the fragility, and it is the only product in the catalogue that a Nigerian student can buy with cash-in-hand certainty for a period longer than a week. The margin arithmetic agrees independently: at $3.65 net it is the largest single transaction available in the market, and its 45% floor margin is the weakest in the NGN table only because its allowance is the most generous.
+**The Term Pass follows that argument one step further.** If the objection to the subscription is the mandate rather than the amount, the answer is not only a smaller prepaid product but also a *longer* one — a learner who wants four months of Plus otherwise has no way to buy four months of Plus except by accepting four chances for their card to fail. ₦5 500 once, aligned to an academic term, is the same commitment with none of the fragility, and it is the only product a Nigerian student can buy with cash-in-hand certainty for longer than a week. The margin arithmetic agrees independently: at $3.65 net it is the largest single transaction available in the market, and its 45% floor margin is the weakest in the NGN table only because its allowance is the most generous.
 
 And the paid case cannot be "AI access", because free Gemini is on the same phone and sets that price at zero. It has to be what a general chatbot structurally cannot do: your courses, your materials, your measured weak areas, your exam date, spaced repetition against what you actually forgot. That is the book's argument in `ch36` — capability, not AI — and here it is also the reason a price above zero is defensible at all.
 
@@ -778,33 +832,43 @@ Points therefore sit entirely inside the pass rails already being built: redempt
 
 ### 6.10 Model roster
 
-> **This section is referenced three times and was never written.** Revision 7's changelog cites "Model roster in §6.10" and drift item 23 resolves an open question with "registered and live (§6.10)". There is no §6.10 in the document. The facts it was meant to hold are recoverable from elsewhere — `gemini-3.5-flash-lite` as the free tier's second candidate, `gemini-3.5-flash` for operations above 500 units, `gemini-3.1-flash-live-preview` for voice, the Gemini 2.5 family shutting down October 2026 — but they are scattered across §6.2, §5.2 and drift 23 rather than tabulated anywhere. Recorded here rather than fabricated: whoever owns Decision P should write it, because two other sections currently promise a reader that it exists.
+| Role | Model | Rate per 1M (in/out) | Where it is set |
+| --- | --- | --- | --- |
+| Free chat, and every operation under 500 units | `gemini-3.5-flash-lite` | $0.25 / $1.50 | `LLM_TIER_ALLOWLIST_FREE`, `registry._DEFAULTS` |
+| Free fallback | `gemini-3.5-flash-lite` second candidate | as above | Decision P |
+| Plus, operations **above 500 units** | `gemini-3.5-flash` | **$1.50 / $9.00** | `LLM_TIER_ALLOWLIST_PLUS`, `registry._DEFAULTS` |
+| Live voice, both tiers | `gemini-3.1-flash-live-preview` | $3.00 / $12.00 per 1M audio tokens ≈ **$0.02/min** | `config.py` |
 
-### 6.11 Revision 8: the two models side by side
+**`gemini-2.5-flash-lite` is not in this table and must not be added.** It is the cheapest row in `cost_calculator`'s pricing table at $0.10/$0.40, which is exactly why it keeps being suggested — but the whole Gemini 2.5 family shuts down in **October 2026**. A price table records cost, not availability, and a fallback with weeks to live is not a fallback.
 
-Both markets, at 10 000 MAU, before and after revision 8. Nigeria's "before" column is the reconciled one from §6.8 — the `+$518` version is not a fair comparison because it rests on a free-COGS figure that contradicts §6.7.
+The `gemini-3.5-flash` rate above is the corrected one. It was $0.50/$3.00 in two separate tables, 3× low, with five tests asserting the wrong figure (Phase 0). Decision Q is why that error no longer reaches any margin in this document.
 
-| | Nigeria — plan as written | Nigeria — free COGS reconciled | **Nigeria — revision 8** | Global — plan | **Global — revision 8** |
-| --- | --- | --- | --- | --- | --- |
-| Net revenue | $1 220 | $1 220 | **$1 058** | $2 267 | **$2 267** |
-| Paid COGS | $242 | $242 | $278 | $573 | $629 |
-| Free COGS | $460 | $920 | $368 | $940 | $368 |
-| Total COGS | $702 | $1 162 | **$646** | $1 513 | **$997** |
-| **Contribution** | +$518 | **+$58** | **+$412** | +$754 | **+$1 270** |
-| Margin | 42% | **5%** | **39%** | 33% | **56%** |
-| Revenue per MAU | $0.122 | $0.122 | $0.106 | $0.227 | $0.227 |
-| Rate-card exposure | 3× understated | 3× understated | **none — Decision Q** | 3× understated | **none — Decision Q** |
-| At 1.5× usage overshoot | negative | negative | **+$89** | negative | **+$772** |
+### 6.11 The two markets side by side
 
-Nigerian payer mix assumed: **1.0% Plus Monthly, 1.0% Term Pass, 4.0% buy 7-day passes (1.4/month), 2.0% buy 5-hour passes (2.5/month)** — 8% in total, matching §6.7's rate but weighted to prepaid products, with Term Pass revenue and COGS recognised monthly across its four months rather than at purchase. Global keeps §6.7's mix unchanged so the revenue line is directly comparable.
+Both at 10 000 MAU, with and without the §6.5 cost work. Nigeria's mix is prepaid-weighted per §6.8; global keeps §6.7's mix.
 
-**Revision 8 earns less revenue in Nigeria than the plan claimed and roughly 7× the contribution.** The 7-day price cut and the smaller allowances take net revenue $1 220 → $1 058; reconciling free COGS and then fixing it takes total COGS $1 162 → $646. Both markets improve almost entirely on the cost side, and **no USD price moved at all** — which is the same finding §6.7's lever table reached and then buried: the two highest-value levers in this business were never pricing decisions.
+| | **Nigeria** | **Global** |
+| --- | --- | --- |
+| Net revenue | **$1 155** | **$2 383** |
+| — of which voice packs | $97 | $116 |
+| Paid COGS | $324 | $675 |
+| Free COGS | $368 | $368 |
+| Total COGS | **$692** | **$1 043** |
+| **Contribution** | **+$463** | **+$1 340** |
+| Margin | **40%** | **56%** |
+| Revenue per MAU | $0.116 | $0.238 |
+| Contribution without the §6.5 fixes | **−$1 188** | **−$270** |
+| At 1.5× usage overshoot | **+$117** | **+$818** |
 
-**The 1.5× overshoot row is the one that matters for confidence.** Under Decision Q there is no rate-card error left to absorb, because the caps are denominated in dollars; the residual risk is that learners draw closer to their ceilings than the "typical" column assumes. At 1.5× typical draw both markets stay positive. The previous model did not survive a 1.7× shock in either market, and it was already carrying a known 3× one.
+**Nigeria earns roughly half the revenue at a better margin.** The margin difference is not a pricing effect — it is the payer mix. Nigeria skews to passes, and passes carry the highest per-product margin in the catalogue because they are the products with the smallest allowances relative to price. The subscription is the value choice for the learner and the thinnest product for us, in both currencies.
 
-**What revision 8 does not fix, stated plainly because the margin tables invite the wrong conclusion.** $412/month at 10 000 MAU funds nobody. Contribution excludes infrastructure, storage, CDN, email and salaries, so it is not profit and never was. At a 39% contribution margin and $0.106 revenue per MAU, Nigeria needs on the order of **100 000 MAU to fund two engineers** — and that is now the binding constraint on this business, not pricing. The margin question is answered; the distribution question is open, and it is the harder one.
+**The 1.5× overshoot row is the one that matters for confidence.** Under Decision Q there is no rate-card error left to absorb, because the caps are denominated in dollars. The residual risk is behavioural: learners drawing closer to their ceilings than the "typical" column assumes. At 1.5× typical draw both markets stay positive, and the shape of the risk is now a usage question that Phase 3's instrumentation answers directly rather than a rate question nobody could close.
 
-**And every payer rate above is still a guess against zero payment history.** 1 205 free users, no payment relationship anywhere in the database (§ Phase 2b). The mix is a hypothesis for Phase 3 to instrument, not a forecast. The first real number replaces all of them.
+**What this does not fix, stated plainly because the margin numbers invite the wrong conclusion.** $463/month at 10 000 MAU funds nobody. Contribution excludes infrastructure, storage, CDN, email and salaries, so it is not profit. At a 40% contribution margin and $0.116 revenue per MAU, Nigeria needs on the order of **90 000 MAU to fund two engineers** — and that, not pricing, is the binding constraint on this business. The margin question is answered. The distribution question is open, and it is the harder one.
+
+**No catalogue change will move that.** The voice pack added 12% to Nigerian contribution and it is the last obvious product gap; the next one would be a fifth SKU earning single-digit percentages against four more consoles to keep in sync. **Stop adding products after this one** and spend the effort on the MAU number instead — Decision R is the rule that makes that a decision rather than a drift.
+
+**Every payer rate above is a guess against zero payment history.** 1 205 free users and no payment relationship anywhere in the database (Phase 2b). The mix is a hypothesis for Phase 3 to instrument, not a forecast, and the first real number replaces all of them.
 
 ## 7. Architecture decisions
 
@@ -1067,6 +1131,35 @@ Corollary, and it is the part that will feel wrong: **a learner paying a third o
 
 **What this decision requires in code: nothing new.** Decision E already terminates a pass on `units_used >= units_allowance`, and §6.3's window already bounds a subscription. The caps are the enforcement. This decision only changes which number a margin table is allowed to cite — which is why it is a decision in this document rather than a phase item.
 
+### Decision R: One top-up, for voice, and no others. The pass ladder is already the top-up for everything else.
+
+**Voice gets a pack. Nothing else does.** The reasoning matters more than the conclusion, because "should feature X have a top-up" is a question that will be asked again about every expensive operation in §6.5, and the answer is no for all of them for one structural reason.
+
+**The pass ladder is already a units top-up.** A `plus_pass_5h` at $0.99 grants 3 000 units. A learner who wants more course generation, more quizzes, more documents, more of anything metered buys another pass — a product that exists, is priced, is in four store consoles and needs no new counter. A separate "units top-up" would be the 5-hour pass with a different name and a worse price, and it would compete with the product it duplicates.
+
+| Expensive operation | Units | Top-up? | Why |
+| --- | --- | --- | --- |
+| **Live voice** | 200/min | **Yes** | Own counter; the pass ladder cannot refill it |
+| Resource recommendations | 1 600 | No | Draws from the window; a pass refills it |
+| Course generation | 1 020 | No | Same |
+| Quiz / question generation | 780 | No | Same |
+| Lesson body | 780 | No | Same |
+| Document generation | 570 | No | Same |
+
+**Voice is the exception because it is not denominated in the same thing.** §6.3 unbundles it into `voiceSecondsRemaining`, so a pass grants voice minutes but cannot be bought *for* voice minutes — and Decision D closes the loophole that would have made this work by accident: **a learner with active Plus cannot activate a pass at all.** So a subscriber who exhausts 60 minutes has, without this product, no purchase available anywhere in the catalogue. The only outcomes are serving the minutes free (COGS at zero revenue) or refusing them with nothing to buy. Both are worse than $1.49, and the learner in that position is by definition the most engaged one we have.
+
+**Three reasons the answer stays no for everything else.**
+
+1. **One currency was the point of §6.2, and there are already two.** The window's first stated property is that it is explainable in one sentence with a number in it. Two counters is a defensible cost of the 40× voice asymmetry. Three is a product nobody can predict their own spend on, and a learner who cannot predict their spend stops using the expensive features — which is the opposite of what a top-up is for.
+2. **Every SKU is real work in four consoles.** §5.7 is now explicit about what adding a product costs: a Stripe price, a Paystack constant, a Play product with per-territory pricing, an Apple product with a price schedule and availability, a consumable type that cannot be corrected later, plus a counter, a sweep, a purchase rail and client UI. That is the price of admission for any top-up, and it should be paid once.
+3. **Metering a study tool per feature charges people for studying harder.** `business/ch36-pricing-philosophy` says payment should expand capability rather than unlock basic usefulness. A voice pack expands a capability that has a genuine marginal cost per minute. A "10 more quizzes" pack charges for the core loop, and the honest version of that product is a subscription — which we already sell.
+
+**The rule, so this is decided rather than re-litigated:** a capability earns its own top-up **only if it has its own counter**, and it earns its own counter only if its unit cost is an order of magnitude away from everything else. Voice qualifies at 40×. Nothing else in §6.5 is within an order of magnitude of the chat turn it is measured against, so nothing else qualifies. If a future capability does — video, or a realtime model priced like voice — it draws from `voiceSecondsRemaining`'s *pattern* rather than inventing a third meter.
+
+**One consequence for the purchase rail: buying voice minutes requires holding Plus.** `plus_voice_30` is refused with `403 VOICE_PACK_REQUIRES_PLUS` for a learner with no active entitlement, and hidden from `GET /plans/catalog` for the same learner via `PlanItem.requiresEntitlement`. This is a purchase refusal rather than a UI convention because the store rails do not consult our UI: a learner can reach a Play or StoreKit purchase sheet from a cached catalogue, and selling 30 minutes of a capability the buyer does not have is the clearest possible version of the thing §1's rule forbids. The refusal is also the correct upsell surface — the learner wanting voice without Plus should be offered a pass, which is what Decision N's machinery is for.
+
+**The pack stacks, unlike a pass.** `plus_voice_30` is a balance, not an entitlement, so Decision D's redundancy refusal does not apply and a learner may hold and consume any number. Minutes expire with the entitlement that was active when they were bought, tracked by `voiceAllowanceSourceId` (§8) — buying 30 minutes on the last day of a 7-day pass does not carry them into next month, for the same reason unused pass time is forfeited.
+
 ## 8. Data model
 
 Migration `063_add_plus_passes.py` — `062_chat_generation_attempt.py` is the current head. `060` and `061` are taken (`060_notification_phase1`, `061_notification_phase2`); do not reuse them.
@@ -1077,7 +1170,7 @@ Migration `063_add_plus_passes.py` — `062_chat_generation_attempt.py` is the c
 | --- | --- | --- |
 | `id` | String PK | |
 | `userId` | String FK → `User.id` CASCADE | indexed |
-| `productId` | String | `plus_pass_5h` \| `plus_pass_7d` |
+| `productId` | String | `plus_pass_5h` \| `plus_pass_7d` \| `plus_pass_term`. **Not `plus_voice_30`** — a voice pack is a balance, not a pass, and never becomes a `PlusPass` row (Decision R) |
 | `durationMinutes` | Integer | 300 \| 10080. Snapshotted, so re-pricing or re-timing the product never changes a pass already sold |
 | `unitsAllowance` | Integer | 3 000 \| 10 000. Snapshotted for the same reason (Decision E) |
 | `unitsUsed` | Integer | default 0 |
@@ -1123,9 +1216,11 @@ Indexes: `(userId, createdAt)`; `(userId, expiresAt)` for the sweep and for the 
 
 **`User`** — added: `activePlusPassId`, `activePlusPassExpiresAt`, `usageWindowStartedAt`, `usageWindowUnitsUsed`, `usageMonthStartedAt`, `usageMonthUnitsUsed` (the §6.3 backstop), `pointsBalance` (cache over `PointsLedgerEntry`, rebuildable), `appleOriginalTransactionId` (unique, nullable), `appleProductId`.
 
-**Added by revision 8: `voiceSecondsRemaining` (Integer) and `voiceAllowanceSourceId` (String, nullable).** Unbundling voice (§6.3) means it needs its own counter, and it has to be a counter rather than a derived value because the whole point is that voice draws down independently of the unit window. Seconds rather than minutes: a `study_voice` relay bills continuously and rounding a 40-second session up to a minute is a charge the learner did not incur. `voiceAllowanceSourceId` records which pass or subscription period granted the current balance, so the sweep in Decision E can zero it when that source ends rather than letting a pass's voice minutes outlive the pass — the same leak Decision C's denormalisation exists to prevent for entitlement.
+**Added for voice: `voiceSecondsRemaining` (Integer) and `voiceAllowanceSourceId` (String, nullable).** Unbundling voice (§6.3) means it needs its own counter, and it has to be a counter rather than a derived value because the whole point is that voice draws down independently of the unit window. Seconds rather than minutes: a `study_voice` relay bills continuously and rounding a 40-second session up to a minute is a charge the learner did not incur. `voiceAllowanceSourceId` records which pass or subscription period granted the current balance, so the sweep in Decision E can zero it when that source ends rather than letting a pass's voice minutes outlive the pass — the same leak Decision C's denormalisation exists to prevent for entitlement.
 
-**This is the one place revision 8 adds mechanics rather than only changing numbers**, and it is worth being explicit that it is a second meter. §6.2's argument for a single cost-denominated unit was that one currency is comprehensible and two are not, and a voice counter is a partial retreat from that. The retreat is justified by the 40× cost ratio: a single currency means either pricing every product for the voice case, which makes text-only learners subsidise a feature they do not use, or pricing for the text case and losing money on voice users. It is not justified anywhere else, and no third meter should follow — if a future capability has voice-like cost asymmetry, it draws from `voiceSecondsRemaining`'s pattern rather than inventing its own.
+**A `plus_voice_30` purchase adds 1 800 seconds to the same counter** and writes a `PlusPurchase` row with no `PlusPass` behind it — the first purchase in the plan that grants no entitlement. It does **not** change `voiceAllowanceSourceId`: bought minutes inherit the expiry of whatever entitlement is already active, which is what makes them expire with it (Decision R) and what makes the pack refusable when there is no entitlement to inherit from.
+
+**This is the only second meter, and it is a deliberate partial retreat from §6.2.** The argument for a single cost-denominated unit was that one currency is comprehensible and two are not. The retreat is justified by the 40× cost ratio: a single currency means either pricing every product for the voice case, which makes text-only learners subsidise a feature they do not use, or pricing for the text case and losing money on voice users. **Decision R is the rule that stops a third**, and it is worth reading before adding any counter.
 
 **`User`** — dropped in the same migration: `creditsUsed`, `creditsPeriodStart`, `creditsPeriodEnd`, `creditsSoftCap`, `creditsHardCap`, `creditsUsedToday`, `creditsDailyLimit`, `lastDailyReset`, `purchasedCreditsBalance`. One migration, not two. The earlier draft staged this over two releases to keep a rollback path; with **no paid users and no purchased balances to honour** there is nothing to roll back to and nothing to preserve.
 
@@ -1144,7 +1239,8 @@ New, under `/api/v1/billing`:
 | GET | `/plans/catalog` | the personal products available **to this learner's territory** (five in NGN, four elsewhere), reference prices, store product ids per platform |
 | GET | `/passes` | `{active, inventory[], history[]}` — the source of truth for pass ownership |
 | POST | `/passes/{id}/activate` | `200` → `Entitlement`; `409 PASS_REDUNDANT` \| `PASS_ALREADY_ACTIVE` \| `PASS_CONSUMED` |
-| POST | `/passes/checkout` | web only — Stripe one-time session for a pass |
+| POST | `/passes/checkout` | web only — Stripe or Paystack one-time session for a pass **or the voice pack**. `403 VOICE_PACK_REQUIRES_PLUS` when `plus_voice_30` is requested without an active entitlement (Decision R) |
+| GET | `/voice/balance` | `{secondsRemaining, expiresAt, packPurchasable}` — the voice counter, separate from `/billing/usage` because it is a separate meter |
 | POST | `/purchases/apple/verify` | StoreKit transaction → verified purchase (+ pass, or subscription tier) |
 | POST | `/purchases/google-play/verify` | replaces `/subscriptions/google-play/verify-product` |
 | GET | `/purchases` | purchase history from `PlusPurchase` (Decision H — no legacy union; the old tables are dropped) |
@@ -1163,196 +1259,71 @@ Removed: `/billing/ads/*` and `/billing/credit-packs*` (Decision O, §6.1).
 
 ## 10. Phases
 
-### Phase 0 — Decide (blocks allowance tuning; no longer blocks everything)
+### Phases 0–2b — done, with what still binds
 
-**Verified unstarted on 2026-09-01, not merely unmarked.** The question "was Phase 0 done and left unticked?" was checked against the code rather than assumed, because an unticked box and a done-but-unrecorded task look identical in a document and lead to opposite decisions. All three questions are open, with the evidence:
+**Complete.** Full narration of each phase lives in git history; what follows is only the outcomes later phases depend on, plus the items still open.
 
-| Question | Claim in §11 | State in code | Open? |
-| --- | --- | --- | --- |
-| 3 — is the rate card current? | `gemini-3.5-flash` priced at $0.50/$3.00 vs published ~$1.50/$9.00 | `cost_calculator.py:26` reads `"gemini-3.5-flash": (0.50, 3.00)` | **yes** |
-| 2 — 8 000 input tokens per chat turn? | `HISTORY_LIMIT = 12` plus enrichment | `ask_service.py:383` reads `HISTORY_LIMIT = 12` | **yes** |
-| 1 — who owns the `max_tokens` audit? | 8 192 output tokens budgeted for a paragraph | `narrative_cache.py:237` passes `max_tokens=8192`; `llm/__init__.py:136` **defaults** every caller to `8192` | **yes** |
+**Phase 0 — decide.** Three research questions, all answered.
 
-Question 1 is worse than §11 described. The 8 192 budget is not three call sites that each chose badly — it is the **default parameter value** of `generate_content_json` at `llm/__init__.py:136`, so every one of the 26 operations that does not pass `max_tokens` explicitly inherits it. The comment at `:124` records that it was raised from 2 048 because a *third* call site was truncating, which is how a fix for one operation became the budget for all of them. The audit is therefore one default plus a per-operation review, not twenty-six independent decisions, which makes it substantially cheaper than §11 implies and does not change who has to own it.
+- **The rate card was wrong.** `gemini-3.5-flash` was priced at $0.50/$3.00 against a published $1.50/$9.00 — 3× low, in *two* tables (`cost_calculator._EXACT_MODEL_PRICING` and `cost_tracker.PROVIDER_PRICING`), with five tests asserting the wrong figure. Both corrected. `gemini-3.1-flash-lite` at $0.25/$1.50 was right, and one correct row is what stopped anyone checking the next. Rates now in §6.10.
+- **The `max_tokens` audit was withdrawn, and the premise was the plan's own error.** `max_output_tokens` is a **ceiling, not a charge** — `llm/__init__.py:137` says so in as many words — so lowering it saves nothing. Worse, lowering it re-opens truncations this codebase had already diagnosed five separate times (diagram `1200→2048→8192`, grounded search `2048→8192`, lesson `4096→8192`, reflection title `800→2048`, home guidance `500→1200`), because these are thinking models and **reasoning tokens draw from the same output allowance**: the visible reply is cut off while the budget looks generous. Measured case at `resource_service.py:278` — `thoughts_token_count=1067` of 2 000, `finish_reason=MAX_TOKENS`, reply cut at 364 characters, JSON never closed, learner told no resources existed.
+- **The real knob is `thinking_budget`, and nothing sets it.** `0` disables thinking, `-1` is dynamic, a positive integer caps it. Three classes: **0** for transcription with no reasoning to do (`resource_service.py:304`, note summary, `type=quiz`/`type=summary` markdown, `memory_impl` summarisation); **~512** for bounded phrasing of pre-computed facts (goal insight, growth drivers, subject insight, home guidance — every prompt word-bounded and every figure supplied); **dynamic** for genuine reasoning (lesson bodies, quiz generation, course outlines, reflection narrative, diagrams). Two real over-provisions to fix alongside: `narrative_cache.compose_json:237` hardcodes one budget for four panels of very different sizes — **add a per-caller parameter, do not lower the default** — and `resource_service.py:304` sits at 8 192 to transcribe text it was just handed. Then stop guessing: `finish_reason == MAX_TOKENS` is already extracted and `GroundedResult.truncated` already carries it, so **count it per operation and set budgets from data**.
+- **Chat context is where the input money is, and `HISTORY_LIMIT` is not the lever** — leave it at 12; it is what makes "what did you just say" work. Ranked: **(1) context-cache the stable prefix**, the single biggest win — [cached input tokens cost 10% of standard](https://cloud.google.com/blog/products/ai-machine-learning/vertex-ai-context-caching), and two blocks qualify while nothing caches today: the system instruction (`prompts.py:6-63`, ~1 200 tokens, identical for every learner but a trailing name line) and the tool declarations (`gemini_chat_tools.py:109-131`, rebuilt on every call including an `_uppercase_types` walk). Caching is **prefix-based**, and `context.py:70` opens every prompt with a timestamp, which defeats it on its own. **(2) Cap the four uncapped blocks** — `topicResources`, `topicUploadedResources`, `knowledgeBaseContext`, `memory_context` are `str(...)`'d whole (`context.py:96-104, 118, 208`) while everything in the learner-profile family is capped at 120–600 characters. Two are inert only because `attach_topic_resources` is a stub; cap them before it is implemented. **(3) Truncate history message bodies** — all 12 go in whole and thread images are re-sent as inline bytes. **(4) Fix `estimate_prompt_tokens`** (`ask_service.py:163-192`), which counts neither the system instruction nor the tool schemas, so the pre-flight credit check under-charges every turn — the same class of defect as the voice rate. *Content was rephrased for compliance with licensing restrictions.*
+- [ ] **Still open:** Open Question 10, the points price of the 7-day pass. Cheap to change later, so it blocks only Phase 4b.
 
-**Scope correction: Phase 0 does not block everything.** Revision 3's heading said it did, which is part of why nothing moved — it made three unowned research questions look like a gate on the whole plan, and they are not. Nothing in Phase 2, 2b, 4, 4b or 5 depends on the rate card: entitlement resolution, the Paystack port, pass lifecycle, points and the purchase rails are all correct whatever a token costs. What Phase 0 genuinely blocks is **allowance tuning** — the window sizes in §6.3, the COGS and contribution figures in §6.7 and §6.8, and any decision that the free tier is affordable.
+**Phase 1 — the money path is reachable.** `billing_router` and `webhooks_router` mounted; the four personal catalogue entries rewritten with the space-scoped two untouched; credit packs and the rewarded-ad path deleted; `TRIAL_DAYS_MAIGIE_PLUS = 3` with `TrialService.TRIAL_DURATION_DAYS` agreeing; `openapi.json` and the generated client types regenerated. Three things from it that still constrain:
 
-- [x] **Question 3 answered, 2026-09-01: the rate card was wrong, in the direction that under-states cost.**
+- **`PlanId` deliberately still accepts the six withdrawn ids**, so a stale client gets `410 this was retired, here is what replaced it` rather than `422 not a valid plan`. A plan removed from the catalogue is not a plan that never existed.
+- **Both rails read one plan list.** `paystack_service` imports `PLAN_IDS` and `DEPRECATED_PLAN_IDS` from `stripe_service` rather than holding a copy — the copy had already diverged when yearly Plus was withdrawn, so Stripe refused it while Paystack went on selling it.
+- **`PlanItem` is a `CamelModel`**, changed safely only because the endpoint had never been mounted and no client was reading the old spelling.
 
-  | Model | Table said | Published | Verdict |
-  | --- | --- | --- | --- |
-  | `gemini-3.5-flash` (what Plus uses) | $0.50 / $3.00 | **$1.50 / $9.00** | **wrong, 3× low on both sides** |
-  | `gemini-3.1-flash-lite` (what Free uses) | $0.25 / $1.50 | $0.25 / $1.50 | correct |
+**Phase 2 — one resolver.** `entitlement_service.resolve` is the only thing that decides whether a learner is Plus (Decision B). `require_premium`, `PremiumUser` and `PAID_TIERS` deleted; `feature_tier_service.get_effective_tier` and the personal branch of `feature_flags.effective_tier_for_request` repointed at it; `GET /billing/entitlement` serving `source` rather than leaving clients to infer it. Two properties worth keeping in mind:
 
-  Checked against several independent trackers. The correct entry for Flash-Lite is what made the wrong one look plausible — one right row is enough to stop a reader checking the next.
+- **`personal_tier` was removed from `effective_tier_for_request`'s signature, not merely left unread.** It was a pre-loaded `User.tier` offered as a way to skip a database read, and it can no longer answer the question — a trialling or pass-holding learner has `tier == "FREE"` and is entitled to Plus models. Leaving the parameter would have let a caller reintroduce drift 11 through the door marked optimisation, which is how the defect arrived the first time.
+- **The pass branch was written and tested before passes existed.** `_compose` is pure over `(subscription_tier, subscription_period_end, active_pass, active_trial)` and `_read_active_pass` is a named seam returning `None` until Phase 4. An unknown pass product id falls to the **smallest** allowance, deliberately: under-granting is a support ticket, over-granting is COGS.
 
-  **The same wrong pair was in two tables**: `cost_calculator._EXACT_MODEL_PRICING` and `intelligence.reasoning.llm.cost_tracker.PROVIDER_PRICING`, the two cost paths §6.5 records as hanging off the chat path only. Both corrected, and five tests that asserted the wrong figures updated — they were agreeing with the table rather than checking it.
+**Phase 2a — the review findings.** All eleven closed. The two that other sections depend on:
 
-  **Consequence for this document: every COGS figure that used the Plus model is understated by 3×, and the §6.7 tables have not yet been recomputed.** They are now conservative in the wrong direction. Nigeria's contribution at 10 000 MAU was already negative without the §6.5 fixes; correcting the rate card makes the case for the `max_tokens` audit and the context trim stronger, not weaker. Recompute before quoting §6.7 at anyone.
-  Added while confirming: `gemini-3.1-flash-live-preview` at $3.00/$12.00 per 1M audio tokens, which is where the voice figure below comes from.
-- [x] **Question 1 answered, and the answer is that the question was wrong. Do not do the `max_tokens` audit as scoped.**
+- **All three webhooks fail closed.** An unset secret refuses ingestion with `503` so a real event is redelivered rather than lost; Stripe refuses on an empty `STRIPE_WEBHOOK_SECRET`; the Paystack HMAC condition is inverted so an empty key fails rather than short-circuits; the Play RTDN endpoint verifies the Pub/Sub push **OIDC bearer token** against Google's certs and checks the token's `email` against `GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL` — a Google-signed token proves Google minted it, not that our subscription sent it. Handler exceptions answer `500` so the provider retries; **only a processed event answers `200`.** Before this, `webhooks.py:40-42` parsed an unverified Stripe body when the secret was empty, and that handler writes `User.tier` — an unset secret let any caller grant themselves `PREMIUM_MONTHLY`. Covered by `tests/test_billing_webhook_auth.py`.
+- **`resolve()` is memoised per HTTP request** in a `ContextVar`, opened by `EntitlementScopeMiddleware`. The cache exists **only inside a scope**, which is correctness rather than a shortcut: a `study_voice` relay runs for minutes and bills every tick, so a task-scoped memo would let a pass expire mid-session and go on being honoured until the learner hung up. Websockets get no scope and resolve fresh. Pure ASGI, not `BaseHTTPMiddleware`. `trial_service.start_trial` calls `invalidate()` because it resolves `free` to check eligibility and then writes the trial.
+- **The `usage_note` counts are out until Phase 3 can honour them.** They promised the §6.3 window allowances against a meter that implements a monthly token cap — for `plus_monthly`, ~19× the voice minutes the live meter funds. `test_no_note_promises_a_figure_the_meter_cannot_honour` forbids the words `turn`, `minute`, `message` and `credit` in a note, and **is written to be deleted by Phase 3** in the change that makes the figures true.
 
-  §6.5 said 8 192 output tokens is "89% of each operation's cost". **That is false, and it was my claim.** `max_output_tokens` is a **ceiling, not a charge** — billing is on tokens actually produced. `llm/__init__.py:137` already says so: *"Costing nothing when unused: billing is on tokens actually produced, not on the ceiling."* Lowering a ceiling saves nothing.
+**Phase 2b — the NGN rail is open.** `paystack_service` ported off Prisma; both routes mounted; the webhook handlers fail loudly instead of returning `200` over a discarded event. `db_client` removed from all nine signatures, attributes snake_cased, `datetime.utcnow()` → `datetime.now(UTC)`. Two repository methods added: `find_user_by_paystack_subscription` (a `subscription.disable` identifies the learner by subscription code and nothing else) and `find_user_by_email`.
 
-  Worse, lowering it re-introduces bugs that have each been diagnosed once already. Five separate escalations are recorded in code, all with the same cause and all in the same direction: diagram `1200 → 2048 → 8192`, grounded search `2048 → 8192`, lesson `4096 → 8192`, reflection title `800 → 2048`, home guidance `500 → 1200`. **These are thinking models and reasoning tokens are drawn from the same output allowance**, so the visible reply gets cut off while the budget looks generous. The measured case at `resource_service.py:278`: `thoughts_token_count=1067` of 2 000, `finish_reason=MAX_TOKENS`, reply cut at 364 characters, JSON never closed, learner told no resources existed.
+**The subscriber count, taken 2026-09-01 against production**, by `scripts/count_legacy_commercial_state.py` — read-only, committed and re-runnable, so it never has to be re-derived from memory:
 
-  **The knob that actually caps reasoning spend is `thinking_config.thinking_budget`**, which nothing in the codebase sets — `0` disables thinking, `-1` is dynamic, a positive integer caps it. That is the audit worth doing, and it is a different audit:
+| Check | Count |
+| --- | --- |
+| Users on a retired tier (`PREMIUM_YEARLY` / `STUDY_CIRCLE_*` / `SQUAD_*`) | **0** |
+| Users with a Stripe subscription id | **0** |
+| Users with a Paystack subscription code | **0** |
+| Users with a Google Play purchase token | **0** |
+| Users with a non-zero `purchasedCreditsBalance` | **0** |
+| `CreditPurchaseTransaction` rows with `status = 'completed'` | **0** |
+| `CreditPurchaseTransaction` rows, any status | 9 (all abandoned) |
+| Tier breakdown | `FREE` 1 205, `PREMIUM_MONTHLY` 1 |
 
-  | Class | `thinking_budget` | Operations |
-  | --- | --- | --- |
-  | Transcription — no reasoning to do | **0** | `resource_service.py:304` (JSON-ifies step 1's own text at temp 0.0), note summary, `type=quiz` / `type=summary` markdown, `memory_impl` summarisation |
-  | Bounded — phrasing pre-computed facts | **~512** | goal insight, growth drivers, subject insight, home guidance. Every prompt is word-bounded (≤8-word headings, ≤30-word sentences, ≈80–150 words total) and every figure is supplied; there is nothing to reason about beyond wording |
-  | Genuine reasoning | **dynamic** | lesson bodies, quiz generation, course outlines, reflection narrative, diagrams |
+**There is no payment relationship anywhere in the database.** Not one Stripe, Paystack or Play identifier. The single `PREMIUM_MONTHLY` row carries no subscription id, so it is a tier set by hand rather than a subscriber; its null `subscriptionCurrentPeriodEnd` is a live example of why `_subscription_lapsed` treats absent as "not lapsed". `LEGACY_PLUS_TIERS` is deleted and **the writers were narrowed in the same commit** — `_price_id_to_tier` and `_plan_code_to_tier` now emit only `PREMIUM_MONTHLY` or `FREE`, with a test asserting every tier a writer can produce is a subset of `PLUS_TIERS`. The resolver and the writers were only ever wrong apart.
 
-  Two real fixes remain from the original framing. `narrative_cache.compose_json:237` hardcodes one budget for four panels, so reflection — which legitimately scales with signals × subjects and has a *measured* 4 096 truncation — cannot be distinguished from goal insight's fixed ~80 words: **add a per-caller parameter, do not lower the default.** And `resource_service.py:304` is the one genuine over-provision, at 8 192 to transcribe text it was just handed.
+**NGN amounts are read from config, not hardcoded.** `_plan_amount_kobo` was sending `"10000"` (₦100), harmless for subscriptions because the plan overrides the amount and **fatal the moment Phase 5 adds one-time pass charges**, where nothing overrides it. Fixed, with the ₦2 500 flat-fee reasoning recorded beside the constants. §5.7.3 carries the values, **two of which are still wrong in code**.
 
-  Then stop guessing: `finish_reason == MAX_TOKENS` is already extracted, and `GroundedResult.truncated` already carries it. **Count it per operation and set budgets from data**, rather than from whichever engineer was last burned by a truncation.
+Open from Phase 2b:
 
-- [x] **Question 2 answered: the chat context is where the money is, and `HISTORY_LIMIT` is not the lever.** Leave it at 12 — its reasoning is sound and it is what makes "what did you just say" work. Ranked by value:
-
-  1. **Context cache the stable prefix. This is the single biggest win in the plan.** [Cached input tokens cost 10% of standard — a 90% discount, on 2.5-and-above models, implicit or explicit](https://cloud.google.com/blog/products/ai-machine-learning/vertex-ai-context-caching). Two blocks qualify and nothing caches today: the **system instruction** (`prompts.py:6-63`, ~1 200 tokens, a module-level constant identical for every learner apart from a trailing name line) and the **tool declarations** (`gemini_chat_tools.py:109-131`, rebuilt on every single call including an `_uppercase_types` walk — wasted tokens *and* wasted work). Together they are the largest fixed cost of every turn and they are byte-stable across all users, not merely across turns. Requires splitting the constant from the name suffix and moving volatile content to the **end** of the message, because Gemini caching is prefix-based — and `context.py:70` currently opens every prompt with a timestamp, which defeats prefix caching on its own. *Content was rephrased for compliance with licensing restrictions.*
-  2. **Cap the four uncapped blocks.** `topicResources`, `topicUploadedResources`, `knowledgeBaseContext` and `memory_context` are `str(...)`'d whole into the prompt (`context.py:96-104, 118, 208`). Everything in the learner-profile family is carefully capped at 120–600 characters, and then these four walk past it. Two are inert *today* only because `attach_topic_resources` is a stub — cap them before it is implemented, not after.
-  3. **Truncate history message bodies.** All 12 go in whole (`ask_service.format_history`), and images in a thread are re-sent as inline bytes. A per-message cap bounds the worst case without touching a normal turn.
-  4. **Fix the pre-flight estimator, which systematically under-counts.** `estimate_prompt_tokens` (`ask_service.py:163-192`) is `(len(message)+len(str(context))+len(str(history)))//4` and counts **neither the system instruction nor the tool schemas** — the two largest blocks. So the credit check under-charges every chat turn. Same class of defect as the voice rate: a meter that quietly reports less than the truth.
-  5. Drop two lines emitted unconditionally and usually worthless: `learningRhythm` is always set and frequently renders *"average session unknown; consistency unknown; best day unknown"*, and `Flashcards due for review: 0`.
-
-  **Net effect on §6.7:** caching the prefix and capping the four blocks reduce per-turn input cost without touching what the learner gets, which is the shape of saving the Nigeria economics need. The 3× rate-card correction and this both land on the same figures, so recompute §6.7 once, after both.
-- [ ] Answer Open Question 10 (points price for the 7-day pass) before Phase 4b. Unlike a store price it is cheap to change later, so it should not block anything else.
-
-*(Revision 3's first line referred to "Question 1 (7-day pass price)", stale numbering from an earlier draft; pass prices are settled in §6.1.)*
-
-### Phase 1 — Make the money path reachable
-
-**Done**, with two additions and one blocker found on the way. All three are recorded below rather than folded in silently.
-
-- [x] Delete `credit-packs` routes and `credit_service.get_credit_packs` / `initiate_purchase`. **`SeatAddonPurchaseRequest` and the seat repository methods left alone** (Decision F). `credit_purchase_service` itself is untouched: `get_purchase_history` and `admin_adjust_balance` are still served, and `fulfill_purchase` is still reachable from the Paystack webhook, so nothing was deleted that a real transaction can still arrive for. *(Superseded by revision 4: Decision H now drops `CreditPurchaseTransaction` and `CreditPack` outright in Phase 4, and `credit_purchase_service.fulfill_purchase` goes with them in Phase 2b rather than being ported. The caution in this line was correct when written — it assumed a real transaction could still arrive for a credit pack, and the zero-purchase count is what makes that assumption safe to drop.)*
-- [x] **Delete the rewarded-ad path** (Decision O): `credit_service.claim_ad_reward` and `get_ad_stats`, `AD_REWARD_CREDITS`, `MAX_ADS_PER_DAY`, the `/billing/ads/*` routes and the `AdRewardRequest` / `AdRewardResponse` / `AdStatsResponse` schemas. `billing_repo.count_ads_today` / `create_ad_claim` / `get_total_ad_earnings` and the `AdRewardClaim` table are all left in place, now unread. One consequence to know about: `billing.credits_purchased` had exactly one emitter and it was the ad claim, so nothing emits it now. The enum member stays — a pass purchase is a fact worth publishing — and the entry was removed from `test_event_bus.EMITTERS_WITHOUT_A_LISTENER`, which describes what fires rather than what exists.
-- [x] Rewrite the four `scope: "personal"` entries in `stripe_service.get_active_plan_catalog`, leaving the `circle` and `add_on` entries unchanged. Added `PRICE_CENTS_PLUS_PASS_5H = 99`, `PRICE_CENTS_PLUS_PASS_7D = 249`; `PRICE_CENTS_PLUS_MONTHLY` **left at `499`**; added `STRIPE_PRICE_ID_PLUS_PASS_5H` / `_7D`; `plus_yearly` **and** `maigie_plus_yearly` moved into `DEPRECATED_PLAN_IDS`; deleted `TRIAL_DAYS_STUDY_CIRCLE` and `TRIAL_DAYS_SQUAD` only. Catalogue entries carry the §6.3 usage equivalents in a new `usageNote` field, and a test asserts every one of them names the voice figure — "5 hours of Plus" without it reads as five hours of tutoring, which costs ~8× what the pass earns.
-- [x] **Set `TRIAL_DAYS_MAIGIE_PLUS = 3`**, carried in the catalogue as `trialDays`. **`TRIAL_DAYS_CIRCLE_PLAN` left at 7** (Decision F).
-- [x] Shorten `TrialService.TRIAL_DURATION_DAYS` to 3. A test asserts the two copies agree. The fallback string in `conversion_engine._build_message` promised "free for 7 days" as a literal and now reads the constant.
-- [x] Mount `billing_router` and `webhooks_router`.
-- [x] Regenerate `openapi.json` and `libs/types/src/generated/api-types.ts`; re-run `maigie-mobile/scripts/sync-api-paths.mjs`.
-- [x] Test: `test_subscription_catalog.py` — rewritten from scratch, because the existing file had not run since the SQLAlchemy migration. It imported `src.schemas.subscription`, `src.services.subscription_service` and `src.utils.exceptions`, none of which are modules, so it failed at *collection* and asserted a five-product catalogue with yearly Plus and a 7-day trial that nothing was checking. New file asserts the four `personal` products, the three prices, `410` on all six withdrawn ids across **both** rails, the pass-is-not-a-subscription refusal, the per-day price ladder, and — as scope guards — that `circle_plan_monthly` and `plus_seat_add_on_monthly` keep their ids, scopes, prices and 7-day trial.
-- [x] Test: `test_billing_routes_mounted.py` — new. Asserts the routing table rather than mocking a provider, because the defect was never in the handlers: they were written, complete and unreachable, and a test that called `create_checkout_session` with a fake Stripe would have passed throughout. It also pins each deliberate absence to its reason, and fails if a Prisma sentinel is removed without the corresponding route being mounted.
-
-**Set by hand, outside the code, and not asserted by anything:** the Stripe price's `trial_period_days` must read 3. The App Store Connect and Play Console trial periods are created in Phase 5. Four places hold this number, two of them consoles.
-
-#### Added in Phase 1, not in the original checklist
-
-- [x] **`plus_yearly` is refused on the price-id door as well as the plan-id door.** `assert_plan_id_is_active` guards a fresh checkout, which arrives as a plan id; `modify_existing_subscription` arrives as a *price* id. A monthly subscriber switching to yearly would otherwise have bought a withdrawn product through a door the plan-id check does not watch. Nothing in `_assert_price_id_is_active` runs on a renewal, so grandfathered yearly subscribers are unaffected — asserted.
-- [x] **`paystack_service` now imports `PLAN_IDS` and `DEPRECATED_PLAN_IDS` from `stripe_service` instead of holding a copy.** The copy had already diverged the moment yearly Plus was withdrawn: Stripe would have refused it and Paystack would have gone on selling it, so the one learner who found the difference would have been a Nigerian learner buying a product nobody else could. A test asserts the two rails read the same object.
-- [x] **`PlanItem` is now a `CamelModel`.** It published `price_cents` / `trial_days` while every other schema written since `CamelModel` landed publishes camelCase. Safe to change precisely because the endpoint has never been mounted, so no client is reading the old spelling — and the alternative was exporting a mixed convention into the generated client types on the same day they first became real.
-- [x] **`PlanId` deliberately still accepts the six withdrawn ids.** It listed only active ids, which meant a request carrying `study_circle_monthly` was rejected by FastAPI validation with `422 not a valid plan` before `DEPRECATED_PLAN_IDS` could answer `410 this was retired, here is what replaced it`. The 410 machinery has existed and been unreachable for as long as the router was unmounted. A plan removed from the catalogue is not the same thing as a plan that never existed, and the learner holding the stale id is the one who needs to be told which.
-
-#### Not mounted, and why — three absences, three different reasons
-
-- **`/billing/subscriptions/google-play/verify-product`.** Verified a credit-pack purchase and granted credits, so it verified a product that no longer exists. `google_play_service.verify_product_purchase` is left in place as the basis for its replacement — the `purchases.products.get` call and the token-replay check are both reusable by the pass equivalent in Phase 5.
-- **`/billing/referrals/stats`, `/claimable`, `/claim`.** All three resolve into `referral_rewards_service`, which holds a `PrismaClientRemoved` sentinel where its database used to be, so all three would answer 500. Mounting them would take three endpoints that are currently *honestly* unreachable and make them dishonestly reachable. They return in Phase 4b as the points ledger, which is a different contract rather than a port.
-- **⚠️ `/billing/subscriptions/paystack/initialize` and `/verify`.** §5.1 lists these as "kept", and they cannot be: `paystack_service` holds the same Prisma sentinel. `initialize_paystack_subscription`, `verify_paystack_transaction`, `cancel_paystack_subscription` and `handle_paystack_webhook` all reach it. The webhook fails quietly — `webhooks.py` catches and answers 200, so Paystack events are silently discarded — but the two routes would answer 500.
-
-  **This is a launch blocker and it was not in the plan.** Paystack is the NGN rail and §6.8 makes Nigeria the launch market, with naira prices set independently rather than converted precisely because FX parity would price Maigie above Netflix Standard there. Phase 1 has therefore made the money path reachable in every market except the one we are launching in. `test_billing_routes_mounted.py:104-114` fails if the sentinel is removed without the routes being mounted, so the port cannot land and be forgotten.
-
-  **Now Phase 2b, with its own checklist.** Revision 3 said the port "belongs immediately after Phase 2" and then gave it no phase, no owner and no task list — the same failure mode as Phase 0, on the more expensive item. It is a phase now.
-
-### Phase 2 — Entitlement resolver
-
-**Done.** Four mechanisms became one, and the two live defects they were causing (drift 10 and 11) are closed. One addition is recorded below rather than folded in silently.
-
-- [x] `entitlement_service.py` per Decision B, with `PLUS_TIERS = frozenset({"PREMIUM_MONTHLY"})` as an explicit frozenset. ~~**No `LEGACY_PLUS_TIERS`** — revision 4 removed it; the retired tiers resolve to `free`.~~ **Superseded by Phase 2a:** `LEGACY_PLUS_TIERS` is restored and the retired tiers resolve to `plus`, because removing it left the resolver disagreeing with everything that writes `User.tier`. The `Entitlement` dataclass is as specified; `window_allowance` carries the §6.3 numbers (Free 500, Plus 4 000, 5-hour pass 3 000, 7-day pass 4 000) so that Phase 3 repoints the meter at a value rather than inventing one. `resolve()` is one round trip — an outer join from `User` to `LearningProfile`, because the tier and the trial live on different tables and Decision C's argument is that this sits in the hot path.
-- [x] Repoint `feature_tier_service.get_effective_tier` at it, preserving the `(tier, is_trial, days)` shape. All ~15 call sites unchanged; a pass holder will arrive there as `("plus", False, None)`, indistinguishable from a subscriber.
-- [x] Repoint the **personal branch** of `feature_flags.effective_tier_for_request` at it; the `seat_tier` branch is untouched (Decision F, closes drift 11 for personal scope). `_fetch_personal_tier` and `_personal_tier_to_effective` are deleted with the branch they served.
-- [x] Delete `require_premium`, `PremiumUser`, `PAID_TIERS` from `shared/auth/dependencies.py` and `shared/auth/__init__.py` (closes drift 8). Confirmed unused before deleting: the only references anywhere were the definitions and the two export lists.
-- [x] `GET /billing/entitlement`, returning `EntitlementResponse` (a `CamelModel`). `source` is served rather than left for the client to infer, because the right UI differs per source and `expiresAt` alone cannot tell a renewal date from a pass countdown. `openapi.json`, `libs/types/src/generated/api-types.ts` and `maigie-mobile`'s path fixture regenerated.
-- [x] Tests: `test_entitlement_service.py`, 31 assertions. Subscription-outranks-pass, pass-outranks-trial, trial gets Plus allowance, all five retired tiers are grandfathered *(rewritten in Phase 2a; this line originally asserted they resolve to `free`, which was the finding)*, a `PREMIUM`-prefixed unknown string is *not* Plus, the LLM router sees a trial (closes drift 11), and `require_premium` cannot come back. Scope guards: a space-scoped request never calls `resolve()` at all, and `resolve`'s signature is asserted to take `user_id` and nothing else.
-- [x] Full suite green: 4 188 passed, 185 skipped, 6 xfailed. `ruff check` clean.
-
-#### Added in Phase 2, not in the original checklist
-
-- [x] **`personal_tier` is removed from `effective_tier_for_request`'s signature, not merely left unread.** It was a pre-loaded `User.tier` offered as a way to skip a database read, and it can no longer answer the question: a trialling or pass-holding learner has `tier == "FREE"` and is entitled to Plus models. Leaving the parameter in place would have let a caller reintroduce drift 11 through the door marked optimisation — which is exactly how the defect arrived the first time. `ask_service`'s `resolve_tier` effect drops the argument with it. `seat_tier` stays, because under space scope a seat tier genuinely is the whole answer.
-- [x] **The pass branch is written and tested before passes exist.** `_compose` is a pure function over `(subscription_tier, subscription_period_end, active_pass, active_trial)`, and `_read_active_pass` is a named seam that returns `None` until Phase 4 creates `PlusPass`. The expensive part of passes is the precedence question, not the query, so Phase 4 replaces one function body and does not reopen it. An unknown pass product id falls to the *smallest* allowance, deliberately: under-granting is a support ticket, over-granting is COGS.
-
-### Phase 2a — Close the review findings (runs before 2b)
-
-From the 2026-09-01 review in the status header. Items 1 and 2 are live defects; the rest are coherence.
-
-- [x] **All three webhooks fail closed.** An unset secret now refuses ingestion (`503`, so a real event is redelivered rather than lost) instead of trusting the body — the default `RESEND_WEBHOOK_SECRET` already used. Stripe refuses when `STRIPE_WEBHOOK_SECRET` is empty; the Paystack condition is inverted so an empty key fails rather than short-circuits; the Google Play RTDN endpoint verifies the Pub/Sub push **OIDC bearer token** against Google's certs with a configured audience, and checks the token's `email` against `GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL` — a Google-signed token proves Google minted it, not that our subscription sent it. Handler exceptions now answer `500` so the provider retries: only a processed event answers `200`. New config: `GOOGLE_PUBSUB_AUDIENCE`, `GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL`. Covered by `tests/test_billing_webhook_auth.py` (10 tests), which did not exist because no test of a mount or of a default would have caught a defect in their interaction.
-- [x] **`LEGACY_PLUS_TIERS` restored**, as `PLUS_TIERS | LEGACY_PLUS_TIERS = ALL_PLUS_TIERS`, so the resolver and the writers agree again. Two frozensets rather than one edited set, so Phase 2b deletes a name rather than reasoning about a membership list. ~~Delete it when Phase 2b records the count as zero~~ — **done: Phase 2b took the count (all zero), deleted the frozenset, and narrowed the writers in the same change.** The restoration was right for the six hours it existed: it was the only thing standing between a yearly renewal and being billed for nothing, and it cost one frozenset to not need to be right about an unmeasured claim.
-- [x] Reconciled the two tests. `test_retired_tiers_resolve_to_free` → `test_retired_tiers_are_grandfathered`, with the reason recorded in the docstring so the next person to flip it sees the argument rather than the assertion.
-- [x] **`schedule_reminders._should_remind` reads `entitlement_service.resolve`**; the `tier != "FREE"` rule and the docstring paragraph arguing for it are gone. It is `async` now, and its tests stub the resolver rather than a tier string — the function no longer has an opinion about what "paid" means. A trialling learner gets the 15-minute lead time, which is the case the comparison silently lost and whose absence leaves no trace.
-- [x] **Lazy subscription expiry in `_compose`** via `_subscription_lapsed`, so all three sources expire on read rather than two of three. A lapsed subscription falls through to a pass or trial rather than short-circuiting to free — the learner whose card failed and who then bought a pass is the case that makes it matter. A `None` period end is *not* lapsed: absent is not expired.
-- [x] Pass ids added to `PlanId`, so `POST /subscriptions/checkout` reaches the written refusal (`400`) instead of a `422` shadowing it. Asserted at the schema boundary, which is the gate that was answering `422`.
-- [x] `PlanItem.purchasable` added, defaulting `True`, `False` on both passes until Phase 5 builds the one-time rail. Listed, described, priced, not offered.
-- [x] `feature_flags.TIER_TO_ALLOWLIST_KEY:148-162` — **no longer a contradiction.** It maps the five retired tiers to `plus`, which is now exactly what `ALL_PLUS_TIERS` says, so restoring `LEGACY_PLUS_TIERS` closed this finding rather than requiring a second edit. Revisit it in Phase 2b with the frozenset, not before.
-- [x] **The `usage_note` figures are out until Phase 3 can honour them.** They carried the §6.3 window allowances — "about 23 chat turns and 20 minutes of live voice per 5-hour session" — and there is no window: `CREDIT_LIMITS` still meters a monthly and a daily token cap. Checked rather than assumed, and it was worse than "unverified". For `plus_monthly` the note promised ~20 voice-minutes per 5-hour window, which is ~2 880/month against the ~150/month the live meter actually funds — **about 19× over.** Free's note was over by ~4.8× the other way round (2.5 minutes per *window* where the meter allows 2.5 per *day*). The four notes now state the shape the resolver does enforce today — voice is allowanced, not included without limit — and carry no counts. `test_no_note_promises_a_figure_the_meter_cannot_honour` forbids the words `turn`, `minute`, `message` and `credit` in a note, and is written to be **deleted by Phase 3** in the change that makes the figures true. The durations stay: 5 hours and 7 days are real and pass expiry enforces them.
-- [x] **Drift 10 is recorded as half-closed rather than closed.** The resolver half is done — the five retired strings resolve to `free`, which is now the correct answer rather than a defect, because Phase 2b removed the writers that could produce them. The meter half is not: `CREDIT_LIMITS` still holds rows granting `SQUAD_YEARLY` 12M credits and `STUDY_CIRCLE_YEARLY` 6M, keyed by strings nothing can write any more. That is dead weight rather than a live grant, and Phase 3 deletes the whole table, so narrowing it now would be a second edit to something being removed. Stated here so the overlap is not rediscovered as a finding.
-- [x] **`resolve()` is memoised per request**, in `_REQUEST_CACHE` (a `ContextVar`) with `EntitlementScopeMiddleware` opening exactly one scope per HTTP request. The cache **only exists inside a scope**, which is a correctness property and not a shortcut: the longest-lived task here is a `study_voice` relay, which runs for minutes and bills every tick, and a task- or process-scoped memo would let a pass expire mid-session and go on being honoured until the learner hung up. Websockets get no scope and keep resolving fresh. Pure ASGI rather than `BaseHTTPMiddleware`, which runs `dispatch` in a task of its own and propagates context variables downwards only by the child task's context copy. The one staleness this leaves is a write earlier in the same request, and `trial_service.start_trial` is where that happens — it resolves `free` to check eligibility, *then* writes the trial — so it calls `invalidate()`. Seven tests, including the two negative ones that are the whole point: no scope means no cache, and a write inside a scope is visible after `invalidate()`.
-
-### Phase 2b — Port `paystack_service` to SQLAlchemy (launch blocker)
-
-**Runs immediately after Phase 2 and before Phase 3.** Nigeria is the launch market (§6.8), Paystack is its rail, and today `POST /billing/subscriptions/paystack/initialize` and `GET /verify` are unmounted because `paystack_service` holds `PrismaClientRemoved` at `:32`. The webhook is worse than unmounted: `webhooks.py` catches and answers `200`, so **live Paystack events are being silently discarded**.
-
-**The port is smaller than the phase's importance suggests.** 595 lines, but only **nine** Prisma call sites — `:214`, `:405`, `:429`, `:487`, `:489`, `:515`, `:535`, `:538` (all `db_client.user.find_unique` / `find_first` / `update`) and `:565` (`db_client.creditpurchasetransaction.find_first`). Every column they touch already exists on the SQLAlchemy `User` model with an explicit camelCase DB name: `paystack_customer_code` → `"paystackCustomerCode"` and `paystack_subscription_code` → `"paystackSubscriptionCode"` (`identity/db_models.py:69-73`), plus `subscription_current_period_end` (`:64`) and `tier` (`:28`). The three camelCase attribute reads to fix are `user.paystackCustomerCode:424`, `user.paystackSubscriptionCode`, and `user.subscriptionCurrentPeriodEnd:228`.
-
-**Sequencing matters here and revision 3 did not notice it.** `paystack_service` imports two functions that Phase 3 deletes:
-
-```python
-from ..services.credit_consumption_service import reset_credits_for_period_start   # :22, called at :435
-from ..services.referral_rewards_service import track_referral_subscription        # :23, called at :454
-```
-
-Phase 3 deletes `reset_credits_for_period_start` when the monthly credit period gives way to the rolling window, and deletes `track_referral_subscription` outright. Porting both to SQLAlchemy in Phase 2b and deleting them in Phase 3 is wasted work on the critical path. So:
-
-- **`reset_credits_for_period_start:435`** — port the *call*, not the function. Phase 3 replaces the body with a window reset; Phase 2b leaves the existing signature in place and does not touch its internals.
-- **`track_referral_subscription:454`** — **delete the call now.** Phase 3 already deletes the function, `referral_rewards_service` holds its own Prisma sentinel so the call cannot work today, and Phase 4b replaces referral rewards with the points ledger, in which a subscription grants nothing (Decision O). Porting it would mean writing SQLAlchemy for behaviour the plan has already withdrawn.
-- **`creditpurchasetransaction.find_first:565`** — **delete the branch.** Decision H as revised drops the table, and no credit-pack transaction exists for it to find. `credit_purchase_service.fulfill_purchase` is deleted here rather than ported, which removes the last live reader of `CreditPurchaseTransaction` ahead of Phase 4's migration.
-
-Checklist:
-
-- [x] **The subscriber count, taken 2026-09-01 against production.** `scripts/count_legacy_commercial_state.py` — read-only, committed, re-runnable, so this never has to be re-derived from memory:
-
-  | Check | Count |
-  | --- | --- |
-  | Users on a retired tier (`PREMIUM_YEARLY` / `STUDY_CIRCLE_*` / `SQUAD_*`) | **0** |
-  | Users with a Stripe subscription id | **0** |
-  | Users with a Paystack subscription code | **0** |
-  | Users with a Google Play purchase token | **0** |
-  | Users with a non-zero `purchasedCreditsBalance` | **0** |
-  | `CreditPurchaseTransaction` rows with `status = 'completed'` | **0** |
-  | `CreditPurchaseTransaction` rows, any status | 9 (all abandoned) |
-  | Tier breakdown | `FREE` 1 205, `PREMIUM_MONTHLY` 1 |
-
-  **The product fact is confirmed, and more strongly than stated: there is no payment relationship anywhere in the database.** Not one Stripe, Paystack or Play identifier. The single `PREMIUM_MONTHLY` row carries no subscription id of any kind, so it is a tier set by hand rather than a subscriber — it keeps Plus either way, since `PREMIUM_MONTHLY` is the tier on sale, and its null `subscriptionCurrentPeriodEnd` is a live example of why Phase 2a made `_subscription_lapsed` treat absent as "not lapsed". The nine credit-pack rows are abandoned checkouts; none took money, so Decision H's table drop stands.
-
-  Consequences applied in the same commit, because the resolver and the writers were only ever wrong *apart*: **`LEGACY_PLUS_TIERS` is deleted** (Phase 2a restored it under uncertainty; the uncertainty is now resolved), and `stripe_service._price_id_to_tier` and `paystack_service._plan_code_to_tier` **no longer emit any tier the resolver refuses** — both collapse to `PREMIUM_MONTHLY` or `FREE`. A new test asserts that every tier a writer can produce is a subset of `PLUS_TIERS`, which is the gap the original defect lived in.
-- [x] **Ported.** All nine call sites read through `billing_repo`; the `PrismaClientRemoved` sentinel is gone. Three things changed shape beyond the mechanical session work, each recorded in the module docstring: **`db_client` is removed from every signature** (a Prisma client threaded through nine functions so a caller could pass a transaction — nothing ever did, and `billing_repo` owns its sessions, so it was a place for a future bug rather than a capability); **attributes are snake_case** (`user.paystackSubscriptionCode` → `user.paystack_subscription_code`, the class of mistake `test_orm_attribute_names.py` exists to catch); and `datetime.utcnow()` → `datetime.now(UTC)`. Two repository methods added: `find_user_by_paystack_subscription` (a `subscription.disable` identifies the learner by subscription code and nothing else) and `find_user_by_email`.
-- [x] **The webhook handlers fail loudly instead of returning quietly.** An unattributable `subscription.create`, a `charge.success` with no reference or user id, a verification that returns `None`, and an unrecognised event all raise — `webhooks.py` turns that into a `500` so Paystack retries. Previously each logged a warning and returned, which `webhooks.py` then answered `200` to: money taken, nothing granted, and an acknowledgement that we had handled it. The one case that still returns quietly is a `subscription.disable` for a code we do not hold, which is benign and idempotent — usually our own `cancel_paystack_subscription` having cleared it first.
-- [x] Deleted the `track_referral_subscription` call. Worth noting where it sat: *inside* the `try` whose `except` logs "Failed to send subscription email", so its failure was reported as an email problem.
-- [x] Deleted the `CreditPurchaseTransaction` branch of `_handle_charge_success`. Its error handling is the shape this port removed throughout — the whole branch wrapped in `except Exception: log; return` with the comment "webhook should still return 200".
-- [x] Deduplicated the cancellation state. `cancel_paystack_subscription` and `_handle_subscription_disable` are the same change reached two ways (the learner asking, Paystack telling us) and held identical copies of the five-column dict; now `_CANCELLED_SUBSCRIPTION_STATE`. Also fixed a latent bug in `cancel`: it read `subscription_current_period_end` for its return value *after* the update had cleared it, so the learner was always told `None`.
-- [x] Removed `PREMIUM_YEARLY` from `plan_family_to_tiers`. With the writers narrowed, no code path can produce that tier, so leaving it would have told a monthly subscriber they were "already subscribed to this plan" on the strength of a value nothing can hold.
-- [ ] **Deferred, deliberately: `credit_purchase_service.fulfill_purchase`.** Confirmed to have **zero callers** after the branch above was deleted, and `_send_purchase_receipt_email` is called only from inside it — so ~180 lines are now dead. Not removed here because it is dead rather than wrong, Phase 3 drops the tables it reads anyway, and folding a large deletion into the commit that opens the NGN rail makes both harder to review. It also imports from `credit_purchase_notifications`, which the notification branch is actively editing.
-- [x] **NGN placeholder fixed.** `_plan_amount_kobo(plan_id)` reads the price from config instead of sending `"10000"` (₦100). Never wrong in production, because a subscription's plan overrides the field — but it stops being inert the moment Phase 5 adds one-time pass charges, where nothing overrides it and ₦100 *is* the price. Setting it now means the pass work adds a call site rather than finding a placeholder.
-- [x] `PRICE_NGN_PLUS_PASS_5H = 70_000`, `PRICE_NGN_PLUS_PASS_7D = 180_000`, `PRICE_NGN_PLUS_MONTHLY = 240_000` added to `config.py`, with the ₦2 500 flat-fee reasoning recorded beside them so nobody rounds one up.
-- [x] **Both Paystack routes mounted**, and the sentinel comment block replaced by the handlers. Also added `is_modification` / `is_upgrade` to `PaystackInitializeResponse`: the service already computed them and Pydantic was dropping them silently as extra keys, so the client could not tell that an upgrade had been cancel-and-resubscribe. Stripe's response has carried the equivalent pair since it was written.
-- [ ] Delete the four `STRIPE_PRICE_ID_STUDY_CIRCLE_*` / `_SQUAD_*` and four `PAYSTACK_PLAN_STUDY_CIRCLE_*` / `_SQUAD_*` settings (§5.1), and the Study Circle / Squad branches of `_plan_code_to_tier`, `_price_id_to_tier` and `_assert_price_id_is_active`. `DEPRECATED_PLAN_IDS` keeps all six ids so a stale client still gets `410`.
-- [x] Inverted `test_billing_routes_mounted.py`'s sentinel guard. **It earned its keep**: it asserted the sentinel was present specifically so that porting the service without mounting the routes would fail loudly, and that is exactly what happened during this phase. It now asserts `paystack_service` has no `db` attribute, so nothing can quietly reintroduce a Prisma client.
-- [ ] Tests: initialize returns an authorization URL with the NGN amount from config; verify promotes a `FREE` user to `PREMIUM_MONTHLY` and sets `subscription_current_period_end`; `charge.success` on a renewal extends the period; `subscription.disable` returns the user to `FREE`; a webhook whose signature fails answers non-`200` and logs; a retired plan id answers `410` on the Paystack door as well as the Stripe one (already asserted in Phase 1 — keep it green through the port).
+- [ ] Delete `credit_purchase_service.fulfill_purchase` and `_send_purchase_receipt_email` — confirmed **zero callers**, so ~180 lines are dead. Deferred deliberately: it is dead rather than wrong, Phase 3 drops the tables it reads, and folding a large deletion into the commit that opened the NGN rail would have made both harder to review.
+- [ ] Delete the four `STRIPE_PRICE_ID_STUDY_CIRCLE_*` / `_SQUAD_*` and four `PAYSTACK_PLAN_STUDY_CIRCLE_*` / `_SQUAD_*` settings (§5.1), and the retired branches of `_plan_code_to_tier`, `_price_id_to_tier` and `_assert_price_id_is_active`. `DEPRECATED_PLAN_IDS` keeps all six ids.
+- [ ] Tests: initialize returns an authorization URL with the NGN amount from config; verify promotes `FREE` → `PREMIUM_MONTHLY` and sets the period end; `charge.success` on a renewal extends it; `subscription.disable` returns the user to `FREE`; a failed signature answers non-`200`; a retired plan id answers `410` on the Paystack door as well as the Stripe one.
 
 ### Phase 3 — Reprice voice, redenominate usage, add windows
 
 **Runs first among the implementation phases.** The free-voice exposure in §6.2 is live and costs roughly $150/month per free user who finds it. The one-line mitigation — raise the voice price — can ship ahead of everything else in this phase.
 
-- [x] **Live voice repriced, 2026-09-01. `GEMINI_LIVE_CREDITS_PER_MINUTE: 100.0 → 10_000.0`.**
+- [x] **Live voice repriced. `GEMINI_LIVE_CREDITS_PER_MINUTE: 100.0 → 10_000.0`, and `GEMINI_LIVE_MIN_SESSION_CREDITS: 500 → 10_000`.**
 
-  The arithmetic: a conversational minute of `gemini-3.1-flash-live-preview` costs about **$0.023** ($0.005/min audio in, $0.018/min out). A text token on `gemini-3.5-flash` at the now-verified $1.50/$9.00 costs about **$0.0000020** at a realistic 8 000-in / 600-out mix. So a voice minute costs what **~11 400 text tokens** cost, and was billed as 100 — **under-priced by about 100×**. 10 000 is set slightly under the arithmetic deliberately: err towards the learner, keep the order of magnitude.
+  A conversational minute of `gemini-3.1-flash-live-preview` costs about **$0.023**; a text token on `gemini-3.5-flash` at the verified rate costs about $0.0000020 at a realistic 8 000-in / 600-out mix. So a voice minute cost what **~11 400 text tokens** cost and was billed as 100 — **under-priced by about 100×**. Free tier is 5 000 charged credits/day and `study_voice` has no tier gate at all (drift 5), so a free learner could run **250 minutes of live voice a day: roughly $170/month, at zero revenue.** The session floor moved with the rate because 500 credits was five minutes before and would have been **three seconds** after, silently removing the wall-clock minimum charge and the pre-start affordability check with it.
 
-  What it was costing: free tier is 5 000 charged credits/day and `study_voice` has no tier gate at all (drift 5), so at 20 effective credits/minute a free learner could run **250 minutes of live voice a day** — roughly $5.75/day, **$170/month, at zero revenue**. At the corrected rate that is ~2.5 minutes/day, and a `PREMIUM_MONTHLY` allowance is ~150 minutes/month, which is close to what $4.99 can actually fund.
+  **How it survived: nothing was broken and no test looked at the number.** `study_voice/billing.py`'s docstring described the 100 figure and called it "a pricing question flagged in the design document, not a bug here" — a comment that noticed the problem and gave every later reader permission to move on. Two tests now check the *configured* rate rather than the arithmetic: one that it stays within an order of magnitude of the cost basis, one that the session floor is at least a minute. Both deliberately loose, to catch drift rather than pin a figure Google will move.
 
-  `GEMINI_LIVE_MIN_SESSION_CREDITS: 500 → 10_000`, because 500 was five minutes at the old rate and would have been **three seconds** at the new one — the wall-clock minimum charge would have silently stopped existing, and it doubles as the pre-start check, so too low also lets a learner begin a session they cannot afford a minute of.
-
-  **How this survived: nothing was broken and no test looked at the number.** `study_voice/billing.py`'s docstring described the 100 figure and called it "a pricing question flagged in the design document, not a bug here" — a comment that noticed the problem and gave the reader permission to move on. Two tests now check the *configured* rate rather than the arithmetic: one asserts it stays within an order of magnitude of the cost basis, one that the session floor is at least a minute. Both deliberately loose, to catch drift rather than pin a figure Google will move.
-
-  **This is a real product change and it is not a tuning decision, so it is not gated on Phase 0's allowance freeze** — the meter was lying, and the freeze exists to stop allowances being set against a lie. Free voice goes from effectively unlimited to a taster. Worth a deliberate look before launch: ~2.5 min/day may be too tight to demonstrate the feature, and the right fix is a larger free allowance set knowingly, not a meter that under-charges by 100×.
+  **Free voice went from effectively unlimited to ~2.5 min/day, and §6.3 has since taken it to zero** — set knowingly, which is the point. A meter that under-charges by 100× is not a free allowance, it is an accident.
 - [ ] Migration `063` part one: `usageWindowStartedAt`, `usageWindowUnitsUsed`, `usageMonthStartedAt`, `usageMonthUnitsUsed` on `User`; drop the nine retired credit columns.
 - [ ] Introduce the cost-denominated `usage_unit` (§6.2). Deduct **measured** COGS from `cost_calculator.py` rather than a fixed per-operation table. Delete `TOKEN_MULTIPLIER`, `apply_token_multiplier`, `CREDIT_COSTS` and `CREDIT_LIMITS`.
 - [ ] Rewrite the **non-space path** of `check_credit_availability` and `consume_credits` against window + monthly backstop. Delete `initialize_user_credits`, `reset_daily_credits_if_needed`, `ensure_credit_period`, `reset_credits_for_period_start`. **Leave the `space_id` early-return at `:334-343` and the space branch of `consume_credits` exactly as they are** — both return before any of the deleted machinery is reached, which is what makes this separable.
@@ -1364,8 +1335,9 @@ Checklist:
 - [ ] `LimitReachedEmailLog` dedupe key moves from period to window.
 - [ ] **Put the figures back in `usage_note`, and delete the test that keeps them out.** Phase 2a stripped the counts because they promised the §6.3 window allowances against a meter that implements a monthly token cap — for `plus_monthly`, ~19× more than the live meter funds. This is the change that makes them true, so it is the change that restores them: derive each note from `Entitlement.window_allowance` and the measured per-operation cost rather than retyping a number, and delete `test_no_note_promises_a_figure_the_meter_cannot_honour`. The point of the note survives either way — voice must never read as unlimited — but a count is only honest once something counts.
 - [ ] Tests: window opens on first use, resets on first use after elapse, does not reset on a read, 80% warning carries the timestamp, monthly backstop binds, a voice minute deducts ~200 units, free voice is capped at ~2.5 min/window. Scope guard: `test_circle_billing.py` and `test_seat_service.py` pass unmodified.
-- [x] ~~Verify `cost_calculator._EXACT_MODEL_PRICING:31-52` against live provider rates before anything else.~~ **Done in Phase 0 Q3.** It priced `gemini-3.5-flash` at $0.50/$3.00 against published rates of $1.50/$9.00, and `cost_tracker.PROVIDER_PRICING` held the same wrong number — two tables, one figure, both under-stating cost by 3×. Both corrected. This had to come first because the whole meter is denominated in measured COGS, so a 3× error in the rate is a 3× error in every allowance derived from it.
-- [ ] Instrument before tuning: log units per operation and per user so the §6.7 assumptions can be replaced with measurement inside a month.
+- [x] Rate card verified and corrected (Phase 0). This had to come first: the meter is denominated in measured COGS, so a 3× error in the rate is a 3× error in every allowance derived from it.
+- [ ] **Add the voice counters**: `voiceSecondsRemaining` and `voiceAllowanceSourceId` on `User` (§8), and draw live voice from them rather than from the unit window (§6.3). The sweep must zero the balance when its source pass or subscription period ends, or a pass's voice minutes outlive the pass. `GET /billing/voice/balance` ships with them — a counter the learner cannot see is a counter they will be surprised by.
+- [ ] Instrument before tuning: log units per operation and per user so §6.7's assumptions can be replaced with measurement inside a month. **This is the item that closes the largest open risk in the plan** — every payer rate and consumption figure in §6.7 and §6.8 is currently a guess.
 
 ### Phase 3b — Meter everything else (Decision L)
 
@@ -1378,7 +1350,7 @@ Without this, §6.7's contribution is roughly **−$270 at 10 000 MAU** rather t
 - [ ] Shorten the retry/fallback chain. Three attempts × three providers = up to nine billable calls for one operation; that is a cost decision now, not only a reliability one.
 - [ ] Delete the dead `CREDIT_COSTS` entries `ai_course_generation` and `ai_action` — cost is measured, not tabulated.
 - [ ] **Cache home guidance.** `guidance_engine.py:267` fires on every home load; `growth_service` and `goal_insight_service` already avoid this through `narrative_cache`'s `inputs_hash`. Reuse it. Uncached this is ~$2.10/month per active learner, more than a Plus subscription's whole margin.
-- [x] ~~**Audit `max_tokens` on all 26 operations.**~~ **Withdrawn — the premise was wrong.** `max_output_tokens` is a ceiling, not a charge, so lowering it saves nothing, and lowering these three would have re-broken the five truncations this codebase had already diagnosed independently. The real knob is `thinking_budget`, which nothing set; done in Phase 0's answer and implemented in `4d2174b`. Full reasoning in Open Question 1.
+- [ ] **Set `thinking_budget` per operation class**, per Phase 0's three-class split. This replaces the withdrawn `max_tokens` audit — a ceiling is not a charge, and lowering these would have re-broken five separately-diagnosed truncations. Unowned; Open Question 1.
 - [ ] Exempt onboarding auto-setup and memory extraction from charging, on principle (§6.6).
 - [ ] Charge on success, absorb on failure, following `study_voice/notes.py:172-220`.
 - [ ] Tests: every operation in the §6.5 table deducts units; a retry storm is counted not swallowed; a failed generation charges nothing; onboarding and memory extraction charge nothing.
@@ -1396,9 +1368,11 @@ Without this, §6.7's contribution is roughly **−$270 at 10 000 MAU** rather t
 - [ ] SQLAlchemy models in `billing/db_models.py`; add `test_field_mapping_completeness` entries.
 - [ ] `pass_service.py`: `grant(purchase)`, `activate(user_id, pass_id)`, `list_passes(user_id)`, `expire(pass_id, reason)`, `revoke(purchase_id)`. Activation resets the usage window (Decision E).
 - [ ] `GET /billing/passes`, `POST /billing/passes/{id}/activate`.
-- [ ] Celery beat: `billing.sweep_expired_passes` every 5 minutes.
-- [ ] Notifications: pass activated (with expiry time), 30 minutes remaining, pass ended.
-- [ ] Tests: one-active invariant under concurrency, `PASS_REDUNDANT` for each of the three reasons, pass grants every Plus capability for its duration and none after, activation resets the window, expiry forfeits remaining time. Scope guard: an activated pass does not change any space-scoped read.
+- [ ] Celery beat: `billing.sweep_expired_passes` every 5 minutes. **The same sweep zeroes `voiceSecondsRemaining`** when the entitlement its `voiceAllowanceSourceId` names ends — one sweep, two counters, because a second sweep is a second thing that can fall behind.
+- [ ] `voice_service.py`: `credit(user_id, seconds, source)`, `consume(user_id, seconds)`, `balance(user_id)`. `credit` **refuses without an active entitlement** (Decision R) and inherits the active entitlement's expiry rather than setting its own.
+- [ ] `GET /billing/voice/balance`, and `plus_voice_30` accepted by `POST /billing/passes/checkout` with the `403 VOICE_PACK_REQUIRES_PLUS` refusal.
+- [ ] Notifications: pass activated (with expiry time), 30 minutes remaining, pass ended. **Voice: at 5 minutes remaining, carrying the pack as the action** — this is the one notification in the plan that is allowed to name a purchase, because a learner mid-session who is about to lose the tutor needs the option before the silence, not after it.
+- [ ] Tests: one-active invariant under concurrency, `PASS_REDUNDANT` for each of the three reasons, pass grants every Plus capability for its duration and none after, activation resets the window, expiry forfeits remaining time. **Voice pack: it stacks where a pass refuses** (two packs credit 3 600 seconds, two passes give `409`), a purchase without entitlement is refused rather than banked, bought minutes expire with the entitlement that was active at purchase, and **a voice pack does not create a `PlusPass` row**. Scope guard: an activated pass does not change any space-scoped read.
 
 ### Phase 4b — Points (§6.9, Decision O)
 
@@ -1417,18 +1391,16 @@ Depends on Phase 4 and on Phase 3b, which is what makes "active" measurable.
 
 **iOS is in this phase, not after it.** Open Question 6 is resolved — iOS ships with Android — so the Apple work below is a peer of the Google work, not a contingency. §5.7 holds the creation timeline and the reason the console tasks come first.
 
-**Store setup, before any verification code** (§5.7). These are console and agreement tasks with external lead times, and every server task below needs the product ids to exist:
+**Store and processor setup comes first, and §5.7 is the checklist.** Do not duplicate it here — it holds the ordering, the product matrix, the per-provider steps and the parity checks, and a second copy would be a second thing to keep true. Two properties of it that govern this phase:
 
-- [ ] **Apple, start now — earlier than this phase if possible.** App Store Connect app record for `com.maigie`; In-App Purchase enabled on the **App ID** (a developer-portal capability, *not* an entitlements-file change — see §5.6); App Store Server API key generated (`APPLE_ISSUER_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY`); **Paid Apps agreement active with banking and tax complete**. No in-app purchase product can be created until that agreement is active, and it needs details an engineer cannot supply.
-- [ ] **Apple products**: `com.maigie.plus.pass5h` and `com.maigie.plus.pass7d` as **Consumable**; `com.maigie.plus.monthly` in subscription group `maigie_plus` with a **3-day introductory free trial**; NGN prices per §6.8.
-- [ ] **Google Play products**: `plus_pass_5h` / `plus_pass_7d` as **consumable** in-app products; `plus-monthly` base plan stays at `$4.99` with its **free-trial offer set to 3 days**; NGN prices per §6.8.
-- [ ] **Delete, do not repurpose** (§6.1): the Play `plus-yearly` base plan and the three `credit_pack_*` consumables, plus `GOOGLE_PLAY_BASE_PLAN_YEARLY` and the three `GOOGLE_PLAY_SKU_CREDIT_*` settings (`config.py:264-268`) and the branches reading them at `google_play_service.py:65, 191-193`. Nobody has bought any of them, so there is no RTDN history to decode. Archive the Stripe yearly price.
-- [ ] **Store trial parity check**: the App Store Connect introductory offer, the Play base-plan free trial, the Stripe `trial_period_days` and `config.TRIAL_DAYS_MAIGIE_PLUS` all read **3**. Four places, two of them consoles, no test covers them — check by hand and record the check here with a date.
+- [ ] **§5.7.1–§5.7.5 are complete before any verification code is written.** Every server task below needs the product ids to exist, and the Apple prerequisites (§5.7.5) need a **Paid Applications agreement with banking and tax**, which is not an engineer's to supply and is the single item most likely to add a week.
+- [ ] **§5.7.6's parity checks are done by hand and recorded with a date.** Nothing in the repo can read a console, so the trial being `3` in four places and every NGN price matching §6.8 are checks a person performs or nobody does.
 
 Server rails:
 
-- [ ] **Stripe**: one-time Checkout for passes (`mode: payment`), existing `$4.99` subscription price reused, Apple Pay + Google Pay + Link enabled in the dashboard. `checkout.session.completed` → `PlusPurchase` → `pass_service.grant`.
-- [ ] **Paystack**: NGN one-time charges for both passes, using the `PRICE_NGN_*` settings Phase 2b adds; extend `handle_paystack_webhook`. Depends on Phase 2b — there is no NGN rail to extend until the port lands.
+- [ ] **Stripe**: one-time Checkout for the two USD passes and the voice pack (`mode: payment`), existing `$4.99` subscription price reused. `checkout.session.completed` → `PlusPurchase` → `pass_service.grant`, **or `voice_service.credit` for `plus_voice_30`**, which grants seconds and no entitlement (Decision R). **The Term Pass has no Stripe rail** and must not acquire one (§5.7.1).
+- [ ] **Enforce `VOICE_PACK_REQUIRES_PLUS` at the checkout boundary on every rail**, not in the client. A cached catalogue can reach a Play or StoreKit purchase sheet, so a store purchase of `plus_voice_30` by a learner with no entitlement must be **verified, refunded-by-revocation and not credited** rather than silently banked — the one case in this plan where a valid store receipt is deliberately not honoured, and it needs a test.
+- [ ] **Paystack**: NGN one-time charges for **all three** passes including the Term Pass, from the `PRICE_NGN_*` settings; extend `handle_paystack_webhook` to attribute a one-off `charge.success` to a pass grant rather than a subscription. **Set `PRICE_NGN_PLUS_PASS_7D = 150_000` and add `PRICE_NGN_PLUS_PASS_TERM = 550_000` first** — the former still holds the retired ₦1 800 and the latter does not exist, and for a one-off charge nothing overrides a wrong amount (§5.7.3).
 - [ ] **Google Play**: `purchases.products.get` verification in `google_play_service.py` — `verify_product_purchase` is left in place from Phase 1 precisely as the basis for this, since the `purchases.products.get` call and the token-replay check are both reusable; extend RTDN for `SUBSCRIPTION_*` and voided-purchase revocation. Mount the replacement as `POST /billing/purchases/google-play/verify`.
 - [ ] **Apple** (new domain code): `apple_service.py` — App Store Server API client, JWS verification of `signedTransactionInfo` against Apple's root CAs, `POST /billing/purchases/apple/verify`, `POST /webhooks/apple` handling `DID_RENEW`, `EXPIRED`, `REFUND`, `REVOKE`, `CONSUMPTION_REQUEST`. Config: `APPLE_ISSUER_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY`, `APPLE_BUNDLE_ID`, `APPLE_ENVIRONMENT`.
 - [ ] Idempotency and abuse tests: replayed token grants nothing; token bound to user A rejected for user B with `409`; refund revokes an active pass mid-run. Run the set against **both** stores, not just Play — Apple's `REVOKE` and Google's voided-purchase RTDN are different shapes reaching the same revocation path.
@@ -1462,6 +1434,7 @@ Server rails:
 - [ ] `features/commercial`: catalogue hook, `usePasses`, `useActivatePass`, `useEntitlement`, `useUsageWindow`.
 - [ ] Pass wallet on `/subscription`: inventory, one-tap activate, active-pass countdown.
 - [ ] Window meter: allowance used, remaining, reset time. Replaces the credit-balance UI.
+- [ ] **Voice balance, shown separately from the window and only to learners who have voice.** Two meters side by side is the cost of Decision R's second counter, and the mitigation is that a free learner sees one meter, not two with one at zero. Buy-more action reads `packPurchasable` from the server rather than inferring entitlement client-side.
 - [ ] Collapse all **five** locked cards into `UpgradeRequiredPanel`; add owned-pass activation, points redemption, and the window-cap variant (Decision J).
 - [ ] Points wallet, in the same screen as the pass wallet rather than a separate "Earn" section: balance, what it buys, the next expiry date from the server, referral code, and each pending referral's days-active progress. Replaces `EarnPage` / `EarnReferralsPage` rather than reviving them.
 - [ ] Fix `SubscriptionPage.tsx:18` and `:182` to read the resolved entitlement; delete the hardcoded `$1.99`, `purchasedCreditsBalance: 250`, and the two dead `/credits/*` links.
@@ -1476,48 +1449,44 @@ Server rails:
 **Mobile**
 - [ ] Generalise `usePlayBilling` → `useStoreBilling`: remove the `Platform.OS !== 'android'` early return, add the StoreKit path, drive SKUs from the catalogue, render store `displayPrice` (Decision I).
 - [ ] Rewrite `SubscriptionScreen` for the four personal products; delete the `PLANS` literal.
-- [ ] Pass wallet screen; replace `src/app/earn/buy-credits.tsx`. Window meter in `src/app/profile/usage.tsx`.
+- [ ] Pass wallet screen; replace `src/app/earn/buy-credits.tsx`. Window meter and voice balance in `src/app/profile/usage.tsx`.
+- [ ] **`StudyVoiceModal.tsx` shows minutes remaining before the session starts, and offers the pack at 5 minutes left.** It is the one surface where the voice balance is decision-relevant in the moment rather than informational, and it currently shows no billing state at all (drift 19).
 - [ ] **Delete `src/app/earn/watch-ad.tsx`** and any ad-reward call site (Decision O). Rebuild `src/app/earn/` as the points wallet: balance, referral code and share sheet, pending referrals with days-active progress, next expiry date, redeem-to-pass action.
 - [ ] Pass paywall copy says "your personal workspace", not "everywhere" (Decision F).
-- [ ] **iOS — corrected in revision 4.** Revision 3 listed "`expo prebuild` for `ios/`, StoreKit capability, App Store Connect app record and three products, uncomment the iOS EAS jobs". Three of those five were wrong or misplaced:
-  - ~~`expo prebuild`~~ — already run; `ios/` exists with `Maigie.xcworkspace` and installed Pods, and is gitignored (`.gitignore:12`) because EAS regenerates it per build. Nothing to do, and nothing to commit.
-  - ~~StoreKit capability~~ — not an entitlements change. In-App Purchase is a capability on the **App ID** in the developer portal; `ios/Maigie/Maigie.entitlements` correctly holds only `aps-environment` and `applinks:app.maigie.com`. Moved to Phase 5's store-setup block, where it belongs with the other portal tasks.
-  - ~~App Store Connect record and three products~~ — moved to **Phase 5** (§5.7). They gate the server verification code, so they cannot sit in the last client phase.
-  - [ ] **Add the StoreKit branch to `useStoreBilling`.** This is the real iOS work and it was buried. `react-native-iap`'s iOS pod (`NitroIap`) is already linked in `ios/Podfile.lock`, so the native module is present and building — the only thing stopping iOS purchases is the `Platform.OS !== 'android'` early return at `usePlayBilling.ts:88-93`, which refuses the platform its own dependency supports.
+- **iOS.** The console and portal work is Phase 5 (§5.7.5), not here — it gates the server verification code, so it cannot sit in the last client phase. `expo prebuild` and "StoreKit capability" are **not tasks**; §5.6 says why. What remains:
+  - [ ] **Add the StoreKit branch to `useStoreBilling`.** This is the real iOS work. `react-native-iap`'s iOS pod (`NitroIap`) is already linked in `ios/Podfile.lock`, so the native module is present and building — the only thing stopping iOS purchases is the `Platform.OS !== 'android'` early return at `usePlayBilling.ts:88-93`, which refuses the platform its own dependency supports.
   - [ ] **Add `submit.production.ios` to `eas.json`** (`appleId`, `ascAppId`, `appleTeamId`). The `submit.production` block currently holds `android` only.
   - [ ] Uncomment the iOS EAS jobs at `.eas/workflows/deploy-production.yml:72-108` (`get_ios_build`, `build_ios`, `submit_ios_build`, `publish_ios_update`).
   - [ ] Submit the first iOS build **with the four IAP products attached** (the three global ones plus the NGN-only `com.maigie.plus.passterm`) — Apple reviews in-app purchases against a build, and this is the highest rejection-risk submission the project will make. Budget 1–2 weeks and expect one rejection round.
 
 ### Phase 8 — Copy, and existing customers
 
-- [ ] `maigie-public/plan-data.ts`: four personal products, new prices, **`trialDays: 3`** on monthly only. Delete `CreditPacks.tsx`. **`CIRCLE_PRODUCTS` and `CircleProductsSection.tsx` stay** (Decision F).
+- [ ] `maigie-public/plan-data.ts`: the personal products for the visitor's market, new prices, **`trialDays: 3`** on monthly only. Delete `CreditPacks.tsx`. **`CIRCLE_PRODUCTS` and `CircleProductsSection.tsx` stay** (Decision F).
 - [ ] Referral and points copy states the qualification plainly — "when they've studied on 7 different days" — and the expiry plainly. A reward whose condition is in the small print produces support tickets from exactly the learners we most wanted to reward.
 - [ ] Remove every "watch an ad" and "earn credits" claim from the public site and the FAQ (Decision O).
 - [ ] Rewrite `PRICING_COMPARE_ROWS` against §5.3 — remove the five unenforced rows, state the window allowance instead of "unlimited", leave the three Circle rows alone.
 - [ ] Fix the duplicated credit-pack prices in `landing/Pricing.tsx`; rewrite `content/faq/pricing-and-plans.yaml`, which still sells Study Circle at $9.99 and Squad at $14.99 — both retired personal tiers, not the live Circle Plan.
 - [ ] Test asserting `plan-data.ts` matches `GET /plans/catalog` (Decision I).
-- [ ] **No price migration is needed.** `PREMIUM_MONTHLY` stays at $4.99, so no Stripe price migration, no Play notice, no Apple consent flow.
-- [x] ~~Query for live `PREMIUM_*` / `STUDY_CIRCLE_*` / `SQUAD_*` subscriptions and non-zero `purchasedCreditsBalance`, and delete the grandfathering machinery if all are zero.~~ **Moved to Phase 2b, first item.** It was the precondition for decisions taken in Phases 2, 4 and 5, so running it in the final phase meant every earlier phase had to hedge against its answer. That hedging *was* the grandfathering machinery. `LEGACY_PLUS_TIERS` is now never written (Decision B), and `CreditPack` / `CreditPurchaseTransaction` are dropped in Phase 4 (Decision H) rather than conditionally surviving to here.
-- [ ] ~~Migrate grandfathered legacy subscribers onto `plus_monthly`.~~ **Deleted — there are none.** If Phase 2b's count comes back non-zero, this step returns along with `LEGACY_PLUS_TIERS`.
-- [ ] Set the **§6.8 NGN prices** on Play, App Store Connect and Paystack: **₦700 / ₦1 500 / ₦2 400 / ₦5 500** (revision 8 — the 7-day pass is ₦1 500, not ₦1 800). The first three sit under Paystack's ₦2 500 flat-fee threshold, deliberately — do not round any of them up. **₦5 500 is above it and pays the ₦100 flat fee knowingly** (§6.8); do not "fix" it by pricing the Term Pass under ₦2 500, which would undercut two months of the subscription.
-- [ ] Restrict `plus_pass_term` to **NGN territories** in all three consoles, and add the `availability` field to `PlanItem` so `GET /plans/catalog` does not advertise it elsewhere (§6.1). This is the first product in the catalogue whose availability is regional, and a catalogue that offers an unbuyable product is the failure the revision-5 review already recorded for the passes.
-- [x] ~~Fix the 100 NGN placeholder amount at `paystack_service.py:333`.~~ **Moved to Phase 2b**, and the line reference corrected to `:317-323` — `:333` is inside the `httpx` call, not the payload. It cannot wait until the copy phase: the placeholder is harmless for subscriptions (the plan overrides the amount) and becomes the actual price the moment Phase 5 adds one-time pass charges.
-- [x] ~~Add `PRICE_NGN_*` settings.~~ **Moved to Phase 2b**, for the same reason — the NGN rail needs them to charge correctly.
-- [ ] Make `GET /plans/catalog` currency-aware rather than USD-only, serving the `PRICE_NGN_*` values Phase 2b added. Store-purchased products display the store's own `displayPrice` regardless (Decision I); this is for the web rail and for copy.
+- **No price migration is needed.** `PREMIUM_MONTHLY` stays at $4.99, so no Stripe price migration, no mandatory Play notice, no Apple consent flow.
+- **No subscriber migration is needed either.** Phase 2b counted zero payment relationships, so there is nobody to move and no grandfathering machinery left to delete. If the count ever comes back non-zero, this step returns along with `LEGACY_PLUS_TIERS`.
+- [ ] **Public-site prices come from §6.1 and §6.8, and the NGN ladder is ₦700 / ₦1 500 / ₦2 400 / ₦5 500.** The consoles themselves are §5.7, not here — this item is copy only.
+- [ ] Add `PlanItem.availability` and make the public site respect it, so the Term Pass is not advertised outside Nigeria (§6.1). A catalogue that offers an unbuyable product is a defect this plan has already recorded once.
+- [ ] Make `GET /plans/catalog` currency-aware rather than USD-only, serving the `PRICE_NGN_*` values. Store-purchased products display the store's own `displayPrice` regardless (Decision I); this is for the web rail and for copy.
 
 ## 11. Open questions
 
-**Resolved, recorded so they are not reopened.** *Is there pass-versus-subscription arbitrage?* No — the per-day ladder is $4.75 / $0.356 / $0.166 and three 7-day passes already exceed a month. An earlier draft claimed otherwise and was wrong. *Should monthly be $5.00?* No, §6.1. *Should passes be unmetered?* No, Decision E. *Does the 7-day trial survive the 7-day pass?* **No — the trial is 3 days** (§6.1). *Should referrals stay capped at 10/month?* **No — the cap is removed; the 7-day qualification is the control** (§6.9). *Should rewarded ads be re-pointed at the window?* **No — withdrawn** (Decision O). *Can points buy the subscription?* **No, and not by validation but by construction** (Decision O). *Does iOS ship after Android?* **No — together** (question 6). *Is anything grandfathered?* **No — there are no subscribers**, so `LEGACY_PLUS_TIERS`, the retired tier settings and the credit tables are deleted rather than carried (Decision B, Decision H, §5.1); the count is verified in Phase 2b before any of it is acted on. *Was Phase 0 quietly done?* **No — verified open against the code**, and its scope corrected: it blocks allowance tuning, not every phase.
+**Settled, recorded so they are not reopened.** *Is there pass-versus-subscription arbitrage?* No — the per-day ladder is correctly ordered in both currencies and three 7-day passes exceed a month. *Should monthly be $5.00?* No (§6.1). *Should passes be unmetered?* No (Decision E). *Does the 7-day trial survive the 7-day pass?* No — the trial is 3 days. *Should referrals stay capped at 10/month?* No — the 7-day qualification is the control (§6.9). *Should rewarded ads be re-pointed at the window?* No, withdrawn (Decision O). *Can points buy the subscription?* No, and by construction rather than validation (Decision O). *Does iOS ship after Android?* No, together. *Is anything grandfathered?* No — zero payment relationships in the database (Phase 2b). *Is the rate card current?* It was not; corrected, and Decision Q means it no longer moves any margin here. *Was the `max_tokens` audit worth doing?* No — a ceiling is not a charge; `thinking_budget` is the real knob. *Does the 3-day trial need a 180-day cooldown?* No — 90 days, in `trial_service.TRIAL_COOLDOWN_DAYS` as the single source.
 
-1. ~~**Who owns the `max_tokens` audit?**~~ **Withdrawn — the premise was wrong**, and it was mine. `max_output_tokens` is a ceiling, not a charge: lowering it saves nothing and re-opens five separately-diagnosed truncation bugs. Replaced by **"who owns setting `thinking_budget` per operation"**, which is the knob that genuinely caps reasoning spend, which nothing in the codebase sets, and where the output money actually goes. See Phase 0 for the three-class split.
-2. ~~**Is 8 000 input tokens per chat turn necessary?**~~ **Answered in Phase 0.** Not by cutting `HISTORY_LIMIT`, which is correctly sized — by context-caching the system instruction and tool declarations at a 90% discount, capping four uncapped context blocks, truncating history bodies, and fixing a pre-flight estimator that counts neither of the two largest blocks. Still unowned; that was always the real gap rather than the analysis.
-3. ~~**Is `cost_calculator._EXACT_MODEL_PRICING` current?**~~ **Answered 2026-09-01: no.** `gemini-3.5-flash` was $0.50/$3.00 against a published $1.50/$9.00, in two tables, with five tests agreeing. Corrected. §6.7 still needs recomputing.
-4. **Is the free tier affordable at scale?** After the §6.5 fixes, free inference is still $940 of $2 267 revenue at 10 000 MAU. The model rests on two unmeasured assumptions — 50% of free MAU AI-active, and typical consumption around half the allowance. If either is materially higher, contribution goes negative again. Instrument before tuning (Phase 3, last item).
-5. ~~**Does the 3-day trial still need the 180-day cooldown?**~~ **Decided: 90 days.** The 180-day figure was sized for a 7-day trial; a 3-day trial is a much smaller giveaway, and a learner who trialled in January and returns in May is one we want to re-engage rather than turn away. `trial_service.TRIAL_COOLDOWN_DAYS` is now 90 and is the single source — `feature_tier_service._trial_available` reads it instead of repeating the number, so eligibility as shown and eligibility as enforced cannot drift. Still a retention question with no data behind it: watch whether second trials convert at all before treating 90 as settled.
-6. ~~**When does iOS ship?**~~ **Decided: iOS ships with Android.** No Android-first phasing, and the Apple work in Phase 5 does not defer. Two premises of the original question were also wrong: `ios/` **does** exist as a gitignored Expo prebuild with `react-native-iap`'s `NitroIap` pod already linked, so the native side of StoreKit is in place and the gap is the `Platform.OS !== 'android'` early return at `usePlayBilling.ts:88-93` plus console configuration (§5.6). What remains true is the schedule risk: Apple review is 1–2 weeks with real first-submission rejection risk, and **IAP products are reviewed attached to a build**. That makes the App Store Connect record, the Paid Apps agreement and the three product records the longest-lead items in the plan, which is why §5.7 starts them in parallel with Phase 2b rather than waiting for Phase 5.
-7. **Refunds on an activated pass.** Apple and Google decide refunds unilaterally and neither asks first, so a learner can consume most of a pass and be refunded. `CONSUMPTION_REQUEST` (Apple) lets us report usage and reduces this, but it is advisory. Recommend accepting the leakage and measuring it — a consumption cap that fires on a legitimate learner is worse than the loss.
-8. **Is a 5-hour window right for Free, or should Free be longer?** Five hours means a Free learner can reach up to 4.8 allowances a day, which the monthly backstop bounds but does not prevent. The length is shared with Plus for explainability and because it is the pass duration. A 12-hour Free window (~2/day) tightens it at the cost of two numbers to explain. Recommend 5h for both, and let question 1's instrumentation decide.
-9. **Should the 5-hour pass be shown next to the 7-day pass?** $1.50 more buys 33× the duration, so the 5-hour pass is value-dominated for anyone uncertain about how long they need. Its job is the sub-$1 impulse and the first card on file, not volume. Displaying them side by side with equal weight makes the cheap one look silly; surfacing the 5-hour pass contextually — at a paywall, mid-session — is probably where it earns its place.
-10. **Is 250 points the right price for the 7-day pass?** 100 and 250 mirror the cash ratio ($0.99 : $2.49), which is tidy but arbitrary — nothing says an earned currency should price like a sold one. 200 would make two referrals buy the better product cleanly and would push learners toward the 7-day pass, which is the one that actually establishes a study habit. 300 would make the 5-hour pass the default redemption and leave a remainder to expire. Recommend 250 for launch and watch which pass gets redeemed.
-11. **Should contributing a resource earn points?** `ResourceUploadReward` exists and the UI already promises 1 500 credits for an approved upload. Contribution is a better earn source than referral in principle — it produces something other learners use — but "approved" implies a moderation process that does not exist, and points redeemable for real product make an unmoderated upload queue an attack surface. Deferred, deliberately, until moderation exists.
-12. **What is the total points liability?** Every live point is deferred COGS at up to $0.003 (100 points → a $0.30-ceiling pass). Uncapped referrals make this unbounded in principle and 60-day expiry bounds it in practice, but the missing number is qualified referrals per learner. Until Phase 4b's monitoring runs, this is a guess.
+Still open, in rough order of what they cost:
+
+1. **Who owns setting `thinking_budget` per operation class?** Unowned. This is where the output money goes, nothing in the codebase sets it, and Phase 0 has the three-class split ready to apply. The largest unclaimed cost saving in the plan.
+2. **Who owns context-caching the chat prefix?** Also unowned, and likely the largest *input* saving — a 90% discount on the system instruction and tool declarations, both byte-stable across all learners. Requires splitting the prompt constant from its name suffix and moving the timestamp at `context.py:70` off the front, because Gemini caching is prefix-based.
+3. **Is the free tier affordable at scale?** Free inference is $368 of $2 383 revenue at 10 000 MAU after the §6.5 fixes — still the largest single line item. It rests on two unmeasured assumptions: 50% of free MAU AI-active, and typical consumption around half the allowance. If either is materially higher, contribution goes negative. **Instrument before tuning** (Phase 3, last item).
+4. **Is 250 points the right price for the 7-day pass?** 100 and 250 mirror the cash ratio, which is tidy but arbitrary — nothing says an earned currency should price like a sold one. 200 would make two referrals buy the better product cleanly and push learners toward the pass that actually establishes a habit; 300 would make the 5-hour pass the default redemption and leave a remainder to expire. Recommend 250 for launch and watch which pass gets redeemed. Blocks Phase 4b only.
+5. **Refunds on an activated pass.** Apple and Google decide refunds unilaterally and neither asks first, so a learner can consume most of a pass and be refunded. Apple's `CONSUMPTION_REQUEST` lets us report usage and reduces this, but it is advisory. Recommend accepting the leakage and measuring it — a consumption cap that fires on a legitimate learner is worse than the loss.
+6. **Is a 5-hour window right for Free?** Five hours permits up to 4.8 allowances a day, which the monthly backstop bounds but does not prevent. The length is shared with Plus for explainability and because it is the pass duration. A 12-hour Free window (~2/day) tightens it at the cost of two numbers to explain. Recommend 5h for both and let question 3's instrumentation decide.
+7. **Should the 5-hour pass sit next to the 7-day pass?** $1.50 more buys 33× the duration, so the 5-hour pass is value-dominated for anyone uncertain how long they need. Its job is the sub-$1 impulse and the first card on file, not volume. Showing them side by side with equal weight makes the cheap one look silly; surfacing it contextually — at a paywall, mid-session — is probably where it earns its place.
+8. **Should contributing a resource earn points?** Better than referral in principle, because it produces something other learners use. But "approved" implies a moderation process that does not exist, and points redeemable for real product make an unmoderated upload queue an attack surface. Deferred until moderation exists.
+9. **What is the total points liability?** Every live point is deferred COGS at up to $0.003. Uncapped referrals make this unbounded in principle and 60-day expiry bounds it in practice; the missing number is qualified referrals per learner. A guess until Phase 4b's monitoring runs.
+10. **What is the voice pack's real attach rate?** The revenue tables assume **12% of payers buy one pack a month**, and it is the weakest number in this document — voice has the least usage data behind it and the highest unit cost, so the plausible range spans an order of magnitude. At 30% the pack is a significant product; at 2% it is a rounding error that still needs four store SKUs and a second counter. **Build it anyway** — Decision R's argument is that it closes an unbounded exposure rather than that it earns $70 — but do not plan against the revenue, and let Phase 3's instrumentation set the real figure before anyone quotes it.
+11. **Does the Term Pass cannibalise the subscription in Nigeria?** It nets $0.91/month against the monthly's $1.61, so a subscriber who switches costs us 43% of their revenue. The bet is that they were never a reliable subscriber — a mandate that fails in month two collects less than a term paid up front. Measurable the first month both exist, and if it is wrong the fix is pricing the Term Pass nearer four months of monthly, not withdrawing it.
