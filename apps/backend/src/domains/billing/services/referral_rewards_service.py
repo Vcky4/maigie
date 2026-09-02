@@ -1,11 +1,34 @@
-"""
-Referral service for managing referral rewards.
+"""Referral codes and the record of who referred whom.
 
-This module handles:
-- Referral code generation
-- Referral tracking
-- Reward claiming
-- Daily limit increases from claimed rewards
+**What this module no longer does: reward anybody.** It used to grant 1 000 tokens for a signup and
+500 for a subscription, hold them as unclaimed `ReferralReward` rows, and let a learner claim one to
+raise their *daily credit limit* for that calendar day. Five functions implemented that —
+`REFERRAL_REWARDS`, `track_referral_subscription`, `get_claimable_rewards`, `claim_referral_reward`,
+`get_daily_limit_increase` — and all five are deleted.
+
+Three reasons, in order of weight:
+
+1. **Nothing tops up a window (§6.3).** The reward's mechanism was `creditsDailyLimit`, which Phase 3
+   dropped. A rolling 5-hour allowance has nowhere to put a bonus that isn't either invisible (spent
+   within the window it lands in) or unbounded.
+2. **A subscription is the wrong trigger.** Paying us is something the *referred* learner does;
+   rewarding the referrer for it pays out on the signal easiest to game and says nothing about
+   whether the referral was any good.
+3. **A reward you must claim, that then silently raises a number you cannot see, buys no advocacy.**
+   The learner could not observe it, predict it or plan around it.
+
+Decision O replaces all of it with points: granted when a referred learner has genuinely studied on
+seven distinct days, expiring per grant at 60 days, redeemable for passes and for nothing else. That
+is a different contract, not a port.
+
+**What survives, ported to SQLAlchemy:** the code, and the record of who referred whom. Both are
+inputs to the points ledger, and both were dead before this — the module held a
+`PrismaClientRemoved` sentinel where its database used to be, so `get_or_create_referral_code`
+raised on every call. `milestone_service` has been rendering share cards with a slice of a primary
+key in place of a referral code as a result.
+
+`get_referral_stats` keeps its shape minus the two token totals, which counted a currency that is
+being retired. It reports referral counts; the points balance joins it in Phase 4b, from the ledger.
 
 Copyright (C) 2025 Maigie
 
@@ -16,391 +39,168 @@ See LICENSE file in the repository root for details.
 import logging
 import secrets
 import string
-from datetime import datetime, timedelta
-from typing import Any, Optional
 
+from sqlalchemy import func, select, update
+
+from src.domains.billing.db_models import ReferralReward
 from src.domains.identity.db_models import User
-from src.shared.infrastructure.unmigrated import PrismaClientRemoved
+from src.shared.database import get_session_factory
 
 logger = logging.getLogger(__name__)
 
-# This module was written against the Prisma client and has not been ported to
-# SQLAlchemy: it calls db_client.user.find_unique/update and reads camelCase
-# attributes such as user.referralCode. Referral rewards are therefore not
-# functional. The sentinel makes each affected path fail with an explanatory
-# error rather than an undefined-name error.
-db = PrismaClientRemoved("billing.services.referral_rewards_service")
-
-# Referral reward amounts (in tokens)
-REFERRAL_REWARDS = {
-    "signup": 1000,  # 1000 tokens for referring a user who signs up
-    "subscription": 500,  # 500 tokens for referring a user who subscribes
-}
-
 
 def generate_referral_code(length: int = 8) -> str:
-    """
-    Generate a unique referral code.
+    """Generate a candidate referral code.
 
-    Args:
-        length: Length of the referral code (default: 8)
-
-    Returns:
-        Unique referral code string
+    Uppercase letters and digits only, so it survives being read aloud, typed on a phone keyboard
+    and printed on a share card. Collisions are handled by the caller, not by making the code longer.
     """
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-async def get_or_create_referral_code(user: User, db_client: Any | None = None) -> str:
-    """
-    Get existing referral code for user or generate a new one.
+async def get_or_create_referral_code(user_id: str) -> str:
+    """Return the learner's referral code, minting one on first use.
 
     Args:
-        user: User model instance
-        db_client: Optional (kept for backward compat, ignored)
+        user_id: The learner's id. Takes an id rather than a `User` row, unlike the Prisma version:
+            the row it was handed could be stale, and it wrote through to the database anyway.
 
     Returns:
-        Referral code string
+        The referral code.
+
+    Raises:
+        ValueError: If the user does not exist, or if ten candidate codes all collided — at 36^8
+            that means something is wrong with the generator, not with our luck.
     """
-    if db_client is None:
-        db_client = db
+    factory = get_session_factory()
+    async with factory() as session:
+        existing = (
+            await session.execute(select(User.referral_code).where(User.id == user_id))
+        ).scalar_one_or_none()
+        if existing:
+            return existing
 
-    if user.referralCode:
-        return user.referralCode
-
-    # Generate a unique code
-    max_attempts = 10
-    for _ in range(max_attempts):
+    for _ in range(10):
         code = generate_referral_code()
-        # Check if code already exists
-        existing_user = await db_client.user.find_unique(where={"referralCode": code})
-        if not existing_user:
-            # Update user with new referral code
-            updated_user = await db_client.user.update(
-                where={"id": user.id},
-                data={"referralCode": code},
+        async with factory() as session:
+            taken = (
+                await session.execute(select(User.id).where(User.referral_code == code))
+            ).scalar_one_or_none()
+            if taken:
+                continue
+            result = await session.execute(
+                update(User)
+                .where(User.id == user_id, User.referral_code.is_(None))
+                .values(referral_code=code)
             )
-            logger.info(f"Generated referral code {code} for user {user.id}")
+            await session.commit()
+
+        if result.rowcount:
+            logger.info("Generated referral code %s for user %s", code, user_id)
             return code
 
-    raise ValueError("Failed to generate unique referral code after multiple attempts")
+        # The row either does not exist or acquired a code between the read above and this write.
+        # Re-read rather than retry: a second racer minting a *different* code would leave the two
+        # callers disagreeing about the learner's own code.
+        async with factory() as session:
+            settled = (
+                await session.execute(select(User.referral_code).where(User.id == user_id))
+            ).scalar_one_or_none()
+        if settled:
+            return settled
+        raise ValueError(f"User {user_id} not found")
+
+    raise ValueError("Failed to generate a unique referral code after 10 attempts")
 
 
-async def track_referral_signup(
-    referred_user: User, referral_code: str, db_client: Any | None = None
-) -> User | None:
-    """
-    Track when a user signs up with a referral code and award the referrer.
+async def track_referral_signup(referred_user_id: str, referral_code: str) -> str | None:
+    """Record that `referred_user_id` signed up on someone's code.
+
+    Records the relationship and **grants nothing**. The grant now waits on the referred learner
+    studying for seven distinct days (Decision O), which this row is the precondition for rather than
+    the trigger of.
 
     Args:
-        referred_user: User who signed up
-        referral_code: Referral code used during signup
-        db_client: Optional (kept for backward compat, ignored)
+        referred_user_id: The learner who just signed up.
+        referral_code: The code they arrived with.
 
     Returns:
-        Referrer User object if found, None otherwise
+        The referrer's id, or `None` if the code is unknown or self-referral was attempted.
     """
-    if db_client is None:
-        db_client = db
+    factory = get_session_factory()
+    async with factory() as session:
+        referrer_id = (
+            await session.execute(select(User.id).where(User.referral_code == referral_code))
+        ).scalar_one_or_none()
 
-    # Find referrer by code
-    referrer = await db_client.user.find_unique(where={"referralCode": referral_code})
-    if not referrer:
-        logger.warning(f"Referral code {referral_code} not found")
+    if not referrer_id:
+        logger.warning("Referral code %s not found", referral_code)
         return None
 
-    # Prevent self-referral
-    if referrer.id == referred_user.id:
-        logger.warning(f"User {referred_user.id} attempted self-referral")
+    if referrer_id == referred_user_id:
+        logger.warning("User %s attempted self-referral", referred_user_id)
         return None
 
-    # Check if reward already exists
-    existing_reward = await db_client.referralreward.find_first(
-        where={
-            "referrerId": referrer.id,
-            "referredUserId": referred_user.id,
-            "rewardType": "signup",
-        }
-    )
+    async with factory() as session:
+        already = (
+            await session.execute(
+                select(ReferralReward.id).where(
+                    ReferralReward.referrer_id == referrer_id,
+                    ReferralReward.referred_user_id == referred_user_id,
+                    ReferralReward.reward_type == "signup",
+                )
+            )
+        ).scalar_one_or_none()
+        if already:
+            return referrer_id
 
-    if existing_reward:
-        logger.info(
-            f"Signup reward already exists for referrer {referrer.id} and referred {referred_user.id}"
+        # `tokens=0` and `is_claimed=False` are the columns' defaults and are left alone. The row is
+        # a record of a relationship now, not of an amount owed; the amount lives in the points
+        # ledger, and these two columns go when Decision O's tables land.
+        session.add(
+            ReferralReward(
+                referrer_id=referrer_id,
+                referred_user_id=referred_user_id,
+                reward_type="signup",
+            )
         )
-        return referrer
-
-    # Create referral reward
-    await db_client.referralreward.create(
-        data={
-            "referrerId": referrer.id,
-            "referredUserId": referred_user.id,
-            "rewardType": "signup",
-            "tokens": REFERRAL_REWARDS["signup"],
-            "isClaimed": False,
-        }
-    )
-
-    # Update referred user with referral code used
-    await db_client.user.update(
-        where={"id": referred_user.id},
-        data={"referredByCode": referral_code},
-    )
-
-    logger.info(
-        f"Created signup referral reward: referrer {referrer.id} -> referred {referred_user.id}"
-    )
-
-    return referrer
-
-
-async def track_referral_subscription(referred_user: User, db_client: Any | None = None) -> None:
-    """
-    Track when a referred user subscribes and award the referrer.
-
-    Args:
-        referred_user: User who subscribed (must have referredByCode set)
-        db_client: Optional (kept for backward compat, ignored)
-    """
-    if db_client is None:
-        db_client = db
-
-    if not referred_user.referredByCode:
-        # User wasn't referred, nothing to do
-        return
-
-    # Find referrer by code
-    referrer = await db_client.user.find_unique(
-        where={"referralCode": referred_user.referredByCode}
-    )
-    if not referrer:
-        logger.warning(f"Referrer not found for code {referred_user.referredByCode}")
-        return
-
-    # Check if subscription reward already exists
-    existing_reward = await db_client.referralreward.find_first(
-        where={
-            "referrerId": referrer.id,
-            "referredUserId": referred_user.id,
-            "rewardType": "subscription",
-        }
-    )
-
-    if existing_reward:
-        logger.info(
-            f"Subscription reward already exists for referrer {referrer.id} and referred {referred_user.id}"
+        await session.execute(
+            update(User).where(User.id == referred_user_id).values(referred_by_code=referral_code)
         )
-        return
+        try:
+            await session.commit()
+        except Exception:
+            # The unique index on (referrerId, referredUserId, rewardType) is the real guard; the
+            # read above only avoids the common case. Two concurrent signups on one code cannot
+            # both land, and losing the race is success.
+            await session.rollback()
 
-    # Create subscription referral reward
-    await db_client.referralreward.create(
-        data={
-            "referrerId": referrer.id,
-            "referredUserId": referred_user.id,
-            "rewardType": "subscription",
-            "tokens": REFERRAL_REWARDS["subscription"],
-            "isClaimed": False,
-        }
-    )
-
-    logger.info(
-        f"Created subscription referral reward: referrer {referrer.id} -> referred {referred_user.id}"
-    )
+    logger.info("Recorded referral: %s -> %s", referrer_id, referred_user_id)
+    return referrer_id
 
 
-async def get_claimable_rewards(user: User, db_client: Any | None = None) -> list[dict]:
+async def get_referral_stats(user_id: str) -> dict:
+    """Referral counts and the learner's own code.
+
+    `totalTokensEarned` and `totalTokensClaimed` are gone: they summed a currency being retired, and
+    reporting a token total beside a window allowance would invite a learner to convert between two
+    units that no longer relate. The points balance replaces them in Phase 4b, read from the ledger
+    rather than summed out of these rows.
     """
-    Get all unclaimed referral rewards for a user.
+    referral_code = await get_or_create_referral_code(user_id)
 
-    Args:
-        user: User model instance
-        db_client: Optional (kept for backward compat, ignored)
-
-    Returns:
-        List of claimable reward dictionaries
-    """
-    if db_client is None:
-        db_client = db
-
-    rewards = await db_client.referralreward.find_many(
-        where={"referrerId": user.id, "isClaimed": False},
-        include={"referredUser": True},
-        order={"createdAt": "desc"},
-    )
-
-    return [
-        {
-            "id": reward.id,
-            "rewardType": reward.rewardType,
-            "tokens": reward.tokens,
-            "referredUser": {
-                "id": reward.referredUser.id,
-                "email": reward.referredUser.email,
-                "name": reward.referredUser.name,
-            },
-            "createdAt": reward.createdAt.isoformat() if reward.createdAt else None,
-        }
-        for reward in rewards
-    ]
-
-
-async def claim_referral_reward(user: User, reward_id: str, db_client: Any | None = None) -> dict:
-    """
-    Claim a referral reward. This increases the user's daily limit for the current day.
-
-    Args:
-        user: User model instance
-        reward_id: ID of the reward to claim
-        db_client: Optional (kept for backward compat, ignored)
-
-    Returns:
-        Dictionary with claim details
-    """
-    if db_client is None:
-        db_client = db
-
-    # Get the reward
-    reward = await db_client.referralreward.find_unique(where={"id": reward_id})
-    if not reward:
-        raise ValueError("Reward not found")
-
-    # Verify ownership
-    if reward.referrerId != user.id:
-        raise ValueError("Reward does not belong to this user")
-
-    # Check if already claimed
-    if reward.isClaimed:
-        raise ValueError("Reward already claimed")
-
-    # Get today's date (midnight UTC)
-    now = datetime.utcnow()
-    today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    # Check if user has already claimed a reward today
-    # If so, we need to check if this reward was already claimed today
-    existing_claim = await db_client.referralrewardclaim.find_first(
-        where={
-            "userId": user.id,
-            "claimDate": {"gte": today_midnight},
-            "rewardId": reward_id,
-        }
-    )
-
-    if existing_claim:
-        raise ValueError("This reward has already been claimed today")
-
-    # Mark reward as claimed
-    await db_client.referralreward.update(
-        where={"id": reward_id},
-        data={
-            "isClaimed": True,
-            "claimedAt": now,
-            "claimDate": today_midnight,
-        },
-    )
-
-    # Create claim record
-    claim = await db_client.referralrewardclaim.create(
-        data={
-            "userId": user.id,
-            "rewardId": reward_id,
-            "tokensClaimed": reward.tokens,
-            "claimDate": today_midnight,
-            "dailyLimitIncrease": reward.tokens,
-        }
-    )
-
-    # Increase user's daily limit for today
-    # We'll track this separately - the credit service will check claimed rewards
-    # For now, we'll store it in a way that credit_service can access it
-
-    logger.info(f"User {user.id} claimed referral reward {reward_id}: {reward.tokens} tokens")
-
-    return {
-        "rewardId": reward_id,
-        "tokensClaimed": reward.tokens,
-        "claimDate": today_midnight.isoformat(),
-        "dailyLimitIncrease": reward.tokens,
-    }
-
-
-async def get_daily_limit_increase(user: User, db_client: Any | None = None) -> int:
-    """
-    Get the total daily limit increase from claimed referral rewards for today.
-
-    Args:
-        user: User model instance
-        db_client: Optional (kept for backward compat, ignored)
-
-    Returns:
-        Total daily limit increase in tokens
-    """
-    if db_client is None:
-        db_client = db
-
-    # Get today's date (midnight UTC)
-    now = datetime.utcnow()
-    today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    # Get all claims for today
-    claims = await db_client.referralrewardclaim.find_many(
-        where={
-            "userId": user.id,
-            "claimDate": {"gte": today_midnight},
-        }
-    )
-
-    # Sum up the daily limit increases
-    total_increase = sum(claim.dailyLimitIncrease for claim in claims)
-
-    return total_increase
-
-
-async def get_referral_stats(user: User, db_client: Any | None = None) -> dict:
-    """
-    Get referral statistics for a user.
-
-    Args:
-        user: User model instance
-        db_client: Optional (kept for backward compat, ignored)
-
-    Returns:
-        Dictionary with referral statistics
-    """
-    if db_client is None:
-        db_client = db
-
-    # Get referral code
-    referral_code = await get_or_create_referral_code(user, db_client)
-
-    # Count total referrals
-    total_referrals = await db_client.referralreward.count(where={"referrerId": user.id})
-
-    # Count claimed rewards
-    claimed_rewards = await db_client.referralreward.count(
-        where={"referrerId": user.id, "isClaimed": True}
-    )
-
-    # Count unclaimed rewards
-    unclaimed_rewards = await db_client.referralreward.count(
-        where={"referrerId": user.id, "isClaimed": False}
-    )
-
-    # Calculate total tokens earned
-    all_rewards = await db_client.referralreward.find_many(where={"referrerId": user.id})
-    total_tokens_earned = sum(reward.tokens for reward in all_rewards)
-
-    # Calculate total tokens claimed
-    claimed_reward_records = await db_client.referralreward.find_many(
-        where={"referrerId": user.id, "isClaimed": True}
-    )
-    total_tokens_claimed = sum(reward.tokens for reward in claimed_reward_records)
+    factory = get_session_factory()
+    async with factory() as session:
+        total_referrals = (
+            await session.execute(
+                select(func.count())
+                .select_from(ReferralReward)
+                .where(ReferralReward.referrer_id == user_id)
+            )
+        ).scalar() or 0
 
     return {
         "referralCode": referral_code,
         "totalReferrals": total_referrals,
-        "claimedRewards": claimed_rewards,
-        "unclaimedRewards": unclaimed_rewards,
-        "totalTokensEarned": total_tokens_earned,
-        "totalTokensClaimed": total_tokens_claimed,
     }

@@ -20,12 +20,8 @@ from src.shared.database.session import get_session_factory
 logger = logging.getLogger(__name__)
 
 
-# ===========================================================================
-# Constants
-# ===========================================================================
-
-REFERRAL_REWARD_CREDITS = 10_000
-MAX_MONTHLY_REFERRALS = 10
+# `REFERRAL_REWARD_CREDITS = 10_000` and `MAX_MONTHLY_REFERRALS = 10` are gone with
+# `process_referral_completion`. See that function's absence below.
 
 
 # ===========================================================================
@@ -119,14 +115,8 @@ class ShareCard:
     referral_link: str
 
 
-@dataclass
-class ReferralReward:
-    """A referral reward granted."""
-
-    referrer_id: str
-    referred_id: str
-    credits_awarded: int
-    total_referrals_this_month: int
+# The `ReferralReward` dataclass went with `process_referral_completion`; it existed only as that
+# function's return type.
 
 
 # ===========================================================================
@@ -260,50 +250,21 @@ async def generate_share_card(user_id: str, milestone_id: str) -> ShareCard:
     )
 
 
-async def process_referral_completion(referrer_id: str, referred_id: str) -> ReferralReward | None:
-    """
-    Award referral bonus when a referred user completes 7 days of activity.
-
-    Returns None if:
-    - Monthly referral limit reached
-    - Already rewarded for this referral
-    """
-    # Check monthly limit
-    monthly_count = await _get_monthly_referral_count(referrer_id)
-    if monthly_count >= MAX_MONTHLY_REFERRALS:
-        logger.info(
-            f"Referral reward skipped for {referrer_id}: monthly limit reached ({monthly_count})"
-        )
-        return None
-
-    # Award credits to referrer's purchased_credits_balance
-    factory = get_session_factory()
-    async with factory() as session:
-        from sqlalchemy import select, update
-
-        from src.domains.identity.db_models import User
-
-        stmt = (
-            update(User)
-            .where(User.id == referrer_id)
-            .values(
-                purchased_credits_balance=User.purchased_credits_balance + REFERRAL_REWARD_CREDITS
-            )
-        )
-        await session.execute(stmt)
-        await session.commit()
-
-    logger.info(
-        f"Referral reward: {REFERRAL_REWARD_CREDITS} credits to {referrer_id} "
-        f"for referring {referred_id}"
-    )
-
-    return ReferralReward(
-        referrer_id=referrer_id,
-        referred_id=referred_id,
-        credits_awarded=REFERRAL_REWARD_CREDITS,
-        total_referrals_this_month=monthly_count + 1,
-    )
+# `process_referral_completion` is deleted, and it is the one place in the codebase that had the
+# right *trigger* for a referral reward: seven days of genuine activity by the referred learner,
+# rather than a signup. Decision O keeps that trigger and changes everything else about it.
+#
+# What it did was award 10 000 credits into `purchasedCreditsBalance`, which Phase 3 dropped. It was
+# also unreachable — no caller — and its two guards were hollow: `_get_monthly_referral_count`
+# returned a hard-coded 0, so `MAX_MONTHLY_REFERRALS = 10` could never bind, and the "already
+# rewarded for this referral" case its own docstring promised was never checked at all. A referred
+# learner could therefore have been paid for repeatedly.
+#
+# The replacement is a points ledger: points are granted once per referred learner who studies on
+# seven distinct days, they expire per grant at 60 days, and they redeem into passes and nothing
+# else. Idempotency becomes a property of the ledger row rather than a check somebody has to
+# remember to write, and there is no monthly cap — the user's call, on the grounds that the activity
+# requirement is the real cap.
 
 
 # ===========================================================================
@@ -376,23 +337,25 @@ async def _record_milestone(
 
 
 async def _get_or_create_referral_link(user_id: str) -> str:
-    """Get or generate the user's referral link."""
-    # Use existing referral service if available
-    try:
-        from src.domains.billing.services import referral_service
+    """Return the share link that carries the learner's referral code.
 
-        link = await referral_service.get_referral_link(user_id)
-        if link:
-            return link
-    except (ImportError, AttributeError, Exception):
-        pass
+    This used to try `referral_service.get_referral_link(user_id)` first, inside an
+    `except (ImportError, AttributeError, Exception)` that caught everything and passed. That
+    function has never existed, so the branch raised `AttributeError` on every call and the fallback
+    ran every time — a fallback with a 100% hit rate, wearing a preference for a better path that was
+    never taken. The catch-all is what hid it.
 
-    # Fallback: construct a simple referral link
-    return f"https://app.maigie.com/join?ref={user_id[:8]}"
+    The link now resolves the learner's real referral code, because the fallback it replaces did not:
+    `user_id[:8]` is a slice of a primary key, and `track_referral_signup` looks up
+    `User.referralCode`, so every share card ever rendered carried a code that could not be redeemed.
+    """
+    from src.domains.billing.services.referral_rewards_service import (
+        get_or_create_referral_code,
+    )
+
+    code = await get_or_create_referral_code(user_id)
+    return f"https://app.maigie.com/join?ref={code}"
 
 
-async def _get_monthly_referral_count(user_id: str) -> int:
-    """Count referrals awarded this month for a user."""
-    # For now, return 0 — proper implementation would track in a referral rewards table.
-    # The existing billing referral service likely tracks this.
-    return 0
+# `_get_monthly_referral_count` returned a hard-coded 0 and was the sole input to the monthly
+# referral cap, which is how a cap came to exist in name only. It went with its caller.

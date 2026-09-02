@@ -22,7 +22,7 @@ from src.domains.identity.repository import IdentityRepository
 from src.shared.exceptions import SubscriptionLimitError
 
 from . import session_store
-from .billing import credits_from_billable_seconds_raw, credits_total_final_settlement
+from .billing import units_from_billable_seconds_raw, units_total_final_settlement
 from .bridge import BillingSnapshot
 
 logger = logging.getLogger(__name__)
@@ -42,9 +42,9 @@ async def settle(user_id: str, session_id: str, snapshot: BillingSnapshot) -> No
     # connection re-enters the same session id, and each attempt settles separately — so without this a
     # FREE learner on a flaky connection pays the minimum several times for one sitting.
     if await session_store.claim_session_floor(session_id):
-        total = credits_total_final_settlement(snapshot.billable_seconds, snapshot.billing_mode)
+        total = units_total_final_settlement(snapshot.billable_seconds, snapshot.billing_mode)
     else:
-        total = credits_from_billable_seconds_raw(snapshot.billable_seconds)
+        total = units_from_billable_seconds_raw(snapshot.billable_seconds)
     outstanding = max(0, total - snapshot.consumed_credits)
 
     try:

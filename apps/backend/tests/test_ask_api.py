@@ -61,12 +61,10 @@ def fake_effects(**overrides):
         "check_credits": AsyncMock(return_value=(True, None)),
         "credit_usage": AsyncMock(
             return_value={
-                "daily_limit": 5_000,
-                "credits_used_today": 5_000,
-                "credits_used": 5_000,
-                "hard_cap": 5_000,
-                "period_end": "2026-09-01",
-                "next_daily_reset": "midnight",
+                "tier": "free",
+                "windowResetsAt": "2026-09-01T17:00:00+00:00",
+                "percentUsed": 100.0,
+                "isExhausted": True,
             }
         ),
         "consume_credits": AsyncMock(return_value=None),
@@ -78,7 +76,8 @@ def fake_effects(**overrides):
         "tool_badge": ask_service.tool_skill_badge,
         "query_badge": ask_service.query_type_skill_badge,
         "extract_suggestion": lambda text: (text, None),
-        "purchase_deep_link": "maigie://purchase",
+        "units_for_tokens": lambda inp, out, model: inp + out,
+        "upgrade_deep_link": "maigie://plus/upgrade",
     }
     defaults.update(overrides)
     return ask_service.AskEffects(**defaults)
@@ -421,11 +420,24 @@ class TestCreditExhaustion:
         assert response.status_code == 402
 
     def test_the_body_carries_the_same_words_the_socket_sends(self):
+        """One refusal, composed in one place, so the HTTP body and the socket frame cannot drift.
+
+        The phrase this used to look for was "credit limit exceeded". It is gone deliberately: there is
+        no monthly credit limit to exceed, and the words a learner reads should describe a session
+        allowance that comes back rather than a balance they have run down.
+        """
         with Harness(
             effects=fake_effects(check_credits=AsyncMock(return_value=(False, None)))
         ) as h:
             detail = h.ask().json()["detail"]
-        assert "credit limit exceeded" in detail.lower()
+        assert "allowance" in detail.lower()
+        assert (
+            detail
+            == ask_service.credit_refusal(
+                tier="free",
+                credit_usage={"windowResetsAt": "2026-09-01T17:00:00+00:00"},
+            ).message
+        )
 
     def test_an_exhausted_learner_gets_no_assistant_row(self):
         effects = fake_effects(check_credits=AsyncMock(return_value=(False, None)))

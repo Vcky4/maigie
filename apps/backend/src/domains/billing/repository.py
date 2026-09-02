@@ -96,68 +96,25 @@ class BillingRepository:
             return result.scalar_one_or_none()
 
     # -----------------------------------------------------------------------
-    # Credits
+    # Credits — removed
     # -----------------------------------------------------------------------
-
-    async def get_credits(self, user_id: str) -> dict[str, Any]:
-        user = await self.get_user_billing(user_id)
-        if not user:
-            return {}
-        return {
-            "credits_used": user.credits_used or 0,
-            "purchased_balance": user.purchased_credits_balance or 0,
-            "credits_used_today": user.credits_used_today or 0,
-            "daily_limit": user.credits_daily_limit,
-            "hard_cap": user.credits_hard_cap,
-            "soft_cap": user.credits_soft_cap,
-            "period_start": user.credits_period_start,
-            "period_end": user.credits_period_end,
-        }
-
-    async def update_credits(self, user_id: str, data: dict[str, Any]) -> User:
-        from src.domains.identity.repository import IdentityRepository
-
-        repo = IdentityRepository()
-        return await repo.update(user_id, data)
-
-    async def adjust_purchased_credits(self, user_id: str, amount: int) -> User:
-        async with await self._session() as session:
-            stmt = select(User).where(User.id == user_id)
-            result = await session.execute(stmt)
-            user = result.scalar_one_or_none()
-            if not user:
-                raise ValueError(f"User {user_id} not found")
-            new_balance = max(0, (user.purchased_credits_balance or 0) + amount)
-            upd = (
-                update(User).where(User.id == user_id).values(purchased_credits_balance=new_balance)
-            )
-            await session.execute(upd)
-            await session.commit()
-        return await self.get_user_billing(user_id)
+    #
+    # `get_credits`, `update_credits` and `adjust_purchased_credits` read and wrote the nine
+    # credit columns that Phase 3 dropped from `User`. None of the three had a caller: the
+    # meter always went through `IdentityRepository` directly, and this trio was a second
+    # door to the same rows that happened to be unused. Usage now lives in
+    # `credit_consumption_service.window_state`, which reads the four `usage*` columns and is
+    # the only thing that writes them.
 
     # -----------------------------------------------------------------------
     # Credit Purchase Transactions
     # -----------------------------------------------------------------------
-
-    async def create_purchase_transaction(self, data: dict[str, Any]) -> CreditPurchaseTransaction:
-        async with await self._session() as session:
-            txn = CreditPurchaseTransaction(
-                user_id=data["userId"],
-                credit_pack_id=data.get("creditPackId"),
-                credits_granted=data["creditsGranted"],
-                amount_paid=data["amountPaid"],
-                currency=data["currency"],
-                payment_provider=data["paymentProvider"],
-                provider_reference=data["providerReference"],
-                session_id=data.get("sessionId"),
-                session_expires_at=data.get("sessionExpiresAt"),
-                status=data.get("status", "pending"),
-                completed_at=data.get("completedAt"),
-            )
-            session.add(txn)
-            await session.commit()
-            await session.refresh(txn)
-            return txn
+    #
+    # Read-only now. `create_purchase_transaction`, `find_transaction_by_reference` and
+    # `update_transaction` existed to record and settle a credit-pack purchase; nothing can
+    # buy one, so nothing writes here. A write path that still worked would be an invitation
+    # to sell the withdrawn product from a webhook. `PlusPurchase` takes over the recording
+    # (Decision G), and this table is read for history until Decision H drops it.
 
     async def get_purchase_history(
         self, user_id: str, *, skip: int = 0, take: int = 20
@@ -180,47 +137,14 @@ class BillingRepository:
             result = await session.execute(stmt)
             return list(result.scalars().all()), total
 
-    async def find_transaction_by_reference(
-        self, provider_reference: str
-    ) -> CreditPurchaseTransaction | None:
-        async with await self._session() as session:
-            stmt = select(CreditPurchaseTransaction).where(
-                CreditPurchaseTransaction.provider_reference == provider_reference
-            )
-            result = await session.execute(stmt)
-            return result.scalar_one_or_none()
-
-    async def update_transaction(self, txn_id: str, data: dict[str, Any]) -> None:
-        async with await self._session() as session:
-            stmt = (
-                update(CreditPurchaseTransaction)
-                .where(CreditPurchaseTransaction.id == txn_id)
-                .values(**data)
-            )
-            await session.execute(stmt)
-            await session.commit()
-
     # -----------------------------------------------------------------------
-    # Credit Packs
+    # Credit Packs — removed
     # -----------------------------------------------------------------------
-
-    async def list_active_packs(self) -> list[CreditPack]:
-        async with await self._session() as session:
-            stmt = (
-                select(CreditPack)
-                .where(CreditPack.is_active == True)  # noqa: E712
-                .order_by(CreditPack.sort_order.asc())
-            )
-            result = await session.execute(stmt)
-            return list(result.scalars().all())
-
-    async def find_pack(self, pack_id: str) -> CreditPack | None:
-        async with await self._session() as session:
-            stmt = select(CreditPack).where(
-                CreditPack.id == pack_id, CreditPack.is_active.is_(True)
-            )
-            result = await session.execute(stmt)
-            return result.scalar_one_or_none()
+    #
+    # `list_active_packs` served the pack catalogue and `find_pack` priced a purchase; both
+    # went with the product (§6.1). The `CreditPack` table itself is still mapped, because
+    # `get_purchase_history` joins it to name a pack somebody bought, and Decision H drops
+    # both tables together in the pass rails.
 
     # -----------------------------------------------------------------------
     # Referral Rewards

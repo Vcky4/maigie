@@ -54,15 +54,21 @@ async def _run_value_summary_generation() -> dict:
     total_generated = 0
     errors = 0
 
-    # Find PLUS subscribers whose period ends within 3 days
+    # Find PLUS subscribers whose period ends within 3 days.
+    #
+    # Reads `subscriptionCurrentPeriodEnd`, which is what "renews soon" has always meant. This used
+    # to read `creditsPeriodEnd`, a second copy of the same date maintained by a credit-reset
+    # function that Phase 3 deleted — so the summary went out on the strength of a mirror rather
+    # than the fact, and any subscriber whose mirror was never written (the reset was best-effort,
+    # inside a `try` that logged and continued) was silently skipped.
     async with get_session() as session:
         stmt = (
             select(User.id)
             .where(User.tier.like("PREMIUM%"))
             .where(User.is_active.is_(True))
-            .where(User.credits_period_end.isnot(None))
-            .where(User.credits_period_end <= target_end)
-            .where(User.credits_period_end > now)
+            .where(User.subscription_current_period_end.isnot(None))
+            .where(User.subscription_current_period_end <= target_end)
+            .where(User.subscription_current_period_end > now)
         )
         result = await session.execute(stmt)
         user_ids = [row[0] for row in result.all()]

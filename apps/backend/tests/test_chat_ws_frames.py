@@ -343,12 +343,10 @@ async def drive(
         # `FakeUser` because the shape of a credit-usage report is billing's business, not this test's.
         credit_usage=AsyncMock(
             return_value={
-                "daily_limit": 5_000,
-                "credits_used_today": 5_000,
-                "credits_used": 5_000,
-                "hard_cap": 5_000,
-                "period_end": "2026-09-01",
-                "next_daily_reset": "midnight",
+                "tier": "free",
+                "windowResetsAt": "2026-09-01T17:00:00+00:00",
+                "percentUsed": 100.0,
+                "isExhausted": True,
             }
         ),
         consume_credits=consume,
@@ -360,7 +358,10 @@ async def drive(
         tool_badge=ask_service.tool_skill_badge,
         query_badge=ask_service.query_type_skill_badge,
         extract_suggestion=lambda text: (text, None),
-        purchase_deep_link="maigie://purchase",
+        # Identity, so a test asserting what was charged reads the token counts back
+        # rather than the rate card.
+        units_for_tokens=lambda inp, out, model: inp + out,
+        upgrade_deep_link="maigie://plus/upgrade",
     )
 
     with (

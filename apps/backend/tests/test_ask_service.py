@@ -1411,105 +1411,83 @@ class TestSessionTitleGate:
 
 
 def usage(**overrides):
+    """The shape `credit_consumption_service.get_credit_usage` returns.
+
+    Four keys where there were six. Gone: `daily_limit`, `credits_used_today`, `credits_used`,
+    `hard_cap`, `period_end` and `next_daily_reset` — a daily cap, a monthly cap and a period, all of
+    which the window replaced. What is left is a percentage, a reset and two booleans, none of which
+    quotes a unit count at the learner.
+    """
     base = {
-        "daily_limit": 5_000,
-        "credits_used_today": 4_900,
-        "credits_used": 40_000,
-        "hard_cap": 100_000,
-        "period_end": "2026-09-01",
-        "next_daily_reset": "midnight",
+        "tier": "free",
+        "windowResetsAt": "2026-09-01T17:00:00+00:00",
+        "percentUsed": 100.0,
+        "isExhausted": True,
     }
     base.update(overrides)
     return base
 
 
 class TestCreditRefusal:
-    def test_a_free_learner_over_their_daily_cap_is_told_it_resets(self):
-        """A daily cap resets tonight, so the learner waits. Naming the reset is the actionable part."""
+    def test_an_exhausted_window_says_it_comes_back(self):
+        """The whole change, in one assertion. What a learner needs to know when refused is that this
+        is temporary; the old message told them a used figure, a limit and a date, and offered a
+        referral reward for bonus credits that no longer exist."""
+        refusal = ask_service.credit_refusal(tier="free", credit_usage=usage())
+        assert "allowance" in refusal.message
+        assert "refills" in refusal.message
+
+    def test_the_reset_time_is_carried_as_a_timestamp_not_prose(self):
+        """So the client can render a countdown in the learner's own timezone. A server-side
+        "3:40 PM UTC" is a small arithmetic problem handed to somebody who has just been refused."""
+        refusal = ask_service.credit_refusal(tier="free", credit_usage=usage())
+        assert refusal.window_resets_at == "2026-09-01T17:00:00+00:00"
+        assert "17:00" not in refusal.message
+
+    def test_a_monthly_refusal_does_not_promise_a_reset_in_five_hours(self):
+        """The one case where the window's reset time is actively misleading: it passes within five
+        hours and changes nothing, because the month is what bound. `window_resets_at` is `None`
+        precisely so a client cannot count down to a moment that will not help."""
+        refusal = ask_service.credit_refusal(tier="free", credit_usage=usage(monthlyExhausted=True))
+        assert refusal.window_resets_at is None
+        assert "month" in refusal.message
+
+    def test_a_monthly_refusal_is_worded_differently_from_a_window_one(self):
+        """Two refusals with two different remedies must not read alike. Telling a learner who has hit
+        the monthly backstop that their allowance "refills automatically" is wrong advice about their
+        own account — it does, on the first of next month."""
+        window = ask_service.credit_refusal(tier="free", credit_usage=usage())
+        monthly = ask_service.credit_refusal(tier="free", credit_usage=usage(monthlyExhausted=True))
+        assert window.message != monthly.message
+
+    def test_the_backstop_being_present_but_unspent_is_not_a_monthly_refusal(self):
+        """`monthlyExhausted` is `False` for every learner who has a backstop and has not reached it,
+        which is nearly all of them. Reading its presence rather than its value would word every
+        refusal as monthly."""
         refusal = ask_service.credit_refusal(
-            tier="FREE", estimated_tokens=500, credit_usage=usage()
+            tier="free", credit_usage=usage(monthlyExhausted=False)
         )
-        assert refusal.is_daily_limit
-        assert "Daily credit limit" in refusal.message
-        assert "midnight" in refusal.message
+        assert refusal.window_resets_at == "2026-09-01T17:00:00+00:00"
+        assert "month" not in refusal.message
 
-    def test_a_monthly_cap_names_the_period_end_instead(self):
-        """A monthly cap needs an upgrade, not patience. Telling someone to wait until midnight for a
-        monthly cap is wrong advice about their own money."""
-        refusal = ask_service.credit_refusal(
-            tier="FREE",
-            estimated_tokens=10,
-            credit_usage=usage(credits_used_today=0),
-        )
-        assert not refusal.is_daily_limit
-        assert "Monthly credit limit" in refusal.message
-        assert "2026-09-01" in refusal.message
+    def test_no_unit_count_reaches_the_learner(self):
+        """Units are $0.0001 of measured COGS (§6.2). Putting one on screen leaks our cost basis and
+        invites arithmetic instead of a decision, which is what the old five-clause message did."""
+        refusal = ask_service.credit_refusal(tier="free", credit_usage=usage())
+        assert not any(character.isdigit() for character in refusal.message)
 
-    def test_a_paid_learner_never_gets_the_daily_message(self):
-        """Only the free tier has a daily cap. A paid learner whose daily numbers happen to look
-        exceeded is over their monthly allowance, not their daily one."""
-        refusal = ask_service.credit_refusal(
-            tier="PLUS_MONTHLY", estimated_tokens=500, credit_usage=usage()
-        )
-        assert not refusal.is_daily_limit
-
-    def test_no_configured_daily_cap_is_not_a_cap_of_zero(self):
-        """`daily_limit == 0` means no daily cap exists. Read as a cap, every free learner would be
-        refused on their first turn."""
-        refusal = ask_service.credit_refusal(
-            tier="FREE",
-            estimated_tokens=1,
-            credit_usage=usage(daily_limit=0, credits_used_today=0),
-        )
-        assert not refusal.is_daily_limit
-
-    def test_this_turns_estimate_counts_towards_the_daily_cap(self):
-        """The question is whether *this* turn fits, not whether the learner has already exceeded. A
-        learner just under their cap must not be allowed to start a turn that blows through it.
-        """
-        under = usage(daily_limit=5_000, credits_used_today=4_000)
-        assert not ask_service.credit_refusal(
-            tier="FREE", estimated_tokens=500, credit_usage=under
-        ).is_daily_limit
-        assert ask_service.credit_refusal(
-            tier="FREE", estimated_tokens=1_500, credit_usage=under
-        ).is_daily_limit
-
-    def test_exactly_on_the_daily_cap_is_allowed_through(self):
-        """`>` not `>=`: a turn that exactly fills the remaining allowance is affordable."""
-        refusal = ask_service.credit_refusal(
-            tier="FREE",
-            estimated_tokens=1_000,
-            credit_usage=usage(daily_limit=5_000, credits_used_today=4_000),
-        )
-        assert not refusal.is_daily_limit
-
-    def test_the_numbers_are_thousands_separated(self):
-        """Six-figure credit counts are unreadable without it, and this is a number the learner is being
-        asked to reason about."""
-        refusal = ask_service.credit_refusal(
-            tier="FREE",
-            estimated_tokens=10,
-            credit_usage=usage(credits_used_today=0, credits_used=40_000),
-        )
-        assert "40,000" in refusal.message
-
-    def test_a_missing_daily_reset_still_produces_a_sentence(self):
-        """The reset time comes from the billing service and is not guaranteed. Absent, the message says
-        "midnight" rather than "None"."""
+    def test_a_missing_reset_still_produces_a_sentence(self):
+        """`windowResetsAt` comes from the meter and is not guaranteed — a Space-scoped result carries
+        no window at all. Absent, the message must not say "None"."""
         credit_usage = usage()
-        del credit_usage["next_daily_reset"]
-        refusal = ask_service.credit_refusal(
-            tier="FREE", estimated_tokens=500, credit_usage=credit_usage
-        )
+        del credit_usage["windowResetsAt"]
+        refusal = ask_service.credit_refusal(tier="free", credit_usage=credit_usage)
         assert "None" not in refusal.message
-        assert "midnight" in refusal.message
+        assert refusal.window_resets_at is None
 
     def test_the_tier_is_carried_through_for_the_client(self):
-        refusal = ask_service.credit_refusal(
-            tier="FREE", estimated_tokens=500, credit_usage=usage()
-        )
-        assert refusal.tier == "FREE"
+        refusal = ask_service.credit_refusal(tier="free", credit_usage=usage())
+        assert refusal.tier == "free"
 
 
 # ---------------------------------------------------------------------------

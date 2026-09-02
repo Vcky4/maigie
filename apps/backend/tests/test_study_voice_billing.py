@@ -22,8 +22,8 @@ from src.domains.study_voice.bridge import BridgeState, study_tools_for
 def settings(monkeypatch):
     """Fixed billing settings, so these assertions do not move when pricing does."""
     fake = SimpleNamespace(
-        GEMINI_LIVE_CREDITS_PER_MINUTE=100.0,
-        GEMINI_LIVE_MIN_SESSION_CREDITS=500,
+        GEMINI_LIVE_UNITS_PER_MINUTE=100.0,
+        GEMINI_LIVE_MIN_SESSION_UNITS=500,
         GEMINI_LIVE_STANDBY_IDLE_SECONDS=2.5,
         GEMINI_LIVE_BILLING_TICK_SECONDS=2.0,
         GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK=50,
@@ -42,44 +42,50 @@ def settings(monkeypatch):
 # because the defect Phase 0 found was not in the arithmetic. The arithmetic was correct and the rate
 # was wrong by about 100×, the module docstring said so and called it "a pricing question flagged in
 # the design document, not a bug here", and no test looked at the number.
+#
+# Phase 3 redenominated both settings from pre-multiplier tokens into usage units, so the *bands* here
+# moved by 50× while the money did not. That is the point of the change: a unit is $0.0001 of measured
+# cost, so the band below can be derived from a provider price list rather than from a chain of
+# reasoning about what a token was worth. The rate is now checkable in one step.
 
 
 def test_a_voice_minute_is_priced_near_what_a_voice_minute_costs():
     """The rate must stay within an order of magnitude of the provider bill.
 
-    A conversational minute of `gemini-3.1-flash-live-preview` costs about $0.023. A text token on
-    `gemini-3.5-flash` ($1.50/$9.00 per 1M) costs about $0.0000020 at a realistic 8 000-in / 600-out
-    mix, so a voice minute is worth roughly 11 400 credits if a credit is to mean one token of cost.
-    A rate of 100 made a free learner's daily cap worth 250 minutes of live voice at roughly
-    $170/month to us, and nothing failed.
+    A conversational minute of `gemini-3.1-flash-live-preview` costs about **$0.023** — roughly
+    $0.005/min of audio in and $0.018/min out. At $0.0001 per unit that is ~230 units, and the
+    configured 200 is deliberately a little under: err towards the learner, keep the magnitude.
 
-    Deliberately a loose band rather than an equality. The point is to catch a rate that has drifted
-    an order of magnitude away from its cost basis — which is what happened — not to pin a figure
-    that legitimately moves when Google reprices. Phase 3 replaces this with measured cost per
-    operation, at which point the band can go.
+    Deliberately a loose band rather than an equality, to catch a rate that has drifted an order of
+    magnitude from its cost basis — which is what happened when it stood at 100 pre-multiplier tokens,
+    or about $0.0004 of cost for $0.023 of service — rather than to pin a figure Google will move.
     """
     from src.config import get_settings
+    from src.domains.billing.services.credit_consumption_service import units_for_usd
 
-    rate = float(get_settings().GEMINI_LIVE_CREDITS_PER_MINUTE)
-    assert 3_000 <= rate <= 40_000, (
-        f"GEMINI_LIVE_CREDITS_PER_MINUTE is {rate}, which is not within an order of magnitude of "
-        f"the ~11 400 credits a voice minute costs. If Google's pricing moved, move the band and "
-        f"say so; if this drifted, it is the 2026-09-01 defect returning."
+    rate = float(get_settings().GEMINI_LIVE_UNITS_PER_MINUTE)
+    measured = units_for_usd(0.023)
+    assert measured / 3 <= rate <= measured * 3, (
+        f"GEMINI_LIVE_UNITS_PER_MINUTE is {rate}, and a voice minute measures {measured} units "
+        f"(~$0.023). If Google's pricing moved, move the figure and say so; if this drifted, it is "
+        f"the 2026-09-01 defect returning."
     )
 
 
 def test_the_session_floor_is_at_least_a_minute_of_voice():
     """A floor below one minute is not a floor.
 
-    `GEMINI_LIVE_MIN_SESSION_CREDITS` was 500 against a rate of 100 — five minutes, which was
-    coherent. At the corrected rate the same 500 would have been three seconds, so the wall-clock
-    minimum charge would have silently stopped existing. It doubles as the pre-start availability
-    check, so too low also means a learner can begin a session they cannot afford a minute of.
+    `GEMINI_LIVE_MIN_SESSION_UNITS` was once 500 against a rate of 100 — five minutes, which was
+    coherent. When the rate was corrected to 10 000 the same 500 became three seconds, so the
+    wall-clock minimum charge would have silently stopped existing had it not been moved with it. That
+    is the coupling this test exists to hold: the floor is meaningless except in terms of the rate. It
+    doubles as the pre-start availability check, so too low also means a learner can begin a session
+    they cannot afford a minute of.
     """
     from src.config import get_settings
 
     cfg = get_settings()
-    assert cfg.GEMINI_LIVE_MIN_SESSION_CREDITS >= cfg.GEMINI_LIVE_CREDITS_PER_MINUTE
+    assert cfg.GEMINI_LIVE_MIN_SESSION_UNITS >= cfg.GEMINI_LIVE_UNITS_PER_MINUTE
 
 
 # ---------------------------------------------------------------------------
@@ -107,23 +113,23 @@ def test_paid_tiers_are_billed_only_while_audio_is_flowing(tier):
 
 
 def test_accrual_is_proportional_to_billable_time(settings):
-    assert billing.credits_from_billable_seconds_raw(60.0) == 100
-    assert billing.credits_from_billable_seconds_raw(30.0) == 50
+    assert billing.units_from_billable_seconds_raw(60.0) == 100
+    assert billing.units_from_billable_seconds_raw(30.0) == 50
 
 
 def test_accrual_truncates_rather_than_rounding_up(settings):
     """A partial credit is not charged until it is whole, so ticks cannot outrun the time they bill."""
-    assert billing.credits_from_billable_seconds_raw(0.5) == 0
-    assert billing.credits_from_billable_seconds_raw(1.2) == 2
+    assert billing.units_from_billable_seconds_raw(0.5) == 0
+    assert billing.units_from_billable_seconds_raw(1.2) == 2
 
 
 def test_accrual_never_goes_negative(settings):
-    assert billing.credits_from_billable_seconds_raw(-10.0) == 0
+    assert billing.units_from_billable_seconds_raw(-10.0) == 0
 
 
 def test_accrual_has_no_session_floor(settings):
     """The floor belongs to settlement only. Applied during accrual it would charge it every tick."""
-    assert billing.credits_from_billable_seconds_raw(1.0) < billing.min_session_credits()
+    assert billing.units_from_billable_seconds_raw(1.0) < billing.min_session_units()
 
 
 # ---------------------------------------------------------------------------
@@ -132,24 +138,24 @@ def test_accrual_has_no_session_floor(settings):
 
 
 def test_a_short_free_session_still_costs_the_session_minimum(settings):
-    total = billing.credits_total_final_settlement(10.0, billing.BILLING_WALL_CLOCK)
+    total = billing.units_total_final_settlement(10.0, billing.BILLING_WALL_CLOCK)
     assert total == 500
 
 
 def test_a_long_free_session_costs_more_than_the_minimum(settings):
-    total = billing.credits_total_final_settlement(600.0, billing.BILLING_WALL_CLOCK)
+    total = billing.units_total_final_settlement(600.0, billing.BILLING_WALL_CLOCK)
     assert total == 1000
 
 
 def test_a_short_paid_session_is_not_floored(settings):
     """A paid learner who spoke for ten seconds genuinely cost ten seconds."""
-    total = billing.credits_total_final_settlement(10.0, billing.BILLING_ACTIVE_AUDIO)
+    total = billing.units_total_final_settlement(10.0, billing.BILLING_ACTIVE_AUDIO)
     assert total == 16
 
 
 def test_settlement_of_no_time_is_free_for_paid_and_floored_for_free(settings):
-    assert billing.credits_total_final_settlement(0.0, billing.BILLING_ACTIVE_AUDIO) == 0
-    assert billing.credits_total_final_settlement(0.0, billing.BILLING_WALL_CLOCK) == 500
+    assert billing.units_total_final_settlement(0.0, billing.BILLING_ACTIVE_AUDIO) == 0
+    assert billing.units_total_final_settlement(0.0, billing.BILLING_WALL_CLOCK) == 500
 
 
 def test_settlement_never_undercuts_what_was_already_charged(settings):
@@ -160,8 +166,8 @@ def test_settlement_never_undercuts_what_was_already_charged(settings):
     """
     for seconds in (0.0, 1.0, 7.5, 61.0, 3600.0):
         for mode in (billing.BILLING_WALL_CLOCK, billing.BILLING_ACTIVE_AUDIO):
-            accrued = billing.credits_from_billable_seconds_raw(seconds)
-            assert billing.credits_total_final_settlement(seconds, mode) >= accrued
+            accrued = billing.units_from_billable_seconds_raw(seconds)
+            assert billing.units_total_final_settlement(seconds, mode) >= accrued
 
 
 # ---------------------------------------------------------------------------

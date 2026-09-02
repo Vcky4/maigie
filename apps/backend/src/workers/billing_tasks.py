@@ -1,8 +1,18 @@
 """
 Billing domain background tasks.
 
-Subscription lifecycle checks, credit period resets, and
-re-engagement notifications for lapsed users.
+Subscription lifecycle checks and account-deletion processing.
+
+`billing.reset_credit_periods` is deleted (drift 13). It swept up to 500 users whose
+`creditsPeriodEnd` had passed and zeroed `creditsUsed` — a scheduled job whose entire purpose was to
+make a counter agree with a clock. The usage window does the same work by *reading*: a window that
+has elapsed reports zero used, and the first billable operation after it persists the new boundaries
+(`credit_consumption_service.window_state`). Nothing needs sweeping, and a learner's allowance no
+longer depends on a Celery beat having fired.
+
+That dependency was the real defect, not the cost of the job. The reset ran at most every schedule
+interval on at most 500 rows, so a learner whose period ended could stay locked out until a later
+pass reached them, and the 501st user waited a full cycle. Lazy rollover cannot have a backlog.
 """
 
 import logging
@@ -10,49 +20,6 @@ import logging
 from src.core.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
-
-
-@celery_app.task(name="billing.reset_credit_periods", queue="default", time_limit=60)
-def reset_credit_periods_task():
-    """Reset credit usage for users whose billing period has ended."""
-    import asyncio
-
-    async def _reset():
-        from datetime import UTC, datetime
-
-        from sqlalchemy import select, update
-
-        from src.domains.identity.db_models import User
-        from src.shared.database import get_session_factory
-
-        now = datetime.now(UTC)
-        factory = get_session_factory()
-        async with factory() as session:
-            # Find users whose credit period has ended
-            stmt = (
-                select(User).where(User.credits_period_end <= now, User.credits_used > 0).limit(500)
-            )
-            result = await session.execute(stmt)
-            users = list(result.scalars().all())
-
-            for user in users:
-                upd = (
-                    update(User)
-                    .where(User.id == user.id)
-                    .values(credits_used=0, credits_period_start=now)
-                )
-                await session.execute(upd)
-
-            await session.commit()
-
-        if users:
-            logger.info(f"Reset credit periods for {len(users)} users")
-
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(_reset())
-    finally:
-        loop.close()
 
 
 @celery_app.task(name="billing.check_expired_trials", queue="default", time_limit=60)

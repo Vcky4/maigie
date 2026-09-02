@@ -28,8 +28,6 @@ from src.shared.exceptions import DeprecatedPlanError
 from src.shared.infrastructure.email import send_subscription_success_email
 
 from ..models import PlanCatalogResponse, PlanItem
-from ..services.credit_consumption_service import reset_credits_for_period_start
-from ..services.referral_rewards_service import track_referral_subscription
 
 logger = logging.getLogger(__name__)
 
@@ -1033,17 +1031,6 @@ async def update_user_subscription_from_stripe(
         period_start_dt = datetime.fromtimestamp(sub_period_start) if sub_period_start else None
         period_end_dt = datetime.fromtimestamp(sub_period_end) if sub_period_end else None
 
-        # Check if this is a new billing period (period start changed)
-        # This happens when a new subscription starts or renews
-        is_new_period = False
-        if period_start_dt and user.subscription_current_period_start:
-            # Period start changed, meaning new billing cycle
-            if period_start_dt != user.subscription_current_period_start:
-                is_new_period = True
-        elif period_start_dt and not user.subscription_current_period_start:
-            # First time setting period start
-            is_new_period = True
-
         # Update user subscription data
         updated_user = await identity_repo.update(
             user.id,
@@ -1058,16 +1045,13 @@ async def update_user_subscription_from_stripe(
             },
         )
 
-        # Reset credits if this is a new billing period
-        if is_new_period and period_start_dt and period_end_dt:
-            try:
-                updated_user = await reset_credits_for_period_start(
-                    updated_user, period_start_dt, period_end_dt
-                )
-                logger.info(f"Reset credits for user {user.id} due to new subscription period")
-            except Exception as e:
-                logger.error(f"Failed to reset credits for user {user.id}: {e}")
-                # Don't fail the subscription update if credit reset fails
+        # A new billing period used to reset the month's credits here, which is why the block above
+        # computed an `is_new_period` flag by comparing period starts. Phase 3 deleted
+        # `reset_credits_for_period_start`: usage is a rolling 5-hour window, so no counter is keyed
+        # to a billing period and a renewal has nothing to zero. The allowance a subscription buys is
+        # read live from `entitlement_service.resolve` rather than copied onto the user at payment
+        # time — which is what kept the two from drifting when a payment succeeded and this write did
+        # not. The flag went with its only reader.
 
         # Send email if upgraded from FREE to Premium
         # Convert enum to string for comparison just in case
@@ -1086,12 +1070,16 @@ async def update_user_subscription_from_stripe(
             except Exception as e:
                 logger.error(f"Failed to send subscription success email: {e}")
 
-            # Track referral subscription reward
-            try:
-                await track_referral_subscription(updated_user)
-            except Exception as e:
-                # Don't fail subscription update if referral tracking fails
-                logger.error(f"Failed to track referral subscription: {e}")
+            # `track_referral_subscription` was called here and is deleted rather than ported.
+            # Decision O replaces referral rewards with a points ledger in which a subscription
+            # grants nothing — points come from a referred learner *studying*, on seven distinct
+            # days, and they redeem into passes only. Rewarding the referrer for a payment they did
+            # not make paid out on the easiest signal to fake.
+            #
+            # It could not have run anyway: `referral_rewards_service` held a Prisma sentinel where
+            # its database used to be. Worth noting the shape of the failure, because the same shape
+            # is one line above — the `except` logs "failed to track referral" and returns normally,
+            # so a function that raised on every call looked like an intermittent tracking problem.
 
         return updated_user
 

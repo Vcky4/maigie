@@ -17,14 +17,19 @@ Earning now produces points, and points buy passes — something a learner can h
 and choose when to spend. ``AdRewardClaim`` and the two repository methods that write it
 are left in place, unread, so a future redesign is not foreclosed.
 
-What remains is history and support tooling: both describe transactions that really
-happened, and both are retained.
+**Admin balance adjustment.** ``admin_adjust_balance`` moved a figure in
+``User.purchasedCreditsBalance``, and Phase 3 dropped that column with the rest of the
+credit meter. There is no balance to adjust: usage is a window that refills on its own
+schedule, so the support action a learner actually needs is a pass granted to their
+account, which arrives with the pass rails. Restoring this against the window would mean
+letting support hand out an allowance that expires in under five hours — a gesture that
+looks like help and is spent before the ticket closes.
+
+What remains is history: it describes transactions that really happened, and it is retained.
 """
 
 import logging
 from typing import Any
-
-from src.domains.identity.db_models import User
 
 logger = logging.getLogger(__name__)
 
@@ -38,19 +43,3 @@ async def get_purchase_history(
     )
 
     return await _history(user_id=user_id, page=page, page_size=page_size)
-
-
-async def admin_adjust_balance(
-    *, admin_id: str, target_user_id: str, amount: int, reason: str
-) -> User:
-    """Admin: adjust a user's purchased credits balance."""
-    from src.domains.billing.services.credit_purchase_service import (
-        admin_adjust_balance as _adjust,
-    )
-
-    return await _adjust(
-        admin_id=admin_id,
-        target_user_id=target_user_id,
-        amount=amount,
-        reason=reason,
-    )

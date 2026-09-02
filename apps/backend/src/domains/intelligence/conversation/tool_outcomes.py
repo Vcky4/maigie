@@ -143,7 +143,9 @@ def build_action_log_row(
         "actionType": action_type,
         "actionData": action_data if action_data else {},
         "status": "SUCCESS" if succeeded else "FAILED",
-        "error": None if succeeded else action_result.get("message") or action_result.get("error"),
+        "error": (
+            None if succeeded else action_result.get("message") or action_result.get("error")
+        ),
     }
 
 
@@ -177,24 +179,26 @@ def action_event(*, action_type: str, action_result: dict[str, Any]) -> dict[str
 
 
 def credit_limit_frame(
-    *, action_type: str, action_result: dict[str, Any], purchase_deep_link: str
+    *, action_type: str, action_result: dict[str, Any], upgrade_deep_link: str
 ) -> dict[str, Any] | None:
-    """The refusal frame for a tool that hit the learner's credit cap, or `None`.
+    """The refusal frame for a tool that exhausted the learner's allowance, or `None`.
 
     Only `create_course` reports this, because course generation is the only tool that spends enough to
-    be refused on its own. The turn's own credits were already checked before generation; this is the
+    be refused on its own. The turn's own allowance was already checked before generation; this is the
     *tool* running out part-way through a turn that was affordable when it started.
+
+    `is_daily_limit` and `show_referral_option` are replaced by `windowResetsAt` — one window, one
+    remedy, and a timestamp instead of a category. See `ask_service.CreditRefusal`.
     """
     if action_type != "create_course" or not action_result.get("credit_limit_error"):
         return None
     return {
         "type": "credit_limit_error",
-        "message": action_result.get("message", "Credit limit exceeded."),
+        "message": action_result.get("message", "Usage limit reached."),
         "tier": action_result.get("tier", "FREE"),
-        "is_daily_limit": action_result.get("is_daily_limit", False),
-        "show_referral_option": action_result.get("show_referral_option", True),
+        "windowResetsAt": action_result.get("windowResetsAt"),
         "blocked": True,
-        "purchaseDeepLink": purchase_deep_link,
+        "upgradeDeepLink": upgrade_deep_link,
     }
 
 
@@ -228,7 +232,7 @@ def collect_tool_outcomes(
     query_results: list[dict[str, Any]] | None,
     format_list: Any,
     format_action: Any,
-    purchase_deep_link: str,
+    upgrade_deep_link: str,
 ) -> ToolOutcomes:
     """Everything a turn's tool calls produced, gathered without performing any of it.
 
@@ -271,7 +275,7 @@ def collect_tool_outcomes(
         refusal = credit_limit_frame(
             action_type=action_type,
             action_result=action_result,
-            purchase_deep_link=purchase_deep_link,
+            upgrade_deep_link=upgrade_deep_link,
         )
         if refusal:
             outcomes.connection_errors.append(refusal)

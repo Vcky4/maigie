@@ -87,14 +87,28 @@ class ConflictError(MaigieError):
 
 
 class SubscriptionLimitError(MaigieError):
-    """Feature requires a paid plan (403)."""
+    """Feature requires a paid plan, or the usage window is spent (403)."""
 
     def __init__(
         self,
         message: str = "This feature requires a paid plan",
         detail: str | None = None,
+        window_resets_at: str | None = None,
     ):
+        """
+        Args:
+            message: What the learner is told.
+            detail: Machine-readable context, for logs and support.
+            window_resets_at: ISO 8601 moment the usage window refills, when this refusal is a spent
+                window rather than a missing entitlement. A structured field rather than something a
+                client digs out of `detail`: the refusal copy deliberately says "refills
+                automatically" without a time, so the client renders the countdown, and it cannot do
+                that from prose. `None` for a monthly-backstop refusal or a plan gate — both of which
+                mean "waiting a few hours will not help", and a `None` a client must handle is safer
+                than a placeholder time it might display.
+        """
         super().__init__(message, status.HTTP_403_FORBIDDEN, "SUBSCRIPTION_LIMIT", detail)
+        self.window_resets_at = window_resets_at
 
 
 class DeprecatedPlanError(MaigieError):
@@ -113,7 +127,10 @@ class TaskError(Exception):
     """Base exception for background task errors."""
 
     def __init__(
-        self, message: str, task_id: str | None = None, details: dict[str, Any] | None = None
+        self,
+        message: str,
+        task_id: str | None = None,
+        details: dict[str, Any] | None = None,
     ):
         self.message = message
         self.task_id = task_id
@@ -125,7 +142,10 @@ class TaskRetryError(TaskError):
     """Task should be retried."""
 
     def __init__(
-        self, message: str = "Task should be retried", retry_after: int | None = None, **kwargs
+        self,
+        message: str = "Task should be retried",
+        retry_after: int | None = None,
+        **kwargs,
     ):
         self.retry_after = retry_after
         super().__init__(message, **kwargs)

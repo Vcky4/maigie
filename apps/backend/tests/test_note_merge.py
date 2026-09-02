@@ -18,6 +18,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.domains.billing.services.credit_consumption_service import (
+    ESTIMATED_OPERATION_UNITS,
+)
 from src.domains.personal_learning.services import note_merge_service
 from src.shared.exceptions import NotFoundError, SubscriptionLimitError, ValidationError
 
@@ -288,7 +291,7 @@ async def test_it_is_charged_once_regardless_of_how_many_notes(world, user):
     The inputs were already paid for when they were written.
     """
     await note_merge_service.merge_notes(user, note_ids=["n1", "n2", "n3"])
-    assert world.charged == [(100, "note_merge")]
+    assert world.charged == [(ESTIMATED_OPERATION_UNITS["note_merge"], "note_merge")]
 
 
 async def test_being_unable_to_pay_refuses_before_the_model_is_called(world, user):

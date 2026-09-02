@@ -37,7 +37,7 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconn
 from jose import JWTError
 
 from src.domains.billing.services.credit_consumption_service import (
-    CREDIT_COSTS,
+    ESTIMATED_OPERATION_UNITS,
     check_credit_availability,
     consume_credits,
 )
@@ -49,7 +49,7 @@ from src.shared.auth.jwt import decode_access_token
 from src.shared.exceptions import MaigieError, SubscriptionLimitError, ValidationError
 
 from . import bridge, context, diagram, notes, session_store, settlement
-from .billing import min_session_credits
+from .billing import min_session_units
 from .models import (
     ConversationListResponse,
     ConversationStatusResponse,
@@ -77,7 +77,7 @@ async def study_diagram(
     current_user: CurrentUser, body: StudyDiagramRequest
 ) -> StudyDiagramResponse:
     """Draw what the learner asked to see. Uses a text model, not the live audio one."""
-    cost = CREDIT_COSTS.get("study_diagram", 80)
+    cost = ESTIMATED_OPERATION_UNITS["study_diagram"]
     available, message = await check_credit_availability(current_user, cost)
     if not available:
         raise HTTPException(
@@ -362,7 +362,7 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
 
         # Refused before a provider socket is opened. Starting a call we cannot bill for would burn provider
         # minutes and end abruptly a few seconds later.
-        available, _message = await check_credit_availability(user, min_session_credits())
+        available, _message = await check_credit_availability(user, min_session_units())
         if not available:
             await _error(
                 send_to_client,

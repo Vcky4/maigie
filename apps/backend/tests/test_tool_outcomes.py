@@ -16,7 +16,7 @@ import pytest
 
 from src.domains.intelligence.conversation import tool_outcomes
 
-DEEP_LINK = "maigie://purchase"
+DEEP_LINK = "maigie://plus/upgrade"
 
 
 def action(kind, *, status="success", data=None, **result):
@@ -40,7 +40,7 @@ def collect(**overrides):
         "query_results": [],
         "format_list": fake_list,
         "format_action": fake_action_component,
-        "purchase_deep_link": DEEP_LINK,
+        "upgrade_deep_link": DEEP_LINK,
     }
     kwargs.update(overrides)
     return tool_outcomes.collect_tool_outcomes(**kwargs)
@@ -224,18 +224,18 @@ class TestCreditRefusal:
         frame = tool_outcomes.credit_limit_frame(
             action_type="create_course",
             action_result={"status": "error", "credit_limit_error": True},
-            purchase_deep_link=DEEP_LINK,
+            upgrade_deep_link=DEEP_LINK,
         )
         assert frame["type"] == "credit_limit_error"
         assert frame["blocked"] is True
-        assert frame["purchaseDeepLink"] == DEEP_LINK
+        assert frame["upgradeDeepLink"] == DEEP_LINK
 
     def test_another_failing_action_is_not_a_credit_refusal(self):
         assert (
             tool_outcomes.credit_limit_frame(
                 action_type="create_goal",
                 action_result={"status": "error", "credit_limit_error": True},
-                purchase_deep_link=DEEP_LINK,
+                upgrade_deep_link=DEEP_LINK,
             )
             is None
         )
@@ -245,7 +245,7 @@ class TestCreditRefusal:
             tool_outcomes.credit_limit_frame(
                 action_type="create_course",
                 action_result={"status": "success"},
-                purchase_deep_link=DEEP_LINK,
+                upgrade_deep_link=DEEP_LINK,
             )
             is None
         )

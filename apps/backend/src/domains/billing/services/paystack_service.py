@@ -19,8 +19,6 @@ from src.domains.identity.db_models import User
 from src.shared.exceptions import DeprecatedPlanError
 from src.shared.infrastructure.email import send_subscription_success_email
 
-from ..services.credit_consumption_service import reset_credits_for_period_start
-
 logger = logging.getLogger(__name__)
 
 # Ported to SQLAlchemy in Phase 2b. This module previously held
@@ -468,10 +466,12 @@ async def verify_paystack_transaction(reference: str, user_id: str) -> User | No
         {k: v for k, v in update_data.items() if v is not None},
     )
 
-    try:
-        updated = await reset_credits_for_period_start(updated, now, period_end)
-    except Exception as e:
-        logger.error(f"Failed to reset credits for user {user_id}: {e}")
+    # `reset_credits_for_period_start` was called here to zero the month's credits and align the
+    # credit period with the new billing period. Phase 3 deleted it: usage is a rolling 5-hour
+    # window, so nothing in the meter is keyed to a billing period and a subscription event has no
+    # counter to reset. What the subscription changes is the *allowance*, and that is read live from
+    # `entitlement_service.resolve` rather than copied onto the user at payment time — which is what
+    # kept the two from drifting apart when a payment succeeded and this write did not.
 
     # The welcome email fires on the FREE → paid transition only, so a renewal does not resend it.
     # `PREMIUM_MONTHLY` is the whole list now: Phase 2b narrowed `_plan_code_to_tier` so it is the

@@ -122,6 +122,28 @@ class EntitlementResponse(CamelModel):
     window_allowance: int
 
 
+class UsageResponse(CamelModel):
+    """How much of the current window is spent, and when it refills.
+
+    **A percentage and a timestamp, never a unit count.** A unit is $0.0001 of our measured COGS
+    (§6.2); putting it on screen would leak our cost basis and invite a learner to do arithmetic
+    instead of studying. The marketing states checkable equivalents instead — "about 15 minutes of
+    live voice tutoring" — which is a promise about their experience rather than about our ledger.
+
+    `monthlyPercentUsed` is absent until the learner is within 20% of the monthly backstop. The
+    backstop is an abuse limit, not a product limit (§6.3), and naming a number designed not to bind
+    invites planning around it. `monthlyExhausted` is present whenever a backstop applies, because a
+    client refused by the *month* must not tell the learner to wait five hours.
+    """
+
+    tier: Literal["free", "plus"]
+    window_resets_at: datetime
+    percent_used: float
+    is_exhausted: bool
+    monthly_percent_used: float | None = None
+    monthly_exhausted: bool | None = None
+
+
 # ===========================================================================
 # Subscriptions
 # ===========================================================================
@@ -255,20 +277,9 @@ class PaginatedPurchaseHistory(BaseModel):
     totalPages: int
 
 
-class AdminCreditAdjustRequest(BaseModel):
-    """Admin credit balance adjustment."""
-
-    userId: str
-    amount: int = Field(..., description="Positive to grant, negative to deduct")
-    reason: str
-
-
-class AdminCreditAdjustResponse(BaseModel):
-    """Admin credit adjustment result."""
-
-    userId: str
-    newBalance: int
-    adjustmentAmount: int
+# `AdminCreditAdjustRequest`/`AdminCreditAdjustResponse` are gone with the endpoint they
+# shaped. `newBalance` named a column that Phase 3 dropped, and there is no balance to
+# report once usage is a self-refilling window.
 
 
 # ===========================================================================

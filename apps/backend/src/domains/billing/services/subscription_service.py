@@ -51,14 +51,18 @@ async def create_checkout_session(
 
 async def sync_from_checkout(*, session_id: str, user_id: str) -> User | None:
     """Sync subscription state from a completed Stripe checkout session."""
-    from src.domains.billing.services.stripe_service import sync_subscription_from_checkout_session
+    from src.domains.billing.services.stripe_service import (
+        sync_subscription_from_checkout_session,
+    )
 
     return await sync_subscription_from_checkout_session(session_id=session_id, user_id=user_id)
 
 
 async def create_portal_session(*, user: User, return_url: str) -> dict[str, str]:
     """Create a Stripe customer portal session."""
-    from src.domains.billing.services.stripe_service import create_portal_session as _portal
+    from src.domains.billing.services.stripe_service import (
+        create_portal_session as _portal,
+    )
 
     return await _portal(user=user, return_url=return_url)
 
@@ -75,7 +79,9 @@ async def cancel_subscription(*, user: User) -> dict[str, Any]:
             provider = "stripe"
 
     if provider == "paystack":
-        from src.domains.billing.services.paystack_service import cancel_paystack_subscription
+        from src.domains.billing.services.paystack_service import (
+            cancel_paystack_subscription,
+        )
 
         result = await cancel_paystack_subscription(user=user)
     else:
@@ -93,7 +99,9 @@ async def initialize_paystack(
     *, user: User, plan_id: str, success_url: str, cancel_url: str
 ) -> dict[str, Any]:
     """Initialize a Paystack subscription (NGN)."""
-    from src.domains.billing.services.paystack_service import initialize_paystack_subscription
+    from src.domains.billing.services.paystack_service import (
+        initialize_paystack_subscription,
+    )
 
     return await initialize_paystack_subscription(
         user=user,
@@ -105,7 +113,9 @@ async def initialize_paystack(
 
 async def verify_paystack(*, reference: str, user_id: str) -> User | None:
     """Verify a Paystack transaction after redirect."""
-    from src.domains.billing.services.paystack_service import verify_paystack_transaction
+    from src.domains.billing.services.paystack_service import (
+        verify_paystack_transaction,
+    )
 
     return await verify_paystack_transaction(reference=reference, user_id=user_id)
 
@@ -124,14 +134,6 @@ async def verify_google_play_subscription(
     )
 
 
-async def verify_google_play_product(
-    *, user_id: str, product_id: str, purchase_token: str
-) -> dict[str, Any]:
-    """Verify a Google Play in-app product (one-time) purchase."""
-    from src.domains.billing.services.google_play_service import verify_product_purchase
-
-    return await verify_product_purchase(
-        user_id=user_id,
-        product_id=product_id,
-        purchase_token=purchase_token,
-    )
+# `verify_google_play_product` is removed with the credit-pack product it verified. Its route went
+# in Phase 1 and its implementation in Phase 3; see `google_play_service` for what the pass
+# equivalent should reuse.

@@ -99,6 +99,24 @@ WINDOW_ALLOWANCE_BY_PASS_PRODUCT: dict[str, int] = {
     "plus_pass_7d": WINDOW_ALLOWANCE_PASS_7D,
 }
 
+# The monthly backstop (§6.3). **Not a product limit — an abuse limit.**
+#
+# A 5-hour tumbling window permits up to 4.8 windows a day, so monthly exposure is 144× the window
+# allowance and no window figure is simultaneously generous enough for one session and bounded enough
+# for a month. The backstop is set at ~7.5 Plus windows a month, far above what studying reaches: two
+# windows a day for twenty days is forty windows, but a typical window consumes well under its
+# allowance, so this binds only on sustained maximal draw.
+#
+# It is not shown in the UI, not in the marketing, and not in `GET /billing/usage` until a learner is
+# within 20% of it. Experientially there is no monthly limit; financially there is a bound.
+#
+# A pass carries no monthly backstop of its own — a 5-hour pass is bounded by its own single window
+# and a 7-day pass by `PlusPass.unitsAllowance` (Decision E), both of which Phase 4 introduces. Until
+# then the pass branch reports `None` and the meter reads it as unbounded, which is correct: nothing
+# can hold a pass yet.
+MONTHLY_BACKSTOP_FREE = 5_000
+MONTHLY_BACKSTOP_PLUS = 30_000
+
 
 # ===========================================================================
 # Shapes
@@ -119,6 +137,13 @@ class Entitlement:
     is_trial: bool
     trial_days_remaining: int | None
     window_allowance: int
+    monthly_backstop: int | None
+    """Units per calendar month, or `None` for an entitlement bounded some other way.
+
+    An abuse limit rather than a product limit (§6.3), which is why it is separate from
+    `window_allowance` rather than derived from it: the ratio between them is a judgement about
+    sustained draw, not arithmetic.
+    """
 
 
 @dataclass(frozen=True)
@@ -167,6 +192,7 @@ def _compose(
             is_trial=False,
             trial_days_remaining=None,
             window_allowance=WINDOW_ALLOWANCE_PLUS,
+            monthly_backstop=MONTHLY_BACKSTOP_PLUS,
         )
 
     if active_pass is not None:
@@ -181,6 +207,8 @@ def _compose(
             window_allowance=WINDOW_ALLOWANCE_BY_PASS_PRODUCT.get(
                 active_pass.product_id, WINDOW_ALLOWANCE_PASS_5H
             ),
+            # A pass is bounded by its own allowance, not by the calendar. Decision E.
+            monthly_backstop=None,
         )
 
     if active_trial is not None:
@@ -195,6 +223,7 @@ def _compose(
             # A trialling learner is indistinguishable from a subscriber, including here. The old
             # model router gave them Plus capabilities and free-tier models; that was drift 11.
             window_allowance=WINDOW_ALLOWANCE_PLUS,
+            monthly_backstop=MONTHLY_BACKSTOP_PLUS,
         )
 
     return Entitlement(
@@ -206,6 +235,7 @@ def _compose(
         is_trial=False,
         trial_days_remaining=None,
         window_allowance=WINDOW_ALLOWANCE_FREE,
+        monthly_backstop=MONTHLY_BACKSTOP_FREE,
     )
 
 

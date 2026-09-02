@@ -51,9 +51,11 @@ REACHABLE = [
     f"{PREFIX}/billing/subscriptions/cancel",
     # Google Play subscription verification. Android is the only shipped store.
     f"{PREFIX}/billing/subscriptions/google-play/verify",
-    # History and the support tool. Both describe transactions that really happened.
+    # History. It describes transactions that really happened.
     f"{PREFIX}/billing/credits/purchases",
-    f"{PREFIX}/billing/admin/credits/adjust",
+    # The meter, read-only. Separate from `/entitlement` because the two change on different
+    # clocks: entitlement when a learner pays, usage on every operation.
+    f"{PREFIX}/billing/usage",
     # Provider callbacks.
     f"{PREFIX}/webhooks/stripe",
     f"{PREFIX}/webhooks/paystack",
@@ -81,6 +83,11 @@ class TestWithdrawnEndpointsAreGone:
             # Nothing in the product asks a learner to watch an advertisement.
             f"{PREFIX}/billing/ads/stats",
             f"{PREFIX}/billing/ads/reward",
+            # Adjusted `purchasedCreditsBalance`, which Phase 3 dropped. Usage is a window that
+            # refills on its own, so there is no balance for support to top up, and pointing this
+            # at the window would let support grant an allowance that expires in under five hours.
+            # The replacement is a granted pass.
+            f"{PREFIX}/billing/admin/credits/adjust",
         ],
     )
     def test_endpoint_is_absent(self, path, paths):
@@ -120,14 +127,38 @@ class TestEndpointsThatCannotWorkAreNotServed:
             "Phase 2b and reads through `billing_repo`"
         )
 
-    def test_the_referral_sentinel_is_still_the_reason(self):
-        from src.domains.billing.services import referral_rewards_service
-        from src.shared.infrastructure.unmigrated import PrismaClientRemoved
+    def test_the_referrals_endpoints_await_a_reward_rather_than_a_port(self):
+        """The reason these three stay absent changed in Phase 3, so this guard did too.
 
-        assert isinstance(referral_rewards_service.db, PrismaClientRemoved), (
-            "referral_rewards_service has been ported — the /referrals/* endpoints "
-            "should now be rewritten onto the points ledger and mounted"
+        It used to assert `isinstance(referral_rewards_service.db, PrismaClientRemoved)` — the routes
+        were absent because the service could not reach a database. Phase 3 ported the service, so that
+        assertion now fails, and the honest reading is not "unmount the guard" but "the absence has a
+        different cause". The three endpoints served `get_claimable_rewards`, `claim_referral_reward`
+        and a stats shape carrying token totals; all three are *deleted*, because a claim against a
+        daily credit limit describes a reward that no longer exists (Decision O).
+
+        What is left is a code and a record of who referred whom, and no reward at all until the points
+        ledger lands. So the guard is now on the functions rather than on the client: if any of them
+        comes back, this fails and asks whether the routes should follow.
+        """
+        from src.domains.billing.services import referral_rewards_service
+
+        assert not hasattr(referral_rewards_service, "db"), (
+            "referral_rewards_service has a `db` attribute again — it was ported to SQLAlchemy in "
+            "Phase 3"
         )
+        for gone in (
+            "REFERRAL_REWARDS",
+            "track_referral_subscription",
+            "get_claimable_rewards",
+            "claim_referral_reward",
+            "get_daily_limit_increase",
+        ):
+            assert not hasattr(referral_rewards_service, gone), (
+                f"`{gone}` is back. Nothing tops up a usage window (§6.3); if a reward has been "
+                f"redesigned, it grants points and redeems into passes, and the /referrals/* routes "
+                f"should be rewritten onto that rather than onto this."
+            )
 
 
 class TestTheCatalogueIsPublished:

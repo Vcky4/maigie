@@ -180,133 +180,22 @@ async def verify_subscription(
     }
 
 
-def _sku_to_credits(product_id: str) -> int:
-    """Map a Google Play credit pack product ID to the number of credits to grant.
-
-    These must match the credit pack definitions in the database. The mapping
-    here is a fallback — ideally credits should come from the CreditPack table.
-    """
-    settings = get_settings()
-    CREDIT_PACK_MAP = {
-        settings.GOOGLE_PLAY_SKU_CREDIT_STARTER: 50_000,
-        settings.GOOGLE_PLAY_SKU_CREDIT_VALUE: 165_000,
-        settings.GOOGLE_PLAY_SKU_CREDIT_POWER: 575_000,
-    }
-    return CREDIT_PACK_MAP.get(product_id, 0)
-
-
-async def verify_product_purchase(
-    user_id: str,
-    product_id: str,
-    purchase_token: str,
-) -> dict:
-    """
-    Verify a Google Play in-app product (one-time) purchase and grant credits.
-
-    Args:
-        user_id: Internal user ID
-        product_id: Google Play product ID (e.g. "credit_pack_starter")
-        purchase_token: The purchase token from the client
-
-    Returns:
-        Dict with verification result and credits granted
-
-    Raises:
-        ValueError: If the purchase is invalid or already consumed
-    """
-    settings = get_settings()
-    package_name = settings.GOOGLE_PLAY_PACKAGE_NAME
-
-    # Check if this token was already consumed (idempotency)
-    existing = await billing_repo.find_transaction_by_reference(purchase_token)
-    if existing and existing.status == "COMPLETED":
-        raise ValueError("This purchase has already been fulfilled")
-
-    try:
-        service = _get_android_publisher_service()
-        result = (
-            service.purchases()
-            .products()
-            .get(
-                packageName=package_name,
-                productId=product_id,
-                token=purchase_token,
-            )
-            .execute()
-        )
-    except Exception as e:
-        logger.error(
-            f"Google Play product verification failed for user {user_id}: {e}",
-            exc_info=True,
-        )
-        raise ValueError(f"Failed to verify purchase with Google Play: {e}")
-
-    # purchaseState: 0 = purchased, 1 = canceled, 2 = pending
-    purchase_state = result.get("purchaseState", -1)
-    if purchase_state != 0:
-        raise ValueError(f"Purchase is not in completed state (state={purchase_state})")
-
-    # Determine credits to grant
-    credits_to_grant = _sku_to_credits(product_id)
-    if credits_to_grant <= 0:
-        raise ValueError(f"Unknown credit pack product: {product_id}")
-
-    # Consume the product so it can be purchased again
-    try:
-        service.purchases().products().consume(
-            packageName=package_name,
-            productId=product_id,
-            token=purchase_token,
-            body={},
-        ).execute()
-        logger.info(f"Consumed product {product_id} for user {user_id}")
-    except Exception as e:
-        logger.warning(f"Failed to consume product (may already be consumed): {e}")
-
-    # Grant credits to user
-    identity_repo = IdentityRepository()
-    factory = get_session_factory()
-    from sqlalchemy import select as sa_select
-
-    from src.domains.identity.db_models import User as UserModel
-
-    async with factory() as session:
-        result_q = await session.execute(sa_select(UserModel).where(UserModel.id == user_id))
-        user_obj = result_q.scalar_one_or_none()
-        current_balance = (user_obj.purchased_credits_balance or 0) if user_obj else 0
-    updated_user = await identity_repo.update(
-        user_id,
-        {
-            "purchasedCreditsBalance": current_balance + credits_to_grant,
-        },
-    )
-
-    # Record the transaction
-    await billing_repo.create_purchase_transaction(
-        {
-            "userId": user_id,
-            "creditPackId": None,
-            "creditsGranted": credits_to_grant,
-            "amountPaid": 0,  # Actual price is managed by Google Play
-            "currency": "USD",
-            "paymentProvider": "google_play",
-            "providerReference": purchase_token,
-            "status": "completed",
-            "completedAt": datetime.now(UTC),
-        }
-    )
-
-    new_balance = updated_user.purchased_credits_balance if updated_user else 0
-    logger.info(
-        f"User {user_id} purchased {credits_to_grant} credits via Google Play "
-        f"(product={product_id}), new balance={new_balance}"
-    )
-
-    return {
-        "verified": True,
-        "creditsGranted": credits_to_grant,
-        "newBalance": new_balance,
-    }
+# `verify_product_purchase` and `_sku_to_credits` are removed.
+#
+# They verified a one-time Google Play purchase of `credit_pack_starter` / `_value` / `_power` and
+# granted 50 000 / 165 000 / 575 000 credits into `User.purchasedCreditsBalance`. Phase 1 withdrew
+# credit packs (§6.1) and Phase 3 dropped the column, so the function verified a product that cannot
+# be listed and credited a column that does not exist.
+#
+# Phase 1 left it standing on the grounds that the `purchases.products.get` call and the
+# token-replay check were reusable for passes. They are, but a function that compiles and cannot
+# work is a worse reference than a note saying what to reuse, so here is the note. The pass rails
+# need: `purchases().products().get()` for the state check, `purchaseState == 0`,
+# `products().consume()` so the SKU can be bought again — a pass is genuinely consumable, which is
+# exactly why Decision G makes the purchase record the source of truth rather than the store —
+# and a replay guard keyed on `purchaseToken`. What they must *not* reuse is the credit grant: a
+# pass purchase creates inactive `PlusPass` inventory, and the clock starts when the learner
+# activates it (Decision A).
 
 
 async def handle_rtdn_notification(message_data: dict) -> None:

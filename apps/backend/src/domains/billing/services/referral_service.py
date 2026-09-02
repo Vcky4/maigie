@@ -1,48 +1,26 @@
-"""
-Referral rewards service.
+"""Thin facade over `referral_rewards_service`, kept because the routes import this name.
 
-Handles referral statistics, claimable rewards, and reward claiming.
+Three of the four functions that were here are gone with the rewards they described.
+`get_claimable_rewards` and `claim_reward` delegated to a claim mechanism that raised a
+`daily credit limit` — a column Phase 3 dropped — and `get_daily_limit_increase` was a stub that
+returned 0 behind a `TODO: migrate implementation from services/referral_service`, in the file named
+`services/referral_service`. It pointed at itself, which is what a stub becomes once the thing it was
+a placeholder for has been reconsidered rather than written.
+
+Points replace all of it (Decision O), and their redemption is not a claim against a daily limit but
+a purchase of a pass, so it belongs with the pass rails rather than here.
 """
 
 import logging
 from typing import Any
 
-from src.domains.identity.db_models import User
-
-from ..repository import billing_repo
-
 logger = logging.getLogger(__name__)
 
 
-async def get_referral_stats(user: User) -> dict[str, Any]:
-    """Get referral statistics for a user."""
-    from src.domains.billing.services.referral_rewards_service import get_referral_stats as _stats
-
-    return await _stats(user)
-
-
-async def get_claimable_rewards(user: User) -> list[dict[str, Any]]:
-    """Get all claimable referral rewards."""
+async def get_referral_stats(user_id: str) -> dict[str, Any]:
+    """Get referral statistics for a learner."""
     from src.domains.billing.services.referral_rewards_service import (
-        get_claimable_rewards as _claimable,
+        get_referral_stats as _stats,
     )
 
-    return await _claimable(user)
-
-
-async def claim_reward(user: User, reward_id: str) -> dict[str, Any]:
-    """Claim a referral reward (increases daily credit limit)."""
-    from src.domains.billing.services.referral_rewards_service import (
-        claim_referral_reward as _claim,
-    )
-
-    return await _claim(user, reward_id)
-
-
-async def get_daily_limit_increase(user) -> int:
-    """Get the daily limit increase from referrals for a user.
-
-    Args:
-        user: User model instance or user_id string.
-    """
-    return 0  # TODO: migrate implementation from services/referral_service
+    return await _stats(user_id)

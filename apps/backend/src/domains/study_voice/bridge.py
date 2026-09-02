@@ -49,8 +49,8 @@ from .billing import (
     billing_min_consume_chunk,
     billing_mode_for_tier,
     billing_tick_seconds,
-    credits_from_billable_seconds_raw,
     standby_idle_seconds,
+    units_from_billable_seconds_raw,
 )
 from .transcript import SessionTranscript
 
@@ -159,7 +159,10 @@ async def run_bridge(
     # ------------------------------------------------------------------ billing
 
     async def charge(amount: int) -> None:
-        """Take `amount` pre-multiplier credits, or end the session if the learner has none left."""
+        """Take `amount` usage units, or end the session if the learner's allowance is spent.
+
+        Units, not pre-multiplier credits: `consume_credits` no longer scales what it is handed.
+        """
         if amount <= 0:
             return
         try:
@@ -169,23 +172,37 @@ async def run_bridge(
             user = await identity_repo.find_by_id(user_id)
             if not user:
                 logger.warning(
-                    "Cannot charge voice session %s — user %s is gone", session_id, user_id
+                    "Cannot charge voice session %s — user %s is gone",
+                    session_id,
+                    user_id,
                 )
                 return
             await consume_credits(user, amount, operation="gemini_live_voice")
             state.consumed_credits += amount
         except SubscriptionLimitError as exc:
-            logger.info("Voice session %s ending — user %s is out of credits", session_id, user_id)
+            logger.info(
+                "Voice session %s ending — user %s is out of credits",
+                session_id,
+                user_id,
+            )
             state.force_disconnect = True
             await _send_json(
                 send_to_client,
                 {
                     "type": "credit_limit_error",
                     "session_id": session_id,
-                    "message": getattr(exc, "detail", None) or "You've reached your token limit.",
+                    # `exc.message`, not `exc.detail`. `detail` is the machine-readable half —
+                    # `units_required=200, windowResetsAt=...` — and it was being shown to a learner
+                    # mid-sentence as the explanation for why their tutor stopped talking.
+                    #
+                    # `is_daily_limit: True` was hard-coded, and wrong whenever the refusal was not a
+                    # daily one: it told a learner who had hit a monthly cap to come back tomorrow,
+                    # when tomorrow changes nothing. The reset time replaces it and is `None` in
+                    # exactly the cases where waiting does not help. `show_referral_option` advertised
+                    # a reward that no longer grants usage (Decision O).
+                    "message": exc.message,
                     "tier": str(tier or "FREE"),
-                    "is_daily_limit": True,
-                    "show_referral_option": True,
+                    "windowResetsAt": exc.window_resets_at,
                 },
             )
         except Exception as exc:
@@ -270,8 +287,7 @@ async def run_bridge(
                     state.last_flush_mono = now
 
                 owed = (
-                    credits_from_billable_seconds_raw(state.billable_seconds)
-                    - state.consumed_credits
+                    units_from_billable_seconds_raw(state.billable_seconds) - state.consumed_credits
                 )
                 due = owed > 0 and (
                     owed >= min_chunk or (now - state.last_flush_mono) >= flush_interval
@@ -327,7 +343,11 @@ async def run_bridge(
                     transcript.add("assistant", text)
                 await _send_json(
                     send_to_client,
-                    {"type": "assistant_message", "session_id": session_id, "text": text},
+                    {
+                        "type": "assistant_message",
+                        "session_id": session_id,
+                        "text": text,
+                    },
                 )
             inline = part.get("inlineData") or {}
             if data := inline.get("data"):
@@ -361,7 +381,8 @@ async def run_bridge(
 
         if isinstance(result, dict) and result.get("action") == "navigate_next":
             await _send_json(
-                send_to_client, {"type": "navigate_next_topic", "session_id": session_id}
+                send_to_client,
+                {"type": "navigate_next_topic", "session_id": session_id},
             )
 
         if (
@@ -490,7 +511,8 @@ async def run_bridge(
                                 payload = json.loads(message)
                             except json.JSONDecodeError:
                                 logger.warning(
-                                    "Ignoring unparseable client frame on %s", session_id
+                                    "Ignoring unparseable client frame on %s",
+                                    session_id,
                                 )
                                 continue
                             if payload.get("type") == "client_message" and payload.get("text"):

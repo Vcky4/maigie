@@ -58,7 +58,7 @@ from __future__ import annotations
 import logging
 
 from src.domains.billing.services.credit_consumption_service import (
-    CREDIT_COSTS,
+    ESTIMATED_OPERATION_UNITS,
     check_credit_availability,
     consume_credits,
 )
@@ -169,7 +169,7 @@ async def save_session_note(
     # Checked before the generation and charged after it, so a learner who cannot pay is told before a model
     # call is spent, and a generation that fails is not billed. Both halves matter: the check alone would
     # bill for failures, and the charge alone would spend a call the learner cannot cover.
-    cost = CREDIT_COSTS.get("voice_session_note", 100)
+    cost = ESTIMATED_OPERATION_UNITS["voice_session_note"]
     available, message = await check_credit_availability(user, cost)
     if not available:
         raise SubscriptionLimitError(

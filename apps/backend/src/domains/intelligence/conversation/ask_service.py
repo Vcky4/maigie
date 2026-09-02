@@ -207,10 +207,37 @@ def estimate_prompt_tokens(
 
 
 def estimate_turn_tokens(*, message: str, context: Any = None, history: Any = None) -> int:
-    """Input estimate plus the reservation for the reply. What the credit check is given."""
+    """Input estimate plus the reservation for the reply."""
     return (
         estimate_prompt_tokens(message=message, context=context, history=history)
         + _RESERVED_OUTPUT_TOKENS
+    )
+
+
+def estimate_turn_units(
+    *,
+    message: str,
+    context: Any = None,
+    history: Any = None,
+    model_name: str,
+    units_for_tokens: Any,
+) -> int:
+    """What the pre-flight check is given: an estimate in **usage units**, not tokens.
+
+    The meter is denominated in measured cost now (§6.2), so the estimate has to be too. Input and
+    output are priced separately because they cost differently — often by 6× — and a single token
+    total cannot express that.
+
+    `model_name` is the fallback model rather than the one this turn will actually use: the tier is
+    resolved after the credit check, because refusing a turn should not require a second entitlement
+    read. The gap is small and points the safe way for the case that matters: the free tier's models
+    are the cheap ones, so a free learner's estimate errs high and refuses a turn that would not have
+    fitted rather than starting one it cannot pay for.
+    """
+    return units_for_tokens(
+        estimate_prompt_tokens(message=message, context=context, history=history),
+        _RESERVED_OUTPUT_TOKENS,
+        model_name,
     )
 
 
@@ -922,48 +949,48 @@ class CreditRefusal:
 
     message: str
     tier: str
-    is_daily_limit: bool
+    window_resets_at: str | None
+    """ISO 8601 when the window refills, or `None` for a monthly-backstop refusal."""
 
 
-def credit_refusal(
-    *, tier: str, estimated_tokens: int, credit_usage: dict[str, Any]
-) -> CreditRefusal:
-    """Decide which cap the learner hit and compose the refusal.
+def credit_refusal(*, tier: str, credit_usage: dict[str, Any]) -> CreditRefusal:
+    """Compose the refusal a learner sees when their allowance cannot fund this turn.
 
     **This text is a billing statement shown to a learner about their own account, and it had never
-    been tested.** It was built inline between the availability check and the frame that carries it, so
-    reaching it needed a live socket and a learner genuinely out of credits.
+    been tested** before Phase 0 gave it a seam. It was built inline between the availability check
+    and the frame that carries it, so reaching it needed a live socket and a learner genuinely out of
+    credits.
 
-    **Daily and monthly are different refusals and must not be confused.** A daily cap resets tonight,
-    so the message names the reset time and the learner waits. A monthly cap resets at period end, so
-    the message names that date and the learner upgrades. Telling someone to wait until midnight for a
-    monthly cap is wrong advice about their own money.
+    What it used to do was choose between a daily and a monthly cap and quote a used figure, a limit
+    and a reset — five clauses and three numbers a learner can do nothing with, one of which offered
+    "refer friends to earn bonus credits" for a reward that no longer exists (Decision O). Now: what
+    happened, when it stops being true, and no unit counts. Units are a COGS accounting device;
+    quoting them in a paywall would leak our cost basis and invite arithmetic instead of a decision.
 
-    The daily rule has three conditions and each excludes a real case: only the free tier has a daily
-    cap at all; a `daily_limit` of zero means no daily cap is configured, not a cap of nothing; and the
-    comparison includes this turn's estimate, because the question is whether *this* turn fits rather
-    than whether the learner has already exceeded.
+    **`is_daily_limit` and `estimated_tokens` are both gone.** The flag existed because two caps had
+    two different remedies and the client had to know which one to describe. There is one window and
+    one remedy now, and `windowResetsAt` is a timestamp rather than a category, so a client renders a
+    countdown instead of branching. `estimated_tokens` existed only to pick that branch — and picking
+    it from an *estimate* meant the category shown could disagree with what the charge would have been.
     """
-    daily_limit = credit_usage.get("daily_limit", 0) or 0
-    used_today = credit_usage.get("credits_used_today", 0) or 0
-    is_daily = tier == "FREE" and daily_limit > 0 and (used_today + estimated_tokens > daily_limit)
+    resets_at = credit_usage.get("windowResetsAt")
+    is_monthly = bool(credit_usage.get("monthlyExhausted"))
 
-    if is_daily:
+    if is_monthly:
         message = (
-            f"Daily credit limit exceeded. You've used {used_today:,} "
-            f"of {daily_limit:,} daily credits. "
-            f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}. "
-            f"Start a free trial for more credits, or refer friends to earn bonus credits!"
+            "You've reached your usage limit for this month. It resets at the start of next month."
         )
     else:
         message = (
-            f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
-            f"of {credit_usage['hard_cap']:,} credits. "
-            f"Period resets: {credit_usage['period_end']}. "
-            f"Start a free trial for unlimited usage, or refer friends to earn bonus credits!"
+            "You've used this session's allowance. It refills automatically — "
+            "or go Plus now for a much larger one."
         )
 
-    return CreditRefusal(message=message, tier=tier, is_daily_limit=is_daily)
+    return CreditRefusal(
+        message=message,
+        tier=tier,
+        window_resets_at=None if is_monthly else resets_at,
+    )
 
 
 # ===========================================================================
@@ -1795,13 +1822,25 @@ class AskEffects:
     """() -> str. The model name to record when the provider does not report one."""
 
     check_credits: Any
-    """(user_obj, tokens) -> (available, warning). Raises `SubscriptionLimitError` on a hard cap."""
+    """(user_obj, units) -> (available, warning). Raises `SubscriptionLimitError` on a hard cap.
+
+    **Units, not tokens.** Both this and `consume_credits` took token counts until Phase 3.
+    """
 
     credit_usage: Any
     """(user_obj) -> dict. Read only on the refusal path, to compose the message."""
 
     consume_credits: Any
-    """(user_obj, tokens, operation) -> result. After generation, on real counts."""
+    """(user_obj, units, operation) -> result. After generation, on real counts."""
+
+    units_for_tokens: Any
+    """(input_tokens, output_tokens, model_name) -> int. Prices a generation in usage units.
+
+    Injected rather than imported so `answer()` can be tested without the rate card, and so a test
+    can assert what was charged by substituting an identity. It is the meter's function, not this
+    module's: pricing belongs to billing, and a second implementation here is how the token
+    multiplier came to disagree with the cost calculator in the first place.
+    """
 
     cost_calculator: Any
     revenue_calculator: Any
@@ -1817,8 +1856,12 @@ class AskEffects:
     extract_suggestion: Any
     """(text) -> (content, suggestion | None). Splits a trailing suggestion off an answer."""
 
-    purchase_deep_link: str
-    """Where a refused learner is sent to buy credits. A value, not a callable."""
+    upgrade_deep_link: str
+    """Where a refused learner is sent. A value, not a callable.
+
+    Was `purchase_deep_link`, pointing at the credit-pack purchase flow — a refusal whose remedy was a
+    link to a withdrawn product.
+    """
 
     library_recall: bool = False
     """Whether Maigie can search everything the learner has written, as opposed to what the client put in
@@ -1903,13 +1946,18 @@ async def answer(
     )
 
     # --- credits, before the model runs -----------------------------------
-    estimated = estimate_turn_tokens(message=message, context=enriched, history=history)
-    available, _warning = await effects.check_credits(user_obj, estimated)
+    estimated_units = estimate_turn_units(
+        message=message,
+        context=enriched,
+        history=history,
+        model_name=effects.fallback_model_name(),
+        units_for_tokens=effects.units_for_tokens,
+    )
+    available, _warning = await effects.check_credits(user_obj, estimated_units)
     if not available:
         raise TurnRefused(
             credit_refusal(
                 tier=str(user_obj.tier) if user_obj.tier else "FREE",
-                estimated_tokens=estimated,
                 credit_usage=await effects.credit_usage(user_obj),
             )
         )
@@ -1988,7 +2036,7 @@ async def answer(
         query_results=query_results,
         format_list=effects.format_list,
         format_action=effects.format_action,
-        purchase_deep_link=effects.purchase_deep_link,
+        upgrade_deep_link=effects.upgrade_deep_link,
     )
     for row in outcomes.action_logs:
         await effects.create_action_log(data=row)
@@ -2011,7 +2059,19 @@ async def answer(
 
     credit_result = None
     try:
-        credit_result = await effects.consume_credits(user_obj, usage.total_tokens, "chat_message")
+        # Charged in **units of measured cost**, from the real input/output split and the model that
+        # actually served the turn. This used to pass `usage.total_tokens`, which the meter scaled by a
+        # flat multiplier — so a turn on an expensive model cost the same as a turn on a cheap one, and
+        # an output token cost the same as an input token despite being roughly 6× the price.
+        #
+        # Derived from the token counts rather than from `usage.cost_usd`, which `resolve_usage` has
+        # already computed a few lines above: `cost_usd` is nullable when the provider reports no
+        # usage, and a null must not quietly become a free turn.
+        credit_result = await effects.consume_credits(
+            user_obj,
+            effects.units_for_tokens(usage.input_tokens, usage.output_tokens, usage.model_name),
+            "chat_message",
+        )
     except Exception as error:  # noqa: BLE001 — the turn succeeded; the charge is not the answer
         # Deliberately not fatal. The learner has their answer and the row is about to be written; a
         # failure to *record* the charge must not retract it, and it is already logged as a real
@@ -2078,10 +2138,11 @@ def production_effects() -> AskEffects:
         calculate_revenue,
     )
     from src.domains.billing.services.credit_consumption_service import (
-        PURCHASE_DEEP_LINK,
+        UPGRADE_DEEP_LINK,
         check_credit_availability,
         consume_credits,
         get_credit_usage,
+        units_for_tokens,
     )
     from src.domains.intelligence.reasoning.llm.adapter_registry import (
         get_feature_flag_service,
@@ -2120,12 +2181,12 @@ def production_effects() -> AskEffects:
             user_id=user_id, scope=PERSONAL_SCOPE
         )
 
-    async def check_credits(user_obj: Any, tokens: int):
-        return await check_credit_availability(user_obj, tokens, db_client=None, space_id=None)
+    async def check_credits(user_obj: Any, units: int):
+        return await check_credit_availability(user_obj, units, db_client=None, space_id=None)
 
-    async def charge(user_obj: Any, tokens: int, operation: str):
+    async def charge(user_obj: Any, units: int, operation: str):
         return await consume_credits(
-            user_obj, tokens, operation=operation, db_client=None, space_id=None
+            user_obj, units, operation=operation, db_client=None, space_id=None
         )
 
     def queue_task(name: str, kwargs: dict[str, Any]) -> None:
@@ -2146,6 +2207,7 @@ def production_effects() -> AskEffects:
         check_credits=check_credits,
         credit_usage=get_credit_usage,
         consume_credits=charge,
+        units_for_tokens=units_for_tokens,
         cost_calculator=calculate_ai_cost,
         revenue_calculator=calculate_revenue,
         queue_task=queue_task,
@@ -2154,7 +2216,7 @@ def production_effects() -> AskEffects:
         tool_badge=tool_skill_badge,
         query_badge=query_type_skill_badge,
         extract_suggestion=_extract_suggestion,
-        purchase_deep_link=PURCHASE_DEEP_LINK,
+        upgrade_deep_link=UPGRADE_DEEP_LINK,
         # Read from the retrieval service rather than hard-coded, so the day a vector backend lands this
         # starts reporting `True` without anyone remembering to come back here.
         library_recall=bool(getattr(rag_service, "available", False)),

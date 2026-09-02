@@ -65,6 +65,41 @@ async def entitlement(current_user: CurrentUser):
 
 
 # ===========================================================================
+# Usage
+# ===========================================================================
+
+
+@router.get("/usage", response_model=models.UsageResponse)
+async def usage(current_user: CurrentUser):
+    """How much of the caller's current window is spent, and when it refills.
+
+    Separate from `/entitlement` rather than folded into it, because the two change on different
+    clocks: entitlement changes when a learner pays, activates a pass or a trial lapses, and usage
+    changes on every operation. A client can poll this without re-resolving entitlement, and a cached
+    entitlement does not go stale because usage moved.
+
+    **This read does not reset anything.** A learner returning after six hours sees a full allowance
+    because their window has elapsed, not because looking at it refilled it; the reset is attributed
+    to the first billable operation afterwards. That is what makes `windowResetsAt` predictable — it
+    is always five hours after a window some operation actually opened.
+
+    Note that `GET /users/usage`, which the web client calls, has never existed server-side; it has
+    been answering 404. This is the endpoint, and Phase 7 points the client at it.
+    """
+    from .services.credit_consumption_service import get_credit_usage
+
+    raw = await get_credit_usage(current_user)
+    return models.UsageResponse(
+        tier=raw["tier"],
+        windowResetsAt=raw["windowResetsAt"],
+        percentUsed=raw["percentUsed"],
+        isExhausted=raw["isExhausted"],
+        monthlyPercentUsed=raw.get("monthlyPercentUsed"),
+        monthlyExhausted=raw.get("monthlyExhausted"),
+    )
+
+
+# ===========================================================================
 # Subscriptions (Stripe)
 # ===========================================================================
 
@@ -237,8 +272,16 @@ async def google_play_verify(body: models.GooglePlayVerifyRequest, current_user:
 # Credits
 # ===========================================================================
 #
-# The credit-pack catalog and purchase endpoints are gone with the product. What is left
-# is history and a support tool: both describe transactions that really happened.
+# The credit-pack catalog and purchase endpoints are gone with the product. What is left is
+# history: it describes transactions that really happened.
+#
+# `POST /admin/credits/adjust` is gone too, and it is the one deletion here that removes a
+# capability rather than a dead product. It moved a figure in `purchasedCreditsBalance`,
+# which Phase 3 dropped. Usage is now a window that refills on its own, so there is no
+# balance for support to top up; pointing this at the window instead would let support hand
+# out an allowance that expires in under five hours, which looks like help and is gone
+# before the ticket closes. The replacement is a granted pass, and it arrives with the pass
+# rails.
 
 
 @router.get("/credits/purchases", response_model=models.PaginatedPurchaseHistory)
@@ -251,26 +294,6 @@ async def get_purchase_history(
     return await credit_service.get_purchase_history(
         user_id=current_user.id, page=page, page_size=pageSize
     )
-
-
-@router.post("/admin/credits/adjust", response_model=models.AdminCreditAdjustResponse)
-async def admin_adjust_credits(body: models.AdminCreditAdjustRequest, admin_user: StaffUser):
-    """Admin: adjust a user's credit balance."""
-    try:
-        updated = await credit_service.admin_adjust_balance(
-            admin_id=admin_user.id,
-            target_user_id=body.userId,
-            amount=body.amount,
-            reason=body.reason,
-        )
-        return models.AdminCreditAdjustResponse(
-            userId=updated.id,
-            newBalance=updated.purchased_credits_balance or 0,
-            adjustmentAmount=body.amount,
-        )
-    except Exception as e:
-        logger.error(f"Credit adjustment failed: {e}")
-        raise HTTPException(status_code=500, detail="Failed to adjust credits")
 
 
 # ===========================================================================

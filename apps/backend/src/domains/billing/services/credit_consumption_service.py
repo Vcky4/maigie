@@ -1,28 +1,39 @@
-"""
-Credit service for managing subscription credit limits.
+"""The usage meter: a rolling 5-hour window denominated in measured cost.
 
-This module handles:
-- Credit consumption tracking
-- Hard/soft cap enforcement
-- Credit period management
-- Fair usage prevention
-- Purchased credits fallback
+What this replaced, and why (MAIGIE_PLUS_COMMERCIAL_PLAN.md §6.2, §6.3):
 
-Copyright (C) 2025 Maigie
+**The unit was a token, and that is why voice was mispriced by two orders of magnitude.** A credit
+was one token, `TOKEN_MULTIPLIER = 0.2` scaled it to flatter the number, and `CREDIT_COSTS` priced
+each operation in tokens by hand. A voice minute was priced at 100 — as though it were 100 tokens of
+text — when it costs what roughly 11 400 text tokens cost. Nothing was broken and no test looked at
+the figure. A `usage_unit` is **$0.0001 of measured COGS**, so an operation cannot be mispriced by a
+table being stale; it is priced by what it actually cost.
 
-Licensed under the Business Source License 1.1 (BUSL-1.1).
-See LICENSE file in the repository root for details.
+**The period was wrong.** A monthly hard cap, plus a daily cap for FREE only, plus an 80%-of-month
+soft warning, plus a purchased-balance fallback, plus a referral daily-limit increase: five
+interacting quantities. The failure a learner hit was "I ran out on the 9th and have three weeks of
+nothing", and the message was a wall of formatted numbers. One window, one reset time, and running out
+is never worse than five hours.
+
+**What went away entirely:** `CREDIT_LIMITS`, `TOKEN_MULTIPLIER`, `apply_token_multiplier`,
+`CREDIT_COSTS` as a fixed table, `get_credit_limits`, `initialize_user_credits`,
+`reset_daily_credits_if_needed`, `ensure_credit_period`, `reset_credits_for_period_start`, the
+purchased-balance fallback and the referral daily-limit increase. There are no paid users, so none of
+it needed a migration path — it needed deleting.
+
+**What is deliberately untouched: the `space_id` path.** Space usage draws on the Space's own credit
+pool, is not personal-scope, and is out of scope for the whole plan (Decision F). Both entry points
+below take the space branch before any window machinery is reached, which is what made this
+separable.
 """
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Any, Literal
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 
-from src.config import Settings, get_settings
-from src.domains.billing.services.referral_service import get_daily_limit_increase
 from src.domains.identity.db_models import LimitReachedEmailLog, User
 from src.domains.identity.repository import IdentityRepository
 from src.domains.learning_spaces.repository import space_repo
@@ -33,910 +44,468 @@ from src.shared.infrastructure.email import send_limit_reached_email
 logger = logging.getLogger(__name__)
 
 
-# Deep link for in-app credit purchase flow
-PURCHASE_DEEP_LINK = "maigie://credits/purchase"
+# ===========================================================================
+# The unit
+# ===========================================================================
+
+#: One usage unit is $0.0001 of measured cost — a hundredth of a cent, so 10 000 units is $1.00.
+#:
+#: Chosen so that the cheapest real operation is still more than one unit (a Flash-Lite chat turn is
+#: ~29) and the most expensive fits in four digits (course generation is ~1 020). A coarser unit would
+#: round the cheap operations to zero and let them run free; a finer one buys precision the rate card
+#: does not have.
+USD_PER_UNIT = 0.0001
+
+
+def units_for_usd(cost_usd: float) -> int:
+    """Convert measured cost to units, rounding up.
+
+    Up, not nearest: rounding down would let an operation cheaper than half a unit cost nothing at
+    all, and "free if small enough" is how an unmetered surface starts.
+    """
+    if cost_usd <= 0:
+        return 0
+    units = cost_usd / USD_PER_UNIT
+    return max(1, int(units) + (1 if units % 1 else 0))
+
+
+#: Where a refused learner is sent. Was `maigie://credits/purchase`, which pointed at a credit-pack
+#: purchase flow for a product withdrawn in Phase 1 — a refusal that offered a dead link as its remedy.
+#: The remedy for an exhausted window is a pass or a subscription, so it goes to the upgrade surface,
+#: which is also where Decision N puts the conversion moment.
+UPGRADE_DEEP_LINK = "maigie://plus/upgrade"
+
+
+def units_for_tokens(input_tokens: int, output_tokens: int, model_name: str | None) -> int:
+    """Price a completed generation from its real token counts and the model that produced it.
+
+    The same operation costs different units on different tiers, because the tier picks the model.
+    That is correct and self-balancing rather than a wrinkle to hide: a Plus learner gets a larger
+    allowance *and* a dearer model, and the ratio between them is the margin.
+    """
+    from src.domains.billing.services.cost_calculator import calculate_ai_cost
+
+    return units_for_usd(calculate_ai_cost(input_tokens, output_tokens, model_name=model_name))
+
+
+#: Flat unit estimates for the operations that charge but cannot yet measure.
+#:
+#: These three reach a provider through `llm_resilient`, which discards the response object and
+#: returns text only, so no caller sees `usage_metadata`. Phase 3b plumbs it through and **deletes
+#: this table** — Decision L is explicit that cost is measured, not tabulated.
+#:
+#: Named as estimates rather than costs so nobody mistakes them for measurements. Each is the §6.5
+#: figure for its operation, which is derived from `max_tokens` and the rate card rather than
+#: observed. They are the last tabulated prices in the codebase.
+ESTIMATED_OPERATION_UNITS = {
+    # One model call producing one durable note the learner keeps.
+    "voice_session_note": 110,
+    # Merging several notes into one. Same price as writing one, because it is the same thing: one
+    # call, one note. Charged once regardless of how many notes went in — the inputs were paid for
+    # when they were written, and pricing per input would make consolidating a messy topic cost more
+    # the messier it got.
+    "note_merge": 110,
+    # A Mermaid or maths diagram for Study Mode.
+    "study_diagram": 100,
+}
+
+
+# ===========================================================================
+# The window
+# ===========================================================================
+
+#: A tumbling window, started by the first billable operation and reset by the first one that occurs
+#: after it has elapsed. Five hours for every tier, deliberately: one number to explain, and it is
+#: also the duration of the 5-hour pass, so "a pass is one Plus session" is literally true.
+WINDOW_HOURS = 5
+
+#: The soft warning fires here. Carries the reset timestamp, which is the whole point — a warning
+#: without a time is just an apology.
+WINDOW_WARNING_FRACTION = 0.8
+
+#: The monthly backstop is invisible until a learner is this close to it (§6.3).
+BACKSTOP_DISCLOSURE_FRACTION = 0.8
+
+
+@dataclass(frozen=True)
+class WindowState:
+    """A learner's window as of `now`, with any elapsed window already rolled over."""
+
+    started_at: datetime
+    units_used: int
+    resets_at: datetime
+    month_started_at: datetime
+    month_units_used: int
+    #: True when the read rolled a window or a month over, so the caller knows the stored row is
+    #: stale and a write must persist the new boundaries rather than only the increment.
+    rolled: bool
+
+
+def _month_start(now: datetime) -> datetime:
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """Postgres returns tz-aware datetimes; SQLite in tests can return naive ones."""
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def window_state(user: User, now: datetime | None = None) -> WindowState:
+    """Resolve the window from the stored columns, rolling over lazily.
+
+    **Reads never write.** A learner who opens a page after six hours sees a full allowance because
+    the window has elapsed, not because looking at it reset anything. The reset is attributed to the
+    first billable operation after the window ends, which is what makes `resets_at` predictable: it is
+    always `started_at + 5h` of a window that some operation actually opened.
+    """
+    now = now or datetime.now(UTC)
+    started = _as_utc(user.usage_window_started_at)
+    used = user.usage_window_units_used or 0
+    month_started = _as_utc(user.usage_month_started_at)
+    month_used = user.usage_month_units_used or 0
+
+    rolled = False
+
+    if started is None or now >= started + timedelta(hours=WINDOW_HOURS):
+        started = now
+        used = 0
+        rolled = True
+
+    current_month = _month_start(now)
+    if month_started is None or month_started < current_month:
+        month_started = current_month
+        month_used = 0
+        rolled = True
+
+    return WindowState(
+        started_at=started,
+        units_used=used,
+        resets_at=started + timedelta(hours=WINDOW_HOURS),
+        month_started_at=month_started,
+        month_units_used=month_used,
+        rolled=rolled,
+    )
 
 
 @dataclass
 class CreditConsumptionResult:
-    """Result of a credit consumption operation with source metadata.
+    """Result of a metered operation.
 
-    Attributes:
-        user: The updated User object after consumption.
-        credits_consumed: Total credits consumed in this operation.
-        source: Where credits were consumed from ('subscription', 'purchased', or 'both').
-        subscription_deducted: Credits deducted from subscription balance.
-        purchased_deducted: Credits deducted from purchased balance.
-        warning: Optional 80% threshold warning message.
-        notice: Optional notice when purchased credits were used.
-        purchased_balance_remaining: Remaining purchased credits balance after operation.
+    No `source`, no `purchased_deducted`, no `purchased_balance_remaining`: there is one place usage
+    is drawn from now. The old shape described a split between subscription and purchased balances
+    that no longer exists, and every caller that read those fields was reading about a product that
+    was withdrawn.
     """
 
     user: User
-    credits_consumed: int
-    source: Literal["subscription", "purchased", "both"]
-    subscription_deducted: int
-    purchased_deducted: int
+    units_consumed: int
+    window_resets_at: datetime
+    window_units_used: int
+    window_allowance: int
     warning: str | None
-    notice: str | None
-    purchased_balance_remaining: int
 
 
-settings = get_settings()
+# ===========================================================================
+# Checks and consumption
+# ===========================================================================
 
 
-# Credit limits per tier (in tokens/credits)
-# These represent monthly limits for monthly subscriptions
-# For yearly subscriptions, multiply by 12
-CREDIT_LIMITS = {
-    "FREE": {
-        "hard_cap": 15000,  # 15k tokens/month
-        "soft_cap": 12000,  # 80% warning threshold
-        "daily_limit": 5000,  # 5k tokens/day
-    },
-    "PREMIUM_MONTHLY": {
-        "hard_cap": 300000,  # 300k tokens/month
-        "soft_cap": 240000,  # 80% warning threshold
-    },
-    "PREMIUM_YEARLY": {
-        "hard_cap": 3600000,  # 3.6M tokens/year (300k/month * 12)
-        "soft_cap": 2880000,  # 80% warning threshold
-    },
-    "STUDY_CIRCLE_MONTHLY": {
-        "hard_cap": 500000,
-        "soft_cap": 400000,
-    },
-    "STUDY_CIRCLE_YEARLY": {
-        "hard_cap": 6000000,  # 500k/month * 12
-        "soft_cap": 4800000,
-    },
-    "SQUAD_MONTHLY": {
-        "hard_cap": 1000000,
-        "soft_cap": 800000,
-    },
-    "SQUAD_YEARLY": {
-        "hard_cap": 12000000,  # 1M/month * 12
-        "soft_cap": 9600000,
-    },
-}
+def _refusal(units_needed: int, resets_at: datetime, *, monthly: bool) -> SubscriptionLimitError:
+    """The refusal a learner actually sees.
 
-# Token multiplier - we charge users less than actual tokens consumed
-# This makes the service more affordable while still tracking usage
-# 0.2 = charge 20% of actual tokens (users get 5x the conversations)
-TOKEN_MULTIPLIER = 0.2
-
-# Credit costs for different operations (in tokens) - Reduced for cost optimization
-CREDIT_COSTS = {
-    "ai_course_generation": 250,  # 250 tokens per AI course generation (reduced from 500)
-    "chat_message": 0,  # Tracked separately via tokenCount in ChatMessage
-    "ai_action": 100,  # 100 tokens per AI action (reduced from 250)
-    "gemini_live_voice": 500,  # minimum pre-start check; live voice bills by time (+ paid standby = audio-active only)
-    "study_diagram": 80,  # one-off Mermaid / math diagram for Study Mode (text model; complements live voice)
-    # Writing a note from a voice session. Charged only when the learner asks for one — nothing about a
-    # voice conversation is summarised or stored automatically, so this cost is never incurred silently.
-    "voice_session_note": 100,
-    # Combining several notes on one topic into one. The same price as writing a note, because it is the
-    # same thing: one model call producing one durable note the learner keeps. Charged once for the merge
-    # regardless of how many notes went into it — the inputs were already paid for when they were written,
-    # and pricing per input would make consolidating a messy topic more expensive the messier it got.
-    "note_merge": 100,
-}
-
-
-async def get_credit_limits(tier: str) -> dict[str, int]:
+    One sentence with a time in it. What this replaced ran to five clauses across a daily cap, a
+    monthly cap and a purchased balance, and told the learner three numbers they could do nothing
+    with. `detail` carries the machine-readable reset so a client can render a countdown without
+    parsing prose — `windowResetsAt` in the plan.
     """
-    Get credit limits for a given tier.
+    if monthly:
+        return SubscriptionLimitError(
+            message=(
+                "You've reached your usage limit for this month. "
+                "It resets at the start of next month."
+            ),
+            detail=f"units_required={units_needed}, limit=monthly_backstop",
+            # Deliberately `None`. A monthly refusal is the one case where the window's reset time is
+            # the wrong thing to show: it will pass in under five hours and change nothing.
+            window_resets_at=None,
+        )
 
-    Args:
-        tier: User tier (FREE, PREMIUM_MONTHLY, PREMIUM_YEARLY)
-
-    Returns:
-        Dictionary with 'hard_cap' and 'soft_cap' values
-    """
-    tier_str = str(tier) if tier else "FREE"
-    return CREDIT_LIMITS.get(tier_str, CREDIT_LIMITS["FREE"])
-
-
-async def initialize_user_credits(
-    user: User, period_start: datetime | None = None, period_end: datetime | None = None
-) -> User:
-    """
-    Initialize or reset user credits for a new billing period.
-
-    Args:
-        user: User model instance
-        period_start: Start of credit period (defaults to now)
-        period_end: End of credit period (defaults to now + 1 month/year based on tier)
-
-    Returns:
-        Updated User object
-    """
-    tier_str = str(user.tier) if user.tier else "FREE"
-    limits = await get_credit_limits(tier_str)
-
-    # Determine period duration based on tier
-    yearly_tiers = ("PREMIUM_YEARLY", "STUDY_CIRCLE_YEARLY", "SQUAD_YEARLY")
-    if tier_str in yearly_tiers:
-        period_duration = timedelta(days=365)
-    else:
-        period_duration = timedelta(days=30)
-
-    # Set period start/end
-    if period_start is None:
-        period_start = datetime.utcnow()
-    if period_end is None:
-        period_end = period_start + period_duration
-
-    # Prepare update data
-    update_data = {
-        "creditsUsed": 0,
-        "creditsPeriodStart": period_start,
-        "creditsPeriodEnd": period_end,
-        "creditsSoftCap": limits["soft_cap"],
-        "creditsHardCap": limits["hard_cap"],
-    }
-
-    # For FREE tier, also initialize daily limits
-    if tier_str == "FREE" and "daily_limit" in limits:
-        update_data["creditsDailyLimit"] = limits["daily_limit"]
-        update_data["creditsUsedToday"] = 0
-        update_data["lastDailyReset"] = datetime.utcnow().replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )  # Set to midnight UTC
-
-    # Update user with credit limits and reset usage
-    identity_repo = IdentityRepository()
-    updated_user = await identity_repo.update(user.id, update_data)
-
-    logger.info(
-        f"Initialized credits for user {user.id} (tier: {tier_str}): "
-        f"hard_cap={limits['hard_cap']}, soft_cap={limits['soft_cap']}"
-        + (f", daily_limit={limits.get('daily_limit', 'N/A')}" if tier_str == "FREE" else "")
+    return SubscriptionLimitError(
+        message="You've used this session's allowance. It refills automatically.",
+        detail=f"units_required={units_needed}, windowResetsAt={resets_at.isoformat()}",
+        # The time is carried structurally rather than written into the sentence. The message is
+        # rendered in a client's own timezone and a server-side "3:40 PM UTC" is a small arithmetic
+        # problem handed to a learner who has just been refused.
+        window_resets_at=resets_at.isoformat(),
     )
 
-    return updated_user
 
-
-async def reset_daily_credits_if_needed(user: User, db_client: Any | None = None) -> User:
-    """
-    Reset daily credits if a new day has started (for FREE tier users).
-
-    Args:
-        user: User model instance
-        db_client: Optional (kept for backward compat, ignored)
-
-    Returns:
-        Updated User object
-    """
-    identity_repo = IdentityRepository()
-
-    tier_str = str(user.tier) if user.tier else "FREE"
-    if tier_str != "FREE":
-        # Daily limits only apply to FREE tier
-        return user
-
-    now = datetime.utcnow()
-    today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    # Check if daily reset is needed
-    needs_daily_reset = False
-
-    last_reset = user.last_daily_reset
-    if last_reset and last_reset.tzinfo:
-        last_reset = last_reset.replace(tzinfo=None)
-
-    if last_reset is None:
-        needs_daily_reset = True
-    elif last_reset < today_midnight:
-        # A new day has started since last reset
-        needs_daily_reset = True
-        logger.info(
-            f"Daily credit reset needed for user {user.id}. "
-            f"Last reset: {user.last_daily_reset}, Today: {today_midnight}"
-        )
-
-    if needs_daily_reset:
-        updated_user = await identity_repo.update(
-            user.id,
-            {
-                "creditsUsedToday": 0,
-                "lastDailyReset": today_midnight,
-            },
-        )
-        logger.info(f"Reset daily credits for user {user.id}")
-        return updated_user
-
-    return user
-
-
-async def ensure_credit_period(user: User, db_client: Any | None = None) -> User:
-    """
-    Ensure user has an active credit period. If period has expired or doesn't exist,
-    initialize a new one.
-
-    FREE tier: Usage resets monthly when creditsPeriodEnd is reached (every 30 days).
-    Limits are synced to current CREDIT_LIMITS when stored limits are outdated
-    (e.g. old 10k cap upgraded to 50k) so existing users get new limits without waiting.
-
-    Args:
-        user: User model instance
-        db_client: Optional (kept for backward compat, ignored)
-
-    Returns:
-        Updated User object with valid credit period
-    """
-    identity_repo = IdentityRepository()
-
-    now = datetime.utcnow()
-    tier_str = str(user.tier) if user.tier else "FREE"
-
-    # Sync any user with outdated stored limits to current tier limits (e.g. 50k -> 75k, 200k -> 300k)
-    current_limits = await get_credit_limits(tier_str)
-    stored_hard = user.credits_hard_cap or 0
-    if stored_hard < current_limits["hard_cap"]:
-        update_data = {
-            "creditsHardCap": current_limits["hard_cap"],
-            "creditsSoftCap": current_limits["soft_cap"],
-        }
-        if tier_str == "FREE" and "daily_limit" in current_limits:
-            update_data["creditsDailyLimit"] = current_limits["daily_limit"]
-        user = await identity_repo.update(user.id, update_data)
-        logger.info(
-            f"Synced user {user.id} ({tier_str}) limits to current: hard_cap={current_limits['hard_cap']}"
-            + (f", daily_limit={current_limits.get('daily_limit')}" if tier_str == "FREE" else "")
-        )
-
-    # Check if period needs to be initialized or reset
-    needs_reset = False
-
-    current_period_end = user.credits_period_end
-    if current_period_end and current_period_end.tzinfo:
-        current_period_end = current_period_end.replace(tzinfo=None)
-
-    if current_period_end is None or user.credits_period_start is None:
-        needs_reset = True
-    elif current_period_end <= now:
-        # Period has expired, reset credits
-        needs_reset = True
-        logger.info(
-            f"Credit period expired for user {user.id}. "
-            f"Period end: {user.credits_period_end}, Now: {now}"
-        )
-
-    if needs_reset:
-        # Determine new period start/end based on subscription period if available
-        period_start = user.subscription_current_period_start
-        period_end = user.subscription_current_period_end
-
-        # Handle timezone awareness for period_start
-        if period_start and period_start.tzinfo:
-            period_start = period_start.replace(tzinfo=None)
-
-        # Handle timezone awareness for period_end
-        if period_end and period_end.tzinfo:
-            period_end = period_end.replace(tzinfo=None)
-
-        if period_start is None or period_end is None or period_end <= now:
-            period_start = now
-            # Set period end based on tier
-            tier_str = str(user.tier) if user.tier else "FREE"
-            yearly_tiers = ("PREMIUM_YEARLY", "STUDY_CIRCLE_YEARLY", "SQUAD_YEARLY")
-            if tier_str in yearly_tiers:
-                period_end = now + timedelta(days=365)
-            else:
-                period_end = now + timedelta(days=30)
-
-        user = await initialize_user_credits(user, period_start, period_end)
-
-    return user
+def _warning(state: WindowState, allowance: int, units_after: int) -> str | None:
+    if allowance <= 0:
+        return None
+    if units_after < allowance * WINDOW_WARNING_FRACTION:
+        return None
+    # No time in the sentence, for the same reason as the refusal: `CreditConsumptionResult` carries
+    # `window_resets_at` alongside this, and the client renders it locally.
+    return "You've used most of this session's allowance."
 
 
 async def check_credit_availability(
     user: User,
-    credits_needed: int,
+    units_needed: int,
     db_client: Any | None = None,
     space_id: str | None = None,
 ) -> tuple[bool, str | None]:
-    """
-    Check if user (or space) has enough credits available.
-
-    Checks subscription credits first, then falls back to purchased credits balance.
+    """Can this operation be paid for out of the current window?
 
     Args:
-        user: User model instance
-        credits_needed: Number of credits required (raw tokens - multiplier will be applied)
-        db_client: Optional (kept for backward compat, ignored)
-        space_id: Optional ID of the space to check credits for
+        user: User model instance.
+        units_needed: Cost in usage units. **Units, not tokens** — callers used to pass raw token
+            counts and this service scaled them by `TOKEN_MULTIPLIER`. Use `units_for_tokens` for a
+            completed generation, or `ESTIMATED_OPERATION_UNITS` where measurement is not yet plumbed.
+        db_client: Ignored; kept so the many existing call sites need no edit.
+        space_id: When set, takes the Space branch and never touches the window (Decision F).
 
     Returns:
-        Tuple of (is_available, warning_or_notice_message)
-        - is_available: True if credits can be consumed, False if all credits exhausted
-        - warning_or_notice_message: Optional warning/notice message
+        `(is_available, warning_message)`. A warning is not a refusal: it fires at 80% of the window
+        and carries the reset time so the learner can plan rather than be surprised.
     """
-    identity_repo = IdentityRepository()
-
-    # Apply token multiplier to get actual credits that will be consumed
-    credits_needed = apply_token_multiplier(credits_needed)
-
-    # Check space credits if space_id is provided
     if space_id:
         space = await space_repo.find_space_basic(space_id)
         if not space:
             raise ValueError(f"Space {space_id} not found")
-
-        # In a space context, limits might be defined per space. For now, checking if limit exists
-        if space.credits_limit and space.credits + credits_needed > space.credits_limit:
+        if space.credits_limit and space.credits + units_needed > space.credits_limit:
             return False, "Space credit limit reached."
         return True, None
 
-    # Ensure credit period is active
-    user = await ensure_credit_period(user)
+    from src.domains.billing.services import entitlement_service
 
-    # Reset daily credits if needed (for FREE tier)
-    user = await reset_daily_credits_if_needed(user)
-
-    # Refresh user from database to get latest creditsUsed
-    user = await identity_repo.find_by_id(user.id)
-    if not user:
+    identity_repo = IdentityRepository()
+    fresh = await identity_repo.find_by_id(user.id)
+    if not fresh:
         raise ValueError(f"User {user.id} not found")
 
-    tier_str = str(user.tier) if user.tier else "FREE"
-    hard_cap = user.credits_hard_cap or 0
-    soft_cap = user.credits_soft_cap or 0
-    credits_used = user.credits_used or 0
-    purchased_balance = user.purchased_credits_balance or 0
+    entitlement = await entitlement_service.resolve(fresh.id)
+    state = window_state(fresh)
 
-    # For FREE tier, check daily limit first
-    if tier_str == "FREE":
-        daily_limit = user.credits_daily_limit or 0
-        credits_used_today = user.credits_used_today or 0
-
-        # Get daily limit increase from claimed referral rewards
-        referral_increase = await get_daily_limit_increase(user)
-        effective_daily_limit = daily_limit + referral_increase
-
-        # Check daily limit
-        if (
-            effective_daily_limit > 0
-            and credits_used_today + credits_needed > effective_daily_limit
-        ):
-            # Daily limit hit - check if purchased credits can cover it
-            if purchased_balance >= credits_needed:
-                return True, (
-                    f"Daily limit reached. Using purchased credits. "
-                    f"Remaining purchased balance: {purchased_balance - credits_needed:,} credits."
-                )
-            elif purchased_balance > 0:
-                return False, (
-                    f"Daily limit reached. Your purchased credits balance ({purchased_balance:,}) "
-                    f"is insufficient for this operation ({credits_needed:,} credits required). "
-                    f"Purchase more credits to continue."
-                )
-            else:
-                return False, None
-
-    # Check monthly hard cap
-    if hard_cap > 0 and credits_used + credits_needed > hard_cap:
-        # Subscription credits exhausted - check purchased credits
-        remaining_subscription = max(0, hard_cap - credits_used)
-        shortfall = credits_needed - remaining_subscription
-
-        if purchased_balance >= shortfall:
-            # Purchased credits can cover the shortfall
-            notice = (
-                f"Subscription credits exhausted. Using purchased credits. "
-                f"Remaining purchased balance after operation: "
-                f"{purchased_balance - shortfall:,} credits."
-            )
-            return True, notice
-        elif purchased_balance > 0:
-            # Purchased balance is positive but insufficient
-            return False, (
-                f"Insufficient credits. Subscription credits exhausted. "
-                f"Your purchased credits balance ({purchased_balance:,}) "
-                f"is insufficient for this operation ({shortfall:,} credits required from purchased balance). "
-                f"Purchase more credits to continue."
-            )
-        else:
-            # Both exhausted
+    if entitlement.monthly_backstop is not None:
+        if state.month_units_used + units_needed > entitlement.monthly_backstop:
             return False, None
 
-    # Check soft cap (warning only, doesn't block)
-    warning_message = None
-    if soft_cap > 0 and credits_used >= soft_cap:
-        remaining = hard_cap - credits_used
-        warning_message = (
-            f"You've used 80% of your credit allocation. "
-            f"You have {remaining:,} credits remaining before hitting your limit. "
-            f"Consider purchasing additional credits to avoid interruption."
-        )
-    elif soft_cap > 0 and credits_used + credits_needed >= soft_cap:
-        remaining = hard_cap - (credits_used + credits_needed)
-        warning_message = (
-            f"You've used 80% of your credit allocation. "
-            f"You have {remaining:,} credits remaining before hitting your limit. "
-            f"Consider purchasing additional credits to avoid interruption."
-        )
+    if state.units_used + units_needed > entitlement.window_allowance:
+        return False, None
 
-    return True, warning_message
-
-
-def apply_token_multiplier(tokens: int) -> int:
-    """
-    Apply token multiplier to reduce the credits charged to users.
-    This makes the service more affordable.
-
-    Args:
-        tokens: Raw token count
-
-    Returns:
-        Adjusted token count after applying multiplier
-    """
-    adjusted = int(tokens * TOKEN_MULTIPLIER)
-    # Minimum of 1 credit if there were any tokens
-    return max(1, adjusted) if tokens > 0 else 0
+    return True, _warning(state, entitlement.window_allowance, state.units_used + units_needed)
 
 
 async def consume_credits(
     user: User,
-    credits: int,
+    units: int,
     operation: str = "unknown",
     db_client: Any | None = None,
     space_id: str | None = None,
 ) -> CreditConsumptionResult:
-    """
-    Consume credits for a user or space operation.
-
-    Supports three consumption modes:
-    - Subscription only: when subscription credits are sufficient
-    - Split (both): when subscription partially covers and purchased covers the rest
-    - Purchased only: when subscription is exhausted but purchased balance is sufficient
-
-    For FREE tier: if daily limit is hit but purchasedCreditsBalance > 0, consumes from purchased.
+    """Draw `units` from the learner's window, or refuse.
 
     Args:
-        user: User model instance
-        credits: Number of credits to consume (raw tokens - multiplier will be applied)
-        operation: Description of the operation (for logging)
-        db_client: Optional (kept for backward compat, ignored)
-        space_id: Optional ID of the space to consume credits from
-
-    Returns:
-        CreditConsumptionResult with source metadata
+        user: User model instance.
+        units: Cost in usage units — see `check_credit_availability` on the change of denomination.
+        operation: For logging and, once Phase 3's instrumentation lands, for per-operation measurement.
+        db_client: Ignored; kept for call-site compatibility.
+        space_id: When set, draws on the Space pool and never touches the window (Decision F).
 
     Raises:
-        SubscriptionLimitError: If all credits (subscription + purchased) are exhausted
+        SubscriptionLimitError: When the window or the monthly backstop cannot fund the operation.
     """
-    identity_repo = IdentityRepository()
-
-    # Apply token multiplier to reduce credits charged
-    credits = apply_token_multiplier(credits)
-
-    # Handle space consumption (unchanged behavior)
     if space_id:
-        is_available, warning_message = await check_credit_availability(
-            user, credits, space_id=space_id
-        )
-        if not is_available:
-            raise SubscriptionLimitError(
-                message="Space credit limit exceeded.",
-                detail=f"This operation requires {credits} credits, which exceeds the space's limit.",
-            )
+        return await _consume_space_credits(user, units, operation, space_id)
 
-        # Increment space credits using raw SQLAlchemy
-        from sqlalchemy import update as sa_update
+    from src.domains.billing.services import entitlement_service
 
-        from src.domains.learning_spaces.db_models import Space
-
-        factory = get_session_factory()
-        async with factory() as session:
-            stmt = (
-                sa_update(Space).where(Space.id == space_id).values(credits=Space.credits + credits)
-            )
-            await session.execute(stmt)
-            await session.commit()
-        logger.info(f"Consumed {credits} credits for space {space_id} (operation: {operation})")
-        return CreditConsumptionResult(
-            user=user,
-            credits_consumed=credits,
-            source="subscription",
-            subscription_deducted=credits,
-            purchased_deducted=0,
-            warning=None,
-            notice=None,
-            purchased_balance_remaining=user.purchased_credits_balance or 0,
-        )
-
-    # Ensure credit period is active
-    user = await ensure_credit_period(user)
-
-    # Reset daily credits if needed (for FREE tier)
-    user = await reset_daily_credits_if_needed(user)
-
-    # Refresh user from database to get latest state
-    user = await identity_repo.find_by_id(user.id)
-    if not user:
+    identity_repo = IdentityRepository()
+    fresh = await identity_repo.find_by_id(user.id)
+    if not fresh:
         raise ValueError("User not found after refresh")
 
-    tier_str = str(user.tier) if user.tier else "FREE"
-    hard_cap = user.credits_hard_cap or 0
-    soft_cap = user.credits_soft_cap or 0
-    credits_used = user.credits_used or 0
-    purchased_balance = user.purchased_credits_balance or 0
-    remaining_subscription = max(0, hard_cap - credits_used)
+    entitlement = await entitlement_service.resolve(fresh.id)
+    state = window_state(fresh)
 
-    # Determine consumption strategy
-    daily_limit_hit = False
+    if (
+        entitlement.monthly_backstop is not None
+        and state.month_units_used + units > entitlement.monthly_backstop
+    ):
+        await _notify_limit_reached(fresh, state)
+        raise _refusal(units, state.resets_at, monthly=True)
 
-    # For FREE tier, check daily limit first
-    if tier_str == "FREE":
-        daily_limit = user.credits_daily_limit or 0
-        credits_used_today = user.credits_used_today or 0
+    if state.units_used + units > entitlement.window_allowance:
+        await _notify_limit_reached(fresh, state)
+        raise _refusal(units, state.resets_at, monthly=False)
 
-        # Get daily limit increase from claimed referral rewards
-        referral_increase = await get_daily_limit_increase(user)
-        effective_daily_limit = daily_limit + referral_increase
+    updated = await identity_repo.update(
+        fresh.id,
+        {
+            # Written whether or not the window rolled. The boundaries are only stale when `rolled`
+            # is set, but writing them unconditionally costs nothing and removes a branch in which
+            # the counter and its window could disagree.
+            "usageWindowStartedAt": state.started_at,
+            "usageWindowUnitsUsed": state.units_used + units,
+            "usageMonthStartedAt": state.month_started_at,
+            "usageMonthUnitsUsed": state.month_units_used + units,
+        },
+    )
 
-        if effective_daily_limit > 0 and credits_used_today + credits > effective_daily_limit:
-            daily_limit_hit = True
+    logger.info(
+        "usage: user=%s operation=%s units=%d window=%d/%d month=%d/%s",
+        fresh.id,
+        operation,
+        units,
+        state.units_used + units,
+        entitlement.window_allowance,
+        state.month_units_used + units,
+        (entitlement.monthly_backstop if entitlement.monthly_backstop is not None else "unbounded"),
+    )
 
-    # Case 1: FREE tier daily limit hit - try purchased credits
-    if daily_limit_hit:
-        if purchased_balance >= credits:
-            # Consume entirely from purchased credits
-            new_purchased_balance = purchased_balance - credits
-            updated_user = await identity_repo.update(
-                user.id,
-                {
-                    "purchasedCreditsBalance": new_purchased_balance,
-                },
-            )
-            new_purchased_balance = updated_user.purchased_credits_balance or 0
-            notice = (
-                f"Daily limit reached. {credits:,} credits consumed from purchased balance. "
-                f"Remaining purchased credits: {new_purchased_balance:,}."
-            )
-            logger.info(
-                f"Consumed {credits} purchased credits for user {user.id} "
-                f"(daily limit hit, operation: {operation}). "
-                f"Purchased balance: {purchased_balance} -> {new_purchased_balance}"
-            )
-            return CreditConsumptionResult(
-                user=updated_user,
-                credits_consumed=credits,
-                source="purchased",
-                subscription_deducted=0,
-                purchased_deducted=credits,
-                warning=None,
-                notice=notice,
-                purchased_balance_remaining=new_purchased_balance,
-            )
-        elif purchased_balance > 0:
-            # Purchased balance positive but insufficient
-            raise SubscriptionLimitError(
-                message=(
-                    f"Daily credit limit exceeded. You've used {credits_used_today:,} of "
-                    f"{effective_daily_limit:,} credits today. "
-                    f"Your purchased credits balance ({purchased_balance:,}) is insufficient "
-                    f"for this operation ({credits:,} credits required)."
-                ),
-                detail=(
-                    f"credits_required={credits}, purchased_balance={purchased_balance}, "
-                    f"purchase_deep_link={PURCHASE_DEEP_LINK}"
-                ),
-            )
-        else:
-            # No purchased credits available
-            raise SubscriptionLimitError(
-                message=(
-                    f"Daily credit limit exceeded. You've used {credits_used_today:,} of "
-                    f"{effective_daily_limit:,} credits today."
-                ),
-                detail=(
-                    f"This operation requires {credits} credits. Your daily limit resets at midnight UTC. "
-                    f"Purchase credits to continue without waiting. "
-                    f"purchase_deep_link={PURCHASE_DEEP_LINK}"
-                ),
-            )
+    return CreditConsumptionResult(
+        user=updated,
+        units_consumed=units,
+        window_resets_at=state.resets_at,
+        window_units_used=state.units_used + units,
+        window_allowance=entitlement.window_allowance,
+        warning=_warning(state, entitlement.window_allowance, state.units_used + units),
+    )
 
-    # Case 2: Subscription credits are sufficient
-    if remaining_subscription >= credits:
-        # Standard subscription-only consumption
-        update_data = {"creditsUsed": credits_used + credits}
-        if tier_str == "FREE":
-            update_data["creditsUsedToday"] = (user.credits_used_today or 0) + credits
 
-        updated_user = await identity_repo.update(user.id, update_data)
+async def _consume_space_credits(
+    user: User, units: int, operation: str, space_id: str
+) -> CreditConsumptionResult:
+    """Unchanged behaviour, moved into its own function so the personal path reads straight through.
 
-        # Check for 80% soft cap warning
-        warning_message = None
-        new_credits_used = updated_user.credits_used or 0
-        if soft_cap > 0 and new_credits_used >= soft_cap:
-            new_remaining = hard_cap - new_credits_used
-            warning_message = (
-                f"You've used 80% of your credit allocation. "
-                f"You have {new_remaining:,} credits remaining before hitting your limit. "
-                f"Consider purchasing additional credits to avoid interruption."
-            )
-
-        # Check FREE tier daily 80% warning
-        if tier_str == "FREE" and not warning_message:
-            new_daily_used = updated_user.credits_used_today or 0
-            daily_soft_cap = int(effective_daily_limit * 0.8)
-            if daily_soft_cap > 0 and new_daily_used >= daily_soft_cap:
-                daily_remaining = effective_daily_limit - new_daily_used
-                warning_message = (
-                    f"You've used 80% of your daily credit allocation. "
-                    f"You have {daily_remaining:,} credits remaining today. "
-                    f"Consider purchasing additional credits to avoid interruption."
-                )
-
-        logger.info(
-            f"Consumed {credits} subscription credits for user {user.id} "
-            f"(operation: {operation}). "
-            f"Total used: {updated_user.credits_used}/{updated_user.credits_hard_cap}"
-            + (
-                f", Daily used: {updated_user.credits_used_today}/{updated_user.credits_daily_limit}"
-                if tier_str == "FREE"
-                else ""
-            )
+    A pass holder working in a Space spends the Space's credits, not their pass, and neither the
+    window nor the entitlement is involved (Decision F).
+    """
+    is_available, _ = await check_credit_availability(user, units, space_id=space_id)
+    if not is_available:
+        raise SubscriptionLimitError(
+            message="Space credit limit exceeded.",
+            detail=f"This operation requires {units} credits, which exceeds the space's limit.",
         )
 
-        return CreditConsumptionResult(
-            user=updated_user,
-            credits_consumed=credits,
-            source="subscription",
-            subscription_deducted=credits,
-            purchased_deducted=0,
-            warning=warning_message,
-            notice=None,
-            purchased_balance_remaining=updated_user.purchased_credits_balance or 0,
+    from sqlalchemy import update as sa_update
+
+    from src.domains.learning_spaces.db_models import Space
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            sa_update(Space).where(Space.id == space_id).values(credits=Space.credits + units)
         )
+        await session.commit()
 
-    # Case 3: Subscription partially covers - split consumption
-    if remaining_subscription > 0 and purchased_balance >= (credits - remaining_subscription):
-        shortfall = credits - remaining_subscription
+    logger.info("Consumed %d credits for space %s (operation: %s)", units, space_id, operation)
+    now = datetime.now(UTC)
+    return CreditConsumptionResult(
+        user=user,
+        units_consumed=units,
+        window_resets_at=now,
+        window_units_used=0,
+        window_allowance=0,
+        warning=None,
+    )
 
-        # Update: consume remaining subscription + deduct from purchased
-        update_data = {
-            "creditsUsed": hard_cap,
-            "purchasedCreditsBalance": purchased_balance - shortfall,
-        }
-        if tier_str == "FREE":
-            update_data["creditsUsedToday"] = (user.credits_used_today or 0) + credits
 
-        await identity_repo.update(user.id, update_data)
+async def _notify_limit_reached(user: User, state: WindowState) -> None:
+    """Email a learner who has run out, at most once a day.
 
-        # Refresh user after update
-        updated_user = await identity_repo.find_by_id(user.id)
-        new_purchased_balance = updated_user.purchased_credits_balance or 0
+    **Deduped per day, not per window**, which is a deliberate deviation from the plan's "the
+    dedupe key moves from period to window". A 5-hour window permits 4.8 windows a day, so a
+    per-window key would mail a heavy free learner up to five times daily where the old behaviour was
+    once a month. The in-app refusal already carries the reset time and is the right place to say
+    "your allowance is back at 3:40 PM"; an email is for the learner who is not looking at the app,
+    and that learner needs telling once.
 
-        notice = (
-            f"Subscription credits exhausted. {shortfall:,} credits consumed from purchased balance. "
-            f"Remaining purchased credits: {new_purchased_balance:,}."
-        )
-
-        logger.info(
-            f"Split consumption for user {user.id} (operation: {operation}): "
-            f"subscription={remaining_subscription}, purchased={shortfall}. "
-            f"Purchased balance: {purchased_balance} -> {new_purchased_balance}"
-        )
-
-        return CreditConsumptionResult(
-            user=updated_user,
-            credits_consumed=credits,
-            source="both",
-            subscription_deducted=remaining_subscription,
-            purchased_deducted=shortfall,
-            warning=None,
-            notice=notice,
-            purchased_balance_remaining=new_purchased_balance,
-        )
-
-    # Case 4: Subscription exhausted, purchased credits cover entirely
-    if remaining_subscription == 0 and purchased_balance >= credits:
-        new_purchased_balance = purchased_balance - credits
-        updated_user = await identity_repo.update(
-            user.id,
-            {
-                "purchasedCreditsBalance": new_purchased_balance,
-            },
-        )
-        new_purchased_balance = updated_user.purchased_credits_balance or 0
-
-        notice = (
-            f"Subscription credits exhausted. {credits:,} credits consumed from purchased balance. "
-            f"Remaining purchased credits: {new_purchased_balance:,}."
-        )
-
-        logger.info(
-            f"Consumed {credits} purchased credits for user {user.id} "
-            f"(subscription exhausted, operation: {operation}). "
-            f"Purchased balance: {purchased_balance} -> {new_purchased_balance}"
-        )
-
-        return CreditConsumptionResult(
-            user=updated_user,
-            credits_consumed=credits,
-            source="purchased",
-            subscription_deducted=0,
-            purchased_deducted=credits,
-            warning=None,
-            notice=notice,
-            purchased_balance_remaining=new_purchased_balance,
-        )
-
-    # Case 5: Both subscription and purchased credits insufficient
-    # Send limit-reached email for FREE tier (once per period)
-    if tier_str == "FREE":
-        period_end = user.credits_period_end
-        if period_end:
-            try:
-                factory = get_session_factory()
-                async with factory() as session:
-                    stmt = select(LimitReachedEmailLog).where(
+    The log row is the dedupe key, so it may only be written for a send that actually happened. It
+    used to be written unconditionally, and because the mailer swallows delivery failures a rejected
+    send still marked the period as notified — observed 2026-08-31 with a Gmail `535 5.7.8`.
+    """
+    day_key = state.resets_at.replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            existing = (
+                await session.execute(
+                    select(LimitReachedEmailLog).where(
                         LimitReachedEmailLog.user_id == user.id,
-                        LimitReachedEmailLog.period_end == period_end,
+                        LimitReachedEmailLog.window_day == day_key,
                     )
-                    result = await session.execute(stmt)
-                    existing = result.scalar_one_or_none()
-                if not existing:
-                    # The log row is the per-period dedupe key, so it may only be written for a send
-                    # that actually happened. It used to be written unconditionally, and because the
-                    # mailer swallows delivery failures that meant a rejected send still marked the
-                    # period as notified — the learner then could not be told again. Observed
-                    # 2026-08-31 with a Gmail `535 5.7.8` credential rejection.
-                    delivered = await send_limit_reached_email(
-                        email=user.email,
-                        name=user.name or None,
-                    )
-                    if delivered:
-                        async with factory() as session:
-                            log_entry = LimitReachedEmailLog(
-                                user_id=user.id,
-                                period_end=period_end,
-                            )
-                            session.add(log_entry)
-                            await session.commit()
-                    else:
-                        logger.warning(
-                            "Limit-reached email was not delivered to user %s; not recording it as "
-                            "sent, so it will be retried on the next refusal this period.",
-                            user.id,
-                        )
-            except Exception as e:
-                logger.warning(f"Failed to send limit reached email to {user.id}: {e}")
+                )
+            ).scalar_one_or_none()
+        if existing:
+            return
 
-    # Determine error message based on state
-    if purchased_balance > 0:
-        # Purchased balance positive but insufficient for the operation
-        shortfall = credits - remaining_subscription
-        raise SubscriptionLimitError(
-            message=(
-                f"Insufficient credits. This operation requires {shortfall:,} credits "
-                f"from purchased balance, but you only have {purchased_balance:,} purchased credits remaining."
-            ),
-            detail=(
-                f"credits_required={shortfall}, purchased_balance={purchased_balance}, "
-                f"purchase_deep_link={PURCHASE_DEEP_LINK}"
-            ),
-        )
-    else:
-        # Both fully exhausted
-        raise SubscriptionLimitError(
-            message=(
-                f"Credit limit exceeded. You've used {credits_used:,} of {hard_cap:,} "
-                f"subscription credits and have no purchased credits remaining. "
-                f"Purchase credits to continue or wait for your next period reset."
-            ),
-            detail=(
-                f"This operation requires {credits} credits. "
-                f"purchase_deep_link={PURCHASE_DEEP_LINK}"
-            ),
-        )
+        delivered = await send_limit_reached_email(email=user.email, name=user.name or None)
+        if not delivered:
+            logger.warning(
+                "Limit-reached email was not delivered to user %s; not recording it as sent, so it "
+                "will be retried on the next refusal today.",
+                user.id,
+            )
+            return
+
+        async with factory() as session:
+            session.add(LimitReachedEmailLog(user_id=user.id, window_day=day_key))
+            await session.commit()
+    except Exception as e:
+        logger.warning("Failed to send limit reached email to %s: %s", user.id, e)
+
+
+# ===========================================================================
+# Reads
+# ===========================================================================
 
 
 async def get_credit_usage(user: User, db_client: Any | None = None) -> dict:
+    """What the learner is shown: a percentage and a reset time, never a unit count.
+
+    Units are a COGS accounting device and mean nothing to a learner; a raw number invites exactly
+    the arithmetic we do not want them doing, and it would leak our cost basis into the UI. The
+    marketing states concrete equivalents instead — "about 15 minutes of live voice tutoring" — which
+    is checkable and true.
+
+    `monthlyPercentUsed` appears only above 80% of the backstop, because a limit a learner never
+    reaches is better not mentioned: naming it invites them to plan around a number that was designed
+    not to bind.
     """
-    Get current credit usage information for a user.
+    from src.domains.billing.services import entitlement_service
 
-    Includes purchased credits balance and total available credits.
-
-    Args:
-        user: User model instance
-        db_client: Optional (kept for backward compat, ignored)
-
-    Returns:
-        Dictionary with credit usage information including purchased credits
-    """
     identity_repo = IdentityRepository()
-
-    # Ensure credit period is active
-    user = await ensure_credit_period(user)
-
-    # Reset daily credits if needed (for FREE tier)
-    user = await reset_daily_credits_if_needed(user)
-
-    # Refresh user from database
-    user = await identity_repo.find_by_id(user.id)
-    if not user:
+    fresh = await identity_repo.find_by_id(user.id)
+    if not fresh:
         raise ValueError(f"User {user.id} not found")
 
-    tier_str = str(user.tier) if user.tier else "FREE"
-    credits_used = user.credits_used or 0
-    hard_cap = user.credits_hard_cap or 0
-    soft_cap = user.credits_soft_cap or 0
-    purchased_balance = user.purchased_credits_balance or 0
+    entitlement = await entitlement_service.resolve(fresh.id)
+    state = window_state(fresh)
+    allowance = entitlement.window_allowance
 
-    usage_percentage = (credits_used / hard_cap * 100) if hard_cap > 0 else 0
-    soft_cap_percentage = (soft_cap / hard_cap * 100) if hard_cap > 0 else 0
-    subscription_remaining = max(0, hard_cap - credits_used)
-    total_available = subscription_remaining + purchased_balance
+    percent_used = round(min(100.0, state.units_used / allowance * 100), 1) if allowance else 0.0
 
-    result = {
-        "credits_used": credits_used,
-        "credits_remaining": subscription_remaining,
-        "hard_cap": hard_cap,
-        "soft_cap": soft_cap,
-        "usage_percentage": round(usage_percentage, 2),
-        "soft_cap_percentage": round(soft_cap_percentage, 2),
-        "period_start": (
-            user.credits_period_start.isoformat() if user.credits_period_start else None
-        ),
-        "period_end": (user.credits_period_end.isoformat() if user.credits_period_end else None),
-        "is_soft_cap_reached": soft_cap > 0 and credits_used >= soft_cap,
-        "is_hard_cap_reached": hard_cap > 0 and credits_used >= hard_cap,
-        "purchased_credits_balance": purchased_balance,
-        "total_available": total_available,
+    result: dict[str, Any] = {
+        "tier": entitlement.tier,
+        "windowResetsAt": state.resets_at.isoformat(),
+        "percentUsed": percent_used,
+        "isExhausted": allowance > 0 and state.units_used >= allowance,
     }
 
-    # Add daily usage info for FREE tier
-    if tier_str == "FREE":
-        credits_used_today = user.credits_used_today or 0
-        daily_limit = user.credits_daily_limit or 0
-        daily_usage_percentage = (credits_used_today / daily_limit * 100) if daily_limit > 0 else 0
-        is_daily_limit_reached = daily_limit > 0 and credits_used_today >= daily_limit
-        result.update(
-            {
-                "credits_used_today": credits_used_today,
-                "credits_remaining_today": max(0, daily_limit - credits_used_today),
-                "daily_limit": daily_limit,
-                "daily_usage_percentage": round(daily_usage_percentage, 2),
-                "is_daily_limit_reached": is_daily_limit_reached,
-                "next_daily_reset": (
-                    (datetime.utcnow() + timedelta(days=1))
-                    .replace(hour=0, minute=0, second=0, microsecond=0)
-                    .isoformat()
-                ),
-                "purchased_credits_available_after_daily_limit": (
-                    purchased_balance > 0 and is_daily_limit_reached
-                ),
-            }
-        )
+    backstop = entitlement.monthly_backstop
+    if backstop:
+        monthly_percent = min(100.0, state.month_units_used / backstop * 100)
+        # `monthlyExhausted` is reported whether or not the percentage is, because a refusal has to
+        # know which limit bound it: the backstop's remedy is not "wait five hours". The *percentage*
+        # stays hidden below the disclosure threshold; the boolean is only ever true at the point
+        # where hiding it would mean refusing without saying why.
+        result["monthlyExhausted"] = state.month_units_used >= backstop
+        if monthly_percent >= BACKSTOP_DISCLOSURE_FRACTION * 100:
+            result["monthlyPercentUsed"] = round(monthly_percent, 1)
 
     return result
-
-
-async def reset_credits_for_period_start(
-    user: User,
-    period_start: datetime,
-    period_end: datetime,
-    db_client: Any | None = None,
-) -> User:
-    """
-    Reset credits when a new subscription period starts.
-
-    Args:
-        user: User model instance
-        period_start: Start of new period
-        period_end: End of new period
-        db_client: Optional (kept for backward compat, ignored)
-
-    Returns:
-        Updated User object
-    """
-    logger.info(
-        f"Resetting credits for user {user.id} - new period: {period_start} to {period_end}"
-    )
-
-    return await initialize_user_credits(user, period_start, period_end)

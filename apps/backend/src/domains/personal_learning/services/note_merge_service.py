@@ -40,7 +40,7 @@ import logging
 from typing import Any
 
 from src.domains.billing.services.credit_consumption_service import (
-    CREDIT_COSTS,
+    ESTIMATED_OPERATION_UNITS,
     check_credit_availability,
     consume_credits,
 )
@@ -121,7 +121,7 @@ async def merge_notes(user: User, *, note_ids: list[str]) -> Any:
     # which is the client's display order — newest first — and is the wrong way round for this.
     notes.sort(key=lambda note: note.created_at)
 
-    cost = CREDIT_COSTS.get("note_merge", 100)
+    cost = ESTIMATED_OPERATION_UNITS["note_merge"]
     available, message = await check_credit_availability(user, cost)
     if not available:
         raise SubscriptionLimitError(

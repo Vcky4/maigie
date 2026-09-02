@@ -25,7 +25,7 @@ from sqlalchemy import func, select
 
 from src.config import settings
 from src.domains.billing.services.credit_consumption_service import (
-    PURCHASE_DEEP_LINK,
+    UPGRADE_DEEP_LINK,
 )
 from src.domains.identity.repository import IdentityRepository
 from src.domains.intelligence.conversation import (
@@ -675,10 +675,14 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                     "type": "credit_limit_error",
                                     "message": refused.refusal.message,
                                     "tier": refused.refusal.tier,
-                                    "is_daily_limit": refused.refusal.is_daily_limit,
-                                    "show_referral_option": True,
+                                    # `is_daily_limit` is replaced by a timestamp so the client can
+                                    # count down instead of branching on which cap it was.
+                                    # `show_referral_option` is gone: it offered a referral reward
+                                    # that no longer grants usage (Decision O), so it advertised a
+                                    # remedy that would not have helped.
+                                    "windowResetsAt": refused.refusal.window_resets_at,
                                     "blocked": True,
-                                    "purchaseDeepLink": PURCHASE_DEEP_LINK,
+                                    "upgradeDeepLink": UPGRADE_DEEP_LINK,
                                     "sessionId": session.id,
                                     "requestId": ai_request_id,
                                     "replyToMessageId": ai_reply_target_id,
@@ -700,15 +704,16 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             await manager.send_connection_json(
                                 {
                                     "type": "credit_limit_error",
-                                    "message": (
-                                        f"{e.message} Start a free trial for more credits, or refer "
-                                        f"friends to earn bonus credits!"
-                                    ),
+                                    # The meter's own message, unembellished. It used to be suffixed
+                                    # with "Start a free trial for more credits, or refer friends to
+                                    # earn bonus credits!" — appended to a refusal that already says
+                                    # what to do, offering a referral reward that grants no usage
+                                    # (Decision O) and a trial the learner may have already spent.
+                                    "message": e.message,
                                     "tier": (str(user_obj.tier) if user_obj.tier else "FREE"),
-                                    "is_daily_limit": False,
-                                    "show_referral_option": True,
+                                    "windowResetsAt": e.window_resets_at,
                                     "blocked": True,
-                                    "purchaseDeepLink": PURCHASE_DEEP_LINK,
+                                    "upgradeDeepLink": UPGRADE_DEEP_LINK,
                                     "sessionId": session.id,
                                     "requestId": ai_request_id,
                                     "replyToMessageId": ai_reply_target_id,
@@ -899,21 +904,22 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             )
 
                         # 14b. Send credit info (warning/notice) if applicable
-                        if credit_result:
-                            credit_info = {}
-                            if credit_result.warning:
-                                credit_info["warning"] = credit_result.warning
-                            if credit_result.notice:
-                                credit_info["notice"] = credit_result.notice
-                            if credit_info:
-                                credit_info["type"] = "credit_info"
-                                credit_info["purchaseDeepLink"] = PURCHASE_DEEP_LINK
-                                credit_info["purchasedCreditsRemaining"] = (
-                                    credit_result.purchased_balance_remaining
-                                )
-                                credit_info["sessionId"] = session.id
-                                credit_info["requestId"] = ai_request_id
-                                await manager.send_json(credit_info, user.id)
+                        # `notice` and `purchasedCreditsRemaining` are gone from this frame with the
+                        # purchased balance they described (§6.1). One warning, at 80% of the window,
+                        # carrying the moment it refills — which is what a learner needs in order to
+                        # decide whether to keep going or come back.
+                        if credit_result and credit_result.warning:
+                            await manager.send_json(
+                                {
+                                    "type": "credit_info",
+                                    "warning": credit_result.warning,
+                                    "windowResetsAt": credit_result.window_resets_at.isoformat(),
+                                    "upgradeDeepLink": UPGRADE_DEEP_LINK,
+                                    "sessionId": session.id,
+                                    "requestId": ai_request_id,
+                                },
+                                user.id,
+                            )
 
                         # 15. When split, suggestion is in assistant_final; no separate send needed
 

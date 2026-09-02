@@ -82,27 +82,27 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         "googlePlayProductId", String, nullable=True
     )
 
-    # Credits
-    credits_used: Mapped[int] = mapped_column("creditsUsed", Integer, default=0, server_default="0")
-    credits_period_start: Mapped[datetime | None] = mapped_column(
-        "creditsPeriodStart", DateTime(timezone=True), nullable=True
+    # Usage meter (MAIGIE_PLUS_COMMERCIAL_PLAN.md §6.2)
+    #
+    # Four columns replaced nine. The nine described a monthly period, a daily sub-period, a soft
+    # cap, a hard cap and a purchased balance — five interacting quantities for one question ("may
+    # this operation run?"). These two pairs answer it: a rolling 5-hour window that the product is
+    # built around, and a calendar month that exists only as an abuse backstop.
+    #
+    # `usageWindowStartedAt` is null for a learner who has never run a billable operation, and the
+    # meter treats null as "elapsed", so the first operation opens the window. There is no
+    # initialisation step and therefore no user who can be missing one.
+    usage_window_started_at: Mapped[datetime | None] = mapped_column(
+        "usageWindowStartedAt", DateTime(timezone=True), nullable=True
     )
-    credits_period_end: Mapped[datetime | None] = mapped_column(
-        "creditsPeriodEnd", DateTime(timezone=True), nullable=True
+    usage_window_units_used: Mapped[int] = mapped_column(
+        "usageWindowUnitsUsed", Integer, default=0, server_default="0"
     )
-    credits_soft_cap: Mapped[int | None] = mapped_column("creditsSoftCap", Integer, nullable=True)
-    credits_hard_cap: Mapped[int | None] = mapped_column("creditsHardCap", Integer, nullable=True)
-    purchased_credits_balance: Mapped[int] = mapped_column(
-        "purchasedCreditsBalance", Integer, default=0, server_default="0"
+    usage_month_started_at: Mapped[datetime | None] = mapped_column(
+        "usageMonthStartedAt", DateTime(timezone=True), nullable=True
     )
-    credits_used_today: Mapped[int] = mapped_column(
-        "creditsUsedToday", Integer, default=0, server_default="0"
-    )
-    credits_daily_limit: Mapped[int | None] = mapped_column(
-        "creditsDailyLimit", Integer, nullable=True
-    )
-    last_daily_reset: Mapped[datetime | None] = mapped_column(
-        "lastDailyReset", DateTime(timezone=True), nullable=True
+    usage_month_units_used: Mapped[int] = mapped_column(
+        "usageMonthUnitsUsed", Integer, default=0, server_default="0"
     )
 
     # Feature usage (FREE tier)
@@ -366,7 +366,14 @@ class ModelPreference(Base, TimestampMixin):
 
 
 class LimitReachedEmailLog(Base):
-    """Tracks limit-reached emails to avoid spam."""
+    """Tracks limit-reached emails to avoid spam.
+
+    Deduped by **day**, not by usage window. A 5-hour window permits 4.8 windows a day, so keying
+    this on the window would mail a heavy free learner up to five times daily where the old monthly
+    period mailed them once. The in-app refusal carries the reset time and is the right surface for
+    "your allowance is back at 3:40 PM"; the email exists for the learner who is not looking at the
+    app, and they need telling once.
+    """
 
     __tablename__ = "LimitReachedEmailLog"
 
@@ -376,8 +383,8 @@ class LimitReachedEmailLog(Base):
     user_id: Mapped[str] = mapped_column(
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
-    period_end: Mapped[datetime] = mapped_column(
-        "periodEnd", DateTime(timezone=True), nullable=False
+    window_day: Mapped[datetime] = mapped_column(
+        "windowDay", DateTime(timezone=True), nullable=False
     )
     sent_at: Mapped[datetime] = mapped_column(
         "sentAt",
@@ -386,5 +393,10 @@ class LimitReachedEmailLog(Base):
     )
 
     __table_args__ = (
-        Index("LimitReachedEmailLog_userId_periodEnd_key", "userId", "periodEnd", unique=True),
+        Index(
+            "LimitReachedEmailLog_userId_windowDay_key",
+            "userId",
+            "windowDay",
+            unique=True,
+        ),
     )

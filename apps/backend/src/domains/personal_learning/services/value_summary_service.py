@@ -139,7 +139,11 @@ async def generate_monthly_summary(user_id: str) -> ValueSummary:
 
     # Build detail message
     detail = _build_detail_message(
-        docs_count, flashcards_reviewed, quizzes_taken, plan_items_completed, plus_features
+        docs_count,
+        flashcards_reviewed,
+        quizzes_taken,
+        plan_items_completed,
+        plus_features,
     )
 
     # Determine top features
@@ -421,7 +425,10 @@ async def _get_days_until_renewal(user_id: str) -> int | None:
 
         from src.domains.identity.db_models import User
 
-        stmt = select(User.credits_period_end).where(User.id == user_id)
+        # `subscriptionCurrentPeriodEnd`, not the retired `creditsPeriodEnd` mirror of it. Renewal is
+        # a billing fact; the credit period was a copy kept in step by a reset job that Phase 3
+        # deleted.
+        stmt = select(User.subscription_current_period_end).where(User.id == user_id)
         result = await session.execute(stmt)
         period_end = result.scalar_one_or_none()
 

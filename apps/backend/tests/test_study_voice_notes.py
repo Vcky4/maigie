@@ -15,6 +15,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.domains.billing.services.credit_consumption_service import (
+    ESTIMATED_OPERATION_UNITS,
+)
 from src.domains.study_voice import notes
 from src.domains.study_voice import transcript as transcript_module
 from src.domains.study_voice.session_store import VoiceSession
@@ -252,7 +255,11 @@ async def test_nothing_is_generated_when_the_learner_cannot_pay(
 async def test_the_charge_happens_after_the_note_exists(note_world, user, session, conversation):
     """A generation that failed is not something to bill for."""
     await notes.save_session_note(user, session, conversation)
-    assert note_world.charged == [(100, "voice_session_note")]
+    # Read from the table rather than retyped, so the estimate can be re-derived without editing a
+    # test that is about *when* the charge happens rather than about what it is.
+    assert note_world.charged == [
+        (ESTIMATED_OPERATION_UNITS["voice_session_note"], "voice_session_note")
+    ]
 
 
 @pytest.mark.asyncio

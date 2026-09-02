@@ -282,10 +282,10 @@ class Settings(BaseSettings):
     #: minted it; this proves it was *our* subscription. Optional but strongly recommended.
     GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL: str = ""
 
-    # Credit pack product IDs (in-app products, consumable)
-    GOOGLE_PLAY_SKU_CREDIT_STARTER: str = "credit_pack_starter"
-    GOOGLE_PLAY_SKU_CREDIT_VALUE: str = "credit_pack_value"
-    GOOGLE_PLAY_SKU_CREDIT_POWER: str = "credit_pack_power"
+    # The three `GOOGLE_PLAY_SKU_CREDIT_*` product IDs are gone with credit packs (§6.1). They must
+    # not simply be renamed to pass SKUs: these were never created in the Play Console, and a pass
+    # is a different kind of consumable — bought as inventory, activated later (Decision A). The
+    # pass SKUs land with the purchase rails, alongside their App Store counterparts.
 
     # --- BunnyCDN Storage ---
     BUNNY_CDN_API_KEY: str | None = None
@@ -390,34 +390,46 @@ class Settings(BaseSettings):
 
     # --- Gemini Live (voice) — was scattered os.getenv reads; keep in Settings ---
     #
-    #: Pre-multiplier credits charged per minute of billable voice. **Was 100.0**, which priced a
-    #: voice minute as if it were 100 tokens of text.
+    #: Usage units charged per minute of billable voice.
     #:
-    #: A conversational minute of `gemini-3.1-flash-live-preview` costs about **$0.023** — roughly
-    #: $0.005/min of audio in and $0.018/min out. A token of text on the model Plus learners use
-    #: (`gemini-3.5-flash`, $1.50/$9.00 per 1M) costs about $0.0000020 at a realistic 8 000-in /
-    #: 600-out mix. So a voice minute costs what ~11 400 text tokens cost, and was billed as 100:
-    #: **under-priced by about 100×.**
+    #: **This was the largest single mispricing in the product.** It began at 100.0, which priced a
+    #: voice minute as if it were 100 tokens of text. A conversational minute of
+    #: `gemini-3.1-flash-live-preview` costs about **$0.023** — roughly $0.005/min of audio in and
+    #: $0.018/min out — while a text token on `gemini-3.5-flash` ($1.50/$9.00 per 1M) costs about
+    #: $0.0000020 at a realistic 8 000-in / 600-out mix. A voice minute therefore cost what ~11 400
+    #: text tokens cost, and was billed as 100: **under-priced by about 100×.** Against a 5 000/day
+    #: free cap and no tier gate on `study_voice` at all, a free learner could run ~250 minutes of
+    #: live voice a day — about $170/month, at zero revenue.
     #:
-    #: `study_voice/billing.py` had flagged this as "a pricing question flagged in the design
-    #: document, not a bug here" and nobody answered it. What it cost in the meantime: free tier is
-    #: 5 000 charged credits/day, so at 20 effective credits/minute a free learner could run **250
-    #: minutes of live voice per day** — about $5.75/day, $170/month, at zero revenue, with no tier
-    #: gate on `study_voice` at all.
+    #: `study_voice/billing.py` had flagged it as "a pricing question flagged in the design document,
+    #: not a bug here", which is how it survived: nothing was broken, no test failed, and the comment
+    #: that noticed the problem also gave the reader permission to move on.
+    #: **Now denominated in usage units, so this is a cost and not a coefficient.** A unit is
+    #: $0.0001 of measured COGS (§6.2), a conversational minute of `gemini-3.1-flash-live-preview`
+    #: costs about $0.023, and 230 would be the arithmetic. 200 is the §6.3 figure: still a little
+    #: under, still erring towards the learner, and a round number the marketing can be checked
+    #: against — a free window of 500 units is 2.5 minutes of voice, which is what §6.1's
+    #: `usage_note` says.
     #:
-    #: 10 000 is deliberately a little under the ~11 400 the arithmetic gives: the figure should
-    #: err towards the learner while remaining the right order of magnitude. At this rate a
-    #: `PREMIUM_MONTHLY` allowance of 300 000 charged credits is ~150 minutes of voice per month,
-    #: which is close to what $4.99 can actually fund, and a free learner gets ~2.5 minutes/day —
-    #: a taster rather than a service. Phase 3 replaces both caps with the §6.3 windows.
-    GEMINI_LIVE_CREDITS_PER_MINUTE: float = 10_000.0
-    #: Wall-clock session floor, pre-multiplier, charged at settlement for FREE sessions only. Was
-    #: 500, which at the corrected rate is three seconds — the floor has to be at least a minute or
-    #: it stops being a floor. Also the pre-start availability check, so it doubles as "can this
-    #: learner afford to begin at all".
-    GEMINI_LIVE_MIN_SESSION_CREDITS: int = 10_000
+    #: The 10 000 this replaces was the same correction expressed in the old token denomination,
+    #: where it had to be 10 000 because a "credit" was a token and a voice minute cost what ~11 400
+    #: text tokens cost. Nothing about the price changed here; the unit did, and 200 units of
+    #: measured cost is the same money as 10 000 pre-multiplier tokens was meant to be. That the two
+    #: figures differ by 50× is the whole argument for denominating in cost: a rate expressed in
+    #: tokens has to be re-derived every time a model's price moves, and this one was not re-derived
+    #: for the life of the feature.
+    GEMINI_LIVE_UNITS_PER_MINUTE: float = 200.0
+    #: Wall-clock session floor in units, charged at settlement for FREE sessions only, and also the
+    #: pre-start availability check — so it doubles as "can this learner afford to begin at all".
+    #: One minute's worth: a floor shorter than a minute stops being a floor, and a longer one would
+    #: charge a learner for time they did not get.
+    GEMINI_LIVE_MIN_SESSION_UNITS: int = 200
     GEMINI_LIVE_STANDBY_IDLE_SECONDS: float = 2.5
     GEMINI_LIVE_BILLING_TICK_SECONDS: float = 2.0
+    #: Accrued units to batch before writing. Unchanged at 50, but its *meaning* changed with the
+    #: denomination: against the old 10 000/minute rate it was 0.3 seconds of audio, so it flushed on
+    #: essentially every 2-second tick and the batching it exists for never happened. At 200/minute
+    #: it is 15 seconds, which is what a batch was supposed to be.
     GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK: int = 50
     GEMINI_LIVE_BILLING_FLUSH_INTERVAL_SECONDS: float = 60.0
     #: Silence this long ends a voice session, in seconds. Ten minutes.

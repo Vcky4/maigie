@@ -71,31 +71,13 @@ def check_streaks_task():
         loop.close()
 
 
-@celery_app.task(name="progress.daily_credit_reset", queue="default", time_limit=30)
-def daily_credit_reset_task():
-    """Reset daily credit counters for free tier users."""
-    import asyncio
-
-    async def _reset():
-        from sqlalchemy import text
-
-        from src.shared.database import get_session_factory
-
-        factory = get_session_factory()
-        async with factory() as session:
-            await session.execute(
-                text(
-                    'UPDATE "User" SET "creditsUsedToday" = 0 WHERE "creditsUsedToday" > 0 AND role = \'USER\''
-                )
-            )
-            await session.commit()
-        logger.info("Daily credit reset complete")
-
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(_reset())
-    finally:
-        loop.close()
+# `progress.daily_credit_reset` is deleted (drift 13). It zeroed `creditsUsedToday` for every
+# `role = 'USER'` row on a schedule. The daily cap it served applied to the free tier only and has
+# been replaced by a 5-hour window that rolls over on read, so there is no counter to sweep.
+#
+# Its `WHERE role = 'USER'` was also a quiet exemption: staff accounts kept whatever they had
+# accumulated, so a staff member who ever hit the daily cap stayed capped indefinitely. Nobody
+# noticed, which says how much the daily cap was doing.
 
 
 @celery_app.task(
@@ -178,10 +160,14 @@ def review_goal_lifecycle_task():
 def get_beat_schedule() -> dict:
     """Beat entries for the progress domain.
 
-    Only the goal snapshot is listed. `progress.process_spaced_repetition`, `progress.check_streaks`
-    and `progress.daily_credit_reset` are registered above but have never had a schedule — that is a
+    Only the goal snapshot is listed. `progress.process_spaced_repetition` and
+    `progress.check_streaks` are registered above but have never had a schedule — that is a
     pre-existing gap, and scheduling a sweep that has not been running is a behaviour change rather
     than wiring, so it is left alone and recorded here instead of quietly switched on.
+
+    `progress.daily_credit_reset` was the third name on that list. It is now deleted rather than
+    unscheduled, and the fact that it never ran is worth keeping in view: the daily credit cap it
+    existed to clear was therefore never cleared, so every learner who hit it stayed at it.
     """
     from celery.schedules import crontab
 
