@@ -237,6 +237,17 @@ class Settings(BaseSettings):
     # --- Paystack (Nigeria) ---
     PAYSTACK_SECRET_KEY: str = ""
     PAYSTACK_PUBLIC_KEY: str = ""
+    # NGN prices in kobo. Set for Nigeria, not converted from USD — at FX parity $4.99 is about
+    # ₦6 900, which would put Maigie Plus above Netflix Standard for a Nigerian student. See
+    # MAIGIE_PLUS_COMMERCIAL_PLAN.md §6.8.
+    #
+    # All three sit deliberately **under ₦2 500**, which is where Paystack's flat ₦100 fee starts
+    # applying on top of the 1.5%. Pricing the subscription at ₦2 500 would turn a ₦36 fee into
+    # ₦137 for one naira of extra revenue; at ₦900 the flat fee would have been 14% of a pass. Do
+    # not round any of these up without re-reading that.
+    PRICE_NGN_PLUS_PASS_5H: int = 70_000  # ₦700
+    PRICE_NGN_PLUS_PASS_7D: int = 180_000  # ₦1 800
+    PRICE_NGN_PLUS_MONTHLY: int = 240_000  # ₦2 400
     # Plan codes (create plans in Paystack Dashboard, amounts in NGN)
     PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY: str = ""
     PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY: str = ""

@@ -177,6 +177,13 @@ class PaystackInitializeResponse(BaseModel):
     authorization_url: str
     access_code: str | None = None
     reference: str | None = None
+    # `initialize_paystack_subscription` computes both — Paystack has no plan-change API, so an
+    # upgrade is cancel-and-resubscribe, and the client needs to know that is what just happened.
+    # They were being returned by the service and dropped here, silently, because Pydantic ignores
+    # extra keys by default. The Stripe response has carried the equivalent pair since it was
+    # written; this is the same information on the other rail.
+    is_modification: bool = False
+    is_upgrade: bool | None = None
 
 
 class PaystackVerifyResponse(BaseModel):

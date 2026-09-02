@@ -10421,6 +10421,121 @@
         "title": "PaginatedResponse[StudyPlanSummaryResponse]",
         "type": "object"
       },
+      "PaystackInitializeRequest": {
+        "description": "Initialize Paystack subscription.",
+        "properties": {
+          "cancel_url": {
+            "default": "",
+            "title": "Cancel Url",
+            "type": "string"
+          },
+          "plan_id": {
+            "enum": [
+              "maigie_plus_monthly",
+              "plus_monthly",
+              "circle_plan_monthly",
+              "plus_seat_add_on_monthly",
+              "plus_pass_5h",
+              "plus_pass_7d",
+              "maigie_plus_yearly",
+              "plus_yearly",
+              "study_circle_monthly",
+              "study_circle_yearly",
+              "squad_monthly",
+              "squad_yearly"
+            ],
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "success_url": {
+            "default": "",
+            "title": "Success Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plan_id"
+        ],
+        "title": "PaystackInitializeRequest",
+        "type": "object"
+      },
+      "PaystackInitializeResponse": {
+        "description": "Paystack initialization result.",
+        "properties": {
+          "access_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Code"
+          },
+          "authorization_url": {
+            "title": "Authorization Url",
+            "type": "string"
+          },
+          "is_modification": {
+            "default": false,
+            "title": "Is Modification",
+            "type": "boolean"
+          },
+          "is_upgrade": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Upgrade"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          }
+        },
+        "required": [
+          "authorization_url"
+        ],
+        "title": "PaystackInitializeResponse",
+        "type": "object"
+      },
+      "PaystackVerifyResponse": {
+        "description": "Paystack verification result.",
+        "properties": {
+          "paystack_subscription_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paystack Subscription Code"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier"
+        ],
+        "title": "PaystackVerifyResponse",
+        "type": "object"
+      },
       "PendingDeletionResponse": {
         "description": "Account deletion countdown info.",
         "properties": {
@@ -21820,6 +21935,103 @@
           }
         ],
         "summary": "Google Play Verify",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/subscriptions/paystack/initialize": {
+      "post": {
+        "description": "Initialize a Paystack subscription (NGN).",
+        "operationId": "paystack_initialize_api_v1_billing_subscriptions_paystack_initialize_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaystackInitializeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaystackInitializeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Paystack Initialize",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/subscriptions/paystack/verify": {
+      "get": {
+        "description": "Verify a Paystack transaction after the learner returns from the payment page.",
+        "operationId": "paystack_verify_api_v1_billing_subscriptions_paystack_verify_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "reference",
+            "required": true,
+            "schema": {
+              "title": "Reference",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaystackVerifyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Paystack Verify",
         "tags": [
           "billing",
           "billing"
