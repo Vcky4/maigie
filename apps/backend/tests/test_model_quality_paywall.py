@@ -416,3 +416,87 @@ class TestTheQualitySplitAtTheChokepoint:
             parameter = inspect.signature(fn).parameters.get("model")
             assert parameter is not None, f"{fn.__name__} takes no model"
             assert parameter.default is None, f"{fn.__name__} should default to CHAT_DEFAULT"
+
+
+# ---------------------------------------------------------------------------
+# Turning a provider off has to turn it off everywhere
+# ---------------------------------------------------------------------------
+
+
+class TestTheGlobalProviderSwitchReachesGeneration:
+    """`LLM_ENABLED_PROVIDERS` reached the chat path and nothing else.
+
+    `router.py`'s own docstring states the rule — "turning a provider off must turn it off
+    everywhere" — and `llm_resilient` was the half of *everywhere* that was missing. It hardcoded
+    `["gemini", "openai", "anthropic"]` for fallbacks and checked a learner's stored preference
+    against `SUPPORTED_PROVIDERS`, so disabling OpenAI in production would have left it serving all
+    27 generation surfaces.
+
+    This matters beyond tidiness because the quality split only exists on the Gemini path: a
+    fallback to OpenAI gets a model no allowlist was consulted about, and possibly a dearer one than
+    the Plus model the split was avoiding.
+    """
+
+    @staticmethod
+    def _enable(monkeypatch, value):
+        from src.config import get_settings
+        from src.domains.personal_learning.services import llm_resilient
+
+        monkeypatch.setattr(get_settings(), "LLM_ENABLED_PROVIDERS", value, raising=False)
+        return llm_resilient
+
+    def test_a_disabled_provider_is_not_a_fallback(self, monkeypatch):
+        llm_resilient = self._enable(monkeypatch, "gemini")
+        assert llm_resilient._get_fallback_providers("gemini") == []
+
+    def test_an_enabled_provider_still_is(self, monkeypatch):
+        llm_resilient = self._enable(monkeypatch, "gemini,openai")
+        assert llm_resilient._get_fallback_providers("gemini") == ["openai"]
+
+    def test_the_order_is_the_supported_order_not_the_configured_order(self, monkeypatch):
+        """So that the fallback sequence is a property of the code rather than of how someone typed
+        an environment variable. Gemini first because it is the only provider the quality split and
+        the `thinking` bound reach.
+        """
+        llm_resilient = self._enable(monkeypatch, "anthropic,openai,gemini")
+        assert llm_resilient.enabled_providers() == ("gemini", "openai", "anthropic")
+
+    @pytest.mark.asyncio
+    async def test_a_learners_preference_cannot_re_enable_a_disabled_provider(self, monkeypatch):
+        """The worse half of the defect. A stored `preferred_llm_provider` of `"openai"` was validated
+        against `SUPPORTED_PROVIDERS`, so it became the learner's **primary** provider for every
+        generation — a disabled provider reached first rather than last.
+        """
+        llm_resilient = self._enable(monkeypatch, "gemini")
+
+        class _Profile:
+            preferred_llm_provider = "openai"
+
+        async def fake_get_profile(user_id):
+            return _Profile()
+
+        from src.domains.personal_learning import repository
+
+        monkeypatch.setattr(
+            repository.personal_learning_repo, "get_profile_by_user", fake_get_profile
+        )
+        assert await llm_resilient._resolve_provider("u1") == "gemini"
+
+    @pytest.mark.asyncio
+    async def test_a_disabled_default_is_not_returned(self, monkeypatch):
+        """`_DEFAULT_PROVIDER` is a constant and is not guaranteed to be enabled. Returning it anyway
+        would put the whole product on the one provider the operator switched off.
+        """
+        llm_resilient = self._enable(monkeypatch, "anthropic")
+        assert await llm_resilient._resolve_provider(None) == "anthropic"
+
+    def test_disabling_everything_is_read_as_a_mistake_not_an_instruction(self, monkeypatch):
+        """A configuration naming no callable provider takes every AI surface in the product down at
+        once, so it is far more likely to be a typo than a decision. It degrades to the default and
+        logs at `error` — loud without being an outage.
+        """
+        llm_resilient = self._enable(monkeypatch, "")
+        assert llm_resilient.enabled_providers() == (llm_resilient._DEFAULT_PROVIDER,)
+
+        llm_resilient = self._enable(monkeypatch, "not-a-provider")
+        assert llm_resilient.enabled_providers() == (llm_resilient._DEFAULT_PROVIDER,)

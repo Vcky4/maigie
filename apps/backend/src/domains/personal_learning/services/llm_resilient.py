@@ -489,36 +489,107 @@ _PROVIDER_CALLABLES = {
 # ---------------------------------------------------------------------------
 
 
+def enabled_providers() -> tuple[str, ...]:
+    """The providers this module may call, honouring `LLM_ENABLED_PROVIDERS`.
+
+    **`LLM_ENABLED_PROVIDERS` did not reach this module, and "turn a provider off" therefore only
+    turned it off for chat.** It is read by `adapter_registry`, `feature_flags` and `router` — the
+    chat path — while this module hardcoded `["gemini", "openai", "anthropic"]` for fallbacks and
+    validated a learner's stored preference against `SUPPORTED_PROVIDERS`. So disabling OpenAI in
+    production would have left it serving all 27 generation surfaces as a fallback, and serving them
+    as the *primary* for any learner whose `preferred_llm_provider` was `"openai"`.
+
+    The only thing that actually stopped a disabled provider was an unset API key, which works by
+    accident: `_call_openai` raises `RuntimeError("... not configured")` and the attempt loop treats
+    that as "skip to the next provider". Depending on a missing credential to enforce a policy means
+    the policy is silently re-enabled by anyone who sets the credential.
+
+    `router.py` already states the intended rule — "turning a provider off must turn it off
+    everywhere" — and this is the half of "everywhere" that was missing.
+
+    **An empty or unparseable list is treated as no opinion rather than as "call nothing".** A
+    configuration that disables every provider is a mistake, not an instruction, and honouring it
+    literally would take every AI surface in the product down at once. It falls back to the default
+    provider and logs at `error`, which is the outcome that is loud without being an outage.
+    """
+    from src.config import get_settings
+
+    configured = {
+        name.strip().lower()
+        for name in (get_settings().LLM_ENABLED_PROVIDERS or "").split(",")
+        if name.strip()
+    }
+    allowed = tuple(name for name in SUPPORTED_PROVIDERS if name in configured)
+    if allowed:
+        return allowed
+
+    logger.error(
+        "LLM_ENABLED_PROVIDERS names no provider this module can call (%r); falling back to %s. "
+        "Disabling every provider is a misconfiguration rather than an instruction.",
+        get_settings().LLM_ENABLED_PROVIDERS,
+        _DEFAULT_PROVIDER,
+    )
+    return (_DEFAULT_PROVIDER,)
+
+
 async def _resolve_provider(user_id: str | None) -> str:
     """Resolve the preferred LLM provider for a user.
 
     Returns the provider name (gemini/openai/anthropic).
-    Falls back to system default if no preference set or user_id is None.
+    Falls back to the system default if there is no preference, the preference names a provider that
+    is not enabled, or `user_id` is None.
     """
+    allowed = enabled_providers()
+    # The configured default is not guaranteed to be enabled, so the fallback for "no preference" is
+    # the default when it is callable and the first enabled provider when it is not. Returning a
+    # disabled default would put the whole product on a provider the operator switched off.
+    default = _DEFAULT_PROVIDER if _DEFAULT_PROVIDER in allowed else allowed[0]
+
+    # **One provider means there is nothing to resolve.** Reading `LearningProfile` to choose between
+    # one option is a database round trip on every generation in the product that cannot change the
+    # answer, and today Gemini is the only enabled provider. The read exists to honour a learner's
+    # preference, and a preference is only meaningful when there is an alternative.
+    #
+    # This is a short-circuit rather than a deletion because the preference is a real feature the
+    # moment a second key is provisioned — and it is deliberately keyed on the *enabled* set rather
+    # than on `SUPPORTED_PROVIDERS`, so it re-enables itself along with the provider.
+    if len(allowed) == 1:
+        return default
+
     if not user_id:
         logger.debug("No user_id provided, using default provider")
-        return _DEFAULT_PROVIDER
+        return default
 
     from ..repository import personal_learning_repo as repo
 
     profile = await repo.get_profile_by_user(user_id)
     if profile and profile.preferred_llm_provider:
         provider = profile.preferred_llm_provider.lower().strip()
-        if provider in SUPPORTED_PROVIDERS:
+        if provider in allowed:
             logger.info(f"User {user_id} preferred LLM provider: {provider}")
             return provider
-        logger.warning(f"Unknown LLM provider '{provider}' for user {user_id}, using default")
+        if provider in SUPPORTED_PROVIDERS:
+            # Distinguished from an unknown name on purpose: this is a real provider the operator has
+            # switched off, and the learner's stored preference is now unhonourable. Worth a distinct
+            # log line, because the remedy is a settings screen that stops offering it rather than a
+            # data fix — the same mismatch as drift 22 on the web model picker.
+            logger.info(
+                "User %s prefers %s, which is not in LLM_ENABLED_PROVIDERS; using %s",
+                user_id,
+                provider,
+                default,
+            )
+        else:
+            logger.warning(f"Unknown LLM provider '{provider}' for user {user_id}, using default")
     else:
-        logger.debug(f"No LLM preference for user {user_id}, using default: {_DEFAULT_PROVIDER}")
+        logger.debug(f"No LLM preference for user {user_id}, using default: {default}")
 
-    return _DEFAULT_PROVIDER
+    return default
 
 
 def _get_fallback_providers(primary: str) -> list[str]:
-    """Get fallback provider order if primary fails."""
-    # Try other providers in a reasonable order
-    fallback_order = ["gemini", "openai", "anthropic"]
-    return [p for p in fallback_order if p != primary]
+    """Get fallback provider order if primary fails, enabled providers only."""
+    return [name for name in enabled_providers() if name != primary]
 
 
 # ---------------------------------------------------------------------------

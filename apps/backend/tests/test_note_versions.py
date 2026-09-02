@@ -164,7 +164,10 @@ async def test_history_is_paginated(repo):
 
 
 async def test_an_ai_retake_records_the_learners_own_prose_first(repo, monkeypatch):
-    from src.domains.intelligence.reasoning import llm
+    # Patched on `llm_resilient`, not on `intelligence.reasoning.llm`. The rewrite moved onto the
+    # metering chokepoint when drift 23 was closed — it had been calling Gemini directly, so it had no
+    # meter, no headroom gate, no retry and no tier.
+    from src.domains.personal_learning.services import llm_resilient as llm
     from src.domains.personal_learning.services import note_service
 
     async def _rewrite(*_args, **_kwargs):
@@ -183,7 +186,7 @@ async def test_an_ai_retake_records_the_learners_own_prose_first(repo, monkeypat
 
 async def test_an_empty_rewrite_is_refused_rather_than_written(repo, monkeypatch):
     """A model returning nothing used to erase the note and report success."""
-    from src.domains.intelligence.reasoning import llm
+    from src.domains.personal_learning.services import llm_resilient as llm
     from src.domains.personal_learning.services import note_service
     from src.shared.exceptions import ValidationError
 
@@ -336,7 +339,10 @@ async def test_the_tag_catalogue_counts_the_library_not_a_page(repo):
     await repo.create_note_tags(only.id, ["topology"])
 
     catalogue = await note_service.list_tags(user_id=USER)
-    assert catalogue == [{"tag": "algebra", "count": 3}, {"tag": "topology", "count": 1}]
+    assert catalogue == [
+        {"tag": "algebra", "count": 3},
+        {"tag": "topology", "count": 1},
+    ]
 
 
 async def test_the_tag_catalogue_matches_what_the_default_list_shows(repo):
@@ -392,7 +398,10 @@ async def test_removing_an_uploaded_attachment_deletes_the_stored_file(repo, mon
     attachment = await note_service.add_attachment(
         user_id=USER,
         note_id=note.id,
-        data={"filename": "slides.pdf", "url": "https://cdn.example/note-attachments/a/slides.pdf"},
+        data={
+            "filename": "slides.pdf",
+            "url": "https://cdn.example/note-attachments/a/slides.pdf",
+        },
     )
 
     assert (
@@ -453,7 +462,10 @@ async def test_deleting_a_note_cleans_up_its_uploaded_files(repo, monkeypatch):
         await note_service.add_attachment(
             user_id=USER,
             note_id=note.id,
-            data={"filename": name, "url": f"https://cdn.example/note-attachments/{name}"},
+            data={
+                "filename": name,
+                "url": f"https://cdn.example/note-attachments/{name}",
+            },
         )
     await note_service.add_attachment(
         user_id=USER,

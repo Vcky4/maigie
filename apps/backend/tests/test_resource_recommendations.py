@@ -72,6 +72,7 @@ def recommend(monkeypatch):
     """
     from src.domains.intelligence.reasoning import llm as llm_module
     from src.domains.knowledge.services import resource_service, url_validator
+    from src.domains.personal_learning.services import llm_resilient
 
     #: Every prompt the fake models were given, so a test can assert on what was asked.
     prompts: dict[str, str] = {}
@@ -121,10 +122,14 @@ def recommend(monkeypatch):
                 for url in urls
             }
 
-        # Patched where they are looked up. All three are imported inside the function body, so the
-        # binding that matters is the one on the defining module.
+        # Patched where they are looked up. All of these are imported inside the function body, so the
+        # binding that matters is the one on the defining module — and for step 2 that module is now
+        # `llm_resilient` rather than `intelligence.reasoning.llm`. Step 2 moved onto the metering
+        # chokepoint when drift 23 was closed, which is what gave it a meter, a headroom gate, a retry
+        # and a tier-chosen model. Step 1 stays direct because grounded search has no fallback
+        # provider and so cannot use a wrapper whose whole shape is fallback.
         monkeypatch.setattr(llm_module, "generate_grounded_content", fake_generate_grounded)
-        monkeypatch.setattr(llm_module, "generate_content", fake_generate)
+        monkeypatch.setattr(llm_resilient, "generate_content", fake_generate)
         monkeypatch.setattr(url_validator, "check_urls", fake_check)
 
         async def fake_memory(_user_id):
@@ -194,7 +199,12 @@ async def test_the_stored_url_is_the_resolved_one_not_the_proposed_one(repo, rec
     instead of its destination would put a Google redirect in the learner's library."""
     run = recommend(
         text=_payload(
-            {"title": "Docs", "url": "http://python.org/doc", "type": "WEBSITE", "score": 0.8}
+            {
+                "title": "Docs",
+                "url": "http://python.org/doc",
+                "type": "WEBSITE",
+                "score": 0.8,
+            }
         ),
         reachable={"http://python.org/doc": "https://www.python.org/doc/"},
     )
@@ -284,7 +294,8 @@ async def test_recommending_the_same_page_twice_does_not_store_it_twice(repo, re
 
 async def test_dedupe_is_on_the_resolved_url_not_the_title(repo, recommend):
     """A title is the model's phrasing and varies between runs; the URL is the identity of
-    the thing. Deduping on title would file the same page twice whenever the wording moved."""
+    the thing. Deduping on title would file the same page twice whenever the wording moved.
+    """
     reachable = {"https://example.com/d": "https://example.com/d"}
     await recommend(
         text=_payload({"title": "Dijkstra's algorithm", "url": "https://example.com/d"}),
@@ -391,7 +402,11 @@ async def test_an_unrecognised_type_becomes_other(repo, recommend):
     """
     run = recommend(
         text=_payload(
-            {"title": "T", "url": "https://example.com/t", "type": "INTERACTIVE_SIMULATION"}
+            {
+                "title": "T",
+                "url": "https://example.com/t",
+                "type": "INTERACTIVE_SIMULATION",
+            }
         ),
         reachable={"https://example.com/t": "https://example.com/t"},
     )
@@ -431,7 +446,9 @@ def test_score_coercion(given, expected):
 def test_a_reply_that_is_not_a_list_of_objects_yields_nothing():
     """An array of bare strings parses as JSON but has no fields, and treating it as items
     would create rows titled "Untitled" with no URL."""
-    from src.domains.knowledge.services.resource_service import _parse_recommendation_payload
+    from src.domains.knowledge.services.resource_service import (
+        _parse_recommendation_payload,
+    )
 
     assert _parse_recommendation_payload('["just", "strings"]') == []
     assert _parse_recommendation_payload('{"not": "an array"}') == []
@@ -510,13 +527,25 @@ async def test_sorting_by_click_count_actually_sorts_by_click_count(repo):
 
     # Most-clicked created first, least-clicked created last.
     popular = await repo.create_resource(
-        {"userId": USER, "title": "Everyone opens this", "url": "https://example.com/popular"}
+        {
+            "userId": USER,
+            "title": "Everyone opens this",
+            "url": "https://example.com/popular",
+        }
     )
     middling = await repo.create_resource(
-        {"userId": USER, "title": "Some open this", "url": "https://example.com/middling"}
+        {
+            "userId": USER,
+            "title": "Some open this",
+            "url": "https://example.com/middling",
+        }
     )
     await repo.create_resource(
-        {"userId": USER, "title": "Nobody opens this", "url": "https://example.com/quiet"}
+        {
+            "userId": USER,
+            "title": "Nobody opens this",
+            "url": "https://example.com/quiet",
+        }
     )
     for _ in range(5):
         await repo.increment_resource_counter(popular.id, column="clickCount")
@@ -548,10 +577,18 @@ async def test_search_treats_like_wildcards_as_literal_text(repo):
     from src.domains.knowledge.services import resource_service
 
     await repo.create_resource(
-        {"userId": USER, "title": "Scoring 100% on finals", "url": "https://example.com/1"}
+        {
+            "userId": USER,
+            "title": "Scoring 100% on finals",
+            "url": "https://example.com/1",
+        }
     )
     await repo.create_resource(
-        {"userId": USER, "title": "Unrelated study habits", "url": "https://example.com/2"}
+        {
+            "userId": USER,
+            "title": "Unrelated study habits",
+            "url": "https://example.com/2",
+        }
     )
 
     # Under the bug this is `%%%` — matches everything.

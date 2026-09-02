@@ -381,8 +381,29 @@ class Settings(BaseSettings):
         "anthropic:claude-sonnet-4-20250514"
     )
 
-    # Feature flags — enabled providers (comma-separated)
-    LLM_ENABLED_PROVIDERS: str = "gemini,openai"
+    # Feature flags — enabled providers (comma-separated).
+    #
+    # **Gemini only: no OpenAI or Anthropic key is provisioned.** So this is not a cost preference, it
+    # is a statement of what can actually answer. Listing an unkeyed provider buys a fallback that
+    # cannot succeed — three timed attempts against a missing credential, added to the latency of
+    # every failed generation, on a path the learner is waiting on.
+    #
+    # It was `"gemini,openai"`, and the default did real work: the switch is read by
+    # `adapter_registry`, `feature_flags`, `router` and — since revision 11a of
+    # MAIGIE_PLUS_COMMERCIAL_PLAN.md — `llm_resilient.enabled_providers`, so an environment that
+    # simply did not set the variable enabled the OpenAI fallback everywhere. Off by default, on by
+    # configuration, is the direction that fails safe.
+    #
+    # Two things to know before adding a provider back, because neither is visible from here. Only the
+    # Gemini path carries the `thinking` bound (Phase 0) and the model-quality split (Decision P), so
+    # a fallback provider is unbounded and untiered and can cost more than the Plus model it stands in
+    # for. And `OPENAI_DEFAULT_MODEL` / `ANTHROPIC_DEFAULT_MODEL` are single models with no tier
+    # variants, so there is nothing for the split to choose between even if it reached them.
+    #
+    # `LLM_TIER_ALLOWLIST_PLUS` still lists `openai:gpt-4o-mini` deliberately. An allowlist entry for a
+    # disabled provider is inert rather than wrong — `is_model_allowed` checks this switch first — and
+    # leaving it means re-enabling OpenAI is one variable rather than two.
+    LLM_ENABLED_PROVIDERS: str = "gemini"
     # Tier-based model allowlists (comma-separated provider:model pairs).
     # Only ``free`` and ``plus`` exist after Circle Reimagining; Circle-scoped
     # AI capabilities are derived from Seat_Tier and resolve to one of these
