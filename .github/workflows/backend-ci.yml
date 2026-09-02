@@ -150,6 +150,14 @@ jobs:
           RESEND_API_KEY: ${{secrets.RESEND_API_KEY}}
           RESEND_FROM_EMAIL: ${{secrets.RESEND_FROM_EMAIL}}
           EMAIL_OUTBOUND_STRATEGY: ${{secrets.EMAIL_OUTBOUND_STRATEGY}}
+          WEB_PUSH_ENABLED: ${{secrets.WEB_PUSH_ENABLED}}
+          WEB_PUSH_ROLLOUT_PERCENT: ${{secrets.WEB_PUSH_ROLLOUT_PERCENT}}
+          WEB_PUSH_INTERNAL_ALLOWLIST: ${{secrets.WEB_PUSH_INTERNAL_ALLOWLIST}}
+          WEB_PUSH_ALLOWLIST: ${{secrets.WEB_PUSH_ALLOWLIST}}
+          WEB_PUSH_DENYLIST: ${{secrets.WEB_PUSH_DENYLIST}}
+          WEB_PUSH_VAPID_PUBLIC_KEY: ${{secrets.WEB_PUSH_VAPID_PUBLIC_KEY}}
+          WEB_PUSH_VAPID_PRIVATE_KEY: ${{secrets.WEB_PUSH_VAPID_PRIVATE_KEY}}
+          WEB_PUSH_VAPID_SUBJECT: ${{secrets.WEB_PUSH_VAPID_SUBJECT}}
           STRIPE_SECRET_KEY: ${{secrets.STRIPE_SECRET_KEY}}
           STRIPE_PUBLISHABLE_KEY: ${{secrets.STRIPE_PUBLISHABLE_KEY}}
           STRIPE_WEBHOOK_SECRET: ${{secrets.STRIPE_WEBHOOK_SECRET}}
@@ -342,6 +350,14 @@ jobs:
             export RESEND_API_KEY="${{secrets.RESEND_API_KEY}}"
             export RESEND_FROM_EMAIL="${{secrets.RESEND_FROM_EMAIL}}"
             export EMAIL_OUTBOUND_STRATEGY="${{secrets.EMAIL_OUTBOUND_STRATEGY}}"
+            export WEB_PUSH_ENABLED="${{secrets.WEB_PUSH_ENABLED}}"
+            export WEB_PUSH_ROLLOUT_PERCENT="${{secrets.WEB_PUSH_ROLLOUT_PERCENT}}"
+            export WEB_PUSH_INTERNAL_ALLOWLIST="${{secrets.WEB_PUSH_INTERNAL_ALLOWLIST}}"
+            export WEB_PUSH_ALLOWLIST="${{secrets.WEB_PUSH_ALLOWLIST}}"
+            export WEB_PUSH_DENYLIST="${{secrets.WEB_PUSH_DENYLIST}}"
+            export WEB_PUSH_VAPID_PUBLIC_KEY="${{secrets.WEB_PUSH_VAPID_PUBLIC_KEY}}"
+            export WEB_PUSH_VAPID_PRIVATE_KEY="${{secrets.WEB_PUSH_VAPID_PRIVATE_KEY}}"
+            export WEB_PUSH_VAPID_SUBJECT="${{secrets.WEB_PUSH_VAPID_SUBJECT}}"
             export STRIPE_SECRET_KEY="${{ secrets.STRIPE_SECRET_KEY }}"
             export STRIPE_PUBLISHABLE_KEY="${{ secrets.STRIPE_PUBLISHABLE_KEY }}"
             export STRIPE_WEBHOOK_SECRET="${{ secrets.STRIPE_WEBHOOK_SECRET }}"
@@ -848,6 +864,14 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
           EMAIL_OUTBOUND_STRATEGY: ${{ secrets.EMAIL_OUTBOUND_STRATEGY }}
+          WEB_PUSH_ENABLED: ${{ secrets.WEB_PUSH_ENABLED_PROD }}
+          WEB_PUSH_ROLLOUT_PERCENT: ${{ secrets.WEB_PUSH_ROLLOUT_PERCENT_PROD }}
+          WEB_PUSH_INTERNAL_ALLOWLIST: ${{ secrets.WEB_PUSH_INTERNAL_ALLOWLIST_PROD }}
+          WEB_PUSH_ALLOWLIST: ${{ secrets.WEB_PUSH_ALLOWLIST_PROD }}
+          WEB_PUSH_DENYLIST: ${{ secrets.WEB_PUSH_DENYLIST_PROD }}
+          WEB_PUSH_VAPID_PUBLIC_KEY: ${{ secrets.WEB_PUSH_VAPID_PUBLIC_KEY_PROD }}
+          WEB_PUSH_VAPID_PRIVATE_KEY: ${{ secrets.WEB_PUSH_VAPID_PRIVATE_KEY_PROD }}
+          WEB_PUSH_VAPID_SUBJECT: ${{ secrets.WEB_PUSH_VAPID_SUBJECT_PROD }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
@@ -1153,6 +1177,14 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
           EMAIL_OUTBOUND_STRATEGY: ${{ secrets.EMAIL_OUTBOUND_STRATEGY }}
+          WEB_PUSH_ENABLED: ${{ secrets.WEB_PUSH_ENABLED }}
+          WEB_PUSH_ROLLOUT_PERCENT: ${{ secrets.WEB_PUSH_ROLLOUT_PERCENT }}
+          WEB_PUSH_INTERNAL_ALLOWLIST: ${{ secrets.WEB_PUSH_INTERNAL_ALLOWLIST }}
+          WEB_PUSH_ALLOWLIST: ${{ secrets.WEB_PUSH_ALLOWLIST }}
+          WEB_PUSH_DENYLIST: ${{ secrets.WEB_PUSH_DENYLIST }}
+          WEB_PUSH_VAPID_PUBLIC_KEY: ${{ secrets.WEB_PUSH_VAPID_PUBLIC_KEY }}
+          WEB_PUSH_VAPID_PRIVATE_KEY: ${{ secrets.WEB_PUSH_VAPID_PRIVATE_KEY }}
+          WEB_PUSH_VAPID_SUBJECT: ${{ secrets.WEB_PUSH_VAPID_SUBJECT }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
@@ -1319,6 +1351,14 @@ jobs:
             export RESEND_API_KEY="${{secrets.RESEND_API_KEY}}"
             export RESEND_FROM_EMAIL="${{secrets.RESEND_FROM_EMAIL}}"
             export EMAIL_OUTBOUND_STRATEGY="${{secrets.EMAIL_OUTBOUND_STRATEGY}}"
+            export WEB_PUSH_ENABLED="${{secrets.WEB_PUSH_ENABLED}}"
+            export WEB_PUSH_ROLLOUT_PERCENT="${{secrets.WEB_PUSH_ROLLOUT_PERCENT}}"
+            export WEB_PUSH_INTERNAL_ALLOWLIST="${{secrets.WEB_PUSH_INTERNAL_ALLOWLIST}}"
+            export WEB_PUSH_ALLOWLIST="${{secrets.WEB_PUSH_ALLOWLIST}}"
+            export WEB_PUSH_DENYLIST="${{secrets.WEB_PUSH_DENYLIST}}"
+            export WEB_PUSH_VAPID_PUBLIC_KEY="${{secrets.WEB_PUSH_VAPID_PUBLIC_KEY}}"
+            export WEB_PUSH_VAPID_PRIVATE_KEY="${{secrets.WEB_PUSH_VAPID_PRIVATE_KEY}}"
+            export WEB_PUSH_VAPID_SUBJECT="${{secrets.WEB_PUSH_VAPID_SUBJECT}}"
             export STRIPE_SECRET_KEY="${{ secrets.STRIPE_SECRET_KEY }}"
             export STRIPE_PUBLISHABLE_KEY="${{ secrets.STRIPE_PUBLISHABLE_KEY }}"
             export STRIPE_WEBHOOK_SECRET="${{ secrets.STRIPE_WEBHOOK_SECRET }}"
