@@ -20968,7 +20968,7 @@
             "title": "Installationid",
             "type": "string"
           },
-          "p256Dh": {
+          "p256dh": {
             "maxLength": 200,
             "minLength": 1,
             "title": "P256Dh",
@@ -20991,7 +20991,7 @@
         "required": [
           "installationId",
           "endpoint",
-          "p256Dh",
+          "p256dh",
           "auth"
         ],
         "title": "WebPushSubscriptionUpsert",

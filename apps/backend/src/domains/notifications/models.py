@@ -124,7 +124,12 @@ class WebPushSubscriptionUpsert(CamelModel):
     installation_id: str = Field(min_length=1, max_length=200)
     endpoint: str = Field(min_length=1, max_length=2000)
     #: Client public key, base64url of the raw uncompressed P-256 point.
-    p256dh: str = Field(min_length=1, max_length=200)
+    #:
+    #: Aliased explicitly because the camel-case generator renders this `p256Dh`, and the name
+    #: is not ours to restyle: `p256dh` is what the Push API calls it and what
+    #: `PushSubscription.toJSON()` emits. A client would have to rename a field it was handed
+    #: by the browser, which is exactly the kind of mismatch that ships as a runtime 422.
+    p256dh: str = Field(alias="p256dh", min_length=1, max_length=200)
     #: Shared authentication secret, base64url of 16 bytes.
     auth: str = Field(min_length=1, max_length=64)
     app_version: str | None = Field(default=None, max_length=100)

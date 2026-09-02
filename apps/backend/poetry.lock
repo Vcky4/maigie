@@ -2187,6 +2187,20 @@ beautifulsoup4 = ">=4.7.0"
 python-docx = ">=0.8.10"
 
 [[package]]
+name = "http-ece"
+version = "1.2.1"
+description = "Encrypted Content Encoding for HTTP"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "http_ece-1.2.1.tar.gz", hash = "sha256:8c6ab23116bbf6affda894acfd5f2ca0fb8facbcbb72121c11c75c33e7ce8cff"},
+]
+
+[package.dependencies]
+cryptography = ">=2.5"
+
+[[package]]
 name = "httpcore"
 version = "1.0.9"
 description = "A minimal low-level HTTP client."
@@ -5762,4 +5776,4 @@ test = ["pytest"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "91b4d816bed7a5dcc0f9922073e5d793e5bef0975792db53cfdf8b0e5599fd46"
+content-hash = "a224de5abca509331d3dce9a259b690fd43e67619e01537b765ab9b9fb7581f0"
