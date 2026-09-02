@@ -40,9 +40,7 @@ import logging
 from typing import Any
 
 from src.domains.billing.services.credit_consumption_service import (
-    ESTIMATED_OPERATION_UNITS,
-    check_credit_availability,
-    consume_credits,
+    has_headroom,
 )
 from src.domains.identity.db_models import User
 from src.shared.exceptions import NotFoundError, SubscriptionLimitError, ValidationError
@@ -121,8 +119,10 @@ async def merge_notes(user: User, *, note_ids: list[str]) -> Any:
     # which is the client's display order — newest first — and is the wrong way round for this.
     notes.sort(key=lambda note: note.created_at)
 
-    cost = ESTIMATED_OPERATION_UNITS["note_merge"]
-    available, message = await check_credit_availability(user, cost)
+    # Gated here, charged at the chokepoint — `llm_resilient` measures the real cost of the
+    # generation below. The flat estimate this replaced was charged on top of the measured cost for
+    # one commit after metering landed.
+    available, message = await has_headroom(user)
     if not available:
         raise SubscriptionLimitError(
             message="Not enough credits to combine these notes.",
@@ -159,12 +159,9 @@ async def merge_notes(user: User, *, note_ids: list[str]) -> Any:
             # archive is visible clutter, not lost work, so this is reported and not raised.
             logger.warning("Could not archive note %s after merging it", note.id)
 
-    try:
-        await consume_credits(user, cost, operation="note_merge")
-    except SubscriptionLimitError:
-        # Same reasoning as the session note: the work is done and the learner can see it. Refusing to hand
-        # it over would be worse than absorbing one generation.
-        logger.warning("Note merge for user %s was completed but could not be billed", user.id)
+    # No charge here: the generation was billed as it happened, from its real token counts. The
+    # "absorb a billing failure rather than withhold finished work" rule still holds and now lives
+    # in `record_units`, which swallows its own failures for exactly that reason.
 
     logger.info("Merged %d notes into %s for user %s", len(notes), merged.id, user.id)
     return merged
@@ -188,6 +185,7 @@ async def _combine(user_id: str, notes: list[Any]) -> tuple[str, str]:
         max_tokens=4096,
         temperature=0.3,
         user_id=user_id,
+        operation="note_merge",
     )
     text = (response or "").strip()
     if not text:

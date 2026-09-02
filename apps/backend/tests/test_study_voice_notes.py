@@ -15,9 +15,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.domains.billing.services.credit_consumption_service import (
-    ESTIMATED_OPERATION_UNITS,
-)
 from src.domains.study_voice import notes
 from src.domains.study_voice import transcript as transcript_module
 from src.domains.study_voice.session_store import VoiceSession
@@ -146,6 +143,7 @@ def note_world(monkeypatch):
         created=[],
         updated=[],
         charged=[],
+        operation=None,
         remembered=[],
         available=(True, None),
         update_raises=None,
@@ -162,6 +160,7 @@ def note_world(monkeypatch):
     async def generate_content(prompt, **kwargs):
         world.prompt = prompt
         world.prompts.append(prompt)
+        world.operation = kwargs.get("operation")
         return world.response
 
     async def get_note(*, user_id, note_id):
@@ -174,7 +173,9 @@ def note_world(monkeypatch):
     async def create_note(*, user_id, data):
         world.note_id_counter += 1
         note = SimpleNamespace(
-            id=f"note-{world.note_id_counter}", title=data["title"], content=data["content"]
+            id=f"note-{world.note_id_counter}",
+            title=data["title"],
+            content=data["content"],
         )
         world.created.append(data)
         return note
@@ -185,12 +186,8 @@ def note_world(monkeypatch):
         world.updated.append((note_id, data))
         return SimpleNamespace(id=note_id, title=data["title"], content=data["content"])
 
-    async def check(user_, cost, **kwargs):
+    async def check(user_, **kwargs):
         return world.available
-
-    async def consume(user_, cost, operation="unknown", **kwargs):
-        world.charged.append((cost, operation))
-        return None
 
     async def remember(session_id, note_id, *, turns=0):
         world.remembered.append((session_id, note_id, turns))
@@ -199,8 +196,7 @@ def note_world(monkeypatch):
     monkeypatch.setattr(notes.note_service, "create_note", create_note)
     monkeypatch.setattr(notes.note_service, "get_note", get_note)
     monkeypatch.setattr(notes.note_service, "update_note", update_note)
-    monkeypatch.setattr(notes, "check_credit_availability", check)
-    monkeypatch.setattr(notes, "consume_credits", consume)
+    monkeypatch.setattr(notes, "has_headroom", check)
     monkeypatch.setattr(notes.session_store, "remember_note", remember)
     return world
 
@@ -253,13 +249,18 @@ async def test_nothing_is_generated_when_the_learner_cannot_pay(
 
 @pytest.mark.asyncio
 async def test_the_charge_happens_after_the_note_exists(note_world, user, session, conversation):
-    """A generation that failed is not something to bill for."""
-    await notes.save_session_note(user, session, conversation)
-    # Read from the table rather than retyped, so the estimate can be re-derived without editing a
-    # test that is about *when* the charge happens rather than about what it is.
-    assert note_world.charged == [
-        (ESTIMATED_OPERATION_UNITS["voice_session_note"], "voice_session_note")
-    ]
+    """A generation that failed is not something to bill for.
+
+    **Asserted one layer down than it used to be.** This service no longer charges: `llm_resilient`
+    bills each provider call from its real token counts, and this fixture stubs `generate_content`
+    out, so no deduction is observable from here. What is observable is that the note exists *and*
+    the generation was labelled for the meter — which is what makes the charge land on the right
+    operation. The deduction itself is covered by `tests/test_llm_metering.py`.
+    """
+    result = await notes.save_session_note(user, session, conversation)
+
+    assert result["note_id"]
+    assert note_world.operation == "voice_session_note"
 
 
 @pytest.mark.asyncio
@@ -388,10 +389,13 @@ async def test_a_written_note_is_handed_over_even_if_the_charge_fails(
     """Refusing to show the learner a note they can already be charged for would be worse than absorbing
     the cost of one generation."""
 
-    async def consume(*args, **kwargs):
+    async def exploding_record(*args, **kwargs):
         raise SubscriptionLimitError()
 
-    monkeypatch.setattr(notes, "consume_credits", consume)
+    monkeypatch.setattr(
+        "src.domains.billing.services.credit_consumption_service.record_units",
+        exploding_record,
+    )
     result = await notes.save_session_note(user, session, conversation)
     assert result["note_id"] == "note-1"
 
@@ -615,12 +619,12 @@ async def test_the_note_survives_the_buffer_being_wiped_mid_write(
 
     snapshot = conversation.snapshot()
 
-    async def check_and_wipe(_user, _cost, **_kwargs):
+    async def check_and_wipe(_user, **_kwargs):
         # Exactly what the socket handler's `finally` does, at exactly the moment it used to do it.
         conversation.clear()
         return finalise_world.available
 
-    monkeypatch.setattr(notes, "check_credit_availability", check_and_wipe)
+    monkeypatch.setattr(notes, "has_headroom", check_and_wipe)
 
     saved = await notes.finalise_session_note(user, session, snapshot)
 

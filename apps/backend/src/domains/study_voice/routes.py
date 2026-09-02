@@ -37,9 +37,8 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconn
 from jose import JWTError
 
 from src.domains.billing.services.credit_consumption_service import (
-    ESTIMATED_OPERATION_UNITS,
     check_credit_availability,
-    consume_credits,
+    has_headroom,
 )
 from src.domains.identity.db_models import User
 from src.domains.identity.repository import IdentityRepository
@@ -77,8 +76,10 @@ async def study_diagram(
     current_user: CurrentUser, body: StudyDiagramRequest
 ) -> StudyDiagramResponse:
     """Draw what the learner asked to see. Uses a text model, not the live audio one."""
-    cost = ESTIMATED_OPERATION_UNITS["study_diagram"]
-    available, message = await check_credit_availability(current_user, cost)
+    # Gated, not priced: `generate_for_topic` reaches a provider through `llm_resilient`, which
+    # bills the real token count. The 100-unit estimate this replaced was charged twice over for one
+    # commit after metering landed at the chokepoint.
+    available, message = await has_headroom(current_user)
     if not available:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -107,15 +108,10 @@ async def study_diagram(
             or "The diagram could not be drawn just now. Try again in a moment.",
         ) from exc
 
-    # Charged after the diagram exists, not before. A generation that failed is not something to bill for,
-    # and the learner would have no diagram to show for the credits.
-    try:
-        await consume_credits(current_user, cost, operation="study_diagram")
-    except SubscriptionLimitError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=getattr(exc, "detail", None) or str(exc),
-        ) from exc
+    # Charged after the diagram exists, and now by the chokepoint rather than here: `llm_resilient`
+    # bills each provider call from its usage metadata as it happens. A generation that failed still
+    # bills for the attempts it made, which is more honest than the flat estimate — those attempts
+    # cost real money whether or not a diagram came out of them.
 
     # Kept, so the diagram is still on the lesson tomorrow. It used to be handed to the browser and
     # nowhere else: the client put it in an in-memory map that nothing read, so 80 credits bought something

@@ -263,22 +263,46 @@ class TestTheFiguresTheMarketingQuotes:
         assert ent.MONTHLY_BACKSTOP_PLUS > ent.WINDOW_ALLOWANCE_PLUS
 
 
-class TestTheEstimatesThatRemain:
-    def test_the_three_unmeasured_operations_are_priced_and_no_more(self):
-        """`ESTIMATED_OPERATION_UNITS` is the last tabulated price in the codebase, and it exists only
-        because `llm_resilient` discards the provider response so these three cannot see token counts.
-        Phase 3b plumbs it through and deletes the table. Pinning the keys keeps it from growing into
-        the `CREDIT_COSTS` it replaced — a table nobody re-derived for the life of the product.
-        """
-        assert set(meter.ESTIMATED_OPERATION_UNITS) == {
-            "voice_session_note",
-            "note_merge",
-            "study_diagram",
-        }
+class TestNothingTabulatesPricesAnyMore:
+    """Decision L: cost is measured, not tabulated. This class replaces the one that guarded the
+    last table, and it guards its absence instead.
 
-    def test_the_estimates_are_in_the_range_a_real_generation_lands_in(self):
-        """A tabulated figure that is not checked against the measured unit is how the old table came
-        to price a voice minute at 100. These are one model call producing a page or so of text.
+    The table it tested — `ESTIMATED_OPERATION_UNITS`, three flat figures for the voice session
+    note, the note merge and the study diagram — existed only because `llm_resilient` discarded the
+    provider response, so those three operations could not see their own token counts. Phase 3b
+    plumbed usage through and deleted it, and all three now charge the measured amount at the
+    chokepoint.
+
+    **A table is not a neutral thing to leave lying around.** The one before this priced a voice
+    minute at 100 units against a real cost of about 11 400 text tokens — under by two orders of
+    magnitude, for the life of the product, because nobody re-derived it. The way that does not
+    happen again is for there to be nowhere to put such a number.
+    """
+
+    def test_the_estimate_table_is_gone(self):
+        assert not hasattr(meter, "ESTIMATED_OPERATION_UNITS")
+        assert not hasattr(meter, "CREDIT_COSTS")
+        assert not hasattr(meter, "CREDIT_LIMITS")
+        assert not hasattr(meter, "TOKEN_MULTIPLIER")
+
+    def test_the_only_way_to_price_an_operation_is_from_its_tokens(self):
+        """`units_for_tokens` and `units_for_usd` are the whole pricing surface. Both take a
+        measurement; neither takes an operation name, so neither can grow a table."""
+        import inspect
+
+        assert "input_tokens" in inspect.signature(meter.units_for_tokens).parameters
+        assert "cost_usd" in inspect.signature(meter.units_for_usd).parameters
+
+    def test_a_measured_generation_prices_in_the_range_a_real_one_lands_in(self):
+        """The sanity bound the old test applied to the table, applied to the measurement instead.
+
+        One model call producing a page or so of text: a few hundred units, not a handful and not
+        tens of thousands. Asserted against both tiers because the model is what makes the
+        difference, and that ratio is the margin (§6.2).
         """
-        for operation, units in meter.ESTIMATED_OPERATION_UNITS.items():
-            assert 10 <= units <= 1_000, f"{operation} is priced at {units} units"
+        free_turn = meter.units_for_tokens(8_000, 600, "gemini-3.1-flash-lite")
+        plus_turn = meter.units_for_tokens(8_000, 600, "gemini-3.5-flash")
+
+        assert 10 <= free_turn <= 1_000
+        assert 10 <= plus_turn <= 1_000
+        assert plus_turn > free_turn, "the dearer model must cost more units for the same tokens"

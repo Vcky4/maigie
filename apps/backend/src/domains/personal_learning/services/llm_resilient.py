@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.domains.intelligence.reasoning.llm import GenerationUsage
+from src.shared.exceptions import SubscriptionLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,56 @@ UNCHARGED_OPERATIONS = frozenset(
         "memory_summarisation",
     }
 )
+
+
+async def _refuse_if_exhausted(*, user_id: str | None, operation: str) -> None:
+    """Refuse a learner whose window is already spent, before a provider is called.
+
+    **The counterpart to measured metering, and the reason it is safe.** A measured operation cannot
+    be checked against its own cost in advance — the cost is not known until the generation has
+    happened — so the pre-flight question is not "can they afford this?" but "do they have anything
+    left at all?". Refusing at zero is what stops an exhausted learner from generating indefinitely
+    while `record_units` dutifully logs an ever-growing overshoot.
+
+    A window can still be exceeded by the cost of one operation in flight. That is bounded, it
+    self-corrects on the next call, and it is the price of measuring cost rather than inventing it.
+
+    Raises `SubscriptionLimitError`, which existing handlers already turn into a `402` carrying the
+    reset time. Unlike `_meter`, this **is** allowed to raise: it runs before any money is spent, and
+    refusing is the entire point of it.
+    """
+    if user_id is None or operation in UNCHARGED_OPERATIONS:
+        return
+    try:
+        from src.domains.billing.services.credit_consumption_service import has_headroom
+        from src.domains.identity.repository import IdentityRepository
+
+        user = await IdentityRepository().find_by_id(user_id)
+        if user is None:
+            return
+        available, message = await has_headroom(user)
+    except Exception:
+        # A gate that cannot read the meter must not become an outage. Fail **open**: the learner
+        # gets their generation and `record_units` records the spend. The opposite choice would turn
+        # a transient database blip into a product-wide refusal, which is a far worse failure than
+        # one unbilled operation.
+        logger.exception(
+            "usage: headroom check failed for user=%s operation=%s — allowing",
+            user_id,
+            operation,
+        )
+        return
+
+    if not available:
+        logger.info(
+            "usage: refused user=%s operation=%s — window exhausted before generation",
+            user_id,
+            operation,
+        )
+        raise SubscriptionLimitError(
+            message=message or "You've used this session's allowance. It refills automatically.",
+            detail=f"operation={operation}, limit=window_exhausted",
+        )
 
 
 async def _meter(
@@ -395,6 +446,12 @@ async def generate_content(
     Raises:
         LLMUnavailableError: If all providers unavailable and no fallback provided.
     """
+    # Refuse an already-exhausted learner before spending anything. **Once per logical operation,
+    # not once per attempt** — a retry must not re-gate, or an operation that started legitimately
+    # could be refused halfway through its own retry chain and leave the learner with nothing after
+    # we had already paid for two provider calls.
+    await _refuse_if_exhausted(user_id=user_id, operation=operation)
+
     # Resolve preferred provider
     primary_provider = await _resolve_provider(user_id)
     logger.info(
@@ -655,6 +712,13 @@ async def generate_content_json(
                 return repaired
             raise
 
+    except SubscriptionLimitError:
+        # **Never swallowed into a fallback.** A refusal is not a generation failure — it is a
+        # deliberate answer that the learner is out of allowance, and it has to reach them as a `402`
+        # with a reset time. Returning `fallback` here would silently hand a caller an empty object,
+        # so a learner who had run out would see an empty quiz rather than being told why. This
+        # `except` is above the broad one for that reason alone; it does nothing else.
+        raise
     except (LLMUnavailableError, json.JSONDecodeError, Exception) as e:
         logger.warning(f"generate_content_json failed: {type(e).__name__}: {e}")
         if fallback is not None:

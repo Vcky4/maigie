@@ -58,9 +58,7 @@ from __future__ import annotations
 import logging
 
 from src.domains.billing.services.credit_consumption_service import (
-    ESTIMATED_OPERATION_UNITS,
-    check_credit_availability,
-    consume_credits,
+    has_headroom,
 )
 from src.domains.identity.db_models import User
 from src.domains.personal_learning.services import note_service
@@ -166,11 +164,12 @@ async def save_session_note(
         except NotFoundError:
             logger.info("Session note %s is gone — writing a new one", session.note_id)
 
-    # Checked before the generation and charged after it, so a learner who cannot pay is told before a model
-    # call is spent, and a generation that fails is not billed. Both halves matter: the check alone would
-    # bill for failures, and the charge alone would spend a call the learner cannot cover.
-    cost = ESTIMATED_OPERATION_UNITS["voice_session_note"]
-    available, message = await check_credit_availability(user, cost)
+    # Gated here, charged at the chokepoint. `llm_resilient` now measures what the generation
+    # actually cost and records it, so this no longer names a price — it only refuses a learner who
+    # has nothing left. The flat 110-unit estimate this replaced was one of the last tabulated
+    # prices in the codebase, and it was charged *in addition* to the measured cost the moment
+    # metering landed.
+    available, message = await has_headroom(user)
     if not available:
         raise SubscriptionLimitError(
             message="Not enough credits to write this note.",
@@ -193,11 +192,16 @@ async def save_session_note(
     if existing_note is not None:
         try:
             note = await note_service.update_note(
-                user_id=user.id, note_id=existing_note.id, data={"title": title, "content": content}
+                user_id=user.id,
+                note_id=existing_note.id,
+                data={"title": title, "content": content},
             )
         except NotFoundError:
             # Deleted between the read and the write. Rare, and the answer is the same as above.
-            logger.info("Session note %s vanished mid-write — writing a new one", existing_note.id)
+            logger.info(
+                "Session note %s vanished mid-write — writing a new one",
+                existing_note.id,
+            )
 
     if note is None:
         note = await note_service.create_note(
@@ -215,15 +219,12 @@ async def save_session_note(
     # reads, so a revision that did not update it would let the next pass re-run over the same turns.
     await session_store.remember_note(session.session_id, note.id, turns=transcript.turn_count)
 
-    # Charged after the note exists. A failed generation is not something to bill for.
-    try:
-        await consume_credits(user, cost, operation="voice_session_note")
-    except SubscriptionLimitError:
-        # The note is already written and the learner can see it. Refusing to hand it over now would be
-        # worse than absorbing the cost of one generation.
-        logger.warning(
-            "Voice session note for user %s was written but could not be billed", user.id
-        )
+    # **Nothing is charged here, and the absence is deliberate.** `llm_resilient` billed the
+    # generation from its real token counts while it was happening, so the explicit
+    # `consume_credits` this used to make would double-bill — which it briefly did, in the commit
+    # that landed metering before this call site was converted. The "charged after the note exists"
+    # guarantee is unchanged and now stronger: the meter charges per provider call, so a failed
+    # generation bills for the attempts it really made rather than a flat estimate.
 
     return {
         "note_id": note.id,
@@ -332,6 +333,7 @@ async def _generate(user_id: str, prompt: str, *, max_tokens: int = 2048) -> tup
         max_tokens=max_tokens,
         temperature=0.4,
         user_id=user_id,
+        operation="voice_session_note",
     )
     text = (response or "").strip()
     if not text:

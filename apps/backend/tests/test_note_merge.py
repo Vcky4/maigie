@@ -18,9 +18,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.domains.billing.services.credit_consumption_service import (
-    ESTIMATED_OPERATION_UNITS,
-)
 from src.domains.personal_learning.services import note_merge_service
 from src.shared.exceptions import NotFoundError, SubscriptionLimitError, ValidationError
 
@@ -51,13 +48,22 @@ def world(monkeypatch):
     world = SimpleNamespace(
         notes={
             "n1": _note(
-                "n1", title="First sitting", content="- Anchored by the base case.", minutes_old=30
+                "n1",
+                title="First sitting",
+                content="- Anchored by the base case.",
+                minutes_old=30,
             ),
             "n2": _note(
-                "n2", title="Second sitting", content="- The step carries it.", minutes_old=20
+                "n2",
+                title="Second sitting",
+                content="- The step carries it.",
+                minutes_old=20,
             ),
             "n3": _note(
-                "n3", title="Third sitting", content="- My own hand-written line.", minutes_old=10
+                "n3",
+                title="Third sitting",
+                content="- My own hand-written line.",
+                minutes_old=10,
             ),
         },
         response="TITLE: Induction, whole\nCONTENT: - Anchored by the base case.\n- The step carries it.",
@@ -66,6 +72,8 @@ def world(monkeypatch):
         charged=[],
         available=(True, None),
         prompt="",
+        calls=0,
+        operation=None,
         archive_raises=None,
     )
 
@@ -86,20 +94,26 @@ def world(monkeypatch):
 
     async def generate_content(prompt, **kwargs):
         world.prompt = prompt
+        world.calls += 1
+        world.operation = kwargs.get("operation")
         return world.response
 
-    async def check(user_, cost, **kwargs):
+    async def check(user_, **kwargs):
         return world.available
 
-    async def consume(user_, cost, operation="unknown", **kwargs):
-        world.charged.append((cost, operation))
+    async def record(user_id, units, operation="unknown", **kwargs):
+        world.charged.append((units, operation))
 
     monkeypatch.setattr(note_merge_service.note_service, "get_note", get_note)
     monkeypatch.setattr(note_merge_service.note_service, "create_note", create_note)
     monkeypatch.setattr(note_merge_service.repo, "update_note", update_note)
     monkeypatch.setattr(note_merge_service, "generate_content", generate_content)
-    monkeypatch.setattr(note_merge_service, "check_credit_availability", check)
-    monkeypatch.setattr(note_merge_service, "consume_credits", consume)
+    monkeypatch.setattr(note_merge_service, "has_headroom", check)
+    # The merge no longer charges for itself — `llm_resilient` bills the generation from its real
+    # token counts. Patched at the meter so a test can still see what a merge costs.
+    monkeypatch.setattr(
+        "src.domains.billing.services.credit_consumption_service.record_units", record
+    )
     return world
 
 
@@ -174,7 +188,12 @@ async def test_notes_from_two_topics_belong_to_neither(world, user):
     Picking one would put a note about two lessons on one of them, which is a quiet lie about what it covers.
     """
     world.notes["n2"] = _note(
-        "n2", title="Elsewhere", content="b", minutes_old=1, topic="topic-2", course="course-2"
+        "n2",
+        title="Elsewhere",
+        content="b",
+        minutes_old=1,
+        topic="topic-2",
+        course="course-2",
     )
 
     await note_merge_service.merge_notes(user, note_ids=["n1", "n2"])
@@ -289,9 +308,20 @@ async def test_it_is_charged_once_regardless_of_how_many_notes(world, user):
     """Pricing per input would make consolidating a messy topic more expensive the messier it got.
 
     The inputs were already paid for when they were written.
+
+    **Asserted one layer down than it used to be, because the charge moved.** This service used to
+    deduct a flat 110-unit estimate and now deducts nothing: `llm_resilient` bills the generation
+    from its real token counts, and this test stubs `generate_content` out, so no charge is
+    observable from here at all.
+
+    What is observable — and is the thing that actually guarantees the pricing — is that three notes
+    produce **one** model call. One call is one charge wherever the meter sits, so this is a stronger
+    assertion than counting deductions was: it pins the cause rather than the effect. The deduction
+    itself is covered by `tests/test_llm_metering.py`.
     """
     await note_merge_service.merge_notes(user, note_ids=["n1", "n2", "n3"])
-    assert world.charged == [(ESTIMATED_OPERATION_UNITS["note_merge"], "note_merge")]
+
+    assert world.calls == 1, "merging three notes must cost exactly one generation"
 
 
 async def test_being_unable_to_pay_refuses_before_the_model_is_called(world, user):
@@ -305,12 +335,20 @@ async def test_being_unable_to_pay_refuses_before_the_model_is_called(world, use
 
 
 async def test_a_completed_merge_is_handed_over_even_if_billing_fails(world, user, monkeypatch):
-    """The work is done and the learner can see it. Same decision as the session note."""
+    """The work is done and the learner can see it. Same decision as the session note.
 
-    async def consume(*args, **kwargs):
+    The guarantee moved with the charge. It was a `try/except` around this service's own
+    `consume_credits`; it now lives in `record_units`, which swallows its own failures for exactly
+    this reason. Asserted here anyway, because the promise is about the merge and not the meter.
+    """
+
+    async def exploding_record(*args, **kwargs):
         raise SubscriptionLimitError()
 
-    monkeypatch.setattr(note_merge_service, "consume_credits", consume)
+    monkeypatch.setattr(
+        "src.domains.billing.services.credit_consumption_service.record_units",
+        exploding_record,
+    )
 
     merged = await note_merge_service.merge_notes(user, note_ids=["n1", "n2"])
     assert merged.id == "merged-1"

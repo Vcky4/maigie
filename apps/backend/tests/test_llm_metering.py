@@ -29,6 +29,7 @@ import pytest
 
 from src.domains.intelligence.reasoning.llm import GenerationUsage
 from src.domains.personal_learning.services import llm_resilient
+from src.shared.exceptions import SubscriptionLimitError
 
 # A Plus-model turn at the corrected rate card: 8k in, 600 out. §6.2 prices this at ~175 units.
 PLUS_TURN = GenerationUsage(
@@ -233,3 +234,102 @@ class TestTheJsonWrapperCharges:
 
         assert parsed == {"ok": True}
         assert metered.charges[0][2] == "course_outline"
+
+
+class TestAnExhaustedLearnerIsRefusedBeforeSpending:
+    """The counterpart to measured metering, and the reason it is safe to charge after the fact.
+
+    `record_units` accounts and never refuses, so without a pre-flight gate an exhausted learner
+    would generate indefinitely while the meter logged an ever-growing overshoot. The gate cannot ask
+    "can they afford this?" — the cost is not known until the generation has happened — so it asks
+    "do they have anything left at all?".
+    """
+
+    @pytest.fixture
+    def gate(self, monkeypatch):
+        state = {"available": (True, None), "calls": 0}
+
+        async def fake_find(_self, _user_id):
+            return object()
+
+        async def fake_headroom(_user):
+            state["calls"] += 1
+            return state["available"]
+
+        monkeypatch.setattr(
+            "src.domains.identity.repository.IdentityRepository.find_by_id", fake_find
+        )
+        monkeypatch.setattr(
+            "src.domains.billing.services.credit_consumption_service.has_headroom",
+            fake_headroom,
+        )
+        return state
+
+    async def test_an_exhausted_learner_is_refused_before_a_provider_is_called(self, metered, gate):
+        gate["available"] = (False, "You've used this session's allowance.")
+        metered.install([("should never be reached", PLUS_TURN)])
+
+        with pytest.raises(SubscriptionLimitError):
+            await llm_resilient.generate_content("p", user_id="u1", operation="quiz_generation")
+
+        assert not metered.calls, "no provider call may be made for an exhausted learner"
+        assert not metered.charges
+
+    async def test_the_gate_runs_once_per_operation_not_once_per_attempt(self, metered, gate):
+        """A retry must not re-gate. An operation that started legitimately could otherwise be
+        refused halfway through its own retry chain, leaving the learner with nothing after we had
+        already paid for two provider calls."""
+        metered.install([("", PLUS_TURN), ("", PLUS_TURN), ("finally", PLUS_TURN)])
+
+        await llm_resilient.generate_content("p", user_id="u1", max_retries=2)
+
+        assert len(metered.calls) == 3
+        assert gate["calls"] == 1, "the headroom check must not run per attempt"
+
+    async def test_a_broken_gate_fails_open(self, metered, gate, monkeypatch):
+        """A gate that cannot read the meter must not become an outage.
+
+        Failing closed would turn a transient database blip into a product-wide refusal, which is a
+        far worse failure than one unbilled operation.
+        """
+
+        async def exploding_headroom(_user):
+            raise RuntimeError("the database is on fire")
+
+        monkeypatch.setattr(
+            "src.domains.billing.services.credit_consumption_service.has_headroom",
+            exploding_headroom,
+        )
+        metered.install([("the generation still happens", PLUS_TURN)])
+
+        result = await llm_resilient.generate_content("p", user_id="u1")
+
+        assert result == "the generation still happens"
+
+    async def test_an_exempt_operation_is_not_gated_either(self, metered, gate):
+        """Onboarding is not charged, so it must not be refused for lack of allowance. A learner
+        refused at onboarding has been refused before they ever saw the product work."""
+        gate["available"] = (False, "out")
+        metered.install([("welcome", PLUS_TURN)])
+
+        result = await llm_resilient.generate_content(
+            "p", user_id="u1", operation="onboarding_auto_setup"
+        )
+
+        assert result == "welcome"
+        assert gate["calls"] == 0
+
+    async def test_a_refusal_is_not_swallowed_into_a_json_fallback(self, metered, gate):
+        """The one that would have been a silent product defect.
+
+        `generate_content_json` catches `Exception` and returns `fallback`, so a refusal would have
+        become an empty object — and a learner out of allowance would see an empty quiz instead of
+        being told why. A `402` has to survive the JSON wrapper.
+        """
+        gate["available"] = (False, "out of allowance")
+        metered.install([('{"ok": true}', PLUS_TURN)])
+
+        with pytest.raises(SubscriptionLimitError):
+            await llm_resilient.generate_content_json(
+                "p", user_id="u1", operation="quiz_generation", fallback={}
+            )

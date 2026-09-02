@@ -88,28 +88,6 @@ def units_for_tokens(input_tokens: int, output_tokens: int, model_name: str | No
     return units_for_usd(calculate_ai_cost(input_tokens, output_tokens, model_name=model_name))
 
 
-#: Flat unit estimates for the operations that charge but cannot yet measure.
-#:
-#: These three reach a provider through `llm_resilient`, which discards the response object and
-#: returns text only, so no caller sees `usage_metadata`. Phase 3b plumbs it through and **deletes
-#: this table** — Decision L is explicit that cost is measured, not tabulated.
-#:
-#: Named as estimates rather than costs so nobody mistakes them for measurements. Each is the §6.5
-#: figure for its operation, which is derived from `max_tokens` and the rate card rather than
-#: observed. They are the last tabulated prices in the codebase.
-ESTIMATED_OPERATION_UNITS = {
-    # One model call producing one durable note the learner keeps.
-    "voice_session_note": 110,
-    # Merging several notes into one. Same price as writing one, because it is the same thing: one
-    # call, one note. Charged once regardless of how many notes went in — the inputs were paid for
-    # when they were written, and pricing per input would make consolidating a messy topic cost more
-    # the messier it got.
-    "note_merge": 110,
-    # A Mermaid or maths diagram for Study Mode.
-    "study_diagram": 100,
-}
-
-
 # ===========================================================================
 # The window
 # ===========================================================================
@@ -264,7 +242,9 @@ async def check_credit_availability(
         user: User model instance.
         units_needed: Cost in usage units. **Units, not tokens** — callers used to pass raw token
             counts and this service scaled them by `TOKEN_MULTIPLIER`. Use `units_for_tokens` for a
-            completed generation, or `ESTIMATED_OPERATION_UNITS` where measurement is not yet plumbed.
+            completed generation. There are no tabulated prices left: `ESTIMATED_OPERATION_UNITS`
+            was deleted once `llm_resilient` could measure, which is what Decision L means by cost
+            being measured rather than tabulated.
         db_client: Ignored; kept so the many existing call sites need no edit.
         space_id: When set, takes the Space branch and never touches the window (Decision F).
 
@@ -375,6 +355,50 @@ async def consume_credits(
         window_allowance=entitlement.window_allowance,
         warning=_warning(state, entitlement.window_allowance, state.units_used + units),
     )
+
+
+async def has_headroom(user: User) -> tuple[bool, str | None]:
+    """Is there anything left in the window at all? The gate for an operation of unknown cost.
+
+    **This is what replaced `check_credit_availability(user, estimate)` for measured operations.**
+    A measured operation cannot be checked against its cost in advance, because its cost is not
+    known until it has happened — that is the whole point of measuring instead of tabulating
+    (Decision L). What *can* be checked is whether the learner has any allowance left, and refusing
+    at zero is what stops an exhausted learner from generating indefinitely.
+
+    The consequence, stated plainly: **a window can be exceeded by at most the cost of one
+    operation.** A learner with 10 units left can start a 1 000-unit course generation and end up
+    990 units over. That is the price of measurement, and it is bounded, self-correcting on the next
+    call, and preferable to the alternative — which is charging a made-up number, and is what the
+    3× rate-card error was hiding in.
+
+    Returns `(available, message)` like `check_credit_availability`, with the learner-facing
+    refusal sentence rather than `None` so a caller has something true to render without composing
+    its own copy.
+
+    **Notifies nothing.** This is a read, and it runs before every measured generation — firing the
+    limit-reached email from here would send one on every attempt an exhausted learner made rather
+    than once when they ran out. `consume_credits` and `record_units` own that notification because
+    they are the writes.
+    """
+    from src.domains.billing.services import entitlement_service
+
+    identity_repo = IdentityRepository()
+    fresh = await identity_repo.find_by_id(user.id)
+    if not fresh:
+        return True, None
+
+    entitlement = await entitlement_service.resolve(fresh.id)
+    state = window_state(fresh)
+
+    if (
+        entitlement.monthly_backstop is not None
+        and state.month_units_used >= entitlement.monthly_backstop
+    ):
+        return False, _refusal(0, state.resets_at, monthly=True).message
+    if state.units_used >= entitlement.window_allowance:
+        return False, _refusal(0, state.resets_at, monthly=False).message
+    return True, None
 
 
 async def record_units(user_id: str, units: int, operation: str = "unknown") -> None:

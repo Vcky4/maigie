@@ -100,6 +100,7 @@ async def generate_for_topic(
         # actionable error the route turns into a `502`.
         fallback={},
         user_id=user_id,
+        operation="study_diagram",
     )
     if not isinstance(result, dict):
         raise ValidationError("The model did not return a diagram.")
