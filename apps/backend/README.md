@@ -79,6 +79,28 @@ poetry run ruff format .                    # CI runs this with --check --diff
 poetry run ruff check src tests alembic
 ```
 
+### Pre-commit hook
+
+Both commands also run automatically before each commit, over **staged Python files only**.
+`setup-dev.sh` / `setup-dev.ps1` install the hook; to enable it in an existing checkout:
+
+```bash
+poetry run pre-commit install
+```
+
+The hook definitions live in `.pre-commit-config.yaml` at the **git root**, not in this
+directory — that is the only path `pre-commit install` reads. The ruff `rev` pinned there
+tracks the `ruff` version in `[tool.poetry.group.dev.dependencies]`; bump them together, or
+the hook and `nx lint backend` will disagree about what counts as an error.
+
+Because it only touches staged files, the first commit that edits a long-unformatted module
+will reformat that whole module. Commit the reformat on its own if the diff drowns the change.
+
+```bash
+poetry run pre-commit run --all-files   # from the git root: lint + format the whole backend
+git commit --no-verify                  # escape hatch, for WIP commits
+```
+
 ## Testing
 
 ```bash

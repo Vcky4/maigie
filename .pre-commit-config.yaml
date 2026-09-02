@@ -1,0 +1,35 @@
+# Git hooks for the maigie monorepo.
+#
+# This config lives at the git root because that is the only place `pre-commit install`
+# looks, and because the file paths pre-commit hands to hooks are always relative to the
+# git root. That is why every `files` pattern below is anchored at `apps/backend/`.
+#
+# Backend-only for now: the Python tree under apps/backend has a single agreed lint and
+# format tool (ruff, see apps/backend/pyproject.toml). The JS/TS side is still split
+# between eslint and prettier with no shared entry point, so it is left alone rather than
+# half-wired here.
+#
+# Enable with:  poetry run pre-commit install      (from apps/backend)
+minimum_pre_commit_version: "3.5.0"
+
+# Hooks only touch what is staged, so enabling this on an unformatted tree is safe: the
+# first commit that touches a large file will reformat that file and nothing else.
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Pinned to the exact ruff the backend's dev dependencies resolve to
+    # (`ruff = "^0.6.0"` -> 0.6.9). pre-commit builds an isolated env for this hook, so
+    # drift here would mean the hook and `nx lint backend` disagree about what is an error.
+    rev: v0.6.9
+    hooks:
+      # Lint first, then format: ruff's fixes can leave lines that want re-wrapping.
+      - id: ruff
+        name: ruff lint (backend)
+        # --exit-non-zero-on-fix stops the commit even when every finding was auto-fixed,
+        # so the rewritten code gets read before it lands rather than after.
+        args: [--fix, --exit-non-zero-on-fix]
+        files: ^apps/backend/.*\.py$
+      - id: ruff-format
+        name: ruff format (backend)
+        files: ^apps/backend/.*\.py$

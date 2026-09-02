@@ -77,6 +77,11 @@ aiosqlite = "^0.20.0"
 ruff = "^0.6.0"
 mypy = "^1.11.0"
 coverage = "^7.12.0"
+# Runs ruff on staged files before each commit. The hook definitions live in
+# `.pre-commit-config.yaml` at the *git root*, not here, because that is the only path
+# `pre-commit install` reads. Installed as a backend dev dependency rather than expected
+# globally so `poetry install` is the single setup step; activate with `pre-commit install`.
+pre-commit = "^4.0.0"
 
 [build-system]
 requires = ["poetry-core"]

@@ -138,6 +138,19 @@ if ($LASTEXITCODE -eq 0) {
     exit 1
 }
 
+# Wire the git pre-commit hook: ruff lint + format over staged backend files. The hook
+# definitions live in .pre-commit-config.yaml at the *git root*, which `pre-commit install`
+# locates on its own, so running from apps/backend is fine. A failure here is reported but
+# not fatal — a missing hook should not stop someone from getting a working backend.
+Write-Host ""
+Write-Host "Installing git pre-commit hook (ruff lint + format)..." -ForegroundColor Yellow
+poetry run pre-commit install
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "[OK] pre-commit hook installed" -ForegroundColor Green
+} else {
+    Write-Host "[WARNING] Could not install the git pre-commit hook." -ForegroundColor Yellow
+}
+
 # Create .env file if it doesn't exist
 if (-not (Test-Path ".env")) {
     Write-Host ""
