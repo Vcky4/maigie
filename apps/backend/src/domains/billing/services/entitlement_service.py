@@ -22,6 +22,9 @@ rather than a `TODO` so that the precedence rule can be written, tested and revi
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -217,12 +220,82 @@ rather than failing the request, matching `feature_flags._fetch_personal_tier`."
 
 
 # ===========================================================================
+# Request-scoped memo
+# ===========================================================================
+
+# Collapsing four disagreeing mechanisms into one resolver replaced their reads with *its* read, and
+# a single request now asks the same question several times: `feature_tier_service.check_capability`
+# and `feature_flags.get_quality_tier` resolve independently, and the ask path pays this join per
+# turn where it previously read a tier that had already been loaded with the user. Same answer, once
+# per request, is the whole of the optimisation.
+#
+# **The cache only exists inside an explicitly opened scope**, and `EntitlementScopeMiddleware` opens
+# one per HTTP request and no others. That is a correctness property rather than a simplification.
+# A task-scoped or process-scoped memo would be held for the life of the task, and the longest-lived
+# task in this codebase is a `study_voice` relay: a session runs for minutes, bills every tick, and
+# must notice a pass expiring underneath it. Websocket scopes therefore get no cache and keep
+# resolving fresh, which is exactly the behaviour a metered long-lived connection needs.
+#
+# The window is one request, so the only staleness reachable is a write earlier in the *same*
+# request. `invalidate()` exists for that; `trial_service` is its caller, because starting a trial is
+# the one thing that changes a learner's own entitlement inside a request they made themselves.
+# Provider webhooks and store callbacks write tiers in requests of their own, which each have their
+# own scope and read nothing entitlement-shaped afterwards.
+_REQUEST_CACHE: ContextVar[dict[str, Entitlement] | None] = ContextVar(
+    "entitlement_request_cache", default=None
+)
+
+
+@contextmanager
+def request_scope() -> Iterator[None]:
+    """Open a memo scope for the duration of one request.
+
+    Nesting is safe: the inner scope shadows the outer one and `reset` restores it, so a scope
+    opened in a test around a scope opened by middleware does not leak either way.
+    """
+    token = _REQUEST_CACHE.set({})
+    try:
+        yield
+    finally:
+        _REQUEST_CACHE.reset(token)
+
+
+def invalidate(user_id: str) -> None:
+    """Forget a memoised entitlement after writing something that changes it.
+
+    A no-op outside a scope, which is why callers do not have to know whether they are in one.
+    """
+    cache = _REQUEST_CACHE.get()
+    if cache is not None:
+        cache.pop(user_id, None)
+
+
+# ===========================================================================
 # Reads
 # ===========================================================================
 
 
 async def resolve(user_id: str) -> Entitlement:
-    """Resolve a learner's personal entitlement. Called on nearly every gated request."""
+    """Resolve a learner's personal entitlement. Called on nearly every gated request.
+
+    Memoised for the rest of the request when a scope is open; see `_REQUEST_CACHE` for why that is
+    "when a scope is open" rather than "always".
+    """
+    cache = _REQUEST_CACHE.get()
+    if cache is not None:
+        cached = cache.get(user_id)
+        if cached is not None:
+            return cached
+
+    entitlement = await _resolve_uncached(user_id)
+
+    if cache is not None:
+        cache[user_id] = entitlement
+    return entitlement
+
+
+async def _resolve_uncached(user_id: str) -> Entitlement:
+    """The read itself. Separate from `resolve` so the memo has nothing to do with the query."""
     # Imported here, not at module scope: `personal_learning.services.feature_tier_service` imports
     # this module, so a top-level import of anything under `personal_learning` closes a cycle.
     from sqlalchemy import select

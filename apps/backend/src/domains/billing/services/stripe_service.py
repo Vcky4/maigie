@@ -133,10 +133,23 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
     here. Nothing on any surface may hold a second copy of these numbers — the four
     repositories held nine copies of the subscription price alone, and they disagreed.
 
-    ``usage_note`` carries the concrete equivalent in the units a learner recognises,
-    because "5 hours of Plus" invites the reader to assume five hours of live voice
-    tutoring, which costs about $6.00 to serve against a pass that nets $0.75. Stating
-    the voice figure is the difference between a promise we keep and one we don't.
+    ``usage_note`` exists because "5 hours of Plus" invites the reader to assume five hours
+    of live voice tutoring, which costs about $6.00 to serve against a pass that nets
+    $0.75. Every note therefore says that voice is allowanced rather than unlimited.
+
+    **It says so without a number, and that is deliberate.** These notes shipped carrying
+    the §6.3 figures — "about 23 chat turns and 20 minutes of live voice per 5-hour
+    session" — which are the window allowances Phase 3 introduces. There is no window
+    today: `credit_consumption_service.CREDIT_LIMITS` still meters a monthly cap and a
+    daily cap in tokens, so the per-window promise was enforced by nothing and, for
+    `plus_monthly`, was roughly nineteen times more generous than what the live meter
+    actually permits per month. A customer-facing figure that no code can honour is worse
+    than no figure, because it reads as a commitment.
+
+    **Phase 3 puts the numbers back**, in the same change that makes them true: the window
+    exists, `Entitlement.window_allowance` is the allowance, and `GET /billing/usage`
+    reports against it. The checklist item is recorded there rather than here. Until then
+    the notes state the *shape* of the limit, which the resolver does enforce today.
     """
     cfg = get_settings()
     plans = [
@@ -150,7 +163,7 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 "Everything Maigie does, at a standard level: notes, flashcards, "
                 "practice, study plans, courses and weekly reflections."
             ),
-            usage_note="About 16 chat turns and 2.5 minutes of live voice per 5-hour session.",
+            usage_note="Standard model quality, and a short daily taster of live voice tutoring.",
         ),
         PlanItem(
             id="plus_pass_5h",
@@ -165,7 +178,10 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 "Full Maigie Plus for 5 hours, starting when you activate it. "
                 "Hold it as long as you like; it does not renew."
             ),
-            usage_note="About 17 chat turns and 15 minutes of live voice tutoring.",
+            usage_note=(
+                "Every Plus feature for the 5 hours, with an allowance of live voice "
+                "tutoring inside it rather than 5 unbroken hours of voice."
+            ),
             # Listed so clients and generated types can be built against the real shape;
             # the one-time checkout that sells it arrives in Phase 5. Until then a Buy
             # button would answer 400.
@@ -181,7 +197,10 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 "Full Maigie Plus for 7 days, starting when you activate it. "
                 "A study week. It does not renew."
             ),
-            usage_note="About 57 chat turns and 50 minutes of live voice tutoring in total.",
+            usage_note=(
+                "Every Plus feature for the 7 days, with an allowance of live voice "
+                "tutoring for the week."
+            ),
             purchasable=False,  # Phase 5, as above.
         ),
         PlanItem(
@@ -195,7 +214,9 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 "Advanced models, adaptive practice and plans, deeper reflections, "
                 "and every document format, in your personal workspace."
             ),
-            usage_note="About 23 chat turns and 20 minutes of live voice per 5-hour session.",
+            usage_note=(
+                "Advanced models throughout, with a monthly allowance of live voice tutoring."
+            ),
         ),
         PlanItem(
             id="circle_plan_monthly",

@@ -169,12 +169,36 @@ class TestUsageEquivalents:
             assert by_id[plan_id].usage_note, f"{plan_id} must state its usage equivalent"
 
     @pytest.mark.parametrize("plan_id", sorted(PERSONAL_PRODUCT_IDS))
-    def test_the_voice_figure_is_always_stated(self, plan_id):
+    def test_voice_is_always_named_as_allowanced(self, plan_id):
         """ "5 hours of Plus" invites the reader to assume five hours of live voice tutoring.
         Five hours of tutoring costs about $6.00 to serve against a pass that nets $0.75, so
-        the sentence has to carry the voice number or it is a promise we cannot keep.
+        every note has to say that voice is allowanced rather than included without limit.
         """
-        assert "voice" in _by_id()[plan_id].usage_note.lower()
+        note = _by_id()[plan_id].usage_note.lower()
+        assert "voice" in note
+        assert "allowance" in note or "taster" in note
+
+    @pytest.mark.parametrize("plan_id", sorted(PERSONAL_PRODUCT_IDS))
+    def test_no_note_promises_a_figure_the_meter_cannot_honour(self, plan_id):
+        """These notes shipped carrying the §6.3 window figures — "about 23 chat turns and
+        20 minutes of live voice per 5-hour session" — before the window existed.
+        `credit_consumption_service.CREDIT_LIMITS` still meters a monthly and a daily token
+        cap, so for `plus_monthly` that sentence was about 19× more generous than the live
+        meter allows per month. A number in customer-facing copy reads as a commitment.
+
+        **Phase 3 deletes this test** in the change that introduces the window,
+        `Entitlement.window_allowance` and `GET /billing/usage` — at which point the figures
+        are true and belong back in the copy.
+
+        The check is on the units rather than on digits, because the *durations* — 5 hours,
+        7 days — are real, sold, and enforced by pass expiry. It is the consumption counts
+        that nothing backs.
+        """
+        note = _by_id()[plan_id].usage_note.lower()
+        for unit in ("turn", "minute", "message", "credit"):
+            assert (
+                unit not in note
+            ), f"{plan_id} states a {unit} count that nothing enforces until Phase 3: {note!r}"
 
 
 # ---------------------------------------------------------------------------

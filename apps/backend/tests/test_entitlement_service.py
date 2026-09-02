@@ -365,3 +365,141 @@ class TestTheFourthOpinionIsGone:
         assert "personal_tier" not in params
         # `seat_tier` stays: under space scope a seat tier is the whole answer.
         assert "seat_tier" in params
+
+
+# ---------------------------------------------------------------------------
+# The request-scoped memo
+# ---------------------------------------------------------------------------
+
+
+class TestRequestScopedMemo:
+    """Collapsing four mechanisms into one resolver means one request asks the same question
+    several times — `check_capability` and `get_quality_tier` resolve independently, so the ask
+    path pays the join at least twice per turn where it used to read a pre-loaded tier.
+
+    The interesting assertions here are the two *negative* ones: no scope means no cache, and a
+    write inside a scope is visible after it. Both are the difference between an optimisation and
+    a stale-entitlement bug.
+    """
+
+    @pytest.mark.asyncio
+    async def test_one_read_per_scope(self, monkeypatch):
+        calls = []
+
+        async def counting_read(user_id):
+            calls.append(user_id)
+            return compose(subscription_tier="PREMIUM_MONTHLY")
+
+        monkeypatch.setattr(svc, "_resolve_uncached", counting_read)
+
+        with svc.request_scope():
+            first = await svc.resolve("u1")
+            second = await svc.resolve("u1")
+
+        assert calls == ["u1"]
+        assert first is second
+
+    @pytest.mark.asyncio
+    async def test_users_do_not_share_an_entry(self, monkeypatch):
+        async def by_user(user_id):
+            tier = "PREMIUM_MONTHLY" if user_id == "paid" else "FREE"
+            return compose(subscription_tier=tier)
+
+        monkeypatch.setattr(svc, "_resolve_uncached", by_user)
+
+        with svc.request_scope():
+            assert (await svc.resolve("paid")).tier == "plus"
+            assert (await svc.resolve("free")).tier == "free"
+
+    @pytest.mark.asyncio
+    async def test_nothing_is_cached_without_a_scope(self, monkeypatch):
+        """`study_voice` relays run for minutes and bill every couple of seconds, and they never
+        open a scope. A cache that existed by default would let a pass expire mid-session and go on
+        being honoured until the learner hung up.
+        """
+        calls = []
+
+        async def counting_read(user_id):
+            calls.append(user_id)
+            return compose()
+
+        monkeypatch.setattr(svc, "_resolve_uncached", counting_read)
+
+        await svc.resolve("u1")
+        await svc.resolve("u1")
+
+        assert calls == ["u1", "u1"]
+
+    @pytest.mark.asyncio
+    async def test_invalidate_makes_a_write_visible_in_the_same_request(self, monkeypatch):
+        """`trial_service.start_trial` checks eligibility through `get_effective_tier` — which
+        resolves and caches `free` — and only then writes the trial. Without the `invalidate()`
+        call it makes, anything gated later in that request would deny the learner the trial they
+        had just been granted.
+        """
+        state = {"tier": "FREE"}
+
+        async def read_state(user_id):
+            return compose(subscription_tier=state["tier"])
+
+        monkeypatch.setattr(svc, "_resolve_uncached", read_state)
+
+        with svc.request_scope():
+            assert (await svc.resolve("u1")).tier == "free"
+            state["tier"] = "PREMIUM_MONTHLY"
+            assert (await svc.resolve("u1")).tier == "free", "cached, as designed"
+            svc.invalidate("u1")
+            assert (await svc.resolve("u1")).tier == "plus"
+
+    def test_invalidate_outside_a_scope_is_a_no_op(self):
+        """So that callers never have to know whether they are in a request."""
+        svc.invalidate("nobody")
+
+    @pytest.mark.asyncio
+    async def test_the_scope_does_not_outlive_itself(self, monkeypatch):
+        calls = []
+
+        async def counting_read(user_id):
+            calls.append(user_id)
+            return compose()
+
+        monkeypatch.setattr(svc, "_resolve_uncached", counting_read)
+
+        with svc.request_scope():
+            await svc.resolve("u1")
+        with svc.request_scope():
+            await svc.resolve("u1")
+
+        assert calls == ["u1", "u1"]
+
+    def test_the_middleware_is_installed_and_is_pure_asgi(self):
+        """`BaseHTTPMiddleware` calls the downstream app from a different task, so a context
+        variable set in `dispatch` reaches the endpoint only by the child task's context copy and
+        nothing propagates back. A plain ASGI callable runs in the request's own task. Asserting the
+        base class is asserting that reasoning has not been undone by a later refactor.
+        """
+        import inspect
+
+        from starlette.middleware.base import BaseHTTPMiddleware
+
+        from src.shared.middleware import EntitlementScopeMiddleware
+
+        assert not issubclass(EntitlementScopeMiddleware, BaseHTTPMiddleware)
+        assert inspect.iscoroutinefunction(EntitlementScopeMiddleware.__call__)
+
+    @pytest.mark.asyncio
+    async def test_the_middleware_scopes_http_and_skips_websockets(self, monkeypatch):
+        """Websockets are excluded on purpose; see `test_nothing_is_cached_without_a_scope`."""
+        from src.shared.middleware import EntitlementScopeMiddleware
+
+        seen = {}
+
+        async def downstream(scope, receive, send):
+            seen[scope["type"]] = svc._REQUEST_CACHE.get()
+
+        middleware = EntitlementScopeMiddleware(downstream)
+        await middleware({"type": "http"}, None, None)
+        await middleware({"type": "websocket"}, None, None)
+
+        assert seen["http"] == {}
+        assert seen["websocket"] is None

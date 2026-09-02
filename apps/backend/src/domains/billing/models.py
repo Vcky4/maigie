@@ -62,10 +62,15 @@ class PlanItem(CamelModel):
     interval: str  # "none" | "month" | "year" | "one_time"
     trial_days: int = 0
     features: list[str] = []
-    # The concrete usage equivalent, in units a learner recognises, for this product.
-    # Served rather than composed on the client so that "5 hours of Plus" can never be
-    # displayed without the voice figure beside it — five hours of live tutoring costs
-    # roughly eight times what the pass earns, and the sentence has to say so.
+    # What the product actually buys, in terms a learner recognises. Served rather than
+    # composed on the client so that "5 hours of Plus" can never be displayed without the
+    # voice caveat beside it — five hours of live tutoring costs roughly eight times what
+    # the pass earns, and the sentence has to say so.
+    #
+    # Carries no consumption figures until Phase 3. It briefly carried the §6.3 window
+    # allowances, which the live meter does not implement; see
+    # `stripe_service.get_active_plan_catalog` for what was wrong with that and
+    # `test_subscription_catalog.TestUsageEquivalents` for what holds the line.
     usage_note: str | None = None
     # Whether the plan applies to one person, to a whole space, or tops up an
     # existing space plan. Clients need this to group the catalog for display.

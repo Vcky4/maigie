@@ -35,6 +35,7 @@ from src.shared.exceptions import (
 )
 from src.shared.infrastructure import cache
 from src.shared.middleware import (
+    EntitlementScopeMiddleware,
     LoggingMiddleware,
     SecurityHeadersMiddleware,
     UnhandledExceptionMiddleware,
@@ -140,6 +141,11 @@ def create_app() -> FastAPI:
     # subsystem entirely, and the client's own error handling never runs because it sees a network failure
     # rather than a status code.
     app.add_middleware(UnhandledExceptionMiddleware)
+    # Outside the exception converter and inside everything else, so the memo covers the endpoint and
+    # every error path out of it. It has to wrap the router rather than sit beside it, because the
+    # scope is what makes `entitlement_service.resolve` answer once per request instead of once per
+    # caller; see the module docstring for why websockets are deliberately left out.
+    app.add_middleware(EntitlementScopeMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(

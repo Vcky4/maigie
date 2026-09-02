@@ -105,6 +105,9 @@ async def start_trial(user_id: str) -> TrialStatus:
     - User has trialed within the last TRIAL_COOLDOWN_DAYS days
     - User is already a PLUS subscriber
     """
+    # Local, like every other import in this module: `billing.services` reaches back into
+    # `personal_learning` and a top-level import here would close the cycle.
+    from src.domains.billing.services import entitlement_service
     from src.domains.personal_learning.repository import PersonalLearningRepository
 
     from . import feature_tier_service
@@ -144,6 +147,12 @@ async def start_trial(user_id: str) -> TrialStatus:
         "trialEndsAt": ends_at,
     }
     await repo.update_profile(user_id, update_data)
+
+    # `resolve()` is memoised for the rest of the request, and this function has already caused it to
+    # be called and cached — the eligibility check above went through `get_effective_tier`, which
+    # resolved and stored `free`. Without this, anything gated later in the same request would deny a
+    # learner the trial they had just been granted.
+    entitlement_service.invalidate(user_id)
 
     logger.info(f"Trial started for user {user_id}, ends at {ends_at}")
 
