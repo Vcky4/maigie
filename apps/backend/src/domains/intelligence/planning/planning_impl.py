@@ -31,36 +31,66 @@ class PlanRateLimited(Exception):
     pass
 
 
-async def _call_gemini_for_plan(prompt: str, max_tokens: int = 1200) -> dict | None:
-    """Call Gemini for plan generation. Returns parsed JSON or None."""
+async def _call_gemini_for_plan(
+    prompt: str, max_tokens: int = 1200, *, user_id: str | None = None
+) -> dict | None:
+    """Call Gemini for plan generation. Returns parsed JSON or None.
+
+    `user_id` is what makes the call chargeable; a plan generated without one is not billed, which is
+    correct only for genuinely system-initiated work.
+    """
     from google import genai
     from google.genai import types
 
+    from src.domains.intelligence.reasoning.llm import (
+        THINKING_BOUNDED,
+        extract_usage,
+        thinking_config,
+    )
     from src.domains.intelligence.reasoning.llm.registry import (
         LlmTask,
         default_model_for,
         gemini_api_key,
     )
+    from src.domains.personal_learning.services.llm_resilient import meter_usage
 
     api_key = gemini_api_key()
     if not api_key:
         return None
 
     client = genai.Client(api_key=api_key)
+    model = default_model_for(LlmTask.STRUCTURED_COMPLETION)
     # RESOURCE_EXHAUSTED: short exponential backoff; many long retries still fail and tie up HTTP (~60s+).
     max_attempts = 4
 
     for attempt in range(max_attempts):
         try:
             response = await client.aio.models.generate_content(
-                model=default_model_for(LlmTask.STRUCTURED_COMPLETION),
+                model=model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     max_output_tokens=max_tokens,
                     temperature=0.5,
+                    # Phase 0's middle class. A plan is assembled from supplied goals, dates and
+                    # topics into a fixed JSON shape, so the reasoning is bounded — and the provider
+                    # default on a thinking model is not.
+                    thinking_config=thinking_config(THINKING_BOUNDED),
                     # No tools here; AFC can add noise and extra remote behavior.
                     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                 ),
+            )
+            # Metered here rather than by redirecting this through `llm_resilient`, which is what the
+            # other stragglers did. This one owns a 429 path that raises `PlanRateLimited` so the
+            # route can say "AI is temporarily busy" instead of failing, and the chokepoint would
+            # swallow the 429 into a generic `LLMUnavailableError` and lose that message. **At ~225
+            # units this is below Decision P's 500-unit threshold**, so both tiers run the standard
+            # model and the tier gate the chokepoint would add is a no-op here — which makes the
+            # meter the only thing actually missing. Charged per attempt, like the chokepoint: a 429
+            # that produced no text still spent whatever the provider counted.
+            await meter_usage(
+                user_id=user_id,
+                operation="plan_generation",
+                usage=extract_usage(response, model),
             )
             text = (response.text or "").strip()
             if not text:
@@ -180,7 +210,7 @@ Return a JSON object with:
 Output only valid JSON. Make it realistic and achievable."""
 
     try:
-        plan = await _call_gemini_for_plan(prompt)
+        plan = await _call_gemini_for_plan(prompt, user_id=user_id)
     except PlanRateLimited as e:
         return {
             "status": "error",
@@ -401,7 +431,7 @@ Return a JSON object with:
 Output only valid JSON."""
 
     try:
-        plan = await _call_gemini_for_plan(prompt)
+        plan = await _call_gemini_for_plan(prompt, user_id=user_id)
     except PlanRateLimited as e:
         return {
             "status": "error",

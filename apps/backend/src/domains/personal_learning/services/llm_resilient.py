@@ -216,14 +216,25 @@ async def _refuse_if_exhausted(*, user_id: str | None, operation: str) -> None:
         )
 
 
-async def _meter(
+async def meter_usage(
     *,
     user_id: str | None,
     operation: str,
     usage: GenerationUsage | None,
-    attempt_of: str,
+    attempt_of: str = "direct",
 ) -> None:
     """Charge one provider call to the learner's window.
+
+    **Public because one call site cannot use the chokepoint.**
+    `intelligence.reasoning.llm.generate_grounded_content` attaches the search tool, which the
+    retry-across-providers shape cannot host, so `resource_service` calls it directly — and at ~1 600
+    units it is the most expensive operation in the product. It charges through here rather than
+    reimplementing, so the exemption list, the unmeasured-reply warning and the never-raises
+    guarantee are shared rather than duplicated. Duplicating them is how one path ends up exempting
+    something the other charges.
+
+    `attempt_of` defaults to `"direct"` for those callers: there is no provider chain to name, and
+    labelling it as such keeps the warning line readable when a direct call comes back unmeasured.
 
     **Called per attempt, not per operation, and that is deliberate** (Decision L). One logical
     generation can bill up to nine provider calls — three attempts across three providers, with an
@@ -286,6 +297,16 @@ _FAILURE_THRESHOLD = 5  # Consecutive failures before opening circuit
 _RECOVERY_TIMEOUT_S = 60  # Seconds before trying again after open
 _DEFAULT_TIMEOUT_S = 30  # Per-call timeout in seconds
 _MAX_RETRIES = 2  # Max retries per call (total attempts = MAX_RETRIES + 1)
+
+#: Hard ceiling on billable provider calls for one logical operation, across every provider tried.
+#:
+#: `_MAX_RETRIES` is per provider and says nothing about the sum, so three enabled providers meant a
+#: worst case of nine charged calls for one generation. Four is three attempts on the primary plus one
+#: on a fallback: it keeps the retry that actually recovers transient blanks — the failure this
+#: module's empty-reply handling exists for, which recovers on the second attempt — while refusing to
+#: fund a full walk of the chain. **Since retries are charged, this is a price and not only a
+#: timeout.**
+_MAX_TOTAL_ATTEMPTS = 4
 _DEFAULT_PROVIDER = "gemini"
 
 # Supported providers
@@ -674,7 +695,26 @@ async def generate_content(
 
     last_error: Exception | None = None
 
+    # **A ceiling on the total, not just on each provider.** `max_retries` is per provider, so with
+    # three enabled the worst case was three attempts × three providers = nine billable calls for one
+    # logical operation, and every one of them is charged (Decision L). That was a reliability
+    # decision made before retries cost money.
+    #
+    # Dormant today because `LLM_ENABLED_PROVIDERS` is Gemini alone, which is exactly why it is worth
+    # fixing now: the bug reappears the moment a second provider is enabled, and it reappears as a
+    # bill rather than as an error. `_MAX_TOTAL_ATTEMPTS` bounds the spend regardless of how many
+    # providers exist.
+    attempts_left = _MAX_TOTAL_ATTEMPTS
+
     for provider in providers_to_try:
+        if attempts_left <= 0:
+            logger.warning(
+                "LLM giving up after %d total attempts across providers (operation=%s)",
+                _MAX_TOTAL_ATTEMPTS,
+                operation,
+            )
+            break
+
         # Check circuit breaker for this provider
         if _is_circuit_open(provider):
             logger.debug(f"LLM circuit open for [{provider}] — skipping")
@@ -685,8 +725,9 @@ async def generate_content(
         if not call_fn:
             continue
 
-        # Try this provider with retries
-        for attempt in range(max_retries + 1):
+        # Try this provider with retries, bounded by what is left of the total budget.
+        for attempt in range(min(max_retries + 1, attempts_left)):
+            attempts_left -= 1
             try:
                 # `thinking` and `model` reach Gemini only. The other two callables do not accept
                 # either, and passing them here rather than widening those signatures keeps both
@@ -702,7 +743,7 @@ async def generate_content(
                 # consumed tokens.** The provider answered, billed us, and produced nothing usable,
                 # which is exactly the case where charging on delivery instead of on spend would
                 # leave real cost invisible. Decision L on retries is the same argument.
-                await _meter(
+                await meter_usage(
                     user_id=user_id,
                     operation=operation,
                     usage=reply.usage,

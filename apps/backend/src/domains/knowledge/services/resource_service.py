@@ -250,6 +250,7 @@ async def recommend_resources(
     # difference is that a transient blank is now retried instead of losing the recommendation.
     from src.domains.personal_learning.services.llm_resilient import (
         generate_content,
+        meter_usage,
         model_for_operation,
     )
 
@@ -299,6 +300,17 @@ async def recommend_resources(
         search_prompt,
         temperature=0.3,
         model=await model_for_operation(user_id=user_id, operation="resource_recommendations"),
+    )
+    # Charged here rather than at the chokepoint, because grounding cannot go through it. Metered
+    # **before** the empty-reply check below for the same reason the chokepoint does: a reply that
+    # came back blank still consumed tokens, and this is the operation where that matters most —
+    # ~1 600 units, and a measured run has already been seen spending 1 067 of them on reasoning
+    # before truncating. Charging on delivery would have made the most expensive failure in the
+    # product free to us and invisible to everyone.
+    await meter_usage(
+        user_id=user_id,
+        operation="resource_recommendations",
+        usage=found.usage,
     )
     if not found.text.strip():
         logger.warning("Recommendation search for %r came back empty.", query)

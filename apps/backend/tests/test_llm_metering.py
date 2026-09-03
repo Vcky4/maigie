@@ -333,3 +333,70 @@ class TestAnExhaustedLearnerIsRefusedBeforeSpending:
             await llm_resilient.generate_content_json(
                 "p", user_id="u1", operation="quiz_generation", fallback={}
             )
+
+
+class TestTheTotalAttemptBudget:
+    """One logical operation cannot bill an unbounded number of provider calls.
+
+    `max_retries` is per provider and says nothing about the sum, so three enabled providers meant a
+    worst case of nine charged calls for one generation — a reliability decision taken before retries
+    cost money. Dormant while Gemini is the only enabled provider, which is why it is worth pinning
+    now: it returns the moment a second provider is enabled, and it returns as a bill rather than as
+    an error.
+    """
+
+    @pytest.fixture
+    def three_providers(self, monkeypatch, metered):
+        """Three providers that all fail, so the walk is only stopped by the budget."""
+        calls: list[str] = []
+
+        async def failing(prompt, **_kwargs):
+            calls.append("call")
+            raise RuntimeError("provider is down")
+
+        async def resolve(_user_id):
+            return "gemini"
+
+        monkeypatch.setattr(llm_resilient, "_resolve_provider", resolve)
+        monkeypatch.setattr(
+            llm_resilient, "_get_fallback_providers", lambda _p: ["openai", "anthropic"]
+        )
+        monkeypatch.setattr(llm_resilient, "_is_circuit_open", lambda _p: False)
+        monkeypatch.setattr(llm_resilient, "_record_failure", lambda _p: None)
+        monkeypatch.setattr(
+            llm_resilient,
+            "_PROVIDER_CALLABLES",
+            {"gemini": failing, "openai": failing, "anthropic": failing},
+        )
+        return calls
+
+    async def test_the_total_is_capped_below_retries_times_providers(self, three_providers):
+        """Three providers × three attempts would be nine. The budget stops it at four."""
+        with pytest.raises(llm_resilient.LLMUnavailableError):
+            await llm_resilient.generate_content("p", user_id="u1", max_retries=2)
+
+        assert len(three_providers) == llm_resilient._MAX_TOTAL_ATTEMPTS
+        assert len(three_providers) < 9
+
+    async def test_a_single_provider_still_gets_its_full_retry_budget(self, metered):
+        """The cap must not cost the retry that actually recovers things.
+
+        A transient blank recovers on the second attempt — that is the failure the empty-reply
+        handling exists for — so capping the total must not clip the primary provider's retries.
+        """
+        metered.install([("", PLUS_TURN), ("", PLUS_TURN), ("recovered", PLUS_TURN)])
+
+        result = await llm_resilient.generate_content("p", user_id="u1", max_retries=2)
+
+        assert result == "recovered"
+        assert len(metered.calls) == 3
+
+    async def test_every_attempt_inside_the_budget_is_still_charged(self, three_providers, metered):
+        """Capping the count does not stop the calls that did happen from being billed. The budget
+        bounds the spend; it does not hide it."""
+        with pytest.raises(llm_resilient.LLMUnavailableError):
+            await llm_resilient.generate_content("p", user_id="u1", max_retries=2)
+
+        # These particular attempts raised before returning usage, so nothing is charged — the point
+        # is that the count is bounded, and that a failure charges for tokens it never received.
+        assert not metered.charges

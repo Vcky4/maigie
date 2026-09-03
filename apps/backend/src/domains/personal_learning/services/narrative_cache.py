@@ -33,7 +33,13 @@ logger = logging.getLogger(__name__)
 
 #: The surfaces permitted to store here. A closed set in code rather than a database enum, so a new
 #: panel costs a line instead of a migration, while a typo in a caller still fails loudly.
-NarrativeKind = Literal["growth_drivers", "subject_insight", "goal_insight"]
+#: `home_guidance` is the odd one out and worth flagging: the other three are Plus-only prose panels,
+#: and this one is the home screen every learner sees on every load. It is here because the caching
+#: problem is identical — an expensive composition keyed on figures that rarely move — and because
+#: uncached it was the single dearest operation per learner per month in the product (§6.5), at
+#: roughly $2.10 against a Plus subscription's entire margin. **`resolve` does not gate on Plus**, so
+#: adding a free-tier kind is safe; `plus_gate` is a separate helper the Plus composers call.
+NarrativeKind = Literal["growth_drivers", "subject_insight", "goal_insight", "home_guidance"]
 
 #: Bump this when any narrative prompt or assembly rule changes.
 #:

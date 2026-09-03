@@ -100,7 +100,8 @@ class TestDateAuthority:
 
     def test_it_is_never_stored(self):
         """Derived, so there is no column to disagree with the link. A field map that accepted it would
-        be the beginning of `Goal.progress` all over again — a stored copy of a derived figure."""
+        be the beginning of `Goal.progress` all over again — a stored copy of a derived figure.
+        """
         from src.domains.progress.repository import progress_repo
 
         assert "dateAuthority" not in progress_repo._GOAL_FIELD_MAP
@@ -128,7 +129,8 @@ class TestDeriveScheduleHistory:
     @pytest.mark.asyncio
     async def test_a_goal_with_no_recorded_change_is_absent(self):
         """Absent rather than present with zeros, matching `count_achieved_milestones`. The caller
-        defaults it, so "never moved" and "moved zero times" do not need to be different things."""
+        defaults it, so "never moved" and "moved zero times" do not need to be different things.
+        """
         with patch.object(goal_metrics, "get_session_factory", lambda: lambda: _rows_session([])):
             assert await goal_metrics.derive_schedule_history(["goal-1"]) == {}
 
@@ -210,7 +212,8 @@ class TestDeriveScheduleHistory:
     @pytest.mark.asyncio
     async def test_the_systems_own_extensions_are_counted_separately(self):
         """The distinction the ladder's extension budget rests on. Conflating the two would either spend
-        a learner's budget on their own re-planning, or let the system extend indefinitely."""
+        a learner's budget on their own re-planning, or let the system extend indefinitely.
+        """
         rows = [
             _change(NOW, NOW + timedelta(days=7), "learner_edited"),
             _change(NOW + timedelta(days=7), NOW + timedelta(days=21), "system_extended"),
@@ -247,7 +250,12 @@ class TestDeriveScheduleHistory:
         rows = [
             ("goal-1", NOW, NOW + timedelta(days=7), "learner_edited"),
             ("goal-2", NOW, NOW - timedelta(days=7), "learner_edited"),
-            ("goal-1", NOW + timedelta(days=7), NOW + timedelta(days=30), "learner_edited"),
+            (
+                "goal-1",
+                NOW + timedelta(days=7),
+                NOW + timedelta(days=30),
+                "learner_edited",
+            ),
         ]
         with patch.object(goal_metrics, "get_session_factory", lambda: lambda: _rows_session(rows)):
             history = await goal_metrics.derive_schedule_history(["goal-1", "goal-2"])
@@ -534,7 +542,9 @@ class TestRegeneratePlanRecordsTheMove:
         async def _record(*, goal, new_date, reason):
             recorded.append({"goal": goal, "new_date": new_date, "reason": reason})
 
-        async def _plan(_prompt):
+        async def _plan(_prompt, **_kwargs):
+            # `**_kwargs` absorbs `user_id`, which Phase 3b added so the generation could be
+            # charged. This stub is about what a regeneration *records*, not what it costs.
             return {"goal": {"description": "d"}, "schedule": {}, "study_tips": []}
 
         with (
@@ -550,7 +560,10 @@ class TestRegeneratePlanRecordsTheMove:
             # these tests exercise the deadline write, which happens before that loop and is therefore
             # reached in production too — the date moves, then the request 500s.
             patch.object(
-                planning_impl.action_service, "create_schedule", create=True, new=_empty_result
+                planning_impl.action_service,
+                "create_schedule",
+                create=True,
+                new=_empty_result,
             ),
             patch.object(log_module, "record_date_change", _record),
         ):

@@ -29,46 +29,52 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-async def _call_gemini(prompt: str, max_tokens: int = 600) -> dict[str, Any] | None:
-    """Call Gemini for JSON output. Returns parsed dict or None on failure."""
+async def _call_gemini(
+    prompt: str,
+    max_tokens: int = 600,
+    *,
+    user_id: str | None = None,
+    operation: str = "memory_summarisation",
+) -> dict[str, Any] | None:
+    """Ask for JSON through the chokepoint. Returns a parsed dict, or `None` on failure.
+
+    **This built its own `genai.Client` until Phase 3b** — one of the stragglers Decision L names.
+    That meant no meter, no headroom gate, no retry, no tier and no thinking budget: a direct line to
+    the model with none of the machinery the other 27 surfaces get. Going through `llm_resilient`
+    gets all of it from the one place that owns it.
+
+    `thinking=THINKING_OFF` because there is nothing here to reason about. Both memory operations
+    read a transcript and restate it as fields — a summary, a topic list, a tone — with the shape
+    fully specified in the prompt. **This is the class Phase 0 sized at zero**, and it matters more
+    here than anywhere else: memory is exempt from charging on principle (§6.6, `UNCHARGED_OPERATIONS`),
+    so every reasoning token it spends is COGS with no revenue and no learner allowance behind it.
+    An unbounded default on a free operation is the worst combination available.
+
+    Still returns `None` rather than raising, because both callers have a deterministic fallback and a
+    missing memory is not worth failing a conversation over.
+    """
     try:
-        from google import genai
-        from google.genai import types
-
-        from src.domains.intelligence.reasoning.llm.registry import (
-            LlmTask,
-            default_model_for,
-            gemini_api_key,
+        from src.domains.intelligence.reasoning.llm import THINKING_OFF
+        from src.domains.personal_learning.services.llm_resilient import (
+            generate_content_json,
         )
 
-        api_key = gemini_api_key()
-        if not api_key:
-            return None
-
-        client = genai.Client(api_key=api_key)
-        response = await client.aio.models.generate_content(
-            model=default_model_for(LlmTask.MEMORY_JSON),
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                max_output_tokens=max_tokens,
-                temperature=0.3,
-            ),
+        result = await generate_content_json(
+            prompt,
+            max_tokens=max_tokens,
+            temperature=0.3,
+            thinking=THINKING_OFF,
+            user_id=user_id,
+            operation=operation,
+            # `{}` rather than `None`: `None` means "raise" on this helper, and the whole contract
+            # here is that a failure degrades to the caller's deterministic fallback.
+            fallback={},
         )
-        text = (response.text or "").strip()
-        if not text:
-            return None
-
-        # Extract JSON from response (handle markdown code blocks)
-        match = re.search(r"\{[\s\S]*\}", text)
-        if not match:
-            # Try array
-            match = re.search(r"\[[\s\S]*\]", text)
-            if match:
-                return json.loads(match.group(0))
-            return None
-        return json.loads(match.group(0))
+        if isinstance(result, dict | list) and result:
+            return result  # type: ignore[return-value]
+        return None
     except Exception as e:
-        logger.warning("Gemini call for memory service failed: %s", e)
+        logger.warning("Memory service generation failed: %s", e)
         return None
 
 
@@ -126,7 +132,12 @@ Return a JSON object with:
 
 Output only valid JSON, no markdown."""
 
-        result = await _call_gemini(prompt, max_tokens=400)
+        result = await _call_gemini(
+            prompt,
+            max_tokens=400,
+            user_id=user_id,
+            operation="memory_summarisation",
+        )
         if not result:
             # Fallback: create a basic summary
             summary_text = f"Conversation with {len(user_msgs)} messages."

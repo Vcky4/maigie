@@ -63,6 +63,7 @@ __all__ = [
     "generate_content",
     "generate_content_with_usage",
     "GenerationUsage",
+    "extract_usage",
     "generate_grounded_content",
     "GroundedResult",
     "GroundingSource",
@@ -114,7 +115,7 @@ class GenerationUsage:
         return self.output_tokens + self.thoughts_tokens
 
 
-def _extract_usage(response: Any, model: str) -> GenerationUsage:
+def extract_usage(response: Any, model: str) -> GenerationUsage:
     """Read token counts off a Gemini response, tolerating their absence.
 
     Defensive on every field because `usage_metadata` is absent on some error and streaming shapes,
@@ -191,7 +192,7 @@ async def generate_content_with_usage(
             category="invalid_request",
             message=f"empty response (finish_reason={finish_reason})",
         )
-    return text, _extract_usage(response, model)
+    return text, extract_usage(response, model)
 
 
 async def generate_content(
@@ -250,6 +251,17 @@ class GroundedResult:
 
     text: str
     sources: list[GroundingSource]
+    #: What the call consumed, so the caller can charge for it.
+    #:
+    #: This path does not go through `llm_resilient` — the search tool cannot survive a
+    #: retry-across-providers shape, because OpenAI and Anthropic are not substitutes for a
+    #: Gemini-grounded search — so it does not get the chokepoint's metering for free and has to
+    #: carry its own. **It is the most expensive operation in the product at ~1 600 units**, so it
+    #: was also the largest single thing the meter could not see.
+    #:
+    #: Optional because a caller that only wants the text should not have to care, and `None` reads
+    #: as unmeasured rather than free.
+    usage: GenerationUsage | None = None
     #: True when the model ran out of output budget mid-reply.
     #:
     #: Carried because a truncated answer and an empty one are **not the same failure**, and used to
@@ -310,10 +322,10 @@ async def generate_grounded_content(
     from `llm_resilient.model_for_operation` so there is still one decision. `None` keeps the previous
     default.
 
-    **Still unmetered, and that is a separate gap.** `GroundedResult` carries no usage, so no caller
-    can charge for this call however it is modelled. Recorded as a Phase 3b straggler rather than
-    fixed here: metering it means changing the return shape, and the quality split does not need to
-    wait behind that.
+    **Now metered: `GroundedResult.usage` carries the token counts** and the caller charges them
+    through `llm_resilient.meter_usage`. It has to be the caller rather than this function, because
+    this one has no `user_id` and no business resolving an entitlement — the same separation that
+    keeps `model_for_operation` the single place a tier is decided.
     """
     client = new_gemini_client(gemini_api_key() or None)
     model = model or default_model_for(LlmTask.CHAT_DEFAULT)
@@ -362,7 +374,12 @@ async def generate_grounded_content(
             len(text),
         )
 
-    return GroundedResult(text=text, sources=sources, truncated=truncated)
+    return GroundedResult(
+        text=text,
+        sources=sources,
+        truncated=truncated,
+        usage=extract_usage(response, model),
+    )
 
 
 def _extract_grounding_sources(response: Any) -> list[GroundingSource]:

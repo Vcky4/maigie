@@ -165,12 +165,45 @@ async def _compute_intelligent_guidance(user_id: str, state: dict) -> dict[str, 
     if deterministic:
         return deterministic
 
-    # LLM-driven guidance for complex states
+    # LLM-driven guidance for complex states, cached on the learner state that produced it.
+    #
+    # **This was the dearest operation per learner per month in the product** — cheap per call at
+    # ~140 units and fired on *every* home load, which §6.5 put at roughly $2.10/month per active
+    # learner, more than a Plus subscription's whole margin. `growth_service` and
+    # `goal_insight_service` already avoided this through `narrative_cache`; home guidance was the
+    # one expensive composition that did not.
+    #
+    # The key is `_build_llm_context(state)` — the exact string the prompt is built from. If the
+    # context is byte-identical the guidance would be too, so this is the tightest correct key
+    # available rather than a chosen subset of fields. It contains no timestamp (checked: the same
+    # defect defeats prefix caching on the chat path), and it does contain `maturity_days` and the
+    # due-flashcard count, so guidance refreshes when the day rolls over or work becomes due without
+    # ever being stale about what the learner has.
+    from . import narrative_cache
+
+    context = _build_llm_context(state)
+
+    async def compose() -> dict[str, Any] | None:
+        return await _llm_guidance(user_id, state, context=context)
+
     try:
-        return await _llm_guidance(user_id, state)
+        cached = await narrative_cache.resolve(
+            user_id=user_id,
+            kind="home_guidance",
+            inputs=context,
+            compose=compose,
+        )
     except Exception as e:
+        # `resolve` already degrades a cache failure to an uncached compose, so reaching here means
+        # the composition itself failed. Same fallback as before caching existed.
         logger.warning(f"LLM guidance failed, using fallback: {e}")
         return await _fallback_guidance(state)
+
+    # `resolve` answers `{}` when the composer declined or failed, and deliberately does not store
+    # it — caching an empty panel would turn one timeout into a permanently blank home screen.
+    if not cached:
+        return await _fallback_guidance(state)
+    return cached
 
 
 def _deterministic_guidance(state: dict) -> dict[str, Any] | None:
@@ -229,11 +262,17 @@ def _deterministic_guidance(state: dict) -> dict[str, Any] | None:
     return None  # Let _llm_guidance handle complex states
 
 
-async def _llm_guidance(user_id: str, state: dict) -> dict[str, Any]:
-    """Use LLM to generate contextual, personalized guidance."""
-    from .llm_resilient import generate_content_json
+async def _llm_guidance(user_id: str, state: dict, *, context: str) -> dict[str, Any]:
+    """Use LLM to generate contextual, personalized guidance.
 
-    context = _build_llm_context(state)
+    `context` is passed in rather than rebuilt because the caller fingerprints it to key the cache.
+    Building it twice would risk the key and the prompt disagreeing — a cache that stores output
+    produced from a *different* input than the one it is keyed on is worse than no cache, and the two
+    copies would drift the first time someone edited `_build_llm_context`.
+    """
+    from src.domains.intelligence.reasoning.llm import THINKING_BOUNDED
+
+    from .llm_resilient import generate_content_json
 
     prompt = f"""You are the intelligence layer of Maigie, a learning platform. Your role is to \
 decide what to present to this learner right now. You don't suggest — you prepare and present.
@@ -269,6 +308,12 @@ Return ONLY valid JSON."""
             max_tokens=1200,
             temperature=0.7,
             timeout_s=20,
+            # Phase 0's middle class: bounded phrasing of pre-computed facts. Every figure in the
+            # prompt is supplied and the output is word-bounded — a 1-2 sentence message, a title, a
+            # one-sentence reason, up to three short items — so there is nothing to reason about
+            # beyond wording. The provider default is dynamic, which on a *thinking* model meant an
+            # unbounded reasoning allowance for a paragraph.
+            thinking=THINKING_BOUNDED,
             fallback=None,
             user_id=user_id,
             # ~140 units, below the quality threshold, so both tiers run Flash-Lite. Worth noting

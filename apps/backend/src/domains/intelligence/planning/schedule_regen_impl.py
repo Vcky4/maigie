@@ -7,13 +7,10 @@ past study behavior patterns.
 Uses the LLM to intelligently allocate time blocks.
 """
 
-import json
 import logging
 from datetime import UTC, datetime, timedelta
 
-from src.config import get_settings
 from src.domains.intelligence.action.skills.handlers import handle_create_schedule
-from src.domains.intelligence.reasoning.llm import new_gemini_client
 from src.domains.knowledge.repository import knowledge_repo
 from src.domains.progress.repository import progress_repo
 from src.shared.database import get_session_factory
@@ -129,7 +126,9 @@ async def regenerate_user_schedule(user_id: str) -> None:
         # 4. Get user preferences from memory (if available)
         facts_text = ""
         try:
-            from src.domains.intelligence.memory.user_memory_impl import user_memory_service
+            from src.domains.intelligence.memory.user_memory_impl import (
+                user_memory_service,
+            )
 
             user_facts = await user_memory_service.get_user_facts(
                 user_id, category="schedule", limit=10
@@ -199,60 +198,43 @@ Return a JSON array of objects with these fields:
 
 Return ONLY the JSON array, no other text."""
 
-        # 6. Call LLM (try Gemini, fall back to OpenAI)
-        settings = get_settings()
-        response_text = ""
+        # 6. Call the LLM through the chokepoint.
+        #
+        # **This was the last of Decision L's stragglers, and it was a hand-rolled copy of the thing
+        # it now calls.** It built a Gemini client, fell back to OpenAI on any exception, and then
+        # stripped markdown fences and parsed JSON — which is `generate_content_json`, minus the
+        # meter, the headroom gate, the retry, the tier, the thinking budget and the truncated-JSON
+        # repair. About thirty-five lines of duplicated plumbing, and the duplication is what let the
+        # cost hide: nothing charged for this call and nothing could.
+        #
+        # It also hardcoded `gemini-3.5-flash` — the *Plus* model — for every learner, which is drift
+        # 23 in miniature. The chokepoint resolves the model from the `operation` itself, so nothing
+        # is passed here: at ~225 units this sits below Decision P's threshold and both tiers get the
+        # standard model, and the point is that **one place decides** rather than that the answer
+        # happens to be the same.
+        #
+        # `GEMINI_SCHEDULE_AI_MODELS` is no longer read. A per-feature model override cannot coexist
+        # with a tier-aware model choice without one of them silently winning, and the tier is the one
+        # carrying a commercial promise.
+        from src.domains.intelligence.reasoning.llm import THINKING_BOUNDED
+        from src.domains.personal_learning.services.llm_resilient import (
+            generate_content_json,
+        )
 
-        # Try Gemini first
-        try:
-            client = new_gemini_client(settings.GEMINI_API_KEY)
-            model_name = "gemini-3.5-flash"
-            if settings.GEMINI_SCHEDULE_AI_MODELS:
-                model_name = settings.GEMINI_SCHEDULE_AI_MODELS.split(",")[0].strip()
-
-            response = await client.aio.models.generate_content(
-                model=model_name,
-                contents=prompt,
-            )
-            response_text = response.text or ""
-        except Exception as gemini_err:
-            logger.warning(f"Gemini failed for schedule regen, trying OpenAI: {gemini_err}")
-
-            # Fall back to OpenAI
-            if settings.OPENAI_API_KEY:
-                try:
-                    import openai
-
-                    openai_client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-                    completion = await openai_client.chat.completions.create(
-                        model=settings.OPENAI_DEFAULT_MODEL,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.7,
-                    )
-                    response_text = completion.choices[0].message.content or ""
-                except Exception as openai_err:
-                    logger.error(f"OpenAI also failed for schedule regen: {openai_err}")
-                    return
-            else:
-                logger.error("No fallback LLM available for schedule regen")
-                return
-
-        # 7. Parse response and create blocks
-        cleaned = response_text.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:].strip()
-
-        try:
-            blocks = json.loads(cleaned)
-        except json.JSONDecodeError as e:
-            logger.error(
-                f"Failed to parse LLM schedule response: {e}\nResponse: {response_text[:500]}"
-            )
+        blocks = await generate_content_json(
+            prompt,
+            temperature=0.7,
+            # Bounded: the schedule is assembled from supplied availability, dates and plan items into
+            # a fixed JSON shape. Phase 0's middle class.
+            thinking=THINKING_BOUNDED,
+            user_id=user_id,
+            operation="schedule_regeneration",
+            # `{}` rather than `None`: this is a background regeneration and the caller's contract is
+            # to leave the existing schedule alone on failure, not to raise into a worker.
+            fallback={},
+        )
+        if not blocks:
+            logger.error("Schedule regeneration produced nothing for user %s", user_id)
             return
 
         if not isinstance(blocks, list):
