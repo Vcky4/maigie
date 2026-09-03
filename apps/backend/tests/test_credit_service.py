@@ -218,34 +218,65 @@ class TestTheFiguresTheMarketingQuotes:
 
     def test_a_voice_minute_costs_about_two_hundred_units(self):
         """§6.3. Loose bounds on purpose: this catches the rate drifting an order of magnitude, which
-        is what actually happened, rather than pinning a figure Google will move."""
+        is what actually happened, rather than pinning a figure Google will move.
+
+        Asserted on `units_per_minute` directly now that it is a **cost basis** rather than a charging
+        rate — voice is charged in seconds against its own balance, so nothing converts a minute into
+        units in order to bill it. The figure still has to be right, because the margin tables and the
+        "40× a chat turn" claim both rest on it.
+        """
         from src.domains.study_voice import billing as voice
 
-        per_minute = voice.units_from_billable_seconds_raw(60.0)
+        per_minute = voice.units_per_minute()
         assert 100 <= per_minute <= 400, (
             f"a voice minute costs {per_minute} units; the plan's arithmetic is ~230 and §6.3 "
             "prices it at 200"
         )
 
-    def test_free_voice_is_about_two_and_a_half_minutes_a_window(self):
-        """The claim in the free tier's `usage_note`. It follows from the allowance and the rate, so
-        if either moves without the other this fails rather than the copy quietly becoming false.
-        """
-        from src.domains.billing.services import entitlement_service
-        from src.domains.study_voice import billing as voice
+    def test_free_gets_no_voice_at_all(self):
+        """§6.3, and this test previously asserted the opposite.
 
-        minutes = entitlement_service.WINDOW_ALLOWANCE_FREE / voice.units_per_minute()
-        assert (
-            2.0 <= minutes <= 3.0
-        ), f"free voice is {minutes:.1f} minutes per window, and the catalogue says about 2.5"
+        It used to check that free voice was "about 2.5 minutes a window", derived by dividing the
+        free *unit* window by the voice rate. That number was the artefact the plan later called out:
+        2.5 minutes per window sounds small, but a 5-hour window permits 4.8 windows a day, so it was
+        12 minutes daily — $0.24/day, **$7.20/month at zero revenue**, from a tier whose entire target
+        COGS is $0.20. It was an unbounded grant wearing a per-window label.
+
+        Free now gets zero, from its own counter rather than by division, and voice is the one
+        capability a free learner is told plainly they do not have.
+        """
+        from src.domains.billing.services import entitlement_service as ent
+
+        assert ent.VOICE_SECONDS_FREE == 0
+        assert ent.FREE_ENTITLEMENT.voice_seconds_included == 0
+        assert ent.FREE_ENTITLEMENT.voice_available is False
+
+    def test_voice_is_not_drawn_from_the_unit_window(self):
+        """The structural half of the same change, and the reason the note above matters.
+
+        While voice came out of the unit window, every allowance had to be priced for a 40× cost ratio
+        it almost never incurred. This asserts the separation rather than the numbers: no voice figure
+        may be derivable from `WINDOW_ALLOWANCE_*`, because the moment one is, the two meters are back
+        to competing.
+        """
+        from src.domains.billing.services import entitlement_service as ent
+
+        assert ent.VOICE_SECONDS_PLUS_MONTHLY == 60 * 60
+        assert ent.VOICE_SECONDS_PASS_5H == 10 * 60
+        assert ent.VOICE_SECONDS_PASS_7D == 25 * 60
+        # A pass gets fewer voice minutes than the subscription while having the *same* window
+        # allowance as it. That cannot happen if voice is a function of the window.
+        assert ent.WINDOW_ALLOWANCE_PASS_7D == ent.WINDOW_ALLOWANCE_PLUS
+        assert ent.VOICE_SECONDS_PASS_7D < ent.VOICE_SECONDS_PLUS_MONTHLY
 
     def test_the_session_floor_is_a_minute_of_voice(self):
         """Shorter and it stops being a floor; longer and it charges for time the learner did not get.
-        It is also the pre-start check, so too low lets a session begin that cannot fund a minute.
+
+        In seconds now, so it can no longer be invalidated by a price change — which it was, twice.
         """
         from src.domains.study_voice import billing as voice
 
-        assert voice.min_session_units() == int(voice.units_per_minute())
+        assert voice.min_session_seconds() == 60
 
     def test_plus_buys_meaningfully_more_than_free(self):
         """A paywall has to be worth crossing. 8× is the §6.3 ratio."""

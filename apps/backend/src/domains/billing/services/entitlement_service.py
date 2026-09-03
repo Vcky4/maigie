@@ -131,6 +131,43 @@ MONTHLY_BACKSTOP_PLUS = 36_000
 
 
 # ===========================================================================
+# Voice allowances (§6.3)
+# ===========================================================================
+
+# Live voice has its own counter and is **not** drawn from the window above. At 200 units/minute a
+# voice minute is 40× a Flash-Lite chat turn, so one allowance covering both dominated every ceiling:
+# it had to be priced for the voice case and was spent almost entirely on the text case, which is the
+# worst of both — a price defensible only against a cost almost nobody incurred.
+#
+# Stated in seconds because the billing loop measures seconds. A 2-second tick against a
+# minute-denominated counter either rounds every tick up to a minute or rounds it down to nothing.
+#
+# **Free gets zero, and that is the honest version of the paywall rather than a saving.** An earlier
+# draft gave Free 2.5 minutes *per window* — but a 5-hour window permits 4.8 windows a day, so that is
+# 12 minutes daily, $0.24/day, **$7.20/month at zero revenue**, from a tier whose entire target COGS
+# is $0.20. It was not a small grant of voice; it was an unbounded one wearing a per-window label.
+# Zero is defensible in a way that 2.5 is not, and it makes voice the one capability a free learner is
+# told plainly they do not have — which is also the clearest thing a pass can be sold on.
+VOICE_SECONDS_FREE = 0
+VOICE_SECONDS_PLUS_MONTHLY = 60 * 60  # 60 minutes per subscription period
+VOICE_SECONDS_PASS_5H = 10 * 60
+VOICE_SECONDS_PASS_7D = 25 * 60
+
+# Same shape as `WINDOW_ALLOWANCE_BY_PASS_PRODUCT`: Phase 4 adds a pass by adding a row, not by
+# editing `_compose`. The Term Pass grants the monthly figure because it is a monthly product sold
+# four months at a time (§6.8).
+VOICE_SECONDS_BY_PASS_PRODUCT: dict[str, int] = {
+    "plus_pass_5h": VOICE_SECONDS_PASS_5H,
+    "plus_pass_7d": VOICE_SECONDS_PASS_7D,
+    "plus_pass_term": VOICE_SECONDS_PLUS_MONTHLY,
+}
+
+#: What `plus_voice_30` adds. Purchased seconds are held separately and never expire, so this is a
+#: top-up rather than a new allowance — see `voice_service`.
+VOICE_SECONDS_TOP_UP = 30 * 60
+
+
+# ===========================================================================
 # Shapes
 # ===========================================================================
 
@@ -156,6 +193,26 @@ class Entitlement:
     `window_allowance` rather than derived from it: the ratio between them is a judgement about
     sustained draw, not arithmetic.
     """
+    voice_seconds_included: int
+    """Live-voice seconds this entitlement grants, drawn from its own counter and not the window.
+
+    Zero means voice is **not available**, not "available and empty", and the two need different copy:
+    a free learner has to be told voice is a Plus capability rather than that they have used up an
+    allowance of nothing. `voice_available` is that distinction, kept as a property so no caller has to
+    re-derive it from a zero.
+    """
+    voice_allowance_source_id: str | None
+    """What a granted voice balance belongs to, so expiry needs no sweep.
+
+    `"subscription:{period_end}"`, `"pass:{pass_id}"`, or `None` for a tier with no voice. When this
+    stops matching the value stored on `User`, the balance is stale and `voice_service` re-grants —
+    which is how a renewal tops up and how a pass takes its minutes with it when it ends.
+    """
+
+    @property
+    def voice_available(self) -> bool:
+        """Whether live voice is a capability this learner has at all."""
+        return self.voice_seconds_included > 0
 
 
 @dataclass(frozen=True)
@@ -205,6 +262,14 @@ def _compose(
             trial_days_remaining=None,
             window_allowance=WINDOW_ALLOWANCE_PLUS,
             monthly_backstop=MONTHLY_BACKSTOP_PLUS,
+            voice_seconds_included=VOICE_SECONDS_PLUS_MONTHLY,
+            # Keyed on the period end, which is what makes a renewal re-grant with no sweep and no
+            # job: the id changes when the period does, so the next read after a renewal finds a
+            # source it does not recognise and tops the balance back up. A period end of `None` — a
+            # hand-set tier with no subscription behind it, which is what the one `PREMIUM_MONTHLY`
+            # row in production is — grants once and never again, which is the right answer for a
+            # tier nobody is billing for.
+            voice_allowance_source_id=f"subscription:{subscription_period_end}",
         )
 
     if active_pass is not None:
@@ -221,6 +286,18 @@ def _compose(
             ),
             # A pass is bounded by its own allowance, not by the calendar. Decision E.
             monthly_backstop=None,
+            voice_seconds_included=VOICE_SECONDS_BY_PASS_PRODUCT.get(
+                # Same defensive floor as the window allowance: an unknown pass product falls to the
+                # *smallest* grant, because under-granting is a support ticket and over-granting is
+                # COGS on the most expensive operation in the product.
+                active_pass.product_id,
+                VOICE_SECONDS_PASS_5H,
+            ),
+            # Keyed on the pass rather than on its expiry, so activating a second pass after the
+            # first ends is a new source and a new grant. This is what replaces the plan's sweep:
+            # when the pass stops being the active entitlement the id stops matching, and the next
+            # read discards the balance rather than waiting for a job to notice.
+            voice_allowance_source_id=f"pass:{active_pass.pass_id}",
         )
 
     if active_trial is not None:
@@ -236,6 +313,15 @@ def _compose(
             # model router gave them Plus capabilities and free-tier models; that was drift 11.
             window_allowance=WINDOW_ALLOWANCE_PLUS,
             monthly_backstop=MONTHLY_BACKSTOP_PLUS,
+            # A trial includes voice, and it is the one grant here worth pausing on: 60 minutes at
+            # $0.02/minute is $1.20 of inference given to someone who has paid nothing, against a
+            # 3-day trial. It stays because a trial that withholds the one capability Free is missing
+            # is not a trial of Plus — and Decision B's whole point is that a trialling learner is
+            # indistinguishable from a subscriber. The bound is the 3 days, not a smaller allowance.
+            voice_seconds_included=VOICE_SECONDS_PLUS_MONTHLY,
+            # Keyed on the trial end so a second trial after the cooldown is a fresh grant, and so a
+            # learner cannot re-trial their way to unlimited voice inside one trial.
+            voice_allowance_source_id=f"trial:{active_trial.ends_at}",
         )
 
     return Entitlement(
@@ -248,6 +334,11 @@ def _compose(
         trial_days_remaining=None,
         window_allowance=WINDOW_ALLOWANCE_FREE,
         monthly_backstop=MONTHLY_BACKSTOP_FREE,
+        voice_seconds_included=VOICE_SECONDS_FREE,
+        # Null rather than `"free:..."`: there is nothing to grant, so there is nothing to identify.
+        # A free learner's stored source stays null forever, which is also what makes the re-grant
+        # check cheap for the 1 205 accounts that are on Free.
+        voice_allowance_source_id=None,
     )
 
 

@@ -45,11 +45,15 @@ SPACE_PRODUCT_IDS = {"circle_plan_monthly", "plus_seat_add_on_monthly"}
 #: pointed at the wrong allowance fails rather than agreeing with itself. `plus_monthly` maps to the
 #: Plus window and not to the monthly backstop: what a subscriber gets is a Plus-sized window, and the
 #: backstop is an abuse limit they are not meant to plan around (§6.3).
-_ALLOWANCE_FOR_NOTE = {
-    "free": entitlement_service.WINDOW_ALLOWANCE_FREE,
-    "plus_pass_5h": entitlement_service.WINDOW_ALLOWANCE_PASS_5H,
-    "plus_pass_7d": entitlement_service.WINDOW_ALLOWANCE_PASS_7D,
-    "plus_monthly": entitlement_service.WINDOW_ALLOWANCE_PLUS,
+#: **Voice allowances, not window allowances.** This mapped to `WINDOW_ALLOWANCE_*` while voice was
+#: drawn from the unit window and the catalogue figure was that allowance divided by the voice rate.
+#: §6.3 gave voice its own counter, so the figure is now the counter — and the mapping has to move with
+#: it or the test asserts the old design against the new copy.
+_VOICE_SECONDS_FOR_NOTE = {
+    "free": entitlement_service.VOICE_SECONDS_FREE,
+    "plus_pass_5h": entitlement_service.VOICE_SECONDS_PASS_5H,
+    "plus_pass_7d": entitlement_service.VOICE_SECONDS_PASS_7D,
+    "plus_monthly": entitlement_service.VOICE_SECONDS_PLUS_MONTHLY,
 }
 
 WITHDRAWN = [
@@ -238,36 +242,47 @@ class TestUsageEquivalents:
         every note has to say that voice is bounded rather than included without limit.
 
         The check used to look for the word "allowance" or "taster", which was the best available
-        signal while the notes carried no figures. Now that each states a minute count derived from
-        the window that funds it, the figure *is* the bound and it is a stronger one than the word:
-        "about 20 minutes" cannot be read as unlimited, whereas "an allowance of live voice" leaves a
-        reader guessing at the size. So the assertion moves to the figure.
+        signal while the notes carried no figures. Now that each states a minute count from its own
+        voice counter, the figure *is* the bound and it is a stronger one than the word: "25 minutes"
+        cannot be read as unlimited, whereas "an allowance of live voice" leaves a reader guessing at
+        the size.
+
+        **Free is the exception, and it is the interesting case.** §6.3 gives Free zero voice minutes,
+        so there is no figure to state and "0 minutes of live voice tutoring" would be a strange thing
+        to print. Its note says voice is a Plus capability instead, which bounds it more firmly than
+        any number could — and is the sentence §6.3 wants, since voice is the clearest thing a pass
+        sells.
         """
         note = _by_id()[plan_id].usage_note.lower()
         assert "voice" in note
+        if _VOICE_SECONDS_FOR_NOTE[plan_id] == 0:
+            assert "plus capability" in note, (
+                f"{plan_id} has no voice, so its note must say voice is part of Plus rather than "
+                f"quoting an allowance of nothing: {note!r}"
+            )
+            return
         assert "minutes of live voice" in note, (
             f"{plan_id} names voice without bounding it, which is how a taster reads as a service: "
             f"{note!r}"
         )
 
     @pytest.mark.parametrize("plan_id", sorted(PERSONAL_PRODUCT_IDS))
-    def test_every_voice_figure_follows_from_the_allowance_that_funds_it(self, plan_id):
-        """This replaces `test_no_note_promises_a_figure_the_meter_cannot_honour`, and the swap is the
-        point of Phase 3.
+    def test_every_voice_figure_follows_from_the_counter_that_funds_it(self, plan_id):
+        """A customer-facing number is only safe if something recomputes it.
 
-        That test forbade any consumption count in the copy, because the notes had shipped carrying the
-        §6.3 window figures before the window existed — for `plus_monthly`, a sentence about 19× more
-        generous than the meter then running. It said in its own docstring that Phase 3 should delete it
-        once the figures were true. They are now: the window exists, `Entitlement.window_allowance` is
-        the allowance, and `GET /billing/usage` reports against it.
+        The lineage of this test is the argument for that. Notes first shipped with the §6.3 window
+        figures typed in by hand, before the window existed — for `plus_monthly`, a sentence about 19×
+        more generous than the meter then running — so a test forbade any count at all. Phase 3 made
+        the counts true and this replaced it, deriving each from the *window* allowance divided by the
+        voice rate. That derivation was itself wrong in a subtler way: it described a meter where voice
+        and text competed for one allowance, which §6.3 had already replaced on paper.
 
-        So the guard moves from "state no number" to "state a number that follows". Each note's voice
-        figure is recomputed here from the allowance and the configured rate, which is the only reason
-        it is safe to put a number in front of a customer: if either moves, this fails rather than the
-        copy quietly becoming false.
+        Now each figure is the voice counter, and the counter is what the session spends. Three
+        statements of the same number — the plan, the catalogue and the meter — and this is the assertion
+        that keeps them one number.
         """
         note = _by_id()[plan_id].usage_note
-        assert stripe_svc._voice_minutes_note(_ALLOWANCE_FOR_NOTE[plan_id]) in note
+        assert stripe_svc._voice_minutes_note(_VOICE_SECONDS_FOR_NOTE[plan_id]) in note
 
     @pytest.mark.parametrize("plan_id", sorted(PERSONAL_PRODUCT_IDS))
     def test_no_note_quotes_a_chat_turn_count(self, plan_id):
@@ -285,11 +300,26 @@ class TestUsageEquivalents:
     def test_a_voice_figure_is_rounded_down_rather_than_up(self):
         """A learner will test this with a stopwatch, so it has to be a floor.
 
-        2.5 minutes rendering as "about 3" would overstate the free allowance by 20%, which is exactly
-        the size of error that turns a reasonable limit into a complaint.
+        There is much less rounding left to do than there was: the figure is the voice allowance
+        itself, set in whole minutes, so the fractional cases that needed careful handling — "2.5
+        minutes" rendering as "about 3" and overstating a free allowance by 20% — cannot arise from a
+        well-formed allowance. What remains is the partial minute a *spent* balance leaves, and it
+        still has to round down.
         """
-        assert "2.5" in stripe_svc._voice_minutes_note(500)
-        assert stripe_svc._voice_minutes_note(3_580) == stripe_svc._voice_minutes_note(3_400)
+        assert stripe_svc._voice_minutes_note(600) == "10 minutes of live voice tutoring"
+        # Eleven minutes fifty-nine is eleven minutes, not twelve.
+        assert stripe_svc._voice_minutes_note(719) == stripe_svc._voice_minutes_note(660)
+
+    def test_no_voice_is_stated_as_a_capability_rather_than_a_count(self):
+        """Zero minutes is not "0 minutes"; it is "voice is part of Plus".
+
+        The same distinction `VoiceBalanceResponse.available` carries, expressed in copy. A free learner
+        has not used up an allowance — they do not have the capability — and telling them they have 0
+        minutes left is both confusing and a wasted conversion moment.
+        """
+        note = stripe_svc._voice_minutes_note(0)
+        assert "0" not in note
+        assert "Plus capability" in note
 
 
 # ---------------------------------------------------------------------------

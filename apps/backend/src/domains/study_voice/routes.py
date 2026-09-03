@@ -33,13 +33,18 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from jose import JWTError
 
-from src.domains.billing.services.credit_consumption_service import (
-    check_credit_availability,
-    has_headroom,
-)
+from src.domains.billing.services import voice_service
+from src.domains.billing.services.credit_consumption_service import has_headroom
 from src.domains.identity.db_models import User
 from src.domains.identity.repository import IdentityRepository
 from src.domains.knowledge.services import illustration_service
@@ -48,7 +53,7 @@ from src.shared.auth.jwt import decode_access_token
 from src.shared.exceptions import MaigieError, SubscriptionLimitError, ValidationError
 
 from . import bridge, context, diagram, notes, session_store, settlement
-from .billing import min_session_units
+from .billing import min_session_seconds
 from .models import (
     ConversationListResponse,
     ConversationStatusResponse,
@@ -344,7 +349,9 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
 
         if bridge_task is not None and not bridge_task.done():
             await _error(
-                send_to_client, session_id, "A voice session is already running on this connection"
+                send_to_client,
+                session_id,
+                "A voice session is already running on this connection",
             )
             return
 
@@ -358,12 +365,30 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
 
         # Refused before a provider socket is opened. Starting a call we cannot bill for would burn provider
         # minutes and end abruptly a few seconds later.
-        available, _message = await check_credit_availability(user, min_session_units())
-        if not available:
+        #
+        # **This is also where voice became a Plus capability, which closes drift 5.** `study_voice` had
+        # no tier gate anywhere, so live voice — the single most expensive operation in the product at
+        # 40× a chat turn — was open to every free learner, bounded only by a usage meter that was
+        # under-pricing it by ~100×. §6.3 gives Free zero voice minutes, and zero is enforced here.
+        balance = await voice_service.read_balance(user.id)
+        if not balance.available:
             await _error(
                 send_to_client,
                 session_id,
-                "Not enough credits for voice study. Top up or wait for your limit to reset.",
+                # A capability message, not an allowance one. A free learner has not run out of voice
+                # minutes; they do not have voice. "You've used your 0 minutes" is both nonsense and a
+                # wasted conversion moment — §6.3 makes voice the clearest thing a pass sells.
+                "Live voice tutoring is part of Maigie Plus. Start a pass or subscribe to use it.",
+            )
+            return
+        if balance.total_seconds < min_session_seconds():
+            await _error(
+                send_to_client,
+                session_id,
+                # Named in minutes because that is the unit the learner was sold, and the remedy is the
+                # top-up rather than waiting: a voice balance refills when the plan renews, not when the
+                # 5-hour usage window does.
+                "Not enough voice minutes left to start a session. Add 30 minutes to carry on.",
             )
             return
 
@@ -546,7 +571,8 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
                 # acknowledgement is what the button's state renders from. Spawning it would let a learner
                 # toggle twice before the first reply and end up with a control disagreeing with the server.
                 await set_note_taking(
-                    str(session_id or active_session_id or ""), bool(data.get("enabled", True))
+                    str(session_id or active_session_id or ""),
+                    bool(data.get("enabled", True)),
                 )
             elif message_type == "stop" and session_id:
                 # `None` is the bridge's stop signal: it unwinds its own forwarders and settles, rather than

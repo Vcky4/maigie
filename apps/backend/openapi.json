@@ -20889,6 +20889,40 @@
         "title": "VerifyResetCodeRequest",
         "type": "object"
       },
+      "VoiceBalanceResponse": {
+        "description": "Live-voice minutes remaining, and whether voice is available at all.\n\n**A separate endpoint from `/usage` because it is a separate meter** (§6.3). Voice is not drawn\nfrom the usage window — at 200 units a minute it is 40× a chat turn, so one allowance covering both\nhad to be priced against the voice case and was spent almost entirely on the text case. Folding it\ninto `UsageResponse` would put two unrelated clocks behind one percentage.\n\n**Minutes here, not units and not a percentage**, which is the opposite choice from `/usage` and\ndeliberate. A unit is a COGS accounting device that means nothing to a learner, so `/usage` shows a\nproportion. A voice minute is exactly what was sold — \"60 minutes a month\" — so the honest display\nis the count, and a percentage would obscure the one number the learner was promised.\n\n`available` is not `minutesRemaining > 0`. A free learner has no voice *capability* and needs to be\ntold that voice is part of Plus; a subscriber at zero has run out and needs the top-up. Same empty\ncounter, two different screens, so the server decides rather than leaving the client to infer it\nfrom a zero.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "hasPurchasedMinutes": {
+            "title": "Haspurchasedminutes",
+            "type": "boolean"
+          },
+          "minutesIncluded": {
+            "title": "Minutesincluded",
+            "type": "integer"
+          },
+          "minutesRemaining": {
+            "title": "Minutesremaining",
+            "type": "integer"
+          },
+          "secondsRemaining": {
+            "title": "Secondsremaining",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "available",
+          "minutesRemaining",
+          "secondsRemaining",
+          "minutesIncluded",
+          "hasPurchasedMinutes"
+        ],
+        "title": "VoiceBalanceResponse",
+        "type": "object"
+      },
       "WebPushCapability": {
         "description": "What the client needs in order to decide whether to offer web push at all.",
         "properties": {
@@ -22219,6 +22253,34 @@
           }
         ],
         "summary": "Usage",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/voice/balance": {
+      "get": {
+        "description": "Live-voice minutes remaining, and whether voice is available at all.\n\nShips with the counter it reads, because **a counter the learner cannot see is a counter they will\nbe surprised by** — and being surprised mid-sentence by a tutor that stops talking is the worst\nversion of that. `study_voice` refuses an unfunded session before opening a provider socket, so\nwithout this endpoint the first a learner would know is a refusal.\n\nSeparate from `/usage` because voice is a separate meter (§6.3), and denominated in minutes rather\nthan a percentage because minutes are what was sold.\n\nThis is the one read in the billing domain that can *write*: `voice_service.read_balance` persists\na re-grant when it finds the stored source stale, which is how a renewal tops the balance up\nwithout a sweep job. It is idempotent — a second call within the same period finds a source it\nrecognises and writes nothing — so a polling client does not generate write load.",
+        "operationId": "voice_balance_api_v1_billing_voice_balance_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceBalanceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Voice Balance",
         "tags": [
           "billing",
           "billing"

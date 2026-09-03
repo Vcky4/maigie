@@ -144,6 +144,38 @@ class UsageResponse(CamelModel):
     monthly_exhausted: bool | None = None
 
 
+class VoiceBalanceResponse(CamelModel):
+    """Live-voice minutes remaining, and whether voice is available at all.
+
+    **A separate endpoint from `/usage` because it is a separate meter** (§6.3). Voice is not drawn
+    from the usage window — at 200 units a minute it is 40× a chat turn, so one allowance covering both
+    had to be priced against the voice case and was spent almost entirely on the text case. Folding it
+    into `UsageResponse` would put two unrelated clocks behind one percentage.
+
+    **Minutes here, not units and not a percentage**, which is the opposite choice from `/usage` and
+    deliberate. A unit is a COGS accounting device that means nothing to a learner, so `/usage` shows a
+    proportion. A voice minute is exactly what was sold — "60 minutes a month" — so the honest display
+    is the count, and a percentage would obscure the one number the learner was promised.
+
+    `available` is not `minutesRemaining > 0`. A free learner has no voice *capability* and needs to be
+    told that voice is part of Plus; a subscriber at zero has run out and needs the top-up. Same empty
+    counter, two different screens, so the server decides rather than leaving the client to infer it
+    from a zero.
+    """
+
+    available: bool
+    minutes_remaining: int
+    #: Seconds, for a client that renders a countdown mid-session. `minutesRemaining` is the display
+    #: figure and rounds **down**, so a learner told "1 minute" who gets 50 seconds is not misled.
+    seconds_remaining: int
+    #: Included minutes this entitlement grants per period, so a client can render "12 of 60 left"
+    #: without a second call. Zero when voice is not part of the plan.
+    minutes_included: int
+    #: True when any of the balance was bought rather than granted. Purchased minutes do not expire
+    #: with the period, and a client that says "resets when your plan renews" would be wrong about them.
+    has_purchased_minutes: bool
+
+
 # ===========================================================================
 # Subscriptions
 # ===========================================================================

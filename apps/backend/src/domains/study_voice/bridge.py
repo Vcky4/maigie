@@ -8,10 +8,13 @@ dispatch and billing arithmetic are the original behaviour. What changed:
   forced an `asyncio.Lock` around every read. `BridgeState` is owned by this coroutine tree, so the lock is
   gone. It is safe without one: every mutation here is a read-modify-write with no `await` in the middle, and
   the event loop cannot interleave those.
-- **Credit exhaustion is caught by type.** The original matched `e.code == "SUBSCRIPTION_LIMIT_EXCEEDED"`,
-  and the current `SubscriptionLimitError` uses the code `SUBSCRIPTION_LIMIT` — so the check would have
-  matched nothing and a learner out of credits would have been billed on in silence with the failure logged
-  as "Failed to apply voice credit delta". Catching the class cannot rot that way.
+- **Exhaustion is now a value, not an exception.** This used to catch `SubscriptionLimitError` from
+  `consume_credits`, which was itself a fix for an earlier version that matched a *string* code
+  (`"SUBSCRIPTION_LIMIT_EXCEEDED"` against an actual `"SUBSCRIPTION_LIMIT"`) and therefore matched
+  nothing, billing a learner out of credits onwards in silence. Voice draws from its own balance now
+  (§6.3) and `voice_service.spend` does not raise — the provider minutes are already spent by the time
+  it runs — so `charge` ends the session by *reading* a zero balance. One less thing that can rot: a
+  value cannot be compared against the wrong constant.
 - **No tools means no tools.** The original fell back to the *entire* agentic toolset when the caller passed
   `None`, so a session opened without a topic could create courses and delete notes with no client handling
   for any of it. `None` now means none.
@@ -35,7 +38,7 @@ from typing import Any
 import websockets
 
 from src.config import get_settings
-from src.domains.billing.services.credit_consumption_service import consume_credits
+from src.domains.billing.services import voice_service
 from src.domains.identity.repository import IdentityRepository
 from src.domains.intelligence.action.skills.registry import skill_registry
 from src.domains.knowledge.services import illustration_service
@@ -46,11 +49,11 @@ from .billing import (
     BILLING_WALL_CLOCK,
     abandoned_after_seconds,
     billing_flush_interval_seconds,
-    billing_min_consume_chunk,
+    billing_min_consume_seconds,
     billing_mode_for_tier,
     billing_tick_seconds,
+    chargeable_seconds_raw,
     standby_idle_seconds,
-    units_from_billable_seconds_raw,
 )
 from .transcript import SessionTranscript
 
@@ -85,7 +88,7 @@ class BillingSnapshot:
     billing_mode: str
     billing_started: bool
     billable_seconds: float
-    consumed_credits: int
+    charged_seconds: int
 
 
 @dataclass(slots=True)
@@ -96,8 +99,12 @@ class BridgeState:
     billing_started: bool = False
     #: Seconds that count as billable under `billing_mode`, not seconds connected.
     billable_seconds: float = 0.0
-    #: Pre-multiplier credits already charged, so accrual never charges the same second twice.
-    consumed_credits: int = 0
+    #: Seconds already taken off the voice balance, so accrual never charges the same second twice.
+    #:
+    #: Was `consumed_credits`, holding units. Voice draws from `voiceSecondsRemaining` now (§6.3), so
+    #: the accumulator, the accrual and the balance are all in one denomination and there is no rate
+    #: between them — see `billing.py` for why the absence of that rate is the point.
+    charged_seconds: int = 0
     last_user_audio_mono: float | None = None
     last_ai_audio_mono: float | None = None
     tick_last_mono: float | None = None
@@ -112,7 +119,7 @@ class BridgeState:
             billing_mode=self.billing_mode,
             billing_started=self.billing_started,
             billable_seconds=self.billable_seconds,
-            consumed_credits=self.consumed_credits,
+            charged_seconds=self.charged_seconds,
         )
 
 
@@ -159,55 +166,58 @@ async def run_bridge(
     # ------------------------------------------------------------------ billing
 
     async def charge(amount: int) -> None:
-        """Take `amount` usage units, or end the session if the learner's allowance is spent.
+        """Take `amount` seconds off the voice balance, and end the session once it is spent.
 
-        Units, not pre-multiplier credits: `consume_credits` no longer scales what it is handed.
+        **Seconds against `voiceSecondsRemaining`, not units against the usage window** (§6.3). Voice
+        used to compete with text for one allowance at a 40× cost ratio, which meant the allowance had
+        to be priced for the voice case and was spent almost entirely on the text case.
+
+        `voice_service.spend` does not raise when the balance runs out — the provider minutes are
+        already used by the time this runs, so there is nothing left to refuse. What ends the session is
+        this function noticing an empty balance afterwards, which is the same posture as `record_units`:
+        charge on spend, and let the *next* moment be the one that stops.
         """
         if amount <= 0:
             return
         try:
-            # Refetched rather than held: a session runs for minutes, and `consume_credits` reasons about
-            # the balance on the row it is given. A stale row would undercount everything spent elsewhere
-            # in the meantime.
-            user = await identity_repo.find_by_id(user_id)
-            if not user:
-                logger.warning(
-                    "Cannot charge voice session %s — user %s is gone",
-                    session_id,
-                    user_id,
-                )
-                return
-            await consume_credits(user, amount, operation="gemini_live_voice")
-            state.consumed_credits += amount
-        except SubscriptionLimitError as exc:
-            logger.info(
-                "Voice session %s ending — user %s is out of credits",
-                session_id,
-                user_id,
-            )
-            state.force_disconnect = True
-            await _send_json(
-                send_to_client,
-                {
-                    "type": "credit_limit_error",
-                    "session_id": session_id,
-                    # `exc.message`, not `exc.detail`. `detail` is the machine-readable half —
-                    # `units_required=200, windowResetsAt=...` — and it was being shown to a learner
-                    # mid-sentence as the explanation for why their tutor stopped talking.
-                    #
-                    # `is_daily_limit: True` was hard-coded, and wrong whenever the refusal was not a
-                    # daily one: it told a learner who had hit a monthly cap to come back tomorrow,
-                    # when tomorrow changes nothing. The reset time replaces it and is `None` in
-                    # exactly the cases where waiting does not help. `show_referral_option` advertised
-                    # a reward that no longer grants usage (Decision O).
-                    "message": exc.message,
-                    "tier": str(tier or "FREE"),
-                    "windowResetsAt": exc.window_resets_at,
-                },
-            )
+            balance = await voice_service.spend(user_id, amount)
+            state.charged_seconds += amount
         except Exception as exc:
             # Not fatal: the seconds stay in `billable_seconds` and the final settlement will pick them up.
-            logger.warning("Voice credit charge failed for session %s: %s", session_id, exc)
+            logger.warning("Voice charge failed for session %s: %s", session_id, exc)
+            return
+
+        if balance.total_seconds > 0:
+            return
+
+        # Out of voice. Unlike the old credit refusal this is not an exception path — the balance simply
+        # reached zero — so the message is composed here rather than carried on one.
+        logger.info(
+            "Voice session %s ending — user %s has no voice balance left",
+            session_id,
+            user_id,
+        )
+        state.force_disconnect = True
+        await _send_json(
+            send_to_client,
+            {
+                # Kept as `credit_limit_error` for the client contract even though credits are gone,
+                # because renaming it is a client change and this is a server one. Phase 7 renames both
+                # together; changing it here alone would break the handler that shows the message.
+                "type": "credit_limit_error",
+                "session_id": session_id,
+                # No `windowResetsAt`, and its absence is correct rather than an omission: the usage
+                # window refills in five hours and has nothing to do with voice. A voice balance refills
+                # when the subscription period turns over, or when the learner buys `plus_voice_30`,
+                # and telling them to wait five hours would be advice that does not work.
+                "message": (
+                    "You've used your live voice minutes. They refill when your plan renews, "
+                    "or you can add 30 minutes."
+                ),
+                "tier": str(tier or "FREE"),
+                "windowResetsAt": None,
+            },
+        )
 
     async def billing_loop() -> None:
         """Accrue billable time and flush it to the ledger in batches.
@@ -220,7 +230,7 @@ async def run_bridge(
         tick = billing_tick_seconds()
         idle_gap = standby_idle_seconds()
         abandoned_gap = abandoned_after_seconds()
-        min_chunk = billing_min_consume_chunk()
+        min_chunk = billing_min_consume_seconds()
         flush_interval = billing_flush_interval_seconds()
         loop = asyncio.get_running_loop()
 
@@ -286,9 +296,7 @@ async def run_bridge(
                 if state.last_flush_mono is None:
                     state.last_flush_mono = now
 
-                owed = (
-                    units_from_billable_seconds_raw(state.billable_seconds) - state.consumed_credits
-                )
+                owed = chargeable_seconds_raw(state.billable_seconds) - state.charged_seconds
                 due = owed > 0 and (
                     owed >= min_chunk or (now - state.last_flush_mono) >= flush_interval
                 )
