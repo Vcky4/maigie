@@ -178,6 +178,19 @@ except Exception as e:
     print(f"[celery_app] Failed to load notification beat schedule: {e}")
 
 
+# The pass sweep (Decision E). Expiry itself resolves on read, so this schedule is what makes a learner
+# whose pass ended get *told* rather than what makes the pass end.
+try:
+    from src.workers import billing_tasks as _billing_tasks
+
+    if not hasattr(celery_app.conf, "beat_schedule") or celery_app.conf.beat_schedule is None:
+        celery_app.conf.beat_schedule = {}
+    celery_app.conf.beat_schedule.update(_billing_tasks.get_beat_schedule())
+except Exception as e:
+    logger.exception("Failed to load billing beat schedule: %s", e)
+    print(f"[celery_app] Failed to load billing beat schedule: {e}")
+
+
 # Domain event handlers. Same reason as the task imports above: `@listen` registers on import, so a
 # worker that never imported a handler module dispatches nothing. A worker emitting an event the web
 # process handles — or the reverse — is exactly how this stayed invisible, because each process had its

@@ -14,9 +14,11 @@ in `feature_flags.effective_tier_for_request`'s `seat_tier` branch and in `seat_
 Precedence, highest first: **subscription → active pass → trial → free.** A subscriber outranks a pass
 so that a pass is never silently burned by someone who already has Plus (Decision D).
 
-Passes do not exist yet. `_read_active_pass` is the seam Phase 4 fills in, and it is a named function
-rather than a `TODO` so that the precedence rule can be written, tested and reviewed once — see
-`_compose`, which is pure and total and does not know where any of its arguments came from.
+Passes exist as of Phase 4. `_active_pass` builds the pass half from columns the same joined read
+already fetched (Decision C), and applies **both** of Decision E's endings on read — a pass whose wall
+clock has passed and one whose allowance is spent are equally over, and both are over the instant they
+are read rather than when the five-minute sweep next runs. `_compose` is unchanged by any of it, which
+was the point of writing it pure and total before there was a table.
 """
 
 from __future__ import annotations
@@ -99,9 +101,20 @@ WINDOW_ALLOWANCE_PASS_7D = 4_000
 
 # Keyed by the catalogue product id a pass was bought as, so Phase 4 adds a pass product by adding
 # a row here rather than by editing `_compose`.
+#
+# `plus_pass_term` was missing from this table while being present in `VOICE_SECONDS_BY_PASS_PRODUCT`,
+# and the failure was silent in the worst way: `_compose` falls back to the *smallest* window allowance
+# for an unknown product, so a four-month Term Pass would have run on the 5-hour pass's 2 000 units per
+# window. The fallback is right — under-granting is a support ticket and over-granting is COGS — which
+# is exactly why a missing row reads as working software. `test_plus_passes` now asserts all three
+# tables carry the same ids.
 WINDOW_ALLOWANCE_BY_PASS_PRODUCT: dict[str, int] = {
     "plus_pass_5h": WINDOW_ALLOWANCE_PASS_5H,
     "plus_pass_7d": WINDOW_ALLOWANCE_PASS_7D,
+    # §6.3: 4 000 units/window, the same per-window figure as the subscription. The Term Pass is a
+    # monthly-shaped product sold four months at a time, so it is bounded by its 20 000-unit total
+    # rather than by a smaller window.
+    "plus_pass_term": WINDOW_ALLOWANCE_PLUS,
 }
 
 # The monthly backstop (§6.3). **Not a product limit — an abuse limit.**
@@ -433,20 +446,35 @@ async def _resolve_uncached(user_id: str) -> Entitlement:
     # this module, so a top-level import of anything under `personal_learning` closes a cycle.
     from sqlalchemy import select
 
+    from src.domains.billing.db_models import PlusPass
     from src.domains.identity.db_models import User
     from src.domains.personal_learning.db_models import LearningProfile
     from src.shared.database.session import get_session_factory
 
     # One round trip. Decision C's whole argument is that `resolve()` sits in the hot path, and the
-    # trial lives on a different table from the tier, so the join is what keeps this to a single
-    # read instead of two — reaching for `PersonalLearningRepository` here would cost a second.
+    # tier, the trial and the pass live on three tables, so the joins are what keep this to a single
+    # read instead of three — reaching for a repository here would cost the other two.
     stmt = (
         select(
             User.tier,
             User.subscription_current_period_end,
             LearningProfile.trial_ends_at,
+            # The pass, joined rather than fetched separately. Decision C denormalises
+            # `activePlusPassId` onto `User` precisely so this join is a primary-key lookup that
+            # matches nothing for the overwhelming majority of learners — one round trip either way,
+            # and no second query for the 1 205 accounts holding no pass.
+            #
+            # The *snapshotted* columns are read rather than the product table: `unitsAllowance` is
+            # what this pass was sold with, which is not necessarily what the product carries today
+            # (§6.8's NGN allowances differ, and re-pricing must not touch a pass already sold).
+            PlusPass.id,
+            PlusPass.product_id,
+            PlusPass.expires_at,
+            PlusPass.units_allowance,
+            PlusPass.units_used,
         )
         .outerjoin(LearningProfile, LearningProfile.user_id == User.id)
+        .outerjoin(PlusPass, PlusPass.id == User.active_plus_pass_id)
         .where(User.id == user_id)
     )
 
@@ -461,13 +489,73 @@ async def _resolve_uncached(user_id: str) -> Entitlement:
     if row is None:
         return FREE_ENTITLEMENT
 
-    raw_tier, period_end, trial_ends_at = row
+    (
+        raw_tier,
+        period_end,
+        trial_ends_at,
+        pass_id,
+        pass_product_id,
+        pass_expires_at,
+        pass_units_allowance,
+        pass_units_used,
+    ) = row
 
     return _compose(
         subscription_tier=str(raw_tier) if raw_tier else "FREE",
         subscription_period_end=period_end,
-        active_pass=await _read_active_pass(user_id),
+        active_pass=_active_pass(
+            pass_id=pass_id,
+            product_id=pass_product_id,
+            expires_at=pass_expires_at,
+            units_allowance=pass_units_allowance,
+            units_used=pass_units_used,
+        ),
         active_trial=_active_trial(trial_ends_at),
+    )
+
+
+def _active_pass(
+    *,
+    pass_id: str | None,
+    product_id: str | None,
+    expires_at: datetime | None,
+    units_allowance: int | None,
+    units_used: int | None,
+) -> ActivePass | None:
+    """Build the pass half of the input, or `None` if no pass is currently running.
+
+    **Replaces the `_read_active_pass` seam Phase 2 left returning `None`.** That seam existed so the
+    pass branch of `_compose` could be written, tested and reviewed before `PlusPass` existed — the
+    expensive part of passes being the precedence question rather than the query. This is the query,
+    and `_compose` is unchanged.
+
+    **Decision E's two endings are both applied here, on read.** A pass whose wall clock has passed and
+    a pass whose allowance is spent are equally over, and both are over *the instant they are read*
+    rather than when the five-minute sweep next runs. The sweep exists to write the status and tell the
+    learner, not to make the expiry true — a learner must never be granted Plus by a pass that ended
+    four minutes ago because a job has not caught up.
+    """
+    if pass_id is None or expires_at is None:
+        return None
+
+    if expires_at.tzinfo is None:
+        # Defensive, matching `_subscription_lapsed`: the column is `DateTime(timezone=True)`, but a
+        # naive value from a fixture would raise on comparison rather than answer the question.
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if datetime.now(UTC) >= expires_at:
+        return None
+
+    # Decision E. The allowance is a real ending, not a soft cap: "capabilities without limit, usage
+    # with a stated ceiling", and the ceiling was on the purchase screen. Without this the pass is the
+    # product that loses money faster the more it is used — five hours of continuous live voice is
+    # about $6.00 of inference against $0.75 of net revenue.
+    if units_allowance is not None and (units_used or 0) >= units_allowance:
+        return None
+
+    return ActivePass(
+        pass_id=pass_id,
+        product_id=str(product_id or ""),
+        expires_at=expires_at,
     )
 
 
@@ -513,15 +601,10 @@ def _active_trial(trial_ends_at: datetime | None) -> ActiveTrial | None:
     )
 
 
-async def _read_active_pass(user_id: str) -> ActivePass | None:
-    """Read the learner's running pass.
-
-    **Always `None` until Phase 4.** `PlusPass` and the `activePlusPassId` /
-    `activePlusPassExpiresAt` columns on `User` are created by that phase's migration, so there is
-    nothing to read yet and pretending otherwise would mean querying a table that does not exist.
-
-    This exists as a named seam rather than as a comment inside `resolve` so that the pass branch of
-    `_compose` is reachable, tested and reviewed now — the expensive part of passes is the
-    precedence question, not the query. Phase 4 replaces this body and changes nothing else here.
-    """
-    return None
+#: `_read_active_pass` is gone, and its replacement is `_active_pass` above.
+#:
+#: It was a named seam returning `None` while `PlusPass` did not exist, so that `_compose`'s pass branch
+#: could be written and tested before there was anything to read. Phase 4 filled it — and moved it,
+#: because the seam took a `user_id` and would have cost a second query. The pass now arrives on the same
+#: joined read as the tier and the trial (Decision C), so `_active_pass` is a pure function of columns
+#: rather than a reader, which is also what makes Decision E's two endings testable without a database.

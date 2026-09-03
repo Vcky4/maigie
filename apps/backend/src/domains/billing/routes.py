@@ -130,6 +130,70 @@ async def voice_balance(current_user: CurrentUser):
 
 
 # ===========================================================================
+# Passes
+# ===========================================================================
+
+
+def _pass_item(row) -> models.PlusPassItem:
+    return models.PlusPassItem(
+        id=row.id,
+        productId=row.product_id,
+        status=row.status,
+        source=row.source,
+        durationMinutes=row.duration_minutes,
+        unitsAllowance=row.units_allowance,
+        unitsUsed=row.units_used,
+        activatedAt=row.activated_at,
+        expiresAt=row.expires_at,
+        endedReason=row.ended_reason,
+        createdAt=row.created_at,
+    )
+
+
+@router.get("/passes", response_model=models.PlusPassListResponse)
+async def list_passes(current_user: CurrentUser):
+    """Every pass the learner holds — inventory, running, and ended.
+
+    **The restore path for iOS, not just a list.** StoreKit does not return finished consumables from
+    `Transaction.currentEntitlements`, so a reinstalled app cannot recover a purchased-but-unactivated
+    pass from the device (Decision G). That is why the purchase is persisted at verification time and
+    before anything is granted, and why "restore" for a pass means calling this rather than asking
+    StoreKit.
+
+    Ended passes are returned too: "what happened to my pass" is a question about one that ended.
+    """
+    from .services import pass_service
+
+    rows = await pass_service.list_passes(current_user.id)
+    return models.PlusPassListResponse(
+        passes=[_pass_item(row) for row in rows],
+        inventoryCount=sum(1 for row in rows if row.status == pass_service.STATUS_INVENTORY),
+    )
+
+
+@router.post("/passes/{pass_id}/activate", response_model=models.PlusPassItem)
+async def activate_pass(pass_id: str, current_user: CurrentUser):
+    """Start a pass's clock. **This is the moment the product begins**, not the purchase.
+
+    Decision A: a pass is inventory until activated, so a $0.99 five-hour pass bought on Tuesday can be
+    spent on Saturday's revision session. Decision D: `409 PASS_REDUNDANT` if the learner already has
+    Plus from a subscription, a trial or another pass — and they keep the pass, since a refused
+    activation consumes nothing.
+
+    Activation also resets the usage window (Decision E). Without that, a five-hour pass activated at
+    minute 290 of a Free window would deliver ten minutes and then a wall.
+
+    The one-active invariant is a partial unique index rather than the check above it, so two concurrent
+    activations produce one winner and one `409` instead of a race — `pass_service.activate` turns the
+    `IntegrityError` into the same refusal.
+    """
+    from .services import pass_service
+
+    row = await pass_service.activate(user_id=current_user.id, pass_id=pass_id)
+    return _pass_item(row)
+
+
+# ===========================================================================
 # Subscriptions (Stripe)
 # ===========================================================================
 

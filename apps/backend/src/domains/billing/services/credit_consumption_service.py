@@ -465,6 +465,38 @@ async def has_headroom(user: User) -> tuple[bool, str | None]:
     return True, None
 
 
+async def _advance_active_pass(pass_id: str, units: int) -> None:
+    """Add `units` to a running pass's total, so Decision E's allowance ending can fire.
+
+    An in-place `UPDATE ... SET unitsUsed = unitsUsed + :units` rather than a read-modify-write. Two
+    concurrent generations on one pass would otherwise both read the same total and the second would
+    overwrite the first, under-charging by exactly the amount of one operation — and voice bills every
+    couple of seconds, so concurrent charges on one pass are the normal case rather than the rare one.
+
+    Bounded by `unitsAllowance` on the way in: the counter may reach the allowance but not exceed it, so
+    a client reading "units used" against "units allowed" never sees more than 100%. The overshoot is
+    real — `record_units` charges after the fact, so a pass can be exceeded by the cost of one operation
+    in flight — but it is recorded on the window and month, which is where the accounting lives. The
+    pass counter's job is to answer "is this pass over", and past the allowance the answer stops changing.
+
+    Only ends the pass by making `_active_pass` return `None` on the next read. It does not write
+    `status='consumed'`: that is the sweep's job, along with telling the learner (Decision E).
+    """
+    from sqlalchemy import func as sa_func
+    from sqlalchemy import update as sa_update
+
+    from src.domains.billing.db_models import PlusPass
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            sa_update(PlusPass)
+            .where(PlusPass.id == pass_id)
+            .values(units_used=sa_func.least(PlusPass.units_used + units, PlusPass.units_allowance))
+        )
+        await session.commit()
+
+
 async def _record_usage_event(
     *, user_id: str, units: int, operation: str, model: str | None, proactive: bool
 ) -> None:
@@ -558,6 +590,15 @@ async def record_units(
             state.month_units_used + units,
             (f" proactive={state.month_proactive_units_used + units}" if proactive else ""),
         )
+        # Decision E's second ending needs a counter that does not reset, and neither of the two above
+        # qualifies: the window rolls every five hours and the month rolls on the 1st, while a pass
+        # total has to survive both. So a learner on a pass advances a third counter.
+        #
+        # Only when a pass is what is granting them Plus. A subscriber holding an unactivated pass is
+        # spending their subscription's allowance, and charging the pass would consume something they
+        # have not started — which is exactly what Decision D refuses to let happen on activation.
+        if fresh.active_plus_pass_id:
+            await _advance_active_pass(fresh.active_plus_pass_id, units)
     except Exception:
         # Deliberately broad. This runs after a successful generation, and every failure mode here
         # — a lost connection, a row vanishing, a serialisation conflict — is a reason to
