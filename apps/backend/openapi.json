@@ -13708,20 +13708,28 @@
         "type": "object"
       },
       "PurchaseHistoryItem": {
-        "description": "Single credit purchase transaction.",
+        "description": "One purchase, from `PlusPurchase` (Decision H).\n\nWas a credit-pack transaction — `packName`, `credits`, `amount`. Those columns are gone with the\ntables, and this now describes what a learner actually bought: a pass or the subscription. `status`\nis published, and `refundedAt` alongside `completedAt`, because this is the support surface that\nanswers \"what did I pay you\" and a refunded purchase is part of that answer.",
         "properties": {
-          "amount": {
-            "title": "Amount",
+          "amountMinor": {
+            "title": "Amountminor",
             "type": "integer"
+          },
+          "completedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completedat"
           },
           "createdAt": {
             "format": "date-time",
             "title": "Createdat",
             "type": "string"
-          },
-          "credits": {
-            "title": "Credits",
-            "type": "integer"
           },
           "currency": {
             "title": "Currency",
@@ -13731,13 +13739,33 @@
             "title": "Id",
             "type": "string"
           },
-          "packName": {
-            "title": "Packname",
+          "priceFormatted": {
+            "title": "Priceformatted",
+            "type": "string"
+          },
+          "productId": {
+            "title": "Productid",
+            "type": "string"
+          },
+          "productKind": {
+            "title": "Productkind",
             "type": "string"
           },
           "provider": {
             "title": "Provider",
             "type": "string"
+          },
+          "refundedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refundedat"
           },
           "status": {
             "title": "Status",
@@ -13746,11 +13774,12 @@
         },
         "required": [
           "id",
-          "packName",
-          "credits",
-          "amount",
-          "currency",
+          "productId",
+          "productKind",
           "provider",
+          "amountMinor",
+          "currency",
+          "priceFormatted",
           "status",
           "createdAt"
         ],
@@ -21935,69 +21964,6 @@
         ]
       }
     },
-    "/api/v1/billing/credits/purchases": {
-      "get": {
-        "description": "Get paginated credit purchase history.",
-        "operationId": "get_purchase_history_api_v1_billing_credits_purchases_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "page",
-            "required": false,
-            "schema": {
-              "default": 1,
-              "minimum": 1,
-              "title": "Page",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "pageSize",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "maximum": 100,
-              "minimum": 1,
-              "title": "Pagesize",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PaginatedPurchaseHistory"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get Purchase History",
-        "tags": [
-          "billing",
-          "billing"
-        ]
-      }
-    },
     "/api/v1/billing/entitlement": {
       "get": {
         "description": "Resolve the caller's personal entitlement.\n\nOne endpoint over the one resolver, so a client never has to reconstruct entitlement from\n`User.tier` plus a trial field plus, later, a pass. Every gate on the server already reads\n`entitlement_service.resolve`; this is the same answer, so a locked panel and the screen that\nexplains why it is locked cannot disagree.\n\nPersonal scope only. A learner's seat in a Space is a different question with a different answer\nand is not served here (Decision F).",
@@ -22120,6 +22086,69 @@
           }
         },
         "summary": "Plan Catalog",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/purchases": {
+      "get": {
+        "description": "Paginated purchase history: every pass and subscription the learner bought.\n\nReads `PlusPurchase` (Decision H). Was `/credits/purchases` over `CreditPurchaseTransaction`, which\nis dropped along with `CreditPack` in migration 072 — credit packs are the withdrawn product and\nnobody ever bought one. Renamed to `/purchases` because it is no longer about credits, matching §8.\n\nThe support surface for \"what did I pay you\", so it returns failed and refunded purchases too.",
+        "operationId": "get_purchase_history_api_v1_billing_purchases_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedPurchaseHistory"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Purchase History",
         "tags": [
           "billing",
           "billing"

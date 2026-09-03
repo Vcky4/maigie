@@ -3,8 +3,7 @@ Billing domain — SQLAlchemy models.
 
 ReferralReward, ReferralRewardClaim, AdRewardClaim, ResourceBankItem,
 ResourceBankFile, ResourceBankReport, ResourceUploadReward,
-ResourceUploadRewardClaim, CreditPack, CreditPurchaseTransaction, UsageEvent,
-PlusPurchase, PlusPass.
+ResourceUploadRewardClaim, UsageEvent, PlusPurchase, PlusPass.
 
 Maps to existing PostgreSQL tables created by Prisma.
 """
@@ -125,89 +124,9 @@ class AdRewardClaim(Base):
     __table_args__ = (Index("AdRewardClaim_userId_createdAt_idx", "userId", "createdAt"),)
 
 
-# ---------------------------------------------------------------------------
-# CreditPack
-# ---------------------------------------------------------------------------
-
-
-class CreditPack(Base, TimestampMixin):
-    __tablename__ = "CreditPack"
-
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
-    )
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    credits: Mapped[int] = mapped_column(Integer, nullable=False)
-    bonus_credits: Mapped[int] = mapped_column(
-        "bonusCredits", Integer, default=0, server_default="0"
-    )
-    price_usd_cents: Mapped[int] = mapped_column("priceUsdCents", Integer, nullable=False)
-    price_ngn_kobo: Mapped[int] = mapped_column("priceNgnKobo", Integer, nullable=False)
-    sort_order: Mapped[int] = mapped_column("sortOrder", Integer, default=0, server_default="0")
-    is_active: Mapped[bool] = mapped_column(
-        "isActive", Boolean, default=True, server_default="true"
-    )
-
-    # Relationships
-    transactions: Mapped[list["CreditPurchaseTransaction"]] = relationship(
-        "CreditPurchaseTransaction", back_populates="credit_pack", lazy="noload"
-    )
-
-    __table_args__ = (Index("CreditPack_isActive_sortOrder_idx", "isActive", "sortOrder"),)
-
-
-# ---------------------------------------------------------------------------
-# CreditPurchaseTransaction
-# ---------------------------------------------------------------------------
-
-
-class CreditPurchaseTransaction(Base):
-    __tablename__ = "CreditPurchaseTransaction"
-
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
-    )
-    user_id: Mapped[str] = mapped_column(
-        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
-    )
-    credit_pack_id: Mapped[str] = mapped_column("creditPackId", String, ForeignKey("CreditPack.id"))
-    credits_granted: Mapped[int] = mapped_column("creditsGranted", Integer, nullable=False)
-
-    amount_paid: Mapped[int] = mapped_column("amountPaid", Integer, nullable=False)
-    currency: Mapped[str] = mapped_column(String, nullable=False)
-    payment_provider: Mapped[str] = mapped_column("paymentProvider", String, nullable=False)
-    provider_reference: Mapped[str] = mapped_column(
-        "providerReference", String, unique=True, nullable=False
-    )
-
-    session_id: Mapped[str | None] = mapped_column("sessionId", String, nullable=True)
-    session_expires_at: Mapped[datetime | None] = mapped_column(
-        "sessionExpiresAt", DateTime(timezone=True), nullable=True
-    )
-    status: Mapped[str] = mapped_column(String, default="pending", server_default="pending")
-    completed_at: Mapped[datetime | None] = mapped_column(
-        "completedAt", DateTime(timezone=True), nullable=True
-    )
-
-    created_at: Mapped[datetime] = mapped_column(
-        "createdAt",
-        DateTime(timezone=True),
-        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        "updatedAt",
-        DateTime(timezone=True),
-        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
-        onupdate=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
-    )
-
-    # Relationships
-    credit_pack: Mapped["CreditPack"] = relationship("CreditPack", back_populates="transactions")
-
-    __table_args__ = (
-        Index("CreditPurchaseTransaction_userId_idx", "userId"),
-        Index("CreditPurchaseTransaction_providerReference_idx", "providerReference"),
-    )
+# `CreditPack` and `CreditPurchaseTransaction` are dropped by migration 072 (Decision H). Credit packs
+# are the withdrawn product, nobody ever bought one, and `PlusPurchase` records every pass and
+# subscription purchase instead. `get_purchase_history` reads that table now.
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Purchase history for the credit packs that were sold before packs were withdrawn.
+"""Purchase history — now over `PlusPurchase`, the passes and subscriptions a learner actually bought.
 
 **What this module was, and why almost all of it is gone.** It sold credit packs: a catalogue with
 currency-aware pricing, a Stripe Checkout session, a Paystack charge, an idempotent webhook
@@ -6,23 +6,18 @@ fulfilment that incremented `User.purchasedCreditsBalance`, a receipt email, a p
 an admin tool for adjusting that balance by hand.
 
 Credit packs were withdrawn from the catalogue in Phase 1 (§6.1): a pack of credits cannot be priced
-honestly once the thing a credit buys has been replaced by a rolling usage window, and buying
-capacity you might not use is a worse deal than buying five hours you will. Phase 3 then dropped
-`purchasedCreditsBalance` itself, which left every function here either selling a product that no
-longer exists or writing to a column that no longer exists.
+honestly once the thing a credit buys has been replaced by a rolling usage window. Phase 3 dropped
+`purchasedCreditsBalance`, and Decision H (this change) drops `CreditPurchaseTransaction` and
+`CreditPack` themselves — both had zero rows, since nobody ever bought a pack.
 
-So they are deleted rather than disabled: `get_credit_packs`, `initiate_purchase`,
-`fulfill_purchase`, `admin_adjust_balance`, `_create_stripe_checkout_session`,
-`_create_paystack_charge` and `_send_purchase_receipt_email`. Nothing called any of them —
-`paystack_service` dropped its `fulfill_purchase` call in Phase 2b, and the routes went with the
-product in Phase 1. The purchase rails that replace them sell **passes** and record a `PlusPurchase`
-(Decision G, Decision H); they are a different contract, not a port, which is why there is nothing
-here to adapt.
+So the selling functions are long deleted, and `get_purchase_history` no longer reads the credit
+tables. It reads `PlusPurchase`, which is the record of every pass and subscription purchase
+(Decision G). The module name is now a fossil — it predates passes — but renaming it is a bigger diff
+than it earns, so it stays until something else touches it.
 
-**`get_purchase_history` stays.** It describes transactions that really happened. There happen to be
-none — `scripts/count_legacy_commercial_state.py` found zero completed rows — but a support surface
-that can answer "what did I pay you" must not start lying the moment a product is retired. Decision H
-drops `CreditPurchaseTransaction` in Phase 5, and this goes with the table.
+**Why a support surface rather than a receipts list.** The question this answers is "what did I pay
+you", so it lists every purchase whatever its status: a `failed` or `refunded` row is exactly what a
+learner asking that question needs to see, and hiding them is how a support tool becomes an argument.
 
 Copyright (C) 2025 Maigie
 
@@ -98,20 +93,24 @@ async def get_purchase_history(
     total_pages = math.ceil(total / page_size) if total > 0 else 0
 
     items = []
-    for txn in transactions:
-        pack_name = txn.credit_pack.name if txn.credit_pack else "Unknown Pack"
+    for purchase in transactions:
         items.append(
             {
-                "id": txn.id,
-                "creditPackId": txn.credit_pack_id,
-                "creditPackName": pack_name,
-                "creditsGranted": txn.credits_granted,
-                "amountPaid": txn.amount_paid,
-                "currency": txn.currency,
-                "priceFormatted": _format_price(txn.amount_paid, txn.currency),
-                "status": txn.status,
-                "completedAt": (txn.completed_at.isoformat() if txn.completed_at else None),
-                "createdAt": txn.created_at.isoformat(),
+                "id": purchase.id,
+                "productId": purchase.product_id,
+                # `pass` | `subscription`. What was bought, not what it granted — a pass and the
+                # subscription are different lines on a receipt even when they cost the same.
+                "productKind": purchase.product_kind,
+                "provider": purchase.provider,
+                "amountMinor": purchase.amount_minor,
+                "currency": purchase.currency,
+                "priceFormatted": _format_price(purchase.amount_minor, purchase.currency),
+                "status": purchase.status,
+                "completedAt": (
+                    purchase.completed_at.isoformat() if purchase.completed_at else None
+                ),
+                "refundedAt": (purchase.refunded_at.isoformat() if purchase.refunded_at else None),
+                "createdAt": purchase.created_at.isoformat(),
             }
         )
 

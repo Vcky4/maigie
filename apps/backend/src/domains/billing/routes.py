@@ -378,13 +378,20 @@ async def google_play_verify(body: models.GooglePlayVerifyRequest, current_user:
 # rails.
 
 
-@router.get("/credits/purchases", response_model=models.PaginatedPurchaseHistory)
+@router.get("/purchases", response_model=models.PaginatedPurchaseHistory)
 async def get_purchase_history(
     current_user: CurrentUser,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ):
-    """Get paginated credit purchase history."""
+    """Paginated purchase history: every pass and subscription the learner bought.
+
+    Reads `PlusPurchase` (Decision H). Was `/credits/purchases` over `CreditPurchaseTransaction`, which
+    is dropped along with `CreditPack` in migration 072 — credit packs are the withdrawn product and
+    nobody ever bought one. Renamed to `/purchases` because it is no longer about credits, matching §8.
+
+    The support surface for "what did I pay you", so it returns failed and refunded purchases too.
+    """
     return await credit_service.get_purchase_history(
         user_id=current_user.id, page=page, page_size=pageSize
     )

@@ -335,15 +335,27 @@ class GooglePlayVerifyResponse(BaseModel):
 
 
 class PurchaseHistoryItem(BaseModel):
-    """Single credit purchase transaction."""
+    """One purchase, from `PlusPurchase` (Decision H).
+
+    Was a credit-pack transaction — `packName`, `credits`, `amount`. Those columns are gone with the
+    tables, and this now describes what a learner actually bought: a pass or the subscription. `status`
+    is published, and `refundedAt` alongside `completedAt`, because this is the support surface that
+    answers "what did I pay you" and a refunded purchase is part of that answer.
+    """
 
     id: str
-    packName: str
-    credits: int
-    amount: int
-    currency: str
+    productId: str
+    #: `pass` | `subscription`.
+    productKind: str
     provider: str
+    #: In the currency's smallest unit, as charged — cents or kobo. `priceFormatted` is the display
+    #: string; the raw figure is here so a client is not forced to parse currency out of prose.
+    amountMinor: int
+    currency: str
+    priceFormatted: str
     status: str
+    completedAt: datetime | None = None
+    refundedAt: datetime | None = None
     createdAt: datetime
 
 
