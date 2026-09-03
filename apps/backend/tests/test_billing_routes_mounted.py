@@ -51,8 +51,9 @@ REACHABLE = [
     f"{PREFIX}/billing/subscriptions/cancel",
     # Google Play subscription verification. Android is the only shipped store.
     f"{PREFIX}/billing/subscriptions/google-play/verify",
-    # History. It describes transactions that really happened.
-    f"{PREFIX}/billing/credits/purchases",
+    # History, from `PlusPurchase` (Decision H). Renamed from `/credits/purchases` when the credit
+    # tables were dropped — it is no longer about credits.
+    f"{PREFIX}/billing/purchases",
     # The meter, read-only. Separate from `/entitlement` because the two change on different
     # clocks: entitlement when a learner pays, usage on every operation.
     f"{PREFIX}/billing/usage",

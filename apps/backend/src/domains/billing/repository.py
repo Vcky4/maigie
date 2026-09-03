@@ -14,8 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domains.billing.db_models import (
     AdRewardClaim,
-    CreditPack,
-    CreditPurchaseTransaction,
+    PlusPurchase,
     ReferralReward,
     ReferralRewardClaim,
 )
@@ -107,44 +106,40 @@ class BillingRepository:
     # the only thing that writes them.
 
     # -----------------------------------------------------------------------
-    # Credit Purchase Transactions
+    # Purchase history
     # -----------------------------------------------------------------------
     #
-    # Read-only now. `create_purchase_transaction`, `find_transaction_by_reference` and
-    # `update_transaction` existed to record and settle a credit-pack purchase; nothing can
-    # buy one, so nothing writes here. A write path that still worked would be an invitation
-    # to sell the withdrawn product from a webhook. `PlusPurchase` takes over the recording
-    # (Decision G), and this table is read for history until Decision H drops it.
+    # Reads `PlusPurchase` (Decision H). It used to read `CreditPurchaseTransaction` joined to
+    # `CreditPack` — both dropped in migration 072, because credit packs are the withdrawn product
+    # and nobody ever bought one (Phase 2b's count found zero completed rows). The union the plan's
+    # revision 3 designed, reconciling two purchase schemas into one response, was written for the
+    # benefit of those zero rows and is never written.
+    #
+    # `PlusPurchase` is the record of every pass and subscription purchase (Decision G). This is the
+    # support surface that answers "what did I pay you", so it lists every status rather than only
+    # completed ones — a failed or refunded purchase is exactly what a learner asking that question
+    # wants to see.
 
     async def get_purchase_history(
         self, user_id: str, *, skip: int = 0, take: int = 20
-    ) -> tuple[list[CreditPurchaseTransaction], int]:
+    ) -> tuple[list[PlusPurchase], int]:
         async with await self._session() as session:
             count_stmt = (
                 select(func.count())
-                .select_from(CreditPurchaseTransaction)
-                .where(CreditPurchaseTransaction.user_id == user_id)
+                .select_from(PlusPurchase)
+                .where(PlusPurchase.user_id == user_id)
             )
             total = (await session.execute(count_stmt)).scalar() or 0
 
             stmt = (
-                select(CreditPurchaseTransaction)
-                .where(CreditPurchaseTransaction.user_id == user_id)
-                .order_by(CreditPurchaseTransaction.created_at.desc())
+                select(PlusPurchase)
+                .where(PlusPurchase.user_id == user_id)
+                .order_by(PlusPurchase.created_at.desc())
                 .offset(skip)
                 .limit(take)
             )
             result = await session.execute(stmt)
             return list(result.scalars().all()), total
-
-    # -----------------------------------------------------------------------
-    # Credit Packs — removed
-    # -----------------------------------------------------------------------
-    #
-    # `list_active_packs` served the pack catalogue and `find_pack` priced a purchase; both
-    # went with the product (§6.1). The `CreditPack` table itself is still mapped, because
-    # `get_purchase_history` joins it to name a pack somebody bought, and Decision H drops
-    # both tables together in the pass rails.
 
     # -----------------------------------------------------------------------
     # Referral Rewards

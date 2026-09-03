@@ -1061,6 +1061,8 @@ A new table rather than columns on the old one, because the old one is `NOT NULL
 
 **Revised in revision 4.** Revision 3 kept `CreditPurchaseTransaction` and `CreditPack` unmigrated so that purchase history stayed readable, with `GET /billing/purchases` unioning both. There is no purchase history: nobody has bought a credit pack. Both tables are **dropped** in the Phase 4 migration, `GET /billing/purchases` reads `PlusPurchase` only, and the union logic is never written.
 
+✅ **Done in migration `072_drop_credit_tables`.** Both tables dropped, child (`CreditPurchaseTransaction`, which has the FK) before parent. The endpoint was `/billing/credits/purchases` over the credit tables and is now `/billing/purchases` over `PlusPurchase` — renamed because it is no longer about credits, and no client consumed the old path. `PurchaseHistoryItem` changed shape with it: `packName` / `credits` / `amount` became `productId` / `productKind` / `amountMinor`, and `refundedAt` was added, because the endpoint's job is to answer "what did I pay you" and a refund is part of that answer. The models are deleted rather than left mapped against dropped tables, which is how a query compiles and then fails at runtime.
+
 The union was the more expensive half of that endpoint — two schemas with different notions of what was bought, reconciled into one response shape for the benefit of zero rows. Dropping it also removes the last reason `credit_purchase_service.fulfill_purchase` exists, which the Paystack port (Phase 2b) would otherwise have had to carry forward into SQLAlchemy.
 
 ### Decision I: Store prices are displayed from the store. The catalogue is for identity, not for currency.
