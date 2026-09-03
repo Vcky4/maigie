@@ -25,7 +25,10 @@ import pytest
 
 from src.domains.personal_learning import db_models, models
 from src.domains.personal_learning.repository import PersonalLearningRepository
-from src.domains.personal_learning.services import reflection_service
+from src.domains.personal_learning.services import (
+    reflection_narrative,
+    reflection_service,
+)
 from src.shared.field_mapping import UnmappedFieldError
 
 #: The keys the old prompt asked the model to invent. None of them may reappear.
@@ -104,8 +107,10 @@ class TestTheModelSuppliesNoNumbers:
         assert "do not invent" in prompt.lower()
 
     @pytest.mark.anyio
-    async def test_a_model_that_returns_counts_has_them_ignored(self, reflection_harness):
-        """The load-bearing test.
+    async def test_a_model_that_returns_counts_has_them_ignored(
+        self, reflection_harness, plus_tier
+    ):
+        """The load-bearing test. Run as Plus, since Free calls no model to return counts.
 
         A model will volunteer numbers whether or not it was asked. The service must take its
         wording and nothing else, so what reaches the row is the *measured* metrics — and none
@@ -154,9 +159,15 @@ class TestTheModelSuppliesNoNumbers:
         assert result is reflection_harness.row
 
     @pytest.mark.anyio
-    async def test_metrics_are_computed_before_the_model_is_called(self, reflection_harness):
+    async def test_metrics_are_computed_before_the_model_is_called(
+        self, reflection_harness, plus_tier
+    ):
         """Ordering is the guarantee. If the model ran first, a hang or a crash could take the
-        measurements with it."""
+        measurements with it.
+
+        Run as Plus, because Free no longer calls a model at all (Decision M rule 2) — so on Free
+        there is no ordering left to assert. `TestFreeSpendsNoModelCall` covers that instead.
+        """
         await reflection_service.generate_reflection(user_id="u1", type="weekly")
         assert reflection_harness.order == ["metrics", "llm"]
 
@@ -423,7 +434,9 @@ def reflection_harness(monkeypatch):
     monkeypatch.setattr(llm_resilient, "generate_content_json", call_llm)
     monkeypatch.setattr(reflection_service.repo, "upsert_reflection", harness.upsert)
     monkeypatch.setattr(
-        reflection_service.reflection_metrics, "compute_metrics", harness.compute_metrics
+        reflection_service.reflection_metrics,
+        "compute_metrics",
+        harness.compute_metrics,
     )
 
     async def free_tier(user_id):
@@ -458,3 +471,127 @@ def plus_tier(monkeypatch):
         return "plus"
 
     monkeypatch.setattr(feature_tier_service, "get_quality_tier", plus)
+
+
+class TestFreeSpendsNoModelCall:
+    """Decision M rule 2: the free weekly reflection is composed with no model call at all.
+
+    It used to spend **two**, and keep almost nothing from either. The summary call ran for every
+    tier, and the narrative call ran whenever `chosen` was non-empty — which on Free is whenever any
+    metric is actionable, because `_FREE_RECOMMENDATIONS = 1`. Then `assemble(deep=False)` discarded
+    the reply: no signal prose, no patterns, no closing, no per-subject insight. So a free learner
+    triggered an 8 192-token `THINKING_DYNAMIC` generation and kept one action's wording out of it.
+
+    What blocked the fix for a phase was not the condition but the copy: the only non-model summary in
+    the module was an error message, so skipping the calls would have told every free learner their
+    reflection had failed.
+    """
+
+    @pytest.mark.anyio
+    async def test_no_model_is_called(self, reflection_harness):
+        await reflection_service.generate_reflection(user_id="u1", type="weekly")
+        assert reflection_harness.order == ["metrics"]
+        assert "llm" not in reflection_harness.order
+
+    @pytest.mark.anyio
+    async def test_the_summary_is_measured_rather_than_an_apology(self, reflection_harness):
+        """The distinction the whole item turned on.
+
+        A free learner's summary must read as their week, not as a failure. The specific string
+        guarded against is `_error_summary`'s "could not be generated", which is what would have been
+        published had the calls simply been removed.
+        """
+        await reflection_service.generate_reflection(user_id="u1", type="weekly")
+        summary = reflection_harness.written["summary"]
+
+        assert summary
+        assert "could not be generated" not in summary
+        assert "failed" not in summary.lower()
+
+    @pytest.mark.anyio
+    async def test_the_summary_carries_the_measurements(self, reflection_harness):
+        """Not merely inoffensive — it has to say something. The harness measures 42 focused minutes,
+        so the summary should name them rather than being a generic encouragement.
+        """
+        await reflection_service.generate_reflection(user_id="u1", type="weekly")
+        assert "42m" in reflection_harness.written["summary"]
+
+    @pytest.mark.anyio
+    async def test_a_quiet_period_reads_as_quiet_rather_than_broken(self, reflection_harness):
+        """Zero measurements is a fact about the learner's week, not an error.
+
+        "0 topics mastered, 0% recall" reads as a judgement; "a quiet week" reads as a fact. This is
+        the case where the temptation to reuse the error copy is strongest, because there genuinely is
+        nothing to report.
+        """
+        reflection_harness.measured = models.ReflectionMetrics()
+        await reflection_service.generate_reflection(user_id="u1", type="weekly")
+        summary = reflection_harness.written["summary"]
+
+        assert "quiet" in summary.lower()
+        assert "could not" not in summary
+
+    @pytest.mark.anyio
+    async def test_the_measurements_still_reach_the_row(self, reflection_harness):
+        """Removing the model must not have removed the content. Everything Free is promised is a pure
+        function of the metrics (Decision T2), so the row is shorter than a Plus one rather than holed.
+        """
+        await reflection_service.generate_reflection(user_id="u1", type="weekly")
+        written = reflection_harness.written
+        assert written["metrics"] == reflection_harness.measured.model_dump(by_alias=True)
+        assert written["depth"] == models.ReflectionDepth.STANDARD.value
+
+
+class TestTheDeterministicActionCopy:
+    """Free's actions are worded by `_ACTION_COPY`, so it is the only copy a free learner reads.
+
+    "Keep going" was an acceptable last-resort string while it appeared only after a model call had
+    failed. As the free tier's default it would render the same three words over three different
+    suggestions.
+    """
+
+    def test_every_action_choose_actions_can_emit_has_its_own_copy(self):
+        """The drift this prevents is silent: a new action id falls back to the generic pair and reads
+        as "Keep going / Open" for every free learner who triggers it.
+        """
+        import inspect
+
+        source = inspect.getsource(reflection_narrative.choose_actions)
+        emitted = {
+            line.split('"')[1]
+            for line in source.splitlines()
+            if line.strip().startswith('"') and line.strip().endswith('",')
+        }
+        missing = emitted - set(reflection_narrative._ACTION_COPY)
+        assert not missing, f"action ids with no deterministic copy: {sorted(missing)}"
+
+    def test_an_unworded_action_still_ships_with_its_grounds(self):
+        """The target is the part that has to be right; the sentence is the part that can be plain."""
+        target = models.ReflectionActionTarget(kind=models.ReflectionActionKind.FLASHCARD_REVIEW)
+        actions = reflection_narrative.assemble_actions(
+            chosen=[("recall", target, "recall was 41% this period")],
+            written={},
+        )
+        assert actions[0].title == "Run a review session"
+        assert actions[0].detail == "recall was 41% this period"
+        assert actions[0].label == "Review cards"
+
+    def test_the_model_still_wins_when_it_wrote_something(self):
+        """The deterministic copy is a floor, not a replacement — Plus still buys the wording."""
+        target = models.ReflectionActionTarget(kind=models.ReflectionActionKind.FLASHCARD_REVIEW)
+        actions = reflection_narrative.assemble_actions(
+            chosen=[("recall", target, "recall was 41% this period")],
+            written={"actions": {"recall": {"title": "Shore up recall", "label": "Start"}}},
+        )
+        assert actions[0].title == "Shore up recall"
+        assert actions[0].label == "Start"
+
+    def test_an_unknown_action_id_falls_to_the_generic_pair(self):
+        """Rather than raising. A new action with no copy is a cosmetic gap, and failing a learner's
+        reflection over it would be the wrong trade — the test above is what catches it in CI instead.
+        """
+        target = models.ReflectionActionTarget(kind=models.ReflectionActionKind.SCHEDULE)
+        actions = reflection_narrative.assemble_actions(
+            chosen=[("invented", target, "grounds")], written={}
+        )
+        assert actions[0].title == "Keep going"

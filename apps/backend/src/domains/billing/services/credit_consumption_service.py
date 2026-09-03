@@ -465,8 +465,51 @@ async def has_headroom(user: User) -> tuple[bool, str | None]:
     return True, None
 
 
+async def _record_usage_event(
+    *, user_id: str, units: int, operation: str, model: str | None, proactive: bool
+) -> None:
+    """Itemise one charge, so §6.5's estimates can be checked against the database.
+
+    **Separate from the counter update on purpose, and after it.** The counters are the learner's
+    accounting and this is our analytics; a failed insert must never cost a learner their window
+    reset, and the ordering is what guarantees it. Failures are swallowed for the same reason
+    `record_units` swallows its own — nothing a meter writes for us is worth losing a generation the
+    learner already waited for.
+
+    It is a second round trip per generation. Worth stating rather than hiding: the alternative was a
+    paywall whose 500-unit threshold no query could verify, for as long as it took to get here.
+    """
+    try:
+        from src.domains.billing.db_models import UsageEvent
+
+        factory = get_session_factory()
+        async with factory() as session:
+            session.add(
+                UsageEvent(
+                    user_id=user_id,
+                    operation=operation,
+                    units=units,
+                    model=model,
+                    proactive=proactive,
+                )
+            )
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "usage: failed to itemise %d units for user=%s operation=%s (counters are unaffected)",
+            units,
+            user_id,
+            operation,
+        )
+
+
 async def record_units(
-    user_id: str, units: int, operation: str = "unknown", *, proactive: bool = False
+    user_id: str,
+    units: int,
+    operation: str = "unknown",
+    *,
+    proactive: bool = False,
+    model: str | None = None,
 ) -> None:
     """Advance the window and month counters by `units`. **Accounts, never refuses.**
 
@@ -525,6 +568,18 @@ async def record_units(
             user_id,
             operation,
         )
+
+    # Outside the block above, so the itemisation is attempted whether or not the counters landed.
+    # The two answer different questions and neither is a precondition of the other: a lost counter
+    # update under-charges a learner, a lost row under-reports to us, and folding them into one `try`
+    # would mean either failure costing both.
+    await _record_usage_event(
+        user_id=user_id,
+        units=units,
+        operation=operation,
+        model=model,
+        proactive=proactive,
+    )
 
 
 async def _consume_space_credits(

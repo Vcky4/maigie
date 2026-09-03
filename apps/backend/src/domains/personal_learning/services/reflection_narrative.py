@@ -335,7 +335,7 @@ def assemble(
         # Falls back to the one-paragraph summary rather than to nothing, so a Plus learner whose
         # generation half-failed still gets the hero the page is built around.
         opening=opening or ([summary] if summary else []),
-        theme=(str(written.get("theme")).strip()[:60] or None) if written.get("theme") else None,
+        theme=((str(written.get("theme")).strip()[:60] or None) if written.get("theme") else None),
         change_label=(
             (str(written.get("changeLabel")).strip()[:80] or None)
             if written.get("changeLabel")
@@ -369,27 +369,52 @@ def assemble(
     )
 
 
+#: Deterministic wording per action id, for when no model wrote any.
+#:
+#: **This is the free tier's only action copy, not merely a degraded path.** Free composes its whole
+#: reflection without a model (Decision M rule 2), so whatever is here is what a free learner reads —
+#: which is why "Keep going" for every action is no longer good enough. It was an acceptable
+#: last-resort string while it only appeared when a model call had failed; as the free tier's default
+#: it would render the same three words over three quite different suggestions.
+#:
+#: Keyed by the ids `choose_actions` produces, so the two cannot drift apart silently: a new action
+#: without a row here falls to the generic pair and a test names the gap.
+_ACTION_COPY: dict[str, tuple[str, str]] = {
+    "weakest-subject": ("Pick up where you left off", "Open course"),
+    "recall": ("Run a review session", "Review cards"),
+    "consistency": ("Book your next session", "Open schedule"),
+}
+_GENERIC_ACTION_COPY = ("Keep going", "Open")
+
+
 def assemble_actions(
     *,
     chosen: list[tuple[str, models.ReflectionActionTarget, str]],
     written: dict[str, Any],
 ) -> list[models.ReflectionAction]:
-    """Attach the model's wording to the targets the service chose.
+    """Attach wording to the targets the service chose — the model's, or the deterministic copy.
 
-    An action whose prose is missing still ships, with the grounds as its detail. The target is the
-    part that has to be right; the sentence is the part that can be plain.
+    An action whose prose is missing still ships, with `grounds` as its detail. The target is the part
+    that has to be right; the sentence is the part that can be plain.
+
+    `grounds` is published as the detail here and nowhere else. `choose_actions` describes it as input
+    to the prose "never published as prose itself", which holds for the *model* path — it is evidence
+    handed over to be reworded. On the deterministic path there is nothing to reword, and a measured
+    phrase like "Physics is at 40% (4 of 10 topics)" is a better detail line than any template could
+    be, because it is the actual reason the action was chosen.
     """
     action_prose = _as_dict(written.get("actions"))
     actions: list[models.ReflectionAction] = []
 
     for id_, target, grounds in chosen:
         entry = _as_dict(action_prose.get(id_))
+        default_title, default_label = _ACTION_COPY.get(id_, _GENERIC_ACTION_COPY)
         actions.append(
             models.ReflectionAction(
                 id=id_,
-                title=str(entry.get("title") or "Keep going").strip()[:120],
+                title=str(entry.get("title") or default_title).strip()[:120],
                 detail=str(entry.get("detail") or grounds).strip()[:400],
-                label=str(entry.get("label") or "Open").strip()[:40],
+                label=str(entry.get("label") or default_label).strip()[:40],
                 target=target,
             )
         )

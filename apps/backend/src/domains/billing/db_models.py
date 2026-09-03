@@ -11,7 +11,16 @@ Maps to existing PostgreSQL tables created by Prisma.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -232,7 +241,11 @@ class ResourceBankItem(Base, TimestampMixin):
     report_count: Mapped[int] = mapped_column("reportCount", Integer, default=0, server_default="0")
 
     __table_args__ = (
-        Index("ResourceBankItem_universityName_courseCode_idx", "universityName", "courseCode"),
+        Index(
+            "ResourceBankItem_universityName_courseCode_idx",
+            "universityName",
+            "courseCode",
+        ),
         Index("ResourceBankItem_universityName_type_idx", "universityName", "type"),
     )
 
@@ -340,4 +353,67 @@ class ResourceUploadReward(Base, TimestampMixin):
             "resourceBankItemId",
             unique=True,
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# UsageEvent
+# ---------------------------------------------------------------------------
+
+
+class UsageEvent(Base):
+    """One row per metered operation. What `record_units` spends, itemised.
+
+    **The window counters say how much; this says on what.** §6.5 estimates a unit cost for each of 27
+    operations and Decision P draws its model-quality threshold at 500 of them, but nothing in the
+    database could check either figure: `record_units` advances two aggregates and logs the label, and
+    `LlmCostRecord` has no operation column and is written on the chat path alone. So the paywall's
+    threshold was enforced against numbers no query could contradict.
+
+    An addition to Decision L rather than an unfinished half of it. L asked for cost to be measured
+    rather than tabulated, and it is — `units_for_tokens` prices every generation from real tokens.
+    Per-operation persistence is a new requirement that follows from Decision P needing a checkable
+    threshold.
+
+    `units` is stored without the token counts it came from. `units_for_tokens` has already applied the
+    rate, and keeping both invites the two disagreeing — which is the failure this whole denomination
+    exists to avoid. `model` is kept because under Decision P the same operation costs different units
+    on different tiers, so which model ran is part of the answer rather than a restatement of it.
+
+    No `userTier` column: the tier is derivable from the model, and a denormalised tier would be a
+    second opinion about entitlement, which Decision B exists to prevent. No foreign key to `User`
+    either — a deleted learner's spend still happened, and a cascade would quietly rewrite history to
+    make the cost model look better than it was.
+    """
+
+    __tablename__ = "UsageEvent"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: str(__import__("uuid").uuid4())
+    )
+    user_id: Mapped[str] = mapped_column("userId", String, nullable=False)
+    #: The `operation` label the call site passed to `llm_resilient`. Deliberately a free string
+    #: rather than an enum: a newly labelled call site must not need a migration to start recording.
+    operation: Mapped[str] = mapped_column(String, nullable=False)
+    units: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Nullable because a provider reply can carry usage without a model name, and a null is more
+    #: honest than a guess about which model was charged for.
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+    #: Decision M rule 1's category tag, per operation as well as in the month aggregate, so the
+    #: proactive share can be attributed to the tasks that spent it.
+    proactive: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        "createdAt",
+        DateTime(timezone=True),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        # The aggregation this table exists for: units by operation over a period.
+        Index("UsageEvent_operation_createdAt_idx", "operation", "createdAt"),
+        # Per-learner, for the distribution questions §6.7 leaves open.
+        Index("UsageEvent_userId_createdAt_idx", "userId", "createdAt"),
     )

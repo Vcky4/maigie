@@ -468,3 +468,133 @@ class TestVoiceIsADifferentMeter:
                     f"{module} charges through the unit meter again, which puts voice minutes back "
                     "on the 5-hour window they were unbundled from"
                 )
+
+
+class TestOneRowPerMeteredOperation:
+    """`UsageEvent` is what makes §6.5 and Decision P checkable instead of trusted.
+
+    The window counters say how much a month cost; nothing said on what. §6.5 estimates a unit cost
+    for each of 27 operations and Decision P draws the model-quality threshold at 500 of them, and
+    until this table existed no query could contradict either — `record_units` advanced two aggregates
+    and logged the label, and `LlmCostRecord` has no operation column and is written on the chat path
+    alone.
+
+    Recorded as an addition to Decision L rather than an unfinished half of it: L asked for cost to be
+    measured rather than tabulated, which `units_for_tokens` does. Per-operation persistence is a new
+    requirement that follows from Decision P needing a checkable threshold.
+    """
+
+    @staticmethod
+    def _capture(monkeypatch):
+        """Collect the rows `_record_usage_event` would insert, without a database."""
+        added: list = []
+
+        class FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+            def add(self, row):
+                added.append(row)
+
+            async def commit(self):
+                return None
+
+        monkeypatch.setattr(meter, "get_session_factory", lambda: FakeSession)
+        return added
+
+    @pytest.mark.asyncio
+    async def test_a_charge_writes_one_itemised_row(self, world, monkeypatch):
+        added = self._capture(monkeypatch)
+        await meter.record_units(
+            "user-1", 780, operation="quiz_generation", model="gemini-3.5-flash"
+        )
+
+        assert len(added) == 1
+        row = added[0]
+        assert (row.user_id, row.operation, row.units, row.model) == (
+            "user-1",
+            "quiz_generation",
+            780,
+            "gemini-3.5-flash",
+        )
+        assert row.proactive is False
+
+    @pytest.mark.asyncio
+    async def test_the_proactive_tag_is_carried_per_operation(self, world, monkeypatch):
+        """Decision M rule 1 tags the month aggregate; carrying it here too is what lets the proactive
+        share be attributed to the *tasks* that spent it rather than only totalled.
+        """
+        added = self._capture(monkeypatch)
+        await meter.record_units("user-1", 140, operation="home_guidance", proactive=True)
+        assert added[0].proactive is True
+
+    @pytest.mark.asyncio
+    async def test_nothing_is_written_for_a_zero_charge(self, world, monkeypatch):
+        """`record_units` returns early on a non-positive amount, and the row must not outlive that
+        guard — otherwise the table fills with rows recording that nothing happened.
+        """
+        added = self._capture(monkeypatch)
+        await meter.record_units("user-1", 0, operation="quiz_generation")
+        assert added == []
+
+    @pytest.mark.asyncio
+    async def test_a_missing_model_is_null_rather_than_a_guess(self, world, monkeypatch):
+        """A provider reply can carry usage without a model name. A null says so; a default would
+        attribute the cost to a model that may not have served it.
+        """
+        added = self._capture(monkeypatch)
+        await meter.record_units("user-1", 100, operation="note_summary")
+        assert added[0].model is None
+
+    @pytest.mark.asyncio
+    async def test_a_failed_row_does_not_cost_the_learner_their_counters(self, world, monkeypatch):
+        """The ordering guarantee, and the reason the insert sits outside the counter update's `try`.
+
+        The counters are the learner's accounting; the row is our analytics. A broken insert must not
+        reach the caller *or* undo the accounting — the two answer different questions and neither is a
+        precondition of the other.
+        """
+
+        def explode():
+            raise RuntimeError("no database")
+
+        monkeypatch.setattr(meter, "get_session_factory", explode)
+        await meter.record_units("user-1", 500, operation="lesson_body")
+
+        # The counters landed regardless.
+        assert world.user.usage_window_units_used == 500
+        assert world.user.usage_month_units_used == 500
+
+    @pytest.mark.asyncio
+    async def test_a_failed_counter_update_still_itemises(self, world, monkeypatch):
+        """The converse, which matters for the same reason. If a counter write fails we have
+        under-charged, and the row is the only remaining evidence of what was actually served.
+        """
+        added = self._capture(monkeypatch)
+
+        class BrokenRepo:
+            async def find_by_id(self, _user_id):
+                raise RuntimeError("no database")
+
+        monkeypatch.setattr(meter, "IdentityRepository", BrokenRepo)
+        await meter.record_units("user-1", 300, operation="course_outline")
+
+        assert len(added) == 1
+        assert added[0].units == 300
+
+    @pytest.mark.asyncio
+    async def test_the_meter_passes_the_model_through(self, monkeypatch):
+        """The chokepoint has `usage.model` and the row wants it, so the argument has to survive the
+        hop. Asserted because a silently dropped keyword would leave every row's model null and the
+        Decision P check unanswerable — while looking like it worked.
+        """
+        import inspect
+
+        from src.domains.personal_learning.services import llm_resilient
+
+        source = inspect.getsource(llm_resilient.meter_usage)
+        assert "model=usage.model" in source
+        assert "model" in inspect.signature(meter.record_units).parameters

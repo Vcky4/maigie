@@ -47,7 +47,19 @@ def _fallback_title(type_: models.ReflectionType) -> str:
     )
 
 
-def _fallback_summary(type_: models.ReflectionType) -> str:
+def _error_summary(type_: models.ReflectionType) -> str:
+    """The summary for a reflection whose measurement itself failed. **Genuinely an error path.**
+
+    Was `_fallback_summary`, and was doing two jobs: this one, and standing in as the free tier's
+    summary. Those need different sentences — one string cannot be both "here is your week" and "this
+    did not work" — and the collision is what made Decision M rule 2 look blocked on a product
+    decision rather than on a function that had not been written. `build_measured_summary` is that
+    function, and it now serves both the free tier and a failed *narrative*.
+
+    What is left here is the narrow case where there are no figures to fall back on, which is a real
+    error rather than a quiet period: `build_measured_summary` already has honest copy for a learner
+    who simply did not study.
+    """
     return (
         f"Your {type_.value} reflection is ready. "
         "The narrative could not be generated this time, so this is the short version."
@@ -185,42 +197,60 @@ async def _compose_and_store(
     )
 
     title = _fallback_title(type_)
-    summary = _fallback_summary(type_)
+    # Composed from the metrics above, so there is always a real summary before any model is called.
+    # This is what Free keeps, and what Plus falls back to if its generation fails.
+    summary = reflection_metrics.build_measured_summary(type_, metrics)
 
-    try:
-        # `fallback={}` rather than `None`: passing None to this helper means "raise", and two
-        # routes have already taken a 500 from that reading of it.
-        data = await generate_content_json(
-            _build_prompt(
-                type_=type_,
-                period_start=period_start,
-                period_end=period_end,
-                deep=deep,
-                metrics=metrics,
-            ),
-            # This first call asks only for the title and summary, which every tier gets and which
-            # the fallbacks above already cover. The narrative is a second, larger request made
-            # below — split so that a failure of the long one still leaves a titled, summarised
-            # reflection rather than losing both.
-            # 2048, not the 800 this first used. `max_tokens` is a budget for the whole
-            # generation, and the configured models spend most of it on reasoning tokens before
-            # emitting anything — measured at ~0.8 characters of visible output per token of
-            # budget. At 800 the reply truncated mid-sentence on four of thirteen reflections,
-            # which `json.loads` then rejected, so the narrative silently fell back to the
-            # placeholder. The previous implementation used 2000 for the same reason.
-            max_tokens=2048,
-            fallback={},
-            user_id=user_id,
-            operation="reflection_summary",
-        )
-        if isinstance(data, dict):
-            title = (data.get("title") or title).strip()[:200]
-            summary = (data.get("summary") or summary).strip()
-    except Exception as e:
-        # The reflection is still delivered, with its metrics intact and a plain summary. What
-        # is *not* done here is substituting zeros for the metrics, which is what made the old
-        # failure path indistinguishable from an inactive week.
-        logger.warning("Reflection narrative generation failed for user %s: %s", user_id, e)
+    # **Free spends no model call at all** (Decision M rule 2), and until now it spent two.
+    #
+    # The waste was close to total rather than marginal. This call ran for every tier, and the
+    # narrative call in `_compose_narrative` ran whenever `chosen` was non-empty — which for Free is
+    # whenever any metric is actionable, because `_FREE_RECOMMENDATIONS = 1`. Then
+    # `reflection_narrative.assemble(deep=False)` **discards the reply**: no signal prose, no patterns,
+    # no closing, no per-subject insight, and `opening` taken from `summary`. So a free learner
+    # triggered an 8 192-token `THINKING_DYNAMIC` generation and kept one action's wording out of it.
+    #
+    # Everything Free is promised is already measured. `build_signals`, `build_subjects`,
+    # `build_rhythm`, `build_highlights` and `choose_actions` are pure functions of the metrics
+    # (Decision T2), `build_measured_summary` now writes the opening, and `assemble_actions` already
+    # words an action from its own `grounds` when the model wrote nothing.
+    if deep:
+        try:
+            # `fallback={}` rather than `None`: passing None to this helper means "raise", and two
+            # routes have already taken a 500 from that reading of it.
+            data = await generate_content_json(
+                _build_prompt(
+                    type_=type_,
+                    period_start=period_start,
+                    period_end=period_end,
+                    deep=deep,
+                    metrics=metrics,
+                ),
+                # This first call asks only for the title and summary. The narrative is a second,
+                # larger request made below — split so that a failure of the long one still leaves a
+                # titled, summarised reflection rather than losing both.
+                # 2048, not the 800 this first used. `max_tokens` is a budget for the whole
+                # generation, and the configured models spend most of it on reasoning tokens before
+                # emitting anything — measured at ~0.8 characters of visible output per token of
+                # budget. At 800 the reply truncated mid-sentence on four of thirteen reflections,
+                # which `json.loads` then rejected, so the narrative silently fell back to the
+                # placeholder. The previous implementation used 2000 for the same reason.
+                max_tokens=2048,
+                fallback={},
+                user_id=user_id,
+                operation="reflection_summary",
+            )
+            if isinstance(data, dict):
+                title = (data.get("title") or title).strip()[:200]
+                summary = (data.get("summary") or summary).strip()
+        except Exception as e:
+            # The reflection is still delivered, with its metrics intact and a **measured** summary
+            # rather than an apology — which is the second half of splitting `_fallback_summary`. A
+            # subscriber whose generation failed now reads their real figures where they used to read
+            # "the narrative could not be generated this time". What is *not* done here is
+            # substituting zeros for the metrics, which is what made the old failure path
+            # indistinguishable from an inactive week.
+            logger.warning("Reflection narrative generation failed for user %s: %s", user_id, e)
 
     narrative, recommendations = await _compose_narrative(
         user_id=user_id,
@@ -308,16 +338,17 @@ async def _compose_narrative(
     # The skeleton every tier gets is entirely measured (Decision T2); this call buys the prose on top
     # of it.
     #
-    # **The comment here used to claim free spends no call, and that is not what this condition
-    # does.** `_FREE_RECOMMENDATIONS = 1`, so a free learner with any actionable metric has a
-    # non-empty `chosen` and the call happens — their one recommendation needs wording. The call is
-    # only skipped when there is nothing to say *and* nothing to recommend, which is a narrower case
-    # than "free". Corrected rather than changed: Decision M wants the free weekly reflection composed
-    # with no model call at all, and that needs a deterministic composer this module does not have —
-    # `_fallback_summary` is an error message ("the narrative could not be generated this time"), not
-    # a summary, so it cannot serve as the free version without telling every free learner their
-    # reflection failed. Recorded as the open half of Decision M in Phase 3c.
-    if deep or chosen:
+    # **`if deep`, not `if deep or chosen`** — and the difference was the whole of Decision M rule 2's
+    # open half. `_FREE_RECOMMENDATIONS = 1`, so a free learner with any actionable metric had a
+    # non-empty `chosen` and this call happened; only a learner with nothing to say *and* nothing to
+    # recommend escaped it, which is a much narrower case than "free".
+    #
+    # What made that hard to fix was not the condition but the copy. The free tier had no summary of
+    # its own — `_fallback_summary` was an error message — so skipping the call would have told every
+    # free learner their reflection failed. `reflection_metrics.build_measured_summary` is that missing
+    # composer, and with it the free path needs no model at all: `assemble(deep=False)` was already
+    # discarding this reply, and `assemble_actions` already words an action from its own `grounds`.
+    if deep:
         try:
             reply = await generate_content_json(
                 reflection_narrative.build_prompt(

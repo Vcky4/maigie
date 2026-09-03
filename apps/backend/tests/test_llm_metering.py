@@ -55,9 +55,16 @@ def metered(monkeypatch):
     charges: list[tuple[str, int, str]] = []
     proactive_flags: list[bool] = []
 
-    async def fake_record(user_id, units, operation="unknown", *, proactive=False):
+    models_charged: list[str | None] = []
+
+    # `model` is accepted because the chokepoint now passes it: the itemised `UsageEvent` row records
+    # which model was charged for, since under Decision P the same operation costs different units on
+    # different tiers. A stub missing the keyword raises `TypeError` inside `meter_usage`, which
+    # swallows it — so the symptom is a silently unmetered call rather than an error.
+    async def fake_record(user_id, units, operation="unknown", *, proactive=False, model=None):
         charges.append((user_id, units, operation))
         proactive_flags.append(proactive)
+        models_charged.append(model)
 
     monkeypatch.setattr(
         "src.domains.billing.services.credit_consumption_service.record_units",
@@ -84,6 +91,7 @@ def metered(monkeypatch):
             "calls": calls,
             "charges": charges,
             "proactive_flags": proactive_flags,
+            "models_charged": models_charged,
         },
     )
 
@@ -100,6 +108,10 @@ class TestACallIsCharged:
         assert operation == "quiz_generation"
         # Measured from real token counts and the model that produced them, not from a table.
         assert units > 0
+        # And the model reaches the meter, so the itemised `UsageEvent` row can say which one was
+        # charged for. Under Decision P the same operation costs different units on different tiers,
+        # so a null here would make the per-operation figures unattributable to a tier.
+        assert metered.models_charged == [PLUS_TURN.model]
 
     async def test_reasoning_tokens_are_charged_with_output(self, metered):
         """`thoughts_tokens` are drawn from the output allowance and billed at the output rate.

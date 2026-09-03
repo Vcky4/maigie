@@ -318,7 +318,16 @@ async def meter_usage(
         )
 
         units = units_for_tokens(usage.input_tokens, usage.billable_output_tokens, usage.model)
-        await record_units(user_id, units, operation=operation, proactive=_PROACTIVE.get())
+        await record_units(
+            user_id,
+            units,
+            operation=operation,
+            proactive=_PROACTIVE.get(),
+            # Carried so the itemised row can say which model was charged for. Under Decision P the
+            # same operation costs different units on different tiers, so the model is part of the
+            # answer to "where did the units go" rather than a restatement of it.
+            model=usage.model,
+        )
     except Exception:
         logger.exception(
             "usage: metering failed for user=%s operation=%s model=%s — generation kept",

@@ -21,13 +21,17 @@ matters.
 
 **Where the units actually go.** §6.5 estimated 27 operations from `max_tokens` and a rate card. Some
 will be wrong, and the ones that are wrong in the expensive direction are where the next cost work
-belongs — rather than where the plan currently guesses it belongs.
+belongs — rather than where the plan currently guesses it belongs. This is now answerable:
+`UsageEvent` (migration 070) itemises every charge, and the per-operation table also reports which
+side of Decision P's 500-unit threshold each operation *measures* on, against the set the code
+actually splits.
 
 **Proactive share.** Decision M caps background AI at 20% of the month. Whether learners come near
 that is unknown, and if the real figure is 2% the sub-budget is a bound nobody reaches.
 
-**Strictly read-only.** Aggregates over `User`'s usage columns and `LlmCostRecord`. No writes, no DDL,
-no long transaction. Safe against production, which is the only place the answer exists.
+**Strictly read-only.** Aggregates over `User`'s usage columns, `LlmCostRecord` and `UsageEvent`. No
+writes, no DDL, no long transaction. Safe against production, which is the only place the answer
+exists.
 
 **What it cannot tell you: the payer rate.** There are no payers, so 8% and 6% stay guesses until
 Phase 5 ships a checkout. Every revenue figure in §6.7 and §6.11 depends on that number and none of
@@ -51,6 +55,12 @@ load_dotenv()
 
 #: One unit is $0.0001 of measured COGS (§6.2), so 10 000 units is $1.00.
 USD_PER_UNIT = 0.0001
+
+#: Decision P's model-quality threshold. Duplicated here rather than imported because this script
+#: connects to a database and imports no application code — it has to be runnable against production
+#: without pulling in settings, adapters or a router. A drifting copy would misreport the `side`
+#: column, which is why the plan section is named beside it.
+_QUALITY_SPLIT_UNITS = 500
 
 
 async def main() -> int:
@@ -207,6 +217,83 @@ async def main() -> int:
                     "history is one people learn to ignore."
                 )
 
+            # --- Where the units went -----------------------------------------------------------
+            #
+            # `UsageEvent` is what closed the gap this script used to print as unanswerable. Until it
+            # existed, the aggregates above said how much a month cost and nothing said on what — so
+            # §6.5's 27 estimates could not be contradicted, and Decision P's 500-unit threshold was
+            # enforced against numbers no query could check.
+            try:
+                by_operation = (
+                    (
+                        await conn.execute(
+                            text(
+                                """
+                                SELECT
+                                    operation,
+                                    COUNT(*)                       AS calls,
+                                    COALESCE(SUM(units), 0)        AS units,
+                                    COALESCE(AVG(units), 0)        AS avg_units,
+                                    COALESCE(MAX(units), 0)        AS max_units,
+                                    COUNT(*) FILTER (WHERE proactive) AS proactive_calls
+                                FROM "UsageEvent"
+                                WHERE "createdAt" >= NOW() - INTERVAL '30 days'
+                                GROUP BY 1
+                                ORDER BY 3 DESC
+                                """
+                            )
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+            except Exception as exc:  # pragma: no cover - table is new; may not be migrated yet
+                by_operation = []
+                print(f"\nPer-operation breakdown unavailable: {type(exc).__name__}: {exc}")
+                print("  Migration 070 adds `UsageEvent`. Run `alembic upgrade head` first.")
+
+            if by_operation:
+                print("\nWhere the units went, last 30 days:")
+                print(
+                    f"  {'operation':<26} {'calls':>7} {'units':>10} {'avg':>7} "
+                    f"{'max':>7} {'side':>10}"
+                )
+                for row in by_operation:
+                    avg = float(row["avg_units"] or 0)
+                    # Decision P splits the model by tier for operations above 500 units. Printed per
+                    # row because the threshold is the one number in the plan that decides what a
+                    # learner's generation costs, and it has never been checked against a measurement.
+                    side = "above" if avg >= _QUALITY_SPLIT_UNITS else "below"
+                    print(
+                        f"  {str(row['operation'])[:26]:<26} {int(row['calls'] or 0):>7,} "
+                        f"{int(row['units'] or 0):>10,} {avg:>7.0f} "
+                        f"{int(row['max_units'] or 0):>7,} {side:>10}"
+                    )
+                print(
+                    "\n  `side` is measured against Decision P's 500-unit threshold, which decides "
+                    "whether an\n  operation picks its model by tier. Compare it with "
+                    "`llm_resilient.QUALITY_SPLIT_OPERATIONS`:\n  an operation measuring *above* the "
+                    "line that is absent from that set is being served the\n  cheap model on Plus, "
+                    "and one measuring *below* it that is present is buying a dearer\n  model than "
+                    "the split was meant to pay for."
+                )
+                print(
+                    "\n  `avg` against §6.5: quiz and lesson generation are estimated at 780 units, "
+                    "the narrative\n  panels at 770, resource recommendations at 1 600, document "
+                    "generation at 570, home\n  guidance at 140 and note summarise at 110. The ones "
+                    "that disagree in the expensive\n  direction are where the next cost work "
+                    "belongs — rather than where the plan guesses it does."
+                )
+                unlabelled = next(
+                    (r for r in by_operation if str(r["operation"]) == "unknown"), None
+                )
+                if unlabelled:
+                    print(
+                        f"\n  ⚠ {int(unlabelled['calls'] or 0):,} calls recorded as `unknown`. Every "
+                        "call site in `src` is\n  labelled, so these are either a new site that "
+                        "forgot one or a caller passing the\n  default through a wrapper."
+                    )
+
             print("\n" + "=" * 78)
             print("WHAT THIS CANNOT TELL YOU")
             print("=" * 78)
@@ -216,15 +303,11 @@ async def main() -> int:
                 "them. Costs are\nnow measured; revenue is not, and the model is only half checked."
             )
             print(
-                "\n**Where the units went, per operation.** `record_units` logs the `operation` "
-                "label and\nadvances two aggregate counters on `User`; it writes no per-operation "
-                "row. `LlmCostRecord`\nhas provider, model, tier and cost but no operation, and it "
-                "is written from the chat path\nonly. So §6.5's 27 estimates cannot be checked "
-                "against measurement from the database — only\nfrom logs, which are not aggregated "
-                "and do not persist.\n\nThat is a real gap rather than an oversight of this "
-                "script: closing it means one row per\nmetered operation, which is a table nobody "
-                "has asked for yet and which would be the first\nplace to look when the next cost "
-                "question is 'which surface'."
+                "\n**Whether a cheap operation is cheap because it is efficient or because it is "
+                "rare.**\nThe per-operation table above gives units per call and calls per month, "
+                "which is enough to\nrank surfaces by spend — but not enough to say what a surface "
+                "*would* cost at the volume\n§6.7 forecasts. That needs the payer mix too, so it "
+                "waits on the same checkout."
             )
             return 0
     finally:

@@ -48,6 +48,13 @@ from src.shared.time import LearnerTimezone, resolve_learner_timezone, to_learne
 from .. import models
 from ..db_models import FlashcardReview, LearningProfile, Note, QuizAnswer, QuizSession
 
+# A shared formatter that happens to live in the prose module because the prompts needed it first.
+# Imported rather than duplicated: it exists to stop a division printing as `57.1429`, and a second
+# copy of that rule is the same defect waiting on the other code path — which is the reasoning its own
+# docstring gives for being shared between the two prompts. `reflection_narrative` imports nothing
+# from here, so this direction closes no cycle.
+from .reflection_narrative import render_figure
+
 logger = logging.getLogger(__name__)
 
 #: A review at or above this grade counts as recalled. Mirrors `flashcard_service`, which
@@ -343,7 +350,11 @@ async def load_evidence(
         # learner's own progress ratio move when someone else adds a topic.
         shared_rows = (
             await session.execute(
-                select(UserTopicProgress.topic_id, Topic.title, UserTopicProgress.completed_at)
+                select(
+                    UserTopicProgress.topic_id,
+                    Topic.title,
+                    UserTopicProgress.completed_at,
+                )
                 .join(Topic, UserTopicProgress.topic_id == Topic.id)
                 .where(
                     UserTopicProgress.user_id == user_id,
@@ -465,6 +476,79 @@ def build_highlights(metrics: models.ReflectionMetrics) -> list[str]:
     if metrics.flashcards_reviewed:
         highlights.append(_plural(metrics.flashcards_reviewed, "card") + " reviewed")
     return highlights[:4]
+
+
+def _format_minutes(minutes: float) -> str:
+    hours, remainder = divmod(int(minutes), 60)
+    return f"{hours}h {remainder:02d}m" if hours else f"{remainder}m"
+
+
+def build_measured_summary(type_: models.ReflectionType, metrics: models.ReflectionMetrics) -> str:
+    """The reflection's opening paragraph, composed from measurements with no model call.
+
+    **This is the free tier's summary, and it exists because the alternative was error copy.**
+    Decision M rule 2 asks for the free weekly reflection to be composed with no model call at all.
+    The only non-model string in this module was `_fallback_summary` — "the narrative could not be
+    generated this time" — which is an *error* message, so using it as the free version would have
+    told every free learner their reflection had failed. That was the whole of the blockage; the
+    content itself was already measured and sitting in `compute_metrics`.
+
+    It is also the better failure path for **Plus**. A subscriber whose narrative generation fails
+    used to get the apology; now they get their actual figures, which is what they came for. One
+    function, both tiers, and the apology is left to the one case that is genuinely an error.
+
+    Two sentences at most: effort, then outcome. Written from the same measurements `build_highlights`
+    formats into chips, but as prose rather than a list — a summary that reads as a comma-separated
+    dump of statistics is what the chips are already for.
+
+    Only measured values appear. A learner with nothing measured gets an honest sentence about a quiet
+    period rather than a paragraph of zeros, because "0 topics mastered, 0% recall" reads as a
+    judgement where "a quiet week" reads as a fact.
+    """
+    period = "week" if type_ is models.ReflectionType.WEEKLY else "month"
+
+    # Sentence one: what the learner put in.
+    effort: list[str] = []
+    if metrics.focused_minutes:
+        effort.append(f"{_format_minutes(metrics.focused_minutes)} of focused study")
+    if metrics.active_days:
+        effort.append(f"across {_plural(metrics.active_days, 'day')}")
+    if not effort and metrics.sessions_completed:
+        effort.append(_plural(metrics.sessions_completed, "study session"))
+
+    # Sentence two: what came of it. Recall and accuracy first, because they are the only two figures
+    # here that describe how well the time went rather than how much of it there was.
+    outcome: list[str] = []
+    if metrics.recall_percent is not None:
+        outcome.append(f"recall was {render_figure(metrics.recall_percent)}%")
+    if metrics.accuracy_percent is not None:
+        outcome.append(f"quiz accuracy {render_figure(metrics.accuracy_percent)}%")
+    if metrics.topics_mastered:
+        outcome.append(f"you completed {_plural(metrics.topics_mastered, 'topic')}")
+    if metrics.flashcards_reviewed:
+        outcome.append(f"{_plural(metrics.flashcards_reviewed, 'card')} reviewed")
+
+    if not effort and not outcome:
+        return (
+            f"A quiet {period} — nothing was tracked. "
+            "Your figures pick up again as soon as you study."
+        )
+
+    sentences: list[str] = []
+    if effort:
+        sentences.append(f"You logged {' '.join(effort)} this {period}.")
+    if outcome:
+        # Capped at three so the sentence stays a sentence. The chips carry the rest.
+        joined = outcome[:3]
+        if len(joined) == 1:
+            body = joined[0]
+        else:
+            body = ", ".join(joined[:-1]) + f", and {joined[-1]}"
+        lead = "Along the way, " if effort else "This period, "
+        sentences.append(lead + body + ".")
+    if metrics.streak_current and metrics.streak_current > 1:
+        sentences.append(f"That keeps a {metrics.streak_current}-day streak going.")
+    return " ".join(sentences)
 
 
 async def count_reflection_streak(*, user_id: str) -> int | None:
@@ -657,7 +741,11 @@ async def load_daily_evidence(
         # --- Topic completions in shared courses ---
         shared_rows = (
             await session.execute(
-                select(UserTopicProgress.topic_id, Topic.title, UserTopicProgress.completed_at)
+                select(
+                    UserTopicProgress.topic_id,
+                    Topic.title,
+                    UserTopicProgress.completed_at,
+                )
                 .join(Topic, UserTopicProgress.topic_id == Topic.id)
                 .where(
                     UserTopicProgress.user_id == user_id,
