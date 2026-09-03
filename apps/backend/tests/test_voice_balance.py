@@ -31,6 +31,7 @@ import pytest  # noqa: E402
 
 from src.domains.billing.services import entitlement_service as ent  # noqa: E402
 from src.domains.billing.services import voice_service  # noqa: E402
+from src.domains.study_voice import routes as voice_routes  # noqa: E402
 
 LATER = datetime.now(UTC) + timedelta(days=10)
 TRIAL_ENDS = datetime.now(UTC) + timedelta(days=2)
@@ -399,3 +400,58 @@ class TestSpending:
 
         after = await voice_service.spend("u1", 60)
         assert after.granted_seconds == 540
+
+
+class TestTheExhaustedMessageTracksWhatIsActuallyOnSale:
+    """The refusal copy is derived from the catalogue, not written down.
+
+    It shipped hardcoded as "Add 30 minutes to carry on" while `plus_voice_30` was absent from the
+    catalogue, unpriced and unbuyable — so the one learner who exhausted their minutes was pointed
+    at a product that did not exist. §5.4 is a list of copy that outran the code and this was the
+    newest entry.
+
+    Both directions are pinned, because the reverse drift is just as likely: Phase 5 ships the rail
+    and nobody remembers to restore the offer that was supposed to sell it.
+    """
+
+    def test_it_names_the_refill_while_the_top_up_cannot_be_bought(self):
+        message = voice_routes.voice_exhausted_message()
+
+        assert "refill" in message
+        assert (
+            "Add 30 minutes" not in message
+        ), "a learner cannot buy a top-up yet, so offering one is a dead end"
+
+    def test_it_offers_the_top_up_once_the_top_up_is_purchasable(self, monkeypatch):
+        purchasable_top_up = SimpleNamespace(id=voice_routes._VOICE_TOP_UP_ID, purchasable=True)
+        monkeypatch.setattr(
+            "src.domains.billing.services.stripe_service.get_active_plan_catalog",
+            lambda: SimpleNamespace(plans=[purchasable_top_up]),
+        )
+
+        assert "Add 30 minutes" in voice_routes.voice_exhausted_message()
+
+    def test_a_listed_but_unpurchasable_top_up_is_not_offered(self, monkeypatch):
+        """`purchasable=False` is how the catalogue lists a product whose rail is not built —
+        both passes sit in that state right now. Listing is not selling."""
+        listed_only = SimpleNamespace(id=voice_routes._VOICE_TOP_UP_ID, purchasable=False)
+        monkeypatch.setattr(
+            "src.domains.billing.services.stripe_service.get_active_plan_catalog",
+            lambda: SimpleNamespace(plans=[listed_only]),
+        )
+
+        assert "Add 30 minutes" not in voice_routes.voice_exhausted_message()
+
+    def test_an_unreadable_catalogue_still_says_something_true(self, monkeypatch):
+        """A refusal that cannot read the catalogue must not become a stack trace, and "it refills"
+        is true whatever is on sale."""
+
+        def exploding():
+            raise RuntimeError("catalogue unavailable")
+
+        monkeypatch.setattr(
+            "src.domains.billing.services.stripe_service.get_active_plan_catalog",
+            exploding,
+        )
+
+        assert "refill" in voice_routes.voice_exhausted_message()

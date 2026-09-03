@@ -71,6 +71,50 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["study-voice"])
 
 
+#: The product that refills a voice balance. Absent from the catalogue until Phase 5 builds the
+#: one-time rail, which is why `voice_exhausted_message` asks the catalogue rather than assuming.
+_VOICE_TOP_UP_ID = "plus_voice_30"
+
+
+def voice_exhausted_message() -> str:
+    """What to tell a learner who has voice but has run out of minutes.
+
+    **The message is derived from the catalogue rather than written down, because a hardcoded one
+    was wrong in production.** It read "Add 30 minutes to carry on" while `plus_voice_30` was not in
+    the catalogue, had no price, and had no purchase rail — so the one learner who exhausted their
+    minutes was pointed at a product that could not be bought. That is the §5.4 failure mode
+    exactly: copy that outran the code, in the direction that costs a conversion and looks like a
+    broken app.
+
+    Asking the catalogue fixes it in *both* directions. Today it names the refill, which is true.
+    When Phase 5 marks the top-up purchasable the offer returns with no edit here — which matters,
+    because the reverse drift is just as likely: shipping the rail and forgetting the copy that was
+    supposed to sell it.
+    """
+    from src.domains.billing.services.stripe_service import get_active_plan_catalog
+
+    try:
+        purchasable = any(
+            plan.id == _VOICE_TOP_UP_ID and plan.purchasable
+            for plan in get_active_plan_catalog().plans
+        )
+    except Exception:
+        # A refusal that cannot read the catalogue still has to say something true, and "it refills"
+        # is true regardless of what is on sale.
+        logger.exception("voice: could not read the catalogue for the exhausted-balance message")
+        purchasable = False
+
+    if purchasable:
+        return "Not enough voice minutes left to start a session. Add 30 minutes to carry on."
+    # Named in minutes because that is the unit the learner was sold, and pointed at the renewal
+    # because that is what actually refills a voice balance — not the 5-hour usage window, which is a
+    # different meter and refills on a different clock (§6.3).
+    return (
+        "You've used your voice minutes for this period. "
+        "They refill when your plan renews — everything else in Maigie Plus still works."
+    )
+
+
 # ---------------------------------------------------------------------------
 # REST
 # ---------------------------------------------------------------------------
@@ -382,14 +426,7 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
             )
             return
         if balance.total_seconds < min_session_seconds():
-            await _error(
-                send_to_client,
-                session_id,
-                # Named in minutes because that is the unit the learner was sold, and the remedy is the
-                # top-up rather than waiting: a voice balance refills when the plan renews, not when the
-                # 5-hour usage window does.
-                "Not enough voice minutes left to start a session. Add 30 minutes to carry on.",
-            )
+            await _error(send_to_client, session_id, voice_exhausted_message())
             return
 
         active_session_id = session_id
