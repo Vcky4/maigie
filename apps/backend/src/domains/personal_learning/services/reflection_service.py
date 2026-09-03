@@ -305,8 +305,18 @@ async def _compose_narrative(
     )
 
     written: dict[str, Any] = {}
-    # Free receives no paid prose, so there is nothing to ask for and no reason to spend a call. The
-    # skeleton it does get is entirely measured (Decision T2).
+    # The skeleton every tier gets is entirely measured (Decision T2); this call buys the prose on top
+    # of it.
+    #
+    # **The comment here used to claim free spends no call, and that is not what this condition
+    # does.** `_FREE_RECOMMENDATIONS = 1`, so a free learner with any actionable metric has a
+    # non-empty `chosen` and the call happens — their one recommendation needs wording. The call is
+    # only skipped when there is nothing to say *and* nothing to recommend, which is a narrower case
+    # than "free". Corrected rather than changed: Decision M wants the free weekly reflection composed
+    # with no model call at all, and that needs a deterministic composer this module does not have —
+    # `_fallback_summary` is an error message ("the narrative could not be generated this time"), not
+    # a summary, so it cannot serve as the free version without telling every free learner their
+    # reflection failed. Recorded as the open half of Decision M in Phase 3c.
     if deep or chosen:
         try:
             reply = await generate_content_json(

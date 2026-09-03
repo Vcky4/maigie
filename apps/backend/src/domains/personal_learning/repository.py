@@ -849,7 +849,10 @@ class PersonalLearningRepository:
     ) -> tuple[list[NoteHistory], int]:
         """Versions of one note, newest first. Scoped by owner as well as by note."""
         async with self._read_session(session) as s:
-            conditions = [NoteHistory.note_id == note_id, NoteHistory.user_id == user_id]
+            conditions = [
+                NoteHistory.note_id == note_id,
+                NoteHistory.user_id == user_id,
+            ]
 
             count_stmt = select(func.count()).select_from(NoteHistory).where(*conditions)
             total = (await s.execute(count_stmt)).scalar() or 0
@@ -882,7 +885,11 @@ class PersonalLearningRepository:
             return result.scalar_one_or_none()
 
     async def count_note_summary(
-        self, user_id: str, *, archived: bool = False, session: AsyncSession | None = None
+        self,
+        user_id: str,
+        *,
+        archived: bool = False,
+        session: AsyncSession | None = None,
     ) -> tuple[int, int, int, int]:
         """``(total, tagged, linked_to_course, with_attachments)`` in one round trip.
 
@@ -907,7 +914,12 @@ class PersonalLearningRepository:
                 func.count().filter(has_attachment),
             ).where(*owned)
             row = (await s.execute(stmt)).one()
-            return int(row[0] or 0), int(row[1] or 0), int(row[2] or 0), int(row[3] or 0)
+            return (
+                int(row[0] or 0),
+                int(row[1] or 0),
+                int(row[2] or 0),
+                int(row[3] or 0),
+            )
 
     async def list_note_creation_times(
         self,
@@ -934,7 +946,11 @@ class PersonalLearningRepository:
             return [row[0] for row in (await s.execute(stmt)).all() if row[0] is not None]
 
     async def count_note_tags(
-        self, user_id: str, *, archived: bool = False, session: AsyncSession | None = None
+        self,
+        user_id: str,
+        *,
+        archived: bool = False,
+        session: AsyncSession | None = None,
     ) -> list[tuple[str, int]]:
         """Every tag on this learner's personal notes, with a count each, commonest first.
 
@@ -2746,7 +2762,11 @@ class PersonalLearningRepository:
             return result.scalar_one_or_none()
 
     async def update_prep_topic(
-        self, topic_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+        self,
+        topic_id: str,
+        data: dict[str, Any],
+        *,
+        session: AsyncSession | None = None,
     ) -> PrepTopic | None:
         async with self._use_session(session) as s:
             mapped = self._map_prep_topic(data)
@@ -2818,7 +2838,11 @@ class PersonalLearningRepository:
             return result.scalar_one_or_none()
 
     async def update_prep_material(
-        self, material_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+        self,
+        material_id: str,
+        data: dict[str, Any],
+        *,
+        session: AsyncSession | None = None,
     ) -> PrepMaterial | None:
         async with self._use_session(session) as s:
             mapped = self._map_prep_material(data)
@@ -3082,7 +3106,11 @@ class PersonalLearningRepository:
             return list((await s.execute(stmt)).scalars().all())
 
     async def find_session_question_link(
-        self, *, quiz_session_id: str, prep_question_id: str, session: AsyncSession | None = None
+        self,
+        *,
+        quiz_session_id: str,
+        prep_question_id: str,
+        session: AsyncSession | None = None,
     ) -> QuizSessionQuestion | None:
         """The link recording that a session asked a question, and its hint count."""
         async with self._read_session(session) as s:
@@ -3093,7 +3121,11 @@ class PersonalLearningRepository:
             return (await s.execute(stmt)).scalar_one_or_none()
 
     async def increment_session_question_hints(
-        self, *, quiz_session_id: str, prep_question_id: str, session: AsyncSession | None = None
+        self,
+        *,
+        quiz_session_id: str,
+        prep_question_id: str,
+        session: AsyncSession | None = None,
     ) -> int:
         """Count one hint taken, returning the new total.
 
@@ -3547,7 +3579,11 @@ class PersonalLearningRepository:
             return flag
 
     async def delete_question_flag(
-        self, *, user_id: str, prep_question_id: str, session: AsyncSession | None = None
+        self,
+        *,
+        user_id: str,
+        prep_question_id: str,
+        session: AsyncSession | None = None,
     ) -> bool:
         """Remove a learner's flag. Returns whether one was there to remove."""
         async with self._use_session(session) as s:
@@ -4219,7 +4255,11 @@ class PersonalLearningRepository:
             ]
 
     async def find_courses_owned_by(
-        self, user_id: str, course_ids: list[str], *, session: AsyncSession | None = None
+        self,
+        user_id: str,
+        course_ids: list[str],
+        *,
+        session: AsyncSession | None = None,
     ) -> set[str]:
         """Which of these course ids the learner can actually link.
 
@@ -4623,7 +4663,10 @@ class PersonalLearningRepository:
                     partition_by=StudyPlanItem.plan_id,
                     # Tie-broken by id so a plan with two items on one day does not change
                     # its "Up next" between requests.
-                    order_by=(StudyPlanItem.scheduled_date.asc(), StudyPlanItem.id.asc()),
+                    order_by=(
+                        StudyPlanItem.scheduled_date.asc(),
+                        StudyPlanItem.id.asc(),
+                    ),
                 )
                 .label("rank"),
             )
@@ -4834,7 +4877,10 @@ class PersonalLearningRepository:
         needed to find it.
         """
         async with self._read_session(session) as s:
-            conditions = [Reflection.user_id == user_id, Reflection.opened_at.is_not(None)]
+            conditions = [
+                Reflection.user_id == user_id,
+                Reflection.opened_at.is_not(None),
+            ]
             if type_filter is not None:
                 conditions.append(Reflection.type == type_filter)
 
@@ -5002,7 +5048,12 @@ class PersonalLearningRepository:
             return (await s.execute(stmt)).scalar_one_or_none()
 
     async def update_reflection_note(
-        self, note_id: str, user_id: str, *, body: str, session: AsyncSession | None = None
+        self,
+        note_id: str,
+        user_id: str,
+        *,
+        body: str,
+        session: AsyncSession | None = None,
     ) -> ReflectionNote | None:
         """Edit a note's text. `None` when it was not theirs or not there.
 
@@ -5307,14 +5358,65 @@ class PersonalLearningRepository:
     # Background task helpers
     # -----------------------------------------------------------------------
 
-    async def list_active_profiles(
-        self, *, skip: int = 0, take: int = 100, session: AsyncSession | None = None
-    ) -> list[LearningProfile]:
-        """Return LearningProfiles in paginated batches (for background tasks)."""
+    async def latest_recommendation_at(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> datetime | None:
+        """When this learner's most recent discovery recommendation was created.
+
+        The cadence gate reads this (Decision M): the nightly task runs for everyone, and a free
+        learner is served a fresh set weekly rather than daily. Derived from the rows themselves
+        rather than from a `lastGeneratedAt` column, because a stored timestamp and the rows it
+        describes are two facts that can disagree — and the one that matters to the learner is
+        whether recommendations are actually there.
+        """
         async with self._read_session(session) as s:
             stmt = (
-                select(LearningProfile).order_by(LearningProfile.user_id).offset(skip).limit(take)
+                select(DiscoveryRecommendation.created_at)
+                .where(DiscoveryRecommendation.user_id == user_id)
+                .order_by(DiscoveryRecommendation.created_at.desc())
+                .limit(1)
             )
+            return (await s.execute(stmt)).scalar_one_or_none()
+
+    async def list_active_profiles(
+        self,
+        *,
+        skip: int = 0,
+        take: int = 100,
+        active_since: datetime | None = None,
+        session: AsyncSession | None = None,
+    ) -> list[LearningProfile]:
+        """Return LearningProfiles in paginated batches (for background tasks).
+
+        `active_since` is the dormancy stop (Decision M). **Without it "active" means only that a
+        profile row exists**, which is how the nightly recommendation task came to generate for
+        every learner who had ever signed up — $0.64/month each for people who left in March. A
+        standing order nobody placed.
+
+        Activity is `User.usageWindowStartedAt`, the timestamp the meter maintains: it advances
+        whenever a usage window opens, which requires a billable operation. So it means "did
+        something that cost us money", which is the right question for deciding whether to spend more
+        on them. A `NULL` — never ran a billable operation — counts as dormant, which is deliberate:
+        Principle Five says momentum is designable, and there is no momentum to build on before the
+        learner has done anything. Onboarding auto-setup covers the fresh case, and it is exempt from
+        charging on purpose.
+
+        The bound is up to five hours generous, because the column holds the *window's* start rather
+        than the last operation in it. Erring toward including a borderline learner is the right
+        direction for a spend gate: the failure it exists to prevent is generating for the long gone,
+        not for the recently quiet.
+        """
+        # Imported here rather than at module scope: this repository does not otherwise depend on the
+        # identity domain, and a top-level import would make it do so for the sake of one query.
+        from src.domains.identity.db_models import User
+
+        async with self._read_session(session) as s:
+            stmt = select(LearningProfile)
+            if active_since is not None:
+                stmt = stmt.join(User, User.id == LearningProfile.user_id).where(
+                    User.usage_window_started_at >= active_since
+                )
+            stmt = stmt.order_by(LearningProfile.user_id).offset(skip).limit(take)
             result = await s.execute(stmt)
             return list(result.scalars().all())
 
@@ -5412,7 +5514,11 @@ class PersonalLearningRepository:
             return (await s.execute(stmt)).scalar_one_or_none()
 
     async def update_collection(
-        self, collection_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+        self,
+        collection_id: str,
+        data: dict[str, Any],
+        *,
+        session: AsyncSession | None = None,
     ) -> Collection | None:
         async with self._use_session(session) as s:
             mapped = self._map_collection(data)
@@ -5491,7 +5597,11 @@ class PersonalLearningRepository:
             return result.rowcount > 0
 
     async def reorder_collection_items(
-        self, collection_id: str, item_ids: list[str], *, session: AsyncSession | None = None
+        self,
+        collection_id: str,
+        item_ids: list[str],
+        *,
+        session: AsyncSession | None = None,
     ) -> None:
         async with self._use_session(session) as s:
             for position, item_id in enumerate(item_ids):
@@ -5634,7 +5744,10 @@ class PersonalLearningRepository:
                     & (CollectionItem.entity_type == "document"),
                 )
                 .where(CollectionItem.collection_id == collection_id)
-                .order_by(CollectionItem.position.asc().nullslast(), CollectionItem.added_at.asc())
+                .order_by(
+                    CollectionItem.position.asc().nullslast(),
+                    CollectionItem.added_at.asc(),
+                )
             )
             rows = (await s.execute(stmt)).all()
             results: list[dict[str, Any]] = []

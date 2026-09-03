@@ -7,10 +7,28 @@ Uses paginated batch processing to avoid loading all users into memory.
 
 import asyncio
 import logging
+from datetime import UTC, datetime, timedelta
 
 from src.core.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+#: Decision M's dormancy stop. No proactive generation for a learner with nothing in the preceding
+#: seven days.
+#:
+#: The fan-out used to be every profile that existed, which meant this task generated tonight's
+#: recommendation for someone who last opened the app in March — $0.64/month each, on learners who
+#: would never see it. **That is not proactive, it is a standing order nobody placed.**
+#:
+#: Seven days rather than one or thirty because it has to survive an ordinary gap. A learner who
+#: studies at weekends is not dormant on a Wednesday, and a month is long enough that the spend is
+#: back to being untargeted.
+PROACTIVE_ACTIVITY_WINDOW_DAYS = 7
+
+
+def _dormancy_cutoff() -> datetime:
+    return datetime.now(UTC) - timedelta(days=PROACTIVE_ACTIVITY_WINDOW_DAYS)
+
 
 _BATCH_SIZE = 50
 
@@ -49,7 +67,9 @@ async def _generate_reflections_async():
     skip = 0
 
     while True:
-        profiles = await repo.list_active_profiles(skip=skip, take=_BATCH_SIZE)
+        profiles = await repo.list_active_profiles(
+            skip=skip, take=_BATCH_SIZE, active_since=_dormancy_cutoff()
+        )
         if not profiles:
             break
 
