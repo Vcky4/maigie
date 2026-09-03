@@ -34,6 +34,10 @@ class FakeUser:
         self.usage_window_units_used = 0
         self.usage_month_started_at = None
         self.usage_month_units_used = 0
+        # Decision M's proactive sub-budget: the same units as the month above, counted a
+        # second time so a background task cannot quietly spend an allowance the learner
+        # was saving for a study session.
+        self.usage_month_proactive_units_used = 0
         for key, value in kwargs.items():
             setattr(self, key, value)
 

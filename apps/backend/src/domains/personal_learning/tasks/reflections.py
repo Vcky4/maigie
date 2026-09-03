@@ -59,6 +59,7 @@ async def _generate_reflections_async():
     await ensure_db()
     from src.domains.personal_learning.repository import personal_learning_repo as repo
     from src.domains.personal_learning.services import reflection_service
+    from src.domains.personal_learning.services.llm_resilient import proactive_scope
 
     logger.info("Weekly reflections task started")
 
@@ -82,7 +83,11 @@ async def _generate_reflections_async():
                 # constraint. This said `"WEEKLY"` while the service branched on
                 # `"weekly"`, so every scheduled reflection silently took the fallback
                 # period and was then invisible to `GET /reflections?type=weekly`.
-                await reflection_service.generate_reflection(user_id=user_id, type="weekly")
+                # Marked proactive so the spend lands in the sub-budget as well as the month
+                # (Decision M). Per learner rather than around the batch, so one learner's budget
+                # cannot leak into the next one's accounting if this raises midway.
+                with proactive_scope():
+                    await reflection_service.generate_reflection(user_id=user_id, type="weekly")
                 generated += 1
             except Exception:
                 logger.exception(f"Failed to generate reflection for user {user_id}")

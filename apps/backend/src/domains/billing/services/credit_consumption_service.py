@@ -114,6 +114,9 @@ class WindowState:
     resets_at: datetime
     month_started_at: datetime
     month_units_used: int
+    #: Proactive spend inside the same month (Decision M). Rolls with `month_units_used`, from the
+    #: same boundary, so the two can never describe different months.
+    month_proactive_units_used: int
     #: True when the read rolled a window or a month over, so the caller knows the stored row is
     #: stale and a write must persist the new boundaries rather than only the increment.
     rolled: bool
@@ -143,6 +146,7 @@ def window_state(user: User, now: datetime | None = None) -> WindowState:
     used = user.usage_window_units_used or 0
     month_started = _as_utc(user.usage_month_started_at)
     month_used = user.usage_month_units_used or 0
+    month_proactive = user.usage_month_proactive_units_used or 0
 
     rolled = False
 
@@ -155,6 +159,10 @@ def window_state(user: User, now: datetime | None = None) -> WindowState:
     if month_started is None or month_started < current_month:
         month_started = current_month
         month_used = 0
+        # Reset in the same branch as the month it belongs to. A separate roll for the proactive
+        # counter would be a second place the month boundary is decided, and two boundaries that
+        # agree today are two boundaries that can disagree later.
+        month_proactive = 0
         rolled = True
 
     return WindowState(
@@ -163,6 +171,7 @@ def window_state(user: User, now: datetime | None = None) -> WindowState:
         resets_at=started + timedelta(hours=WINDOW_HOURS),
         month_started_at=month_started,
         month_units_used=month_used,
+        month_proactive_units_used=month_proactive,
         rolled=rolled,
     )
 
@@ -357,6 +366,61 @@ async def consume_credits(
     )
 
 
+#: What share of a month's allowance proactive AI may spend (Decision M, rule 1).
+#:
+#: Twenty per cent, so four fifths of the month is still there for the learner when they sit down. The
+#: number matters less than the existence of a bound: proactive generation is spend the learner did not
+#: ask for and cannot see, and a refusal that names a window they never used is the least explicable
+#: message the meter can produce.
+PROACTIVE_MONTH_SHARE = 0.20
+
+
+def proactive_cap(monthly_backstop: int | None) -> int | None:
+    """The proactive sub-cap implied by a monthly backstop, or `None` when there is no backstop.
+
+    Derived rather than stored, for the same reason the voice allowance is: a stored cap and the
+    entitlement implying it are two facts that can disagree, and an upgrade should raise the sub-cap
+    the moment it raises the backstop rather than at the next month boundary.
+    """
+    if monthly_backstop is None:
+        return None
+    return int(monthly_backstop * PROACTIVE_MONTH_SHARE)
+
+
+async def has_proactive_headroom(user: User) -> tuple[bool, str | None]:
+    """Whether proactive AI may still spend on this learner's behalf this month.
+
+    **Charged and bounded are different properties, and Decision M asks for both.** Phase 3b made
+    proactive spend charge to the learner's window, which is rule 1's first half. Without this, a
+    learner who has not opened the app since Tuesday can have a meaningful share of their month spent
+    by tasks running on their behalf, then sit down on Saturday to find it gone — and nothing about
+    that is visible to them, because they did not run the operations.
+
+    The message is for logs rather than for a learner: nobody is waiting on a background task, and
+    there is no screen on which to explain it.
+    """
+    from src.domains.billing.services import entitlement_service
+
+    identity_repo = IdentityRepository()
+    fresh = await identity_repo.find_by_id(user.id)
+    if not fresh:
+        return True, None
+
+    entitlement = await entitlement_service.resolve(fresh.id)
+    cap = proactive_cap(entitlement.monthly_backstop)
+    if cap is None:
+        # No monthly backstop means no share to take 20% of. Only a pass reaches this, and a pass is
+        # bounded by its own allowance (Decision E), so there is nothing unbounded here.
+        return True, None
+
+    state = window_state(fresh)
+    if state.month_proactive_units_used >= cap:
+        return False, (
+            f"proactive budget spent: {state.month_proactive_units_used}/{cap} units this month"
+        )
+    return True, None
+
+
 async def has_headroom(user: User) -> tuple[bool, str | None]:
     """Is there anything left in the window at all? The gate for an operation of unknown cost.
 
@@ -401,7 +465,9 @@ async def has_headroom(user: User) -> tuple[bool, str | None]:
     return True, None
 
 
-async def record_units(user_id: str, units: int, operation: str = "unknown") -> None:
+async def record_units(
+    user_id: str, units: int, operation: str = "unknown", *, proactive: bool = False
+) -> None:
     """Advance the window and month counters by `units`. **Accounts, never refuses.**
 
     The distinction from `consume_credits` is deliberate and is the whole reason this exists as a
@@ -428,22 +494,26 @@ async def record_units(user_id: str, units: int, operation: str = "unknown") -> 
             logger.error("usage: cannot record %d units, user %s not found", units, user_id)
             return
         state = window_state(fresh)
-        await identity_repo.update(
-            fresh.id,
-            {
-                "usageWindowStartedAt": state.started_at,
-                "usageWindowUnitsUsed": state.units_used + units,
-                "usageMonthStartedAt": state.month_started_at,
-                "usageMonthUnitsUsed": state.month_units_used + units,
-            },
-        )
+        changes = {
+            "usageWindowStartedAt": state.started_at,
+            "usageWindowUnitsUsed": state.units_used + units,
+            "usageMonthStartedAt": state.month_started_at,
+            "usageMonthUnitsUsed": state.month_units_used + units,
+        }
+        if proactive:
+            # Added to **both** counters. The proactive column is a category tag on the month's
+            # spend, not a parallel budget, so a background task cannot dodge the month by being
+            # proactive and cannot dodge the sub-cap by being ordinary.
+            changes["usageMonthProactiveUnitsUsed"] = state.month_proactive_units_used + units
+        await identity_repo.update(fresh.id, changes)
         logger.info(
-            "usage: user=%s operation=%s units=%d window=%d month=%d (recorded)",
+            "usage: user=%s operation=%s units=%d window=%d month=%d%s (recorded)",
             fresh.id,
             operation,
             units,
             state.units_used + units,
             state.month_units_used + units,
+            (f" proactive={state.month_proactive_units_used + units}" if proactive else ""),
         )
     except Exception:
         # Deliberately broad. This runs after a successful generation, and every failure mode here

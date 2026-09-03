@@ -85,6 +85,9 @@ class TestTheWindow:
             usage_window_units_used = 0
             usage_month_started_at = None
             usage_month_units_used = 0
+            # Decision M's proactive sub-budget: the same units as the month above,
+            # counted a second time.
+            usage_month_proactive_units_used = 0
 
         user = _U()
         for key, value in kwargs.items():

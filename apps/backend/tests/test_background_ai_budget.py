@@ -28,7 +28,10 @@ from types import SimpleNamespace  # noqa: E402
 import pytest  # noqa: E402
 
 from src.domains.personal_learning.services import discovery_service  # noqa: E402
-from src.domains.personal_learning.tasks import recommendations, reflections  # noqa: E402
+from src.domains.personal_learning.tasks import (
+    recommendations,
+    reflections,
+)  # noqa: E402
 
 
 class TestTheDormancyCutoff:
@@ -43,7 +46,8 @@ class TestTheDormancyCutoff:
 
     def test_both_proactive_tasks_use_the_same_window(self):
         """Two tasks, one rule. Divergent windows would mean a learner who is dormant for
-        recommendations and active for reflections, which is not a state anyone could explain."""
+        recommendations and active for reflections, which is not a state anyone could explain.
+        """
         assert (
             reflections.PROACTIVE_ACTIVITY_WINDOW_DAYS
             == recommendations.PROACTIVE_ACTIVITY_WINDOW_DAYS
@@ -145,7 +149,8 @@ class TestTheCadenceFollowsTheTier:
     async def test_a_naive_timestamp_does_not_crash_the_gate(self, world):
         """`created_at` has come back naive from this database before — the column is `timestamp
         without time zone` while the ORM declares `timezone=True`, and that mismatch answered `500`
-        on `GET /progress/goals` once already. A cadence gate is not the place to rediscover it."""
+        on `GET /progress/goals` once already. A cadence gate is not the place to rediscover it.
+        """
         world.tier = "free"
         world.last_at = (datetime.now(UTC) - timedelta(days=1)).replace(tzinfo=None)
 
@@ -194,3 +199,35 @@ class TestTheGateRunsBeforeAnythingDestructive:
 
         assert created == 0
         assert not deleted, "nothing may be deleted for a learner who is not due a fresh set"
+
+
+class TestTheProactiveSubBudget:
+    """Charged and bounded are different properties, and Decision M rule 1 asks for both.
+
+    Phase 3b made proactive spend charge to the learner's window. Without a bound, a learner who has
+    not opened the app since Tuesday can have a meaningful share of their month spent by tasks running
+    on their behalf, then sit down on Saturday to find it gone — and none of it is visible to them,
+    because they did not run the operations and the refusal names a window they never used.
+    """
+
+    def test_the_cap_is_a_fifth_of_the_backstop(self):
+        from src.domains.billing.services import credit_consumption_service as meter
+
+        assert meter.PROACTIVE_MONTH_SHARE == 0.20
+        assert meter.proactive_cap(36_000) == 7_200
+        assert meter.proactive_cap(20_000) == 4_000
+
+    def test_no_backstop_means_no_sub_cap(self):
+        """Only a pass reaches this, and a pass is bounded by its own allowance (Decision E), so
+        there is nothing unbounded here — deriving a share of `None` would be."""
+        from src.domains.billing.services import credit_consumption_service as meter
+
+        assert meter.proactive_cap(None) is None
+
+    def test_the_cap_follows_an_upgrade_immediately(self):
+        """Derived rather than stored, for the same reason the voice allowance is: a stored cap and
+        the entitlement implying it are two facts that can disagree, and an upgrade should raise the
+        sub-cap when it raises the backstop rather than at the next month boundary."""
+        from src.domains.billing.services import credit_consumption_service as meter
+
+        assert meter.proactive_cap(36_000) > meter.proactive_cap(5_000)

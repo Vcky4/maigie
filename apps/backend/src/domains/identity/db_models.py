@@ -104,6 +104,17 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     usage_month_units_used: Mapped[int] = mapped_column(
         "usageMonthUnitsUsed", Integer, default=0, server_default="0"
     )
+    #: Proactive spend inside the month (Decision M, rule 1). **The same units as the column above,
+    #: counted a second time, not a separate budget** — every proactive unit advances both, so this is
+    #: a category tag on existing spend rather than a parallel currency. That is what keeps it clear of
+    #: Decision R's rule against a third meter.
+    #:
+    #: Bounded at 20% of the entitlement's monthly backstop, derived on read rather than stored so an
+    #: upgrade raises the sub-cap when it raises the backstop. Reset by the same month roll as
+    #: `usageMonthUnitsUsed`, so the two cannot land on different months.
+    usage_month_proactive_units_used: Mapped[int] = mapped_column(
+        "usageMonthProactiveUnitsUsed", Integer, default=0, server_default="0"
+    )
 
     # Live voice, on its own balance rather than on the window above (§6.3). A voice minute is 40× a
     # Flash-Lite chat turn, so one allowance covering both had to be priced for the voice case and was

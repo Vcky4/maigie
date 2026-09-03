@@ -59,6 +59,7 @@ async def _generate_recommendations_async():
     await ensure_db()
     from src.domains.personal_learning.repository import personal_learning_repo as repo
     from src.domains.personal_learning.services import discovery_service
+    from src.domains.personal_learning.services.llm_resilient import proactive_scope
 
     logger.info("Recommendations generation task started")
 
@@ -81,8 +82,11 @@ async def _generate_recommendations_async():
                 # Clean up old dismissed/expired recommendations
                 await repo.delete_old_recommendations(user_id)
 
-                # Generate fresh recommendations using discovery service
-                await discovery_service.generate_recommendations(user_id=user_id)
+                # Marked proactive so the spend lands in the sub-budget as well as the month
+                # (Decision M). Per learner rather than around the batch, so one learner's budget
+                # cannot leak into the next one's accounting if this raises midway.
+                with proactive_scope():
+                    await discovery_service.generate_recommendations(user_id=user_id)
                 generated += 1
             except Exception:
                 logger.exception(f"Failed to generate recommendations for user {user_id}")

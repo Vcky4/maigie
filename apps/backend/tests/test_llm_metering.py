@@ -25,6 +25,8 @@ on cost (§6.6).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from src.domains.intelligence.reasoning.llm import GenerationUsage
@@ -51,9 +53,11 @@ def metered(monkeypatch):
     monkeypatch.setattr(llm_resilient, "_record_failure", lambda _p: None)
 
     charges: list[tuple[str, int, str]] = []
+    proactive_flags: list[bool] = []
 
-    async def fake_record(user_id, units, operation="unknown"):
+    async def fake_record(user_id, units, operation="unknown", *, proactive=False):
         charges.append((user_id, units, operation))
+        proactive_flags.append(proactive)
 
     monkeypatch.setattr(
         "src.domains.billing.services.credit_consumption_service.record_units",
@@ -75,7 +79,12 @@ def metered(monkeypatch):
     return type(
         "Env",
         (),
-        {"install": staticmethod(install), "calls": calls, "charges": charges},
+        {
+            "install": staticmethod(install),
+            "calls": calls,
+            "charges": charges,
+            "proactive_flags": proactive_flags,
+        },
     )
 
 
@@ -400,3 +409,129 @@ class TestTheTotalAttemptBudget:
         # These particular attempts raised before returning usage, so nothing is charged — the point
         # is that the count is bounded, and that a failure charges for tokens it never received.
         assert not metered.charges
+
+
+class TestProactiveSpendIsTaggedNotSeparate:
+    """The proactive column counts the same units as the month, a second time.
+
+    That is what keeps it clear of Decision R's rule against a third meter — Decision R forbids a new
+    *currency* with its own counter, and this is the same currency asked a second question. The
+    property that matters: a background task cannot dodge the month by being proactive, and cannot
+    dodge the sub-cap by being ordinary.
+    """
+
+    async def test_a_proactive_call_advances_both_counters(self, monkeypatch):
+        # Deliberately does **not** take the `metered` fixture: that fixture replaces
+        # `record_units` with a recorder, which is what the other tests want and is exactly
+        # what this one must not have. This asserts what the real function writes.
+
+        from src.domains.personal_learning.services import llm_resilient
+
+        written: dict = {}
+
+        class FakeRepo:
+            async def find_by_id(self, _user_id):
+                return SimpleNamespace(
+                    id="u1",
+                    usage_window_started_at=None,
+                    usage_window_units_used=0,
+                    usage_month_started_at=None,
+                    usage_month_units_used=0,
+                    usage_month_proactive_units_used=0,
+                )
+
+            async def update(self, _user_id, changes):
+                written.update(changes)
+
+        monkeypatch.setattr(
+            "src.domains.billing.services.credit_consumption_service.IdentityRepository",
+            FakeRepo,
+        )
+        from src.domains.billing.services.credit_consumption_service import record_units
+
+        with llm_resilient.proactive_scope():
+            await record_units("u1", 500, operation="reflection_summary", proactive=True)
+
+        assert written["usageMonthUnitsUsed"] == 500
+        assert written["usageMonthProactiveUnitsUsed"] == 500, (
+            "proactive spend must also land in the month, or the sub-cap becomes a way to spend "
+            "outside the budget"
+        )
+
+    async def test_an_ordinary_call_leaves_the_proactive_counter_alone(self, monkeypatch):
+        written: dict = {}
+
+        class FakeRepo:
+            async def find_by_id(self, _user_id):
+                return SimpleNamespace(
+                    id="u1",
+                    usage_window_started_at=None,
+                    usage_window_units_used=0,
+                    usage_month_started_at=None,
+                    usage_month_units_used=0,
+                    usage_month_proactive_units_used=0,
+                )
+
+            async def update(self, _user_id, changes):
+                written.update(changes)
+
+        monkeypatch.setattr(
+            "src.domains.billing.services.credit_consumption_service.IdentityRepository",
+            FakeRepo,
+        )
+        from src.domains.billing.services.credit_consumption_service import record_units
+
+        await record_units("u1", 500, operation="quiz_generation")
+
+        assert written["usageMonthUnitsUsed"] == 500
+        assert "usageMonthProactiveUnitsUsed" not in written
+
+
+class TestTheScopeReachesTheMeter:
+    """A context variable rather than a parameter, because of the call depth.
+
+    A Celery task reaches a provider through a service that calls the chokepoint several frames down.
+    Threading a flag would mean widening every signature in between, each one existing only to pass it
+    on — a lot of places for one to be forgotten, and forgetting it fails silently by charging the
+    month without the sub-budget.
+    """
+
+    async def test_generation_inside_the_scope_is_marked_proactive(self, metered):
+        from src.domains.personal_learning.services import llm_resilient
+
+        metered.install([("an answer", PLUS_TURN)])
+
+        with llm_resilient.proactive_scope():
+            await llm_resilient.generate_content(
+                "p", user_id="u1", operation="discovery_recommendations"
+            )
+
+        assert metered.proactive_flags == [True]
+
+    async def test_generation_outside_the_scope_is_not(self, metered):
+        from src.domains.personal_learning.services import llm_resilient
+
+        metered.install([("an answer", PLUS_TURN)])
+
+        await llm_resilient.generate_content("p", user_id="u1", operation="quiz_generation")
+
+        assert metered.proactive_flags == [False]
+
+    async def test_the_scope_does_not_leak_past_its_block(self, metered):
+        """Scoped per learner rather than around a batch, so one learner's accounting cannot leak
+        into the next one's if a batch raises midway."""
+        from src.domains.personal_learning.services import llm_resilient
+
+        with llm_resilient.proactive_scope():
+            assert llm_resilient.is_proactive() is True
+
+        assert llm_resilient.is_proactive() is False
+
+    async def test_the_scope_resets_even_when_the_block_raises(self):
+        from src.domains.personal_learning.services import llm_resilient
+
+        with pytest.raises(RuntimeError):
+            with llm_resilient.proactive_scope():
+                raise RuntimeError("a batch failed midway")
+
+        assert llm_resilient.is_proactive() is False

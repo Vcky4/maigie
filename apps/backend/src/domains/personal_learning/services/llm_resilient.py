@@ -19,6 +19,8 @@ import asyncio
 import json
 import logging
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -185,13 +187,21 @@ async def _refuse_if_exhausted(*, user_id: str | None, operation: str) -> None:
     if user_id is None or operation in UNCHARGED_OPERATIONS:
         return
     try:
-        from src.domains.billing.services.credit_consumption_service import has_headroom
+        from src.domains.billing.services.credit_consumption_service import (
+            has_headroom,
+            has_proactive_headroom,
+        )
         from src.domains.identity.repository import IdentityRepository
 
         user = await IdentityRepository().find_by_id(user_id)
         if user is None:
             return
         available, message = await has_headroom(user)
+        # A proactive generation has two bounds to clear, and the sub-cap is the tighter one. Checked
+        # second so an exhausted learner still gets the window message: "out of allowance" is the
+        # truer statement of their position than "the background budget is spent".
+        if available and _PROACTIVE.get():
+            available, message = await has_proactive_headroom(user)
     except Exception:
         # A gate that cannot read the meter must not become an outage. Fail **open**: the learner
         # gets their generation and `record_units` records the spend. The opposite choice would turn
@@ -214,6 +224,35 @@ async def _refuse_if_exhausted(*, user_id: str | None, operation: str) -> None:
             message=message or "You've used this session's allowance. It refills automatically.",
             detail=f"operation={operation}, limit=window_exhausted",
         )
+
+
+#: Marks the current task as proactive, so its spend lands in the sub-budget too (Decision M).
+#:
+#: **A context variable rather than a parameter, and the reason is the call depth.** A Celery task
+#: reaches a provider through `discovery_service` or `reflection_service`, each of which calls the
+#: chokepoint several frames down. Threading a `proactive` flag would mean widening every service
+#: signature between the task and the meter, and every one of those parameters would exist only to be
+#: passed on — which is a lot of places for one to be forgotten, and forgetting it fails silently by
+#: charging the month without the sub-budget.
+_PROACTIVE: ContextVar[bool] = ContextVar("maigie_proactive_generation", default=False)
+
+
+@contextmanager
+def proactive_scope():
+    """Mark everything generated inside this block as proactive.
+
+    Wrapped per learner rather than around a whole task, so one learner's budget cannot leak into the
+    next one's accounting if a batch raises midway.
+    """
+    token = _PROACTIVE.set(True)
+    try:
+        yield
+    finally:
+        _PROACTIVE.reset(token)
+
+
+def is_proactive() -> bool:
+    return _PROACTIVE.get()
 
 
 async def meter_usage(
@@ -279,7 +318,7 @@ async def meter_usage(
         )
 
         units = units_for_tokens(usage.input_tokens, usage.billable_output_tokens, usage.model)
-        await record_units(user_id, units, operation=operation)
+        await record_units(user_id, units, operation=operation, proactive=_PROACTIVE.get())
     except Exception:
         logger.exception(
             "usage: metering failed for user=%s operation=%s model=%s — generation kept",
