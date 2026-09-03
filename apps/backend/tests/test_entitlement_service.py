@@ -289,12 +289,19 @@ class TestSeamsAndFailure:
         result = await svc.resolve("u1")
         assert result == svc.FREE_ENTITLEMENT
 
-    @pytest.mark.asyncio
-    async def test_no_pass_exists_before_phase_4(self):
-        """`_read_active_pass` is a named seam, not an oversight. `PlusPass` and the cached columns
-        on `User` are created by Phase 4's migration; until then there is nothing to read, and the
-        precedence tests above already cover what happens when there is."""
-        assert await svc._read_active_pass("u1") is None
+    def test_the_pass_seam_became_a_pure_function(self):
+        """`_read_active_pass` was a named seam returning `None` while `PlusPass` did not exist, so that
+        `_compose`'s pass branch could be written and tested before there was anything to read.
+
+        Phase 4 filled it and **moved** it. The seam took a `user_id`, which would have meant a second
+        query on the hottest path in the domain; the pass now arrives on the same joined read as the tier
+        and the trial (Decision C), so `_active_pass` is a pure function of columns. That is also what
+        makes Decision E's two endings testable without a database, which the tests below rely on.
+        """
+        import inspect
+
+        assert not hasattr(svc, "_read_active_pass")
+        assert not inspect.iscoroutinefunction(svc._active_pass)
 
     def test_resolve_takes_a_user_id_and_nothing_else(self):
         """Decision F, enforced by signature. An optional `space_id` here is how a personal-scope

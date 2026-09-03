@@ -176,6 +176,54 @@ class VoiceBalanceResponse(CamelModel):
     has_purchased_minutes: bool
 
 
+class PlusPassItem(CamelModel):
+    """One pass the learner holds, in whatever state it is in.
+
+    Consumed and refunded passes are included, deliberately. A learner asking "what happened to my
+    pass" is asking about one that ended, and an inventory that only lists usable passes cannot answer.
+    `status` and `endedReason` together are what let a client say *which* ending it was — Decision E has
+    two and they need different copy.
+
+    **`unitsAllowance` and `unitsUsed` are published, which `GET /billing/usage` deliberately does not
+    do for the window.** The window shows a percentage because a unit is a COGS accounting device that
+    means nothing to a learner. A pass is different: its allowance was a stated number on the purchase
+    screen — "capabilities without limit, usage with a stated ceiling" — so showing progress against the
+    figure they were sold is honouring the promise rather than leaking the cost basis.
+    """
+
+    id: str
+    product_id: str
+    status: Literal["inventory", "active", "consumed", "refunded"]
+    #: `purchase` | `points`. Phase 4b redeems passes from points, and a learner should be able to see
+    #: which of their passes they earned.
+    source: str
+    duration_minutes: int
+    units_allowance: int
+    units_used: int
+    #: Both null while the pass sits in inventory. That is Decision A in the response shape: the clock
+    #: starts on activation, so an unactivated pass has no expiry to show.
+    activated_at: datetime | None = None
+    expires_at: datetime | None = None
+    #: null | `expired` | `exhausted` | `refund`.
+    ended_reason: str | None = None
+    created_at: datetime
+
+
+class PlusPassListResponse(CamelModel):
+    """The learner's passes, newest first.
+
+    **This is also how iOS restores a consumable.** StoreKit does not return finished consumables from
+    `Transaction.currentEntitlements`, so a reinstalled app cannot recover a purchased-but-unactivated
+    pass from the device (Decision G). Restore is a read of this endpoint rather than a StoreKit call,
+    which is why the purchase is persisted at verification time and before anything is granted.
+    """
+
+    passes: list[PlusPassItem]
+    #: How many are activatable right now. Saves a client filtering, and is the number a "you have a
+    #: pass waiting" prompt is built on.
+    inventory_count: int
+
+
 # ===========================================================================
 # Subscriptions
 # ===========================================================================

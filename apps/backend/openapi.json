@@ -10748,6 +10748,119 @@
         "title": "PlanShapeResponse",
         "type": "object"
       },
+      "PlusPassItem": {
+        "description": "One pass the learner holds, in whatever state it is in.\n\nConsumed and refunded passes are included, deliberately. A learner asking \"what happened to my\npass\" is asking about one that ended, and an inventory that only lists usable passes cannot answer.\n`status` and `endedReason` together are what let a client say *which* ending it was — Decision E has\ntwo and they need different copy.\n\n**`unitsAllowance` and `unitsUsed` are published, which `GET /billing/usage` deliberately does not\ndo for the window.** The window shows a percentage because a unit is a COGS accounting device that\nmeans nothing to a learner. A pass is different: its allowance was a stated number on the purchase\nscreen — \"capabilities without limit, usage with a stated ceiling\" — so showing progress against the\nfigure they were sold is honouring the promise rather than leaking the cost basis.",
+        "properties": {
+          "activatedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activatedat"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "durationMinutes": {
+            "title": "Durationminutes",
+            "type": "integer"
+          },
+          "endedReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endedreason"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "productId": {
+            "title": "Productid",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "inventory",
+              "active",
+              "consumed",
+              "refunded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "unitsAllowance": {
+            "title": "Unitsallowance",
+            "type": "integer"
+          },
+          "unitsUsed": {
+            "title": "Unitsused",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "productId",
+          "status",
+          "source",
+          "durationMinutes",
+          "unitsAllowance",
+          "unitsUsed",
+          "createdAt"
+        ],
+        "title": "PlusPassItem",
+        "type": "object"
+      },
+      "PlusPassListResponse": {
+        "description": "The learner's passes, newest first.\n\n**This is also how iOS restores a consumable.** StoreKit does not return finished consumables from\n`Transaction.currentEntitlements`, so a reinstalled app cannot recover a purchased-but-unactivated\npass from the device (Decision G). Restore is a read of this endpoint rather than a StoreKit call,\nwhich is why the purchase is persisted at verification time and before anything is granted.",
+        "properties": {
+          "inventoryCount": {
+            "title": "Inventorycount",
+            "type": "integer"
+          },
+          "passes": {
+            "items": {
+              "$ref": "#/components/schemas/PlusPassItem"
+            },
+            "title": "Passes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "passes",
+          "inventoryCount"
+        ],
+        "title": "PlusPassListResponse",
+        "type": "object"
+      },
       "PortalResponse": {
         "description": "Stripe customer portal URL.",
         "properties": {
@@ -21907,6 +22020,83 @@
           }
         ],
         "summary": "Entitlement",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/passes": {
+      "get": {
+        "description": "Every pass the learner holds — inventory, running, and ended.\n\n**The restore path for iOS, not just a list.** StoreKit does not return finished consumables from\n`Transaction.currentEntitlements`, so a reinstalled app cannot recover a purchased-but-unactivated\npass from the device (Decision G). That is why the purchase is persisted at verification time and\nbefore anything is granted, and why \"restore\" for a pass means calling this rather than asking\nStoreKit.\n\nEnded passes are returned too: \"what happened to my pass\" is a question about one that ended.",
+        "operationId": "list_passes_api_v1_billing_passes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlusPassListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Passes",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/passes/{pass_id}/activate": {
+      "post": {
+        "description": "Start a pass's clock. **This is the moment the product begins**, not the purchase.\n\nDecision A: a pass is inventory until activated, so a $0.99 five-hour pass bought on Tuesday can be\nspent on Saturday's revision session. Decision D: `409 PASS_REDUNDANT` if the learner already has\nPlus from a subscription, a trial or another pass — and they keep the pass, since a refused\nactivation consumes nothing.\n\nActivation also resets the usage window (Decision E). Without that, a five-hour pass activated at\nminute 290 of a Free window would deliver ten minutes and then a wall.\n\nThe one-active invariant is a partial unique index rather than the check above it, so two concurrent\nactivations produce one winner and one `409` instead of a race — `pass_service.activate` turns the\n`IntegrityError` into the same refusal.",
+        "operationId": "activate_pass_api_v1_billing_passes__pass_id__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pass_id",
+            "required": true,
+            "schema": {
+              "title": "Pass Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlusPassItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Activate Pass",
         "tags": [
           "billing",
           "billing"

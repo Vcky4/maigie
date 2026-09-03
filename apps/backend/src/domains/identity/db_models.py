@@ -138,6 +138,27 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         "voiceAllowanceSourceId", String, nullable=True
     )
 
+    # The active pass, denormalised (Decision C). `PlusPass` is the record of truth; these two exist so
+    # `entitlement_service.resolve` — called on nearly every gated request — can tell whether a pass is
+    # running from the `User` row it already loads, and only join `PlusPass` when one is.
+    #
+    # Exactly one writer, `pass_service`, plus the five-minute sweep that reconciles them. The same
+    # trade `Course.progress` already makes, kept true the same way.
+    active_plus_pass_id: Mapped[str | None] = mapped_column(
+        "activePlusPassId", String, nullable=True
+    )
+    active_plus_pass_expires_at: Mapped[datetime | None] = mapped_column(
+        "activePlusPassExpiresAt", DateTime(timezone=True), nullable=True
+    )
+
+    # Apple's cross-purchase identity, unique because it is the account-collision defence: a token
+    # already bound to another learner answers `409 PURCHASE_ALREADY_CLAIMED`. That is the standard IAP
+    # abuse vector and the constraint is the whole of the defence (Decision G).
+    apple_original_transaction_id: Mapped[str | None] = mapped_column(
+        "appleOriginalTransactionId", String, nullable=True, unique=True
+    )
+    apple_product_id: Mapped[str | None] = mapped_column("appleProductId", String, nullable=True)
+
     # Feature usage (FREE tier)
     file_uploads_count: Mapped[int] = mapped_column(
         "fileUploadsCount", Integer, default=0, server_default="0"
