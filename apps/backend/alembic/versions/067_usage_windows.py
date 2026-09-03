@@ -117,7 +117,9 @@ def downgrade() -> None:
     op.add_column(
         "User", sa.Column("creditsUsed", sa.Integer(), nullable=False, server_default="0")
     )
-    op.add_column("User", sa.Column("creditsPeriodStart", sa.DateTime(timezone=True), nullable=True))
+    op.add_column(
+        "User", sa.Column("creditsPeriodStart", sa.DateTime(timezone=True), nullable=True)
+    )
     op.add_column("User", sa.Column("creditsPeriodEnd", sa.DateTime(timezone=True), nullable=True))
     op.add_column("User", sa.Column("creditsSoftCap", sa.Integer(), nullable=True))
     op.add_column("User", sa.Column("creditsHardCap", sa.Integer(), nullable=True))
