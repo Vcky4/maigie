@@ -118,6 +118,33 @@ async def report_gates(user_id: str) -> bool:
             f" permission={row.permission_state} failures={row.failure_count}"
         )
 
+    # A subscription's secrets are encrypted under the SECRET_KEY of whichever deployment stored
+    # them. A process with a different SECRET_KEY cannot decrypt them, and the dispatcher correctly
+    # reads that as unusable key material and prunes the subscription — so running this script
+    # against a subscription created by another environment destroys it. Right for a genuine key
+    # rotation, wrong here, so it is checked before anything is sent.
+    from src.domains.notifications.subscription_crypto import (
+        SubscriptionSecretUnreadable,
+        decrypt_subscription_secret,
+    )
+
+    print("--- can this process decrypt these subscriptions? ---")
+    unreadable = 0
+    for row in installations:
+        if row.disabled_at is not None or not row.p256dh_encrypted:
+            continue
+        try:
+            decrypt_subscription_secret(row.p256dh_encrypted)
+            print(f"  readable    {row.installation_id[:18]}")
+        except SubscriptionSecretUnreadable:
+            unreadable += 1
+            print(
+                f"  UNREADABLE  {row.installation_id[:18]}  stored by a deployment with a "
+                "different SECRET_KEY"
+            )
+    if unreadable:
+        print("  Sending from here would prune it. Dispatch from that deployment instead.")
+
     print("--- consent ---")
     decision = await notification_repo.channel_policy(user_id, TEST_TYPE, "LEARNING", "WEB_PUSH")
     policy = decision["policy"]
@@ -141,7 +168,8 @@ async def report_gates(user_id: str) -> bool:
     for category, enabled, frequency in consent:
         print(f"    {category:12s} enabled={enabled} frequency={frequency}")
 
-    return bool(installations) and gate.enabled and configured and in_cohort
+    live = [row for row in installations if row.disabled_at is None and row.endpoint is not None]
+    return bool(live) and gate.enabled and configured and in_cohort and not unreadable
 
 
 async def create_notification(user_id: str) -> str:
@@ -159,6 +187,48 @@ async def create_notification(user_id: str) -> str:
     )
     print(f"\ncreated notification {row.id} ({row.status}, eligible {row.eligible_at})")
     return row.id
+
+
+async def bring_forward(user_id: str, notification_id: str | None) -> None:
+    """Make a planned web push due now, for testing only.
+
+    The orchestrator defers a notification past the learner's daily attention budget, which is
+    correct behaviour and inconvenient when you are trying to observe one send. This moves the
+    schedule and nothing else: the dispatcher still rechecks the kill switch, VAPID configuration,
+    cohort, engagement and legacy switches, per-category consent, and quiet hours. It cannot make
+    a push happen that policy would refuse — it only stops you waiting for the clock.
+    """
+
+    from sqlalchemy import text
+
+    from src.shared.database.session import get_session_factory
+
+    now = datetime.now(UTC)
+    factory = get_session_factory()
+    async with factory() as session, session.begin():
+        if notification_id:
+            await session.execute(
+                text('UPDATE "Notification" SET "eligibleAt" = :n WHERE id = :i'),
+                {"n": now, "i": notification_id},
+            )
+            result = await session.execute(
+                text(
+                    'UPDATE "NotificationDelivery" SET "eligibleAt" = :n, "nextAttemptAt" = :n '
+                    "WHERE \"notificationId\" = :i AND channel = 'WEB_PUSH' "
+                    "AND status IN ('PLANNED', 'QUEUED')"
+                ),
+                {"n": now, "i": notification_id},
+            )
+        else:
+            result = await session.execute(
+                text(
+                    'UPDATE "NotificationDelivery" SET "eligibleAt" = :n, "nextAttemptAt" = :n '
+                    "WHERE \"userId\" = :u AND channel = 'WEB_PUSH' "
+                    "AND status IN ('PLANNED', 'QUEUED')"
+                ),
+                {"n": now, "u": user_id},
+            )
+    print(f"--now: brought {result.rowcount} web push delivery/deliveries forward")
 
 
 async def report_deliveries(notification_id: str | None) -> None:
@@ -239,6 +309,23 @@ async def main() -> None:
         action="store_true",
         help="drain what is already queued without creating a notification",
     )
+    parser.add_argument(
+        "--now",
+        action="store_true",
+        help=(
+            "bring this learner's planned web push forward to now, ignoring the daily attention "
+            "budget. Moves only the schedule — consent is still rechecked at dispatch."
+        ),
+    )
+    parser.add_argument(
+        "--plan-only",
+        action="store_true",
+        help=(
+            "create the notification and stop, leaving the deployed worker to send it. Use this "
+            "when the subscription belongs to another environment: only that deployment can "
+            "decrypt its subscription secrets, and dispatching from here would prune it."
+        ),
+    )
     args = parser.parse_args()
 
     # Registers the `User` mapper. `NotificationDelivery.userId` carries a foreign key to it, and
@@ -257,12 +344,26 @@ async def main() -> None:
     if args.check:
         print("\n--check: nothing sent.")
         return
+
+    if args.plan_only:
+        notification_id = await create_notification(user_id)
+        if args.now:
+            await bring_forward(user_id, notification_id)
+        print(
+            "\n--plan-only: planned but not sent. The deployed worker's "
+            "`notifications.dispatch_web_push` beat task runs every 60s and will pick it up."
+        )
+        await report_deliveries(notification_id)
+        return
+
     if not ready:
         print("\nOne of the gates above is closed, so nothing would be delivered.")
         print("Fix it and run again — sending anyway would only produce a misleading failure.")
         return
 
     notification_id = None if args.dispatch_only else await create_notification(user_id)
+    if args.now:
+        await bring_forward(user_id, notification_id)
     claimed = await dispatch_due_web_push()
     print(f"dispatcher claimed {claimed} delivery/deliveries\n")
     await report_deliveries(notification_id)
