@@ -99,6 +99,36 @@ async def usage(current_user: CurrentUser):
     )
 
 
+@router.get("/voice/balance", response_model=models.VoiceBalanceResponse)
+async def voice_balance(current_user: CurrentUser):
+    """Live-voice minutes remaining, and whether voice is available at all.
+
+    Ships with the counter it reads, because **a counter the learner cannot see is a counter they will
+    be surprised by** — and being surprised mid-sentence by a tutor that stops talking is the worst
+    version of that. `study_voice` refuses an unfunded session before opening a provider socket, so
+    without this endpoint the first a learner would know is a refusal.
+
+    Separate from `/usage` because voice is a separate meter (§6.3), and denominated in minutes rather
+    than a percentage because minutes are what was sold.
+
+    This is the one read in the billing domain that can *write*: `voice_service.read_balance` persists
+    a re-grant when it finds the stored source stale, which is how a renewal tops the balance up
+    without a sweep job. It is idempotent — a second call within the same period finds a source it
+    recognises and writes nothing — so a polling client does not generate write load.
+    """
+    from .services import voice_service
+
+    balance = await voice_service.read_balance(current_user.id)
+    entitlement = await entitlement_service.resolve(current_user.id)
+    return models.VoiceBalanceResponse(
+        available=balance.available,
+        minutesRemaining=balance.total_minutes,
+        secondsRemaining=balance.total_seconds,
+        minutesIncluded=entitlement.voice_seconds_included // 60,
+        hasPurchasedMinutes=balance.purchased_seconds > 0,
+    )
+
+
 # ===========================================================================
 # Subscriptions (Stripe)
 # ===========================================================================

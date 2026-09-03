@@ -118,35 +118,25 @@ def _is_first_plus_purchase(user: User) -> bool:
     return not (user.stripe_subscription_id or user.paystack_subscription_code)
 
 
-def _voice_minutes(window_allowance: int) -> float:
-    """Minutes of live voice a window's allowance funds, at the configured rate.
+def _voice_minutes_note(voice_seconds: int) -> str:
+    """The voice figure as a learner reads it: "15 minutes of live voice tutoring".
 
-    Derived rather than tabulated so that changing an allowance or the voice rate changes the
-    catalogue copy in the same commit. The previous figures were typed by hand into a docstring and
-    a `usage_note`, and were wrong by 19× against the meter that was actually running.
+    **Reads the voice allowance, and used to divide the unit window by the voice rate.** That division
+    was the honest description of a meter that drew voice from the same allowance as text, and §6.3
+    replaced that meter: voice has its own counter now, so the figure is the allowance rather than a
+    quotient. Two things improve. The number stops being an artefact — a pass advertising "about 15
+    minutes" because 3 000 units ÷ 200 happens to equal 15 is a promise nothing was enforcing, where
+    600 seconds on `voiceSecondsRemaining` is a promise a counter keeps. And the word "about" goes,
+    because there is nothing approximate left: the learner gets exactly the minutes named.
+
+    A tier with no voice returns the capability statement rather than "0 minutes". A free learner has
+    not run out of anything, and §6.3 makes voice the clearest thing a pass sells — so the copy has to
+    say what it is rather than what it is not.
     """
-    from src.domains.study_voice.billing import units_per_minute
-
-    rate = units_per_minute()
-    if rate <= 0:  # pragma: no cover — a zero rate would mean voice is unmetered
-        return 0.0
-    return window_allowance / rate
-
-
-def _voice_minutes_note(window_allowance: int) -> str:
-    """The voice figure as a learner reads it: "about 15 minutes".
-
-    Rounded to whole minutes above two, and to a half below — 2.5 is a taster and saying "about 3"
-    would round a free learner's allowance up by 20%. Rounding is towards the smaller number
-    throughout, because this is a floor a learner will test.
-    """
-    minutes = _voice_minutes(window_allowance)
-    if minutes < 3:
-        halves = int(minutes * 2)
-        rendered = f"{halves / 2:g}"
-    else:
-        rendered = str(int(minutes))
-    return f"about {rendered} minutes of live voice tutoring"
+    if voice_seconds <= 0:
+        return "no live voice tutoring — that's a Plus capability"
+    minutes = voice_seconds // 60
+    return f"{minutes} minutes of live voice tutoring"
 
 
 def get_active_plan_catalog() -> PlanCatalogResponse:
@@ -199,9 +189,7 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 "practice, study plans, courses and weekly reflections."
             ),
             usage_note=(
-                "Standard model quality, and "
-                f"{_voice_minutes_note(ent.WINDOW_ALLOWANCE_FREE)} "
-                "per 5-hour session."
+                "Standard model quality, and " f"{_voice_minutes_note(ent.VOICE_SECONDS_FREE)}."
             ),
         ),
         PlanItem(
@@ -219,7 +207,7 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
             ),
             usage_note=(
                 "Every Plus feature for the 5 hours, including "
-                f"{_voice_minutes_note(ent.WINDOW_ALLOWANCE_PASS_5H)} — "
+                f"{_voice_minutes_note(ent.VOICE_SECONDS_PASS_5H)} — "
                 "an allowance inside the 5 hours, not 5 unbroken hours of voice."
             ),
             # Listed so clients and generated types can be built against the real shape;
@@ -239,8 +227,8 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
             ),
             usage_note=(
                 "Every Plus feature for the 7 days, including "
-                f"{_voice_minutes_note(ent.WINDOW_ALLOWANCE_PASS_7D)} "
-                "per 5-hour session across the week."
+                f"{_voice_minutes_note(ent.VOICE_SECONDS_PASS_7D)} "
+                "for the week."
             ),
             purchasable=False,  # Phase 5, as above.
         ),
@@ -264,8 +252,8 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
             usage_note=(
                 "A stronger model where it shows — chat, quizzes, lessons, documents "
                 "and your growth write-ups — plus "
-                f"{_voice_minutes_note(ent.WINDOW_ALLOWANCE_PLUS)} "
-                "per 5-hour session."
+                f"{_voice_minutes_note(ent.VOICE_SECONDS_PLUS_MONTHLY)} "
+                "a month."
             ),
         ),
         PlanItem(

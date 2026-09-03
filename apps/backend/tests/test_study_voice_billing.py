@@ -23,10 +23,10 @@ def settings(monkeypatch):
     """Fixed billing settings, so these assertions do not move when pricing does."""
     fake = SimpleNamespace(
         GEMINI_LIVE_UNITS_PER_MINUTE=100.0,
-        GEMINI_LIVE_MIN_SESSION_UNITS=500,
+        GEMINI_LIVE_MIN_SESSION_SECONDS=300,
         GEMINI_LIVE_STANDBY_IDLE_SECONDS=2.5,
         GEMINI_LIVE_BILLING_TICK_SECONDS=2.0,
-        GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK=50,
+        GEMINI_LIVE_BILLING_MIN_CONSUME_SECONDS=15,
         GEMINI_LIVE_BILLING_FLUSH_INTERVAL_SECONDS=60.0,
     )
     monkeypatch.setattr(billing, "get_settings", lambda: fake)
@@ -73,19 +73,22 @@ def test_a_voice_minute_is_priced_near_what_a_voice_minute_costs():
 
 
 def test_the_session_floor_is_at_least_a_minute_of_voice():
-    """A floor below one minute is not a floor.
+    """A floor below one minute is not a floor, and this constant has been wrong twice.
 
-    `GEMINI_LIVE_MIN_SESSION_UNITS` was once 500 against a rate of 100 — five minutes, which was
-    coherent. When the rate was corrected to 10 000 the same 500 became three seconds, so the
-    wall-clock minimum charge would have silently stopped existing had it not been moved with it. That
-    is the coupling this test exists to hold: the floor is meaningless except in terms of the rate. It
-    doubles as the pre-start availability check, so too low also means a learner can begin a session
-    they cannot afford a minute of.
+    It was `GEMINI_LIVE_MIN_SESSION_UNITS = 500` against a rate of 100 — five minutes, coherent. When
+    the rate was corrected to 10 000 the same 500 became **three seconds**, so the wall-clock minimum
+    charge would have silently stopped existing had it not been moved with the rate. Then Phase 3
+    redenominated it to 200 units against 200 units/minute, which was one minute again.
+
+    §6.3 moved voice onto a seconds-denominated balance, so the floor is now
+    `GEMINI_LIVE_MIN_SESSION_SECONDS` and **the coupling this test used to hold no longer exists** — a
+    floor expressed in seconds cannot be invalidated by a change to a price. That is the whole reason
+    for the denomination change, and it is why this assertion is now a plain lower bound rather than a
+    relationship between two settings.
     """
     from src.config import get_settings
 
-    cfg = get_settings()
-    assert cfg.GEMINI_LIVE_MIN_SESSION_UNITS >= cfg.GEMINI_LIVE_UNITS_PER_MINUTE
+    assert get_settings().GEMINI_LIVE_MIN_SESSION_SECONDS >= 60
 
 
 # ---------------------------------------------------------------------------
@@ -113,23 +116,28 @@ def test_paid_tiers_are_billed_only_while_audio_is_flowing(tier):
 
 
 def test_accrual_is_proportional_to_billable_time(settings):
-    assert billing.units_from_billable_seconds_raw(60.0) == 100
-    assert billing.units_from_billable_seconds_raw(30.0) == 50
+    """One-to-one now, because the voice balance is denominated in the same thing the loop measures.
+
+    This used to be `60.0 -> 100` at a rate of 100 units/minute, and the multiplication is where two
+    separate cost bugs hid. §6.3 removed the conversion rather than correcting it again.
+    """
+    assert billing.chargeable_seconds_raw(60.0) == 60
+    assert billing.chargeable_seconds_raw(30.0) == 30
 
 
 def test_accrual_truncates_rather_than_rounding_up(settings):
-    """A partial credit is not charged until it is whole, so ticks cannot outrun the time they bill."""
-    assert billing.units_from_billable_seconds_raw(0.5) == 0
-    assert billing.units_from_billable_seconds_raw(1.2) == 2
+    """A partial second is not charged until it is whole, so ticks cannot outrun the time they bill."""
+    assert billing.chargeable_seconds_raw(0.5) == 0
+    assert billing.chargeable_seconds_raw(1.9) == 1
 
 
 def test_accrual_never_goes_negative(settings):
-    assert billing.units_from_billable_seconds_raw(-10.0) == 0
+    assert billing.chargeable_seconds_raw(-10.0) == 0
 
 
 def test_accrual_has_no_session_floor(settings):
     """The floor belongs to settlement only. Applied during accrual it would charge it every tick."""
-    assert billing.units_from_billable_seconds_raw(1.0) < billing.min_session_units()
+    assert billing.chargeable_seconds_raw(1.0) < billing.min_session_seconds()
 
 
 # ---------------------------------------------------------------------------
@@ -138,36 +146,36 @@ def test_accrual_has_no_session_floor(settings):
 
 
 def test_a_short_free_session_still_costs_the_session_minimum(settings):
-    total = billing.units_total_final_settlement(10.0, billing.BILLING_WALL_CLOCK)
-    assert total == 500
+    total = billing.chargeable_seconds_final_settlement(10.0, billing.BILLING_WALL_CLOCK)
+    assert total == 300
 
 
 def test_a_long_free_session_costs_more_than_the_minimum(settings):
-    total = billing.units_total_final_settlement(600.0, billing.BILLING_WALL_CLOCK)
-    assert total == 1000
+    total = billing.chargeable_seconds_final_settlement(600.0, billing.BILLING_WALL_CLOCK)
+    assert total == 600
 
 
 def test_a_short_paid_session_is_not_floored(settings):
     """A paid learner who spoke for ten seconds genuinely cost ten seconds."""
-    total = billing.units_total_final_settlement(10.0, billing.BILLING_ACTIVE_AUDIO)
-    assert total == 16
+    total = billing.chargeable_seconds_final_settlement(10.0, billing.BILLING_ACTIVE_AUDIO)
+    assert total == 10
 
 
 def test_settlement_of_no_time_is_free_for_paid_and_floored_for_free(settings):
-    assert billing.units_total_final_settlement(0.0, billing.BILLING_ACTIVE_AUDIO) == 0
-    assert billing.units_total_final_settlement(0.0, billing.BILLING_WALL_CLOCK) == 500
+    assert billing.chargeable_seconds_final_settlement(0.0, billing.BILLING_ACTIVE_AUDIO) == 0
+    assert billing.chargeable_seconds_final_settlement(0.0, billing.BILLING_WALL_CLOCK) == 300
 
 
 def test_settlement_never_undercuts_what_was_already_charged(settings):
     """The property the loop depends on: the running total can only be caught up to, never exceeded.
 
-    `settle` charges `total - consumed`, so if accrual could ever exceed settlement for the same seconds,
+    `settle` charges `total - charged`, so if accrual could ever exceed settlement for the same seconds,
     the difference would be silently refunded — and there is no refund path.
     """
     for seconds in (0.0, 1.0, 7.5, 61.0, 3600.0):
         for mode in (billing.BILLING_WALL_CLOCK, billing.BILLING_ACTIVE_AUDIO):
-            accrued = billing.units_from_billable_seconds_raw(seconds)
-            assert billing.units_total_final_settlement(seconds, mode) >= accrued
+            accrued = billing.chargeable_seconds_raw(seconds)
+            assert billing.chargeable_seconds_final_settlement(seconds, mode) >= accrued
 
 
 # ---------------------------------------------------------------------------
@@ -179,23 +187,23 @@ def test_a_fresh_bridge_has_nothing_to_settle():
     snapshot = BridgeState(billing_mode=billing.BILLING_WALL_CLOCK).snapshot()
     assert snapshot.billing_started is False
     assert snapshot.billable_seconds == 0.0
-    assert snapshot.consumed_credits == 0
+    assert snapshot.charged_seconds == 0
 
 
 def test_the_snapshot_carries_what_settlement_needs():
     state = BridgeState(billing_mode=billing.BILLING_ACTIVE_AUDIO)
     state.billing_started = True
     state.billable_seconds = 42.0
-    state.consumed_credits = 60
+    state.charged_seconds = 30
     snapshot = state.snapshot()
     assert (
         snapshot.billing_mode,
         snapshot.billable_seconds,
-        snapshot.consumed_credits,
+        snapshot.charged_seconds,
     ) == (
         billing.BILLING_ACTIVE_AUDIO,
         42.0,
-        60,
+        30,
     )
 
 

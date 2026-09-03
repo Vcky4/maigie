@@ -105,6 +105,28 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         "usageMonthUnitsUsed", Integer, default=0, server_default="0"
     )
 
+    # Live voice, on its own balance rather than on the window above (§6.3). A voice minute is 40× a
+    # Flash-Lite chat turn, so one allowance covering both had to be priced for the voice case and was
+    # spent almost entirely on the text case.
+    #
+    # `voice_seconds_remaining` is *granted* and belongs to `voice_allowance_source_id`. It is
+    # re-derived on read: when the source the entitlement names stops matching the stored one, the
+    # balance resets to that source's allowance. A renewal therefore re-grants and a pass expiring
+    # takes its minutes with it, with no sweep job in between — see `billing.services.voice_service`.
+    #
+    # `voice_seconds_purchased` is *bought*, and is the one quantity here that never resets: a learner
+    # who paid for 30 minutes owns them across a period boundary. Spending takes granted seconds
+    # first, because those are the ones that expire.
+    voice_seconds_remaining: Mapped[int] = mapped_column(
+        "voiceSecondsRemaining", Integer, default=0, server_default="0"
+    )
+    voice_seconds_purchased: Mapped[int] = mapped_column(
+        "voiceSecondsPurchased", Integer, default=0, server_default="0"
+    )
+    voice_allowance_source_id: Mapped[str | None] = mapped_column(
+        "voiceAllowanceSourceId", String, nullable=True
+    )
+
     # Feature usage (FREE tier)
     file_uploads_count: Mapped[int] = mapped_column(
         "fileUploadsCount", Integer, default=0, server_default="0"

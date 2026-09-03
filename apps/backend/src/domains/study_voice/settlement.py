@@ -16,13 +16,14 @@ from __future__ import annotations
 import logging
 
 from src.config import get_settings
-from src.domains.billing.services.credit_consumption_service import consume_credits
-from src.domains.billing.services.usage_tracking import PERSONAL_USAGE_SCOPE, emit_ai_usage
-from src.domains.identity.repository import IdentityRepository
-from src.shared.exceptions import SubscriptionLimitError
+from src.domains.billing.services import voice_service
+from src.domains.billing.services.usage_tracking import (
+    PERSONAL_USAGE_SCOPE,
+    emit_ai_usage,
+)
 
 from . import session_store
-from .billing import units_from_billable_seconds_raw, units_total_final_settlement
+from .billing import chargeable_seconds_final_settlement, chargeable_seconds_raw
 from .bridge import BillingSnapshot
 
 logger = logging.getLogger(__name__)
@@ -35,41 +36,43 @@ async def settle(user_id: str, session_id: str, snapshot: BillingSnapshot) -> No
     setup produced no audio, and the learner should not pay for our failure to connect.
     """
     if not snapshot.billing_started:
-        logger.info("Voice session %s ended before billing started — nothing to settle", session_id)
+        logger.info(
+            "Voice session %s ended before billing started — nothing to settle",
+            session_id,
+        )
         return
 
     # The floor is charged once per session, not once per socket. A client that reconnects after a dropped
     # connection re-enters the same session id, and each attempt settles separately — so without this a
     # FREE learner on a flaky connection pays the minimum several times for one sitting.
     if await session_store.claim_session_floor(session_id):
-        total = units_total_final_settlement(snapshot.billable_seconds, snapshot.billing_mode)
+        total = chargeable_seconds_final_settlement(
+            snapshot.billable_seconds, snapshot.billing_mode
+        )
     else:
-        total = units_from_billable_seconds_raw(snapshot.billable_seconds)
-    outstanding = max(0, total - snapshot.consumed_credits)
+        total = chargeable_seconds_raw(snapshot.billable_seconds)
+    outstanding = max(0, total - snapshot.charged_seconds)
 
     try:
-        user = await IdentityRepository().find_by_id(user_id)
-        if not user:
-            logger.warning("Cannot settle voice session %s — user %s is gone", session_id, user_id)
-            return
         if outstanding:
-            await consume_credits(user, outstanding, operation="gemini_live_voice")
+            # `voice_service.spend` never raises and never refuses, so the `SubscriptionLimitError`
+            # branch this used to carry is gone. A learner who ran out partway through has already had
+            # the session ended by `bridge.charge`; what is left here is recording the remainder, and
+            # the balance simply floors at zero. The shortfall is logged inside `spend` rather than
+            # surfaced as an exception, because a settlement that "fails" for want of balance is not a
+            # failure — it is the meter telling us we served more than we sold.
+            balance = await voice_service.spend(user_id, outstanding)
+            remaining = balance.total_seconds
+        else:
+            remaining = (await voice_service.read_balance(user_id)).total_seconds
         logger.info(
-            "Settled voice session %s: %.1fs billable (%s), %s credits total, %s charged now",
+            "Settled voice session %s: %.1fs billable (%s), %ds chargeable, %ds now, %ds left",
             session_id,
             snapshot.billable_seconds,
             snapshot.billing_mode,
             total,
             outstanding,
-        )
-    except SubscriptionLimitError:
-        # The learner ran out partway through. The session already ended for that reason, and there is no
-        # mechanism for carrying a debt, so this is logged with the figures rather than retried.
-        logger.warning(
-            "Voice session %s left %s credits uncollected — user %s is out of credits",
-            session_id,
-            outstanding,
-            user_id,
+            remaining,
         )
     except Exception:
         logger.exception("Failed to settle voice session %s for user %s", session_id, user_id)

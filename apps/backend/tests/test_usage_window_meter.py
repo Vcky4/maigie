@@ -62,7 +62,14 @@ def entitlement(
     tier="free",
     window_allowance=500,
     monthly_backstop=5_000,
+    voice_seconds=0,
 ) -> entitlement_service.Entitlement:
+    """A fixed entitlement for the *unit* meter.
+
+    `voice_seconds` defaults to zero and every test in this file leaves it there, deliberately: voice
+    has its own counter (§6.3) and none of it should reach the window. `tests/test_voice_balance.py`
+    covers the voice side, and `TestVoiceIsADifferentMeter` below asserts the separation from here.
+    """
     return entitlement_service.Entitlement(
         tier=tier,
         source="none" if tier == "free" else "subscription",
@@ -73,6 +80,8 @@ def entitlement(
         trial_days_remaining=None,
         window_allowance=window_allowance,
         monthly_backstop=monthly_backstop,
+        voice_seconds_included=voice_seconds,
+        voice_allowance_source_id=None if voice_seconds == 0 else "subscription:test",
     )
 
 
@@ -160,7 +169,8 @@ class TestReadsDoNotReset:
     @pytest.mark.asyncio
     async def test_checking_availability_writes_nothing(self, world):
         """The check runs before every metered operation, including ones that go on to be refused. If
-        it wrote, a refused learner's window would be reset by the act of refusing them."""
+        it wrote, a refused learner's window would be reset by the act of refusing them.
+        """
         await meter.consume_credits(world.user, 400, "chat_message")
         world.repo.updates.clear()
         await meter.check_credit_availability(world.user, 50)
@@ -178,7 +188,8 @@ class TestReadsDoNotReset:
         self, world
     ):
         """The learner sees a full allowance because their window has elapsed, not because looking at
-        it refilled it. `usageWindowStartedAt` stays where it was until an operation moves it."""
+        it refilled it. `usageWindowStartedAt` stays where it was until an operation moves it.
+        """
         await meter.consume_credits(world.user, 500, "chat_message")
         world.advance(hours=6)
         usage = await meter.get_credit_usage(world.user)
@@ -357,7 +368,8 @@ class TestWhatTheLearnerIsShown:
 
 class TestSpacesAreOutOfScope:
     """Decision F. Both entry points take the Space branch before any window machinery is reached,
-    which is what made the personal path separable — and this is the test that keeps it that way."""
+    which is what made the personal path separable — and this is the test that keeps it that way.
+    """
 
     @pytest.mark.asyncio
     async def test_a_space_operation_does_not_touch_the_learners_window(self, world, monkeypatch):
@@ -397,3 +409,58 @@ class TestSpacesAreOutOfScope:
         )
         assert not available
         assert warning and "Space" in warning
+
+
+class TestVoiceIsADifferentMeter:
+    """The scope guard for §6.3's unbundling, in the same shape as the Decision F guards.
+
+    Voice used to be drawn from this window, and at 200 units a minute it is 40× a Flash-Lite chat
+    turn — so a learner who spent their allowance on voice hit the COGS ceiling and one who spent it on
+    text did not come close. Pricing one allowance for both meant pricing for a case almost nobody
+    incurred.
+
+    The failure mode to guard against is not a wrong number but a *reconnection*: someone reading
+    "voice costs 200 units" and wiring voice back into `consume_credits`, which would look entirely
+    reasonable and would undo the unbundling silently.
+    """
+
+    def test_the_voice_allowance_is_not_derivable_from_the_window(self):
+        from src.domains.billing.services import entitlement_service as ent
+
+        # A 7-day pass has the same window as the subscription and fewer voice minutes. No function of
+        # the window allowance can produce both.
+        assert ent.WINDOW_ALLOWANCE_PASS_7D == ent.WINDOW_ALLOWANCE_PLUS
+        assert ent.VOICE_SECONDS_PASS_7D != ent.VOICE_SECONDS_PLUS_MONTHLY
+
+    def test_the_voice_rate_is_a_cost_basis_and_charges_nothing(self):
+        """`GEMINI_LIVE_UNITS_PER_MINUTE` survives only to price the margin tables and to make "40× a
+        chat turn" checkable. If it were still converting voice time into units to charge for it, that
+        conversion would be a path back into this window — and it is the same conversion that hid a
+        100× under-price for the life of the feature.
+        """
+        from src.domains.study_voice import billing as voice
+
+        assert not hasattr(voice, "units_from_billable_seconds_raw")
+        assert not hasattr(voice, "units_total_final_settlement")
+        assert voice.chargeable_seconds_raw(60.0) == 60
+
+    def test_the_voice_path_does_not_import_the_unit_meter(self):
+        """Asserted structurally, because this is the reconnection that would be easiest to make by
+        accident. `study_voice` charges through `voice_service` now; a `consume_credits` in the bridge
+        or the settlement would put voice minutes back on the window.
+        """
+        from pathlib import Path
+
+        voice_dir = Path(__file__).resolve().parents[1] / "src" / "domains" / "study_voice"
+        for module in ("bridge.py", "settlement.py", "routes.py"):
+            source = (voice_dir / module).read_text(encoding="utf-8", errors="replace")
+            # Imports and calls, not mentions. Both modules discuss `consume_credits` in prose,
+            # recording what they used to do and why they stopped — which is worth keeping, and is
+            # exactly the sort of thing a substring check would have forbidden.
+            for line in source.splitlines():
+                code = line.split("#", 1)[0]
+                assert "import consume_credits" not in code, f"{module} imports the unit meter"
+                assert "consume_credits(" not in code, (
+                    f"{module} charges through the unit meter again, which puts voice minutes back "
+                    "on the 5-hour window they were unbundled from"
+                )

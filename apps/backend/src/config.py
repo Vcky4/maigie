@@ -463,19 +463,36 @@ class Settings(BaseSettings):
     #: figures differ by 50× is the whole argument for denominating in cost: a rate expressed in
     #: tokens has to be re-derived every time a model's price moves, and this one was not re-derived
     #: for the life of the feature.
+    #: **Now a cost basis rather than a charging rate.** §6.3 moved voice onto its own
+    #: seconds-denominated balance (`voiceSecondsRemaining`), so nothing converts voice time into
+    #: units in order to charge for it any more. This figure survives because the *margin* tables and
+    #: the catalogue copy still need to know what a voice minute costs — 200 units is $0.02 — and
+    #: because it is what makes "40× a chat turn" a checkable claim rather than an assertion.
     GEMINI_LIVE_UNITS_PER_MINUTE: float = 200.0
-    #: Wall-clock session floor in units, charged at settlement for FREE sessions only, and also the
-    #: pre-start availability check — so it doubles as "can this learner afford to begin at all".
-    #: One minute's worth: a floor shorter than a minute stops being a floor, and a longer one would
-    #: charge a learner for time they did not get.
-    GEMINI_LIVE_MIN_SESSION_UNITS: int = 200
+    #: Wall-clock session floor **in seconds**, charged at settlement for FREE sessions only. One
+    #: minute: a floor shorter than a minute stops being a floor, and a longer one charges a learner
+    #: for time they did not get.
+    #:
+    #: Was `GEMINI_LIVE_MIN_SESSION_UNITS = 200`, which was the same minute expressed in the currency
+    #: voice no longer spends. Renamed rather than reinterpreted — a quantity that changes
+    #: denomination has to change name, or the next reader converts it twice.
+    #:
+    #: It no longer doubles as the pre-start affordability check. That check now asks the voice
+    #: balance whether a session can be funded at all, which is a different and better question: the
+    #: floor is about the minimum a session costs, not about whether the learner has voice.
+    GEMINI_LIVE_MIN_SESSION_SECONDS: int = 60
     GEMINI_LIVE_STANDBY_IDLE_SECONDS: float = 2.5
     GEMINI_LIVE_BILLING_TICK_SECONDS: float = 2.0
-    #: Accrued units to batch before writing. Unchanged at 50, but its *meaning* changed with the
-    #: denomination: against the old 10 000/minute rate it was 0.3 seconds of audio, so it flushed on
-    #: essentially every 2-second tick and the batching it exists for never happened. At 200/minute
-    #: it is 15 seconds, which is what a batch was supposed to be.
-    GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK: int = 50
+    #: Accrued **seconds** to batch before writing, so a 2-second tick does not mean a write every
+    #: 2 seconds per active session.
+    #:
+    #: 15 seconds, which is what the old `GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK = 50` units came to at
+    #: 200 units/minute. Worth recording that this constant has now been wrong in both directions: at
+    #: the pre-Phase-0 rate of 10 000 units/minute the same 50 was **0.3 seconds** of audio, so it
+    #: flushed on essentially every tick and the batching it exists for never happened at all. A
+    #: threshold expressed in a derived currency drifts whenever the derivation does; expressed in
+    #: seconds it cannot.
+    GEMINI_LIVE_BILLING_MIN_CONSUME_SECONDS: int = 15
     GEMINI_LIVE_BILLING_FLUSH_INTERVAL_SECONDS: float = 60.0
     #: Silence this long ends a voice session, in seconds. Ten minutes.
     #:
