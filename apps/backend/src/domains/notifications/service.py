@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
@@ -16,14 +16,19 @@ from src.shared.time import (
     UNKNOWN_TIMEZONE,
     LearnerTimezone,
     ensure_utc,
-    is_within_quiet_hours,
     local_day_bounds,
-    next_end_of_quiet_hours,
     parse_hhmm,
     resolve_learner_timezone,
 )
 
 from .db_models import Notification, NotificationInteraction
+from .decision import (
+    POLICY_VERSION,
+    DecisionInput,
+    NotificationDecisionRecord,
+    decide,
+    resolve,
+)
 from .email_delivery import address_reference
 from .feature_flags import capability_enabled_for
 from .models import (
@@ -412,16 +417,59 @@ async def create_notification(
     moment = ensure_utc(scheduled_at) if scheduled_at else datetime.now(UTC)
     quiet_from = parse_hhmm(getattr(profile, "quiet_hours_start", None))
     quiet_to = parse_hhmm(getattr(profile, "quiet_hours_end", None))
-    status = "PENDING"
-    eligible_at = moment
-    if is_within_quiet_hours(moment, timezone_, quiet_from, quiet_to):
-        status = "QUEUED"
-        eligible_at = next_end_of_quiet_hours(moment, timezone_, quiet_to)
-    elif priority > PRIORITY_TIME_CRITICAL and await _allowance_spent(
-        user_id, profile=profile, timezone_=timezone_, moment=moment
-    ):
-        status = "QUEUED"
-        _, eligible_at = local_day_bounds(moment, timezone_)
+
+    # Timing, channel selection, and grouping now flow through one deterministic engine rather
+    # than an inline branch here, so there is a single implementation to record, audit, and later
+    # measure a learned layer against. At Level 0 its output is identical to the previous logic.
+    email_plan = await _email_plan(user_id, type=type, spec=spec)
+    decision_input = DecisionInput(
+        notification_type=type,
+        priority=priority,
+        urgency=spec.urgency,
+        category=spec.category,
+        intelligence_scope=spec.intelligence_scope,
+        moment=moment,
+        timezone=timezone_,
+        quiet_from=quiet_from,
+        quiet_to=quiet_to,
+        allowance_spent=(
+            priority > PRIORITY_TIME_CRITICAL
+            and await _allowance_spent(user_id, profile=profile, timezone_=timezone_, moment=moment)
+        ),
+        default_channels=spec.default_channels,
+        allowed_channels=spec.allowed_channels,
+        email_planned=email_plan is not None,
+        group_key=group_key,
+        groupable=spec.groupable,
+    )
+    baseline = decide(decision_input)
+    # There is no learned proposer yet, so `resolve` applies the baseline and records the mode.
+    # The shadow-only setting is threaded through now so that when a proposer is added it is the
+    # only new wiring needed — the seam that keeps a proposal observed-but-not-applied already
+    # exists here and is exercised by tests.
+    resolved = resolve(
+        baseline,
+        proposal=None,
+        shadow_only=get_settings().NOTIFICATION_INTELLIGENCE_SHADOW_ONLY,
+    )
+    status = resolved.applied.status
+    eligible_at = resolved.applied.eligible_at
+
+    # The decision is made for every notification; the audit record is written only for learners in
+    # the intelligence rollout, so the table does not grow for everyone before the layer uses it.
+    # Recording is what the gate controls, never the decision — the deterministic baseline runs for
+    # all learners regardless, so a learner outside the cohort behaves exactly as before.
+    decision_record = None
+    if capability_enabled_for("INTELLIGENCE", user_id):
+        decision_record = NotificationDecisionRecord(
+            user_id=user_id,
+            notification_type=type,
+            policy_version=POLICY_VERSION,
+            input_snapshot=resolved.applied.input_snapshot(decision_input),
+            decision=resolved.applied.decision_record(),
+            reason_codes=resolved.reason_codes(),
+            used_fallback=resolved.used_fallback,
+        )
 
     row, mutation, replaced_id = await notification_repo.create_canonical(
         {
@@ -446,12 +494,13 @@ async def create_notification(
             "expires_at": eligible_at + spec.ttl if spec.ttl else None,
         },
         group_window=spec.dedupe_window if spec.groupable else None,
-        plan_mobile_push="MOBILE_PUSH" in spec.default_channels,
+        plan_mobile_push="MOBILE_PUSH" in resolved.applied.channels,
         # Planned on the same terms as mobile push, with consent rechecked at dispatch. No
         # rollout check here: a learner outside the cohort cannot subscribe in the first place,
         # so there is no browser for a delivery to point at.
-        plan_web_push="WEB_PUSH" in spec.default_channels,
-        plan_email=await _email_plan(user_id, type=type, spec=spec),
+        plan_web_push="WEB_PUSH" in resolved.applied.channels,
+        plan_email=email_plan,
+        decision_record=decision_record,
     )
     if mutation:
         if replaced_id is not None:
@@ -474,6 +523,34 @@ async def lifecycle_metrics() -> dict[str, Any]:
         },
     )
     return data
+
+
+async def intelligence_metrics(*, window_hours: int = 24) -> dict[str, Any]:
+    """The control dashboard for the deterministic baseline, for staff.
+
+    Two halves that answer the exit criterion together: what the engine decided (and how often it
+    fell back), and whether interruptions led to the outcome each type is for. Kept behind the same
+    staff gate as the lifecycle metrics and reports only aggregates — no learner is named.
+    """
+
+    now = datetime.now(UTC)
+    since = now - timedelta(hours=window_hours)
+    decisions = await notification_repo.decision_metrics(since=since, until=now)
+    attribution = await notification_repo.outcome_attribution(since=since, until=now)
+    logger.info(
+        "Notification intelligence metrics inspected",
+        extra={
+            "window_hours": window_hours,
+            "decisions": decisions["decisions"],
+            "attributed_types": len(attribution),
+        },
+    )
+    return {
+        "generatedAt": now,
+        "windowHours": window_hours,
+        "decisions": decisions,
+        "outcomeAttribution": attribution,
+    }
 
 
 async def list_push_installations(*, user_id: str):

@@ -194,6 +194,23 @@ class NotificationSpec:
     digestible: bool = False
     transactional: bool = False
     intelligence_scope: IntelligenceScope = "NONE"
+    #: The interaction events that count as this type's meaningful outcome, and how long after the
+    #: notification an outcome still counts. The plan is explicit that an open is not success: a
+    #: reminder succeeds when the learner *starts the session* (`ACTIONED`), not when they glance
+    #: at the banner. So the default is the strong signal, `ACTIONED`, and only informational types
+    #: whose whole purpose is to open a thing count `CLICKED`/`OPENED`. This is the label the
+    #: intelligence layer optimises for, so getting it right per type matters more than the ranker.
+    success_events: tuple[str, ...] = ("ACTIONED",)
+    attribution_window: timedelta = timedelta(days=1)
+
+    def counts_as_success(self, event: str, *, delivered_at, occurred_at) -> bool:
+        """Whether one interaction is a meaningful outcome for this type, within its window."""
+
+        if event not in self.success_events:
+            return False
+        if delivered_at is None or occurred_at is None:
+            return False
+        return occurred_at - delivered_at <= self.attribution_window
 
 
 IN_APP: tuple[NotificationChannel, ...] = ("IN_APP",)
@@ -222,7 +239,16 @@ def _spec(
     digestible: bool = False,
     transactional: bool = False,
     intelligence_scope: IntelligenceScope = "NONE",
+    success_events: tuple[str, ...] | None = None,
+    attribution_window: timedelta | None = None,
 ) -> NotificationSpec:
+    if success_events is None:
+        # The meaningful outcome is doing the thing (`ACTIONED`). Where the type carries no
+        # navigable action — a digest, an encouragement — there is nothing to do, so the honest
+        # best signal is that the learner opened it. Recognition and awareness types keep the
+        # `ACTIONED` default and will show low action rates; that is a true finding, not a bug,
+        # and precisely the kind of thing attribution exists to reveal.
+        success_events = ("OPENED",) if action_kinds == ("NONE",) else ("ACTIONED",)
     return NotificationSpec(
         category=category,
         urgency=urgency,
@@ -236,6 +262,12 @@ def _spec(
         digestible=digestible,
         transactional=transactional,
         intelligence_scope=intelligence_scope,
+        success_events=success_events,
+        # A reminder acted on the next day is a different thing from one acted on within its own
+        # life. Default the outcome window to the type's ttl (bounded), since past ttl the
+        # notification is gone and a later action is not attributable to it; fall back to a day.
+        attribution_window=attribution_window
+        or (ttl if ttl and ttl <= timedelta(days=7) else timedelta(days=1)),
     )
 
 
@@ -923,6 +955,13 @@ def canonical_action_payload(action: NotificationAction) -> dict[str, object]:
     return action.model_dump(mode="json", by_alias=True)
 
 
+#: The interaction events that can count as a positive outcome. The negative signals — DISMISSED,
+#: UNSUBSCRIBED, DECLINED, SNOOZED — are measured separately as fatigue and can never be "success".
+#: Kept as a local literal set rather than imported from models to avoid a taxonomy->models cycle;
+#: a test cross-checks it against the model's InteractionEvent enum.
+_POSITIVE_EVENTS: frozenset[str] = frozenset({"SEEN", "OPENED", "CLICKED", "READ", "ACTIONED"})
+
+
 def _validate_registry() -> None:
     action_kinds = set(get_args(ActionKind))
     for notification_type, spec in NOTIFICATION_SPECS.items():
@@ -936,6 +975,10 @@ def _validate_registry() -> None:
             raise RuntimeError(f"Invalid action contract for {notification_type}")
         if not spec.outcome.strip():
             raise RuntimeError(f"Missing outcome contract for {notification_type}")
+        if not spec.success_events or not set(spec.success_events).issubset(_POSITIVE_EVENTS):
+            raise RuntimeError(f"Invalid success events for {notification_type}")
+        if spec.attribution_window <= timedelta(0):
+            raise RuntimeError(f"Attribution window must be positive for {notification_type}")
 
 
 _validate_registry()

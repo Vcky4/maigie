@@ -21,6 +21,7 @@ from .db_models import (
     EmailProviderEvent,
     EmailSuppression,
     Notification,
+    NotificationDecision,
     NotificationDelivery,
     NotificationDeliveryAttempt,
     NotificationDigest,
@@ -30,6 +31,7 @@ from .db_models import (
     NotificationPreference,
     PushInstallation,
 )
+from .decision import NotificationDecisionRecord
 
 #: Which `PushInstallation` column carries the provider address for each transport. Expo
 #: addresses a device by opaque token; Web Push addresses a browser by endpoint URL. Both are
@@ -74,8 +76,14 @@ class NotificationRepository:
         plan_mobile_push: bool = False,
         plan_web_push: bool = False,
         plan_email: EmailPlan | None = None,
+        decision_record: NotificationDecisionRecord | None = None,
     ) -> tuple[Notification, str | None, str | None]:
-        """Insert, replay, or replace one active grouped row atomically."""
+        """Insert, replay, or replace one active grouped row atomically.
+
+        When a decision record is supplied it is written in the same transaction and linked from
+        the notification, so the audit trail and the notification succeed or fail together. On an
+        idempotent replay no decision is written — the original decision stands.
+        """
 
         factory = get_session_factory()
         async with factory() as session:
@@ -136,6 +144,26 @@ class NotificationRepository:
                                     suppression_reason="NOTIFICATION_REPLACED",
                                 )
                             )
+
+                    if decision_record is not None:
+                        # Written before the notification so its id can link the FK in the same
+                        # insert. Only reached past the idempotency check above, so a replay never
+                        # produces a second decision for the same logical event.
+                        decision_row = NotificationDecision(
+                            user_id=decision_record.user_id,
+                            notification_type=decision_record.notification_type,
+                            policy_version=decision_record.policy_version,
+                            model_version=decision_record.model_version,
+                            input_snapshot=decision_record.input_snapshot,
+                            decision=decision_record.decision,
+                            reason_codes=decision_record.reason_codes,
+                            confidence=decision_record.confidence,
+                            used_fallback=decision_record.used_fallback,
+                            experiment_id=decision_record.experiment_id,
+                        )
+                        session.add(decision_row)
+                        await session.flush()
+                        values = {**values, "intelligence_decision_id": decision_row.id}
 
                     row = Notification(**values)
                     session.add(row)
@@ -1830,6 +1858,173 @@ class NotificationRepository:
                 for surface, event, count in interaction_rows
             ],
         }
+
+    async def decision_metrics(self, *, since: datetime, until: datetime) -> dict[str, Any]:
+        """How the decision engine behaved over a window, for the control dashboard.
+
+        The point of the baseline is to be a measurable control, so this reports what it decided
+        and how often it fell back, plus — once a proposer exists — how often a proposal diverged
+        from it. All low-cardinality: counts by policy version, by mode, by reason code, never per
+        learner or per notification.
+        """
+
+        factory = get_session_factory()
+        async with factory() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        NotificationDecision.policy_version,
+                        NotificationDecision.used_fallback,
+                        NotificationDecision.reason_codes,
+                    ).where(
+                        NotificationDecision.created_at >= since,
+                        NotificationDecision.created_at < until,
+                    )
+                )
+            ).all()
+
+        total = len(rows)
+        fallbacks = 0
+        by_policy: dict[str, int] = {}
+        by_mode: dict[str, int] = {}
+        by_reason: dict[str, int] = {}
+        shadow = 0
+        shadow_with_divergence = 0
+        for policy_version, used_fallback, reason_codes in rows:
+            by_policy[policy_version] = by_policy.get(policy_version, 0) + 1
+            if used_fallback:
+                fallbacks += 1
+            codes = reason_codes or []
+            is_shadow = "MODE_SHADOW" in codes
+            if is_shadow:
+                shadow += 1
+                if any(c.startswith("DIVERGE_") for c in codes):
+                    shadow_with_divergence += 1
+            for code in codes:
+                if code.startswith("MODE_"):
+                    by_mode[code] = by_mode.get(code, 0) + 1
+                else:
+                    by_reason[code] = by_reason.get(code, 0) + 1
+
+        return {
+            "windowHours": round((until - since).total_seconds() / 3600, 1),
+            "decisions": total,
+            "usedFallback": fallbacks,
+            "byPolicyVersion": [
+                {"policyVersion": pv, "count": c} for pv, c in sorted(by_policy.items())
+            ],
+            "byMode": [{"mode": m, "count": c} for m, c in sorted(by_mode.items())],
+            "byReasonCode": [
+                {"reasonCode": code, "count": c}
+                for code, c in sorted(by_reason.items(), key=lambda kv: (-kv[1], kv[0]))
+            ],
+            # Meaningful only once a proposer runs; reported so shadow evaluation is visible the
+            # moment it begins rather than needing a new metric then.
+            "shadow": {"decisions": shadow, "withDivergence": shadow_with_divergence},
+        }
+
+    async def outcome_attribution(
+        self, *, since: datetime, until: datetime
+    ) -> list[dict[str, Any]]:
+        """Meaningful-action-per-interruption, per notification type, over a window.
+
+        This is the exit-criterion measure for the deterministic baseline: did an interruption
+        lead to the outcome the type is for. It is computed here rather than in one SQL statement
+        because "success" is per-type — a different event set and a different attribution window
+        for a reminder than for a digest — and that policy lives in the taxonomy, not the schema.
+
+        An *interruption* is a notification that left on an interruptive channel (push or email);
+        an in-app record is not an interruption and is not counted, per the plan. The funnel is
+        reported whole — interruptions, opened/clicked, meaningful action, dismissed, no response —
+        so the gap between "opened" and "acted" stays visible rather than being collapsed into one
+        rate that hides it.
+        """
+
+        factory = get_session_factory()
+        async with factory() as session:
+            # One row per (notification, interaction) for interruptive notifications created in the
+            # window, plus the notification's own facts. Bounded by the window and by requiring an
+            # interruptive delivery, so it stays a staff-scale query, not a per-request one.
+            rows = (
+                await session.execute(
+                    select(
+                        Notification.id,
+                        Notification.type,
+                        Notification.eligible_at,
+                        NotificationInteraction.event,
+                        NotificationInteraction.occurred_at,
+                    )
+                    .join(
+                        NotificationDelivery,
+                        NotificationDelivery.notification_id == Notification.id,
+                    )
+                    .outerjoin(
+                        NotificationInteraction,
+                        NotificationInteraction.notification_id == Notification.id,
+                    )
+                    .where(
+                        Notification.created_at >= since,
+                        Notification.created_at < until,
+                        NotificationDelivery.channel.in_(["MOBILE_PUSH", "WEB_PUSH", "EMAIL"]),
+                        NotificationDelivery.status.in_(["SENDING", "ACCEPTED", "DELIVERED"]),
+                    )
+                )
+            ).all()
+
+        # Fold the flat rows into one bucket per notification, then attribute per type in Python
+        # where the per-type success set and window live.
+        from .taxonomy import NOTIFICATION_SPECS
+
+        per_notification: dict[str, dict[str, Any]] = {}
+        for notification_id, type_, eligible_at, event, occurred_at in rows:
+            bucket = per_notification.setdefault(
+                notification_id,
+                {"type": type_, "eligible_at": eligible_at, "events": []},
+            )
+            if event is not None:
+                bucket["events"].append((event, occurred_at))
+
+        summary: dict[str, dict[str, int]] = {}
+        for bucket in per_notification.values():
+            spec = NOTIFICATION_SPECS.get(bucket["type"])
+            if spec is None:
+                continue
+            stats = summary.setdefault(
+                bucket["type"],
+                {"interruptions": 0, "opened": 0, "acted": 0, "dismissed": 0, "noResponse": 0},
+            )
+            stats["interruptions"] += 1
+            events = bucket["events"]
+            opened = any(e in ("OPENED", "CLICKED", "READ", "SEEN") for e, _ in events)
+            acted = any(
+                spec.counts_as_success(e, delivered_at=bucket["eligible_at"], occurred_at=at)
+                for e, at in events
+            )
+            dismissed = any(e in ("DISMISSED", "UNSUBSCRIBED", "DECLINED") for e, _ in events)
+            if opened:
+                stats["opened"] += 1
+            if acted:
+                stats["acted"] += 1
+            if dismissed:
+                stats["dismissed"] += 1
+            if not events:
+                stats["noResponse"] += 1
+
+        return [
+            {
+                "notificationType": type_,
+                "interruptions": s["interruptions"],
+                "opened": s["opened"],
+                "meaningfulActions": s["acted"],
+                "dismissed": s["dismissed"],
+                "noResponse": s["noResponse"],
+                # The exit-criterion number, guarded against divide-by-zero.
+                "actionPerInterruption": (
+                    round(s["acted"] / s["interruptions"], 4) if s["interruptions"] else 0.0
+                ),
+            }
+            for type_, s in sorted(summary.items())
+        ]
 
     async def is_address_suppressed(self, address_hash: str) -> str | None:
         """Return the active suppression reason for an address, or ``None``."""

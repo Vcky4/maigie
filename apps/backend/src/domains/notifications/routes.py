@@ -56,6 +56,16 @@ async def operational_metrics(_staff_user: StaffUser) -> dict[str, Any]:
     return await service.lifecycle_metrics()
 
 
+@router.get("/operations/intelligence", include_in_schema=False)
+async def intelligence_metrics(
+    _staff_user: StaffUser, window_hours: int = Query(default=24, ge=1, le=168)
+) -> dict[str, Any]:
+    """The deterministic baseline's control dashboard: decisions made, fallbacks, and outcome
+    attribution per type. Staff-only and aggregate, the same as the lifecycle metrics."""
+
+    return await service.intelligence_metrics(window_hours=window_hours)
+
+
 @push_installations_router.get("", response_model=PushInstallationList)
 async def list_push_installations(current_user: CurrentUser) -> PushInstallationList:
     rows = await service.list_push_installations(user_id=current_user.id)
