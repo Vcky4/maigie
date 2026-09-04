@@ -379,40 +379,74 @@ class PaginatedPurchaseHistory(BaseModel):
 # ===========================================================================
 
 
-class ReferralStatsResponse(BaseModel):
-    """Referral statistics."""
+class ReferralsResponse(CamelModel):
+    """A learner's referral standing.
 
-    referralCode: str
-    totalReferrals: int
-    claimedRewards: int
-    unclaimedRewards: int
-    totalTokensEarned: int
-    totalTokensClaimed: int
+    `totalTokens*`, `claimedRewards` and `unclaimedRewards` are gone with the token currency they
+    summed (§6.9). What is left is the code to share and how many learners it brought — the reward
+    itself is now points, read from `GET /billing/points`, not a token total reported here. Keeping the
+    two questions on separate endpoints is deliberate: "who did I bring" and "what can I spend" are
+    different, and conflating them is what produced the retired token fields.
+    """
+
+    referral_code: str
+    total_referrals: int
 
 
-class ClaimableRewardResponse(BaseModel):
-    """A single claimable referral reward."""
+# ===========================================================================
+# Points (§6.9, Decision O)
+# ===========================================================================
+
+
+class PointsLedgerItem(CamelModel):
+    """One entry in the points ledger — a grant, a redemption, or an expiry.
+
+    Every entry is published, not just the balance, so the wallet explains its own number: a learner
+    who sees 100 can see the referral that earned it and the pass that would spend it. `points` is
+    signed — positive for a grant, negative for a redemption or expiry — so the running total is the
+    sum of what is shown, with nothing hidden.
+    """
 
     id: str
-    rewardType: str
-    tokens: int
-    referredUser: dict
-    createdAt: str | None = None
+    #: Signed: positive earns, negative spends or expires.
+    points: int
+    #: `referral_qualified` | `redemption` | `expiry` | `adjustment`.
+    kind: str
+    #: Set only on positive grants; a redemption or expiry carries none.
+    expires_at: datetime | None = None
+    #: The referred learner (a grant), the pass bought (a redemption), or the grant written off (an
+    #: expiry). What each entry points back at, so the ledger reads as cause and effect.
+    source_ref: str | None = None
+    note: str | None = None
+    created_at: datetime
 
 
-class ClaimRewardRequest(BaseModel):
-    """Claim a referral reward."""
+class PointsBalanceResponse(CamelModel):
+    """The points wallet: what is spendable, what it can buy, and what expires next.
 
-    rewardId: str
+    `redeemable` is the pass ids this balance can afford right now, so a client shows exactly the
+    passes a learner can take rather than offering one and refusing it. `nextExpiryAt`/`nextExpiryPoints`
+    describe the soonest-expiring grant — `null` when nothing is live, so "nothing to lose" reads
+    differently from "loses some soon". `history` is the full ledger, newest first, because the wallet
+    explains its own balance (§6.9).
+    """
+
+    balance: int
+    next_expiry_at: datetime | None = None
+    next_expiry_points: int | None = None
+    redeemable: list[str]
+    history: list[PointsLedgerItem]
 
 
-class ClaimRewardResponse(BaseModel):
-    """Claim result."""
+class RedeemPointsRequest(BaseModel):
+    """Spend points on a pass.
 
-    rewardId: str
-    tokensClaimed: int
-    claimDate: str
-    dailyLimitIncrease: int
+    `productId` is one of the pass ids in `POINTS_COST`. The subscription is not redeemable and there
+    is no code path that could grant it from points — the construction §6.9 relies on. An id that is
+    not a pass is refused 422; enough points not held is 409 `INSUFFICIENT_POINTS`.
+    """
+
+    productId: Literal["plus_pass_5h", "plus_pass_7d"]
 
 
 # ===========================================================================

@@ -219,6 +219,108 @@ def sweep_expired_passes_task():
     return asyncio.run(_sweep())
 
 
+@celery_app.task(name="billing.qualify_referrals", queue="default", time_limit=300)
+def qualify_referrals_task():
+    """Grant points to referrers whose referred learners have now studied on 7 distinct days.
+
+    **Evaluates from `UsageEvent`, not `lastLoginAt`** (§6.9). A referred learner qualifies their
+    referrer on their seventh distinct billable day, and `UsageEvent` exists only for charged
+    operations, so an account that logs in seven times and studies nothing has no rows and grants
+    nothing. That is the anti-farm mechanism now the cap is gone.
+
+    Walks the `signup` referral rows whose referred learner has not yet produced a
+    `referral_qualified` grant, and asks `points_service.qualify_referral` about each. The grant is
+    idempotent on a unique index, so running this twice — or overlapping runs — cannot double-pay:
+    the check here only narrows the work, it does not hold the invariant.
+
+    Once per referred learner, forever. A referred learner who later churns keeps the referrer's
+    points; clawback reads as bad faith and is unmanageable (§6.9).
+    """
+    import asyncio
+
+    async def _run() -> dict:
+        from sqlalchemy import select
+
+        from src.domains.billing.db_models import PointsLedgerEntry, ReferralReward
+        from src.domains.billing.services import points_service
+        from src.shared.database import get_session_factory
+
+        factory = get_session_factory()
+        async with factory() as session:
+            # Referred learners recorded at signup, minus those already granted. A `NOT IN` against the
+            # grants rather than a join, because the grant is keyed on the referred learner's id in
+            # `sourceRef` and there are few enough of either for this to be cheap.
+            granted = set(
+                (
+                    await session.execute(
+                        select(PointsLedgerEntry.source_ref).where(
+                            PointsLedgerEntry.kind == points_service.KIND_REFERRAL
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            candidates = list(
+                (
+                    await session.execute(
+                        select(ReferralReward.referred_user_id).where(
+                            ReferralReward.reward_type == "signup"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        pending = [c for c in candidates if c not in granted]
+        qualified = 0
+        for referred_user_id in pending:
+            try:
+                if await points_service.qualify_referral(referred_user_id):
+                    qualified += 1
+            except Exception:
+                # One learner's evaluation failing does not stop the run — the next daily pass retries.
+                logger.exception("points: qualification failed for referred=%s", referred_user_id)
+
+        if pending:
+            logger.info(
+                "points: evaluated %d pending referral(s), qualified %d",
+                len(pending),
+                qualified,
+            )
+        return {"pending": len(pending), "qualified": qualified}
+
+    return asyncio.run(_run())
+
+
+@celery_app.task(name="billing.expire_points", queue="default", time_limit=120)
+def expire_points_task():
+    """Write the negative `expiry` entries for grants past 60 days, and notify a learner about to lose
+    a spendable one.
+
+    **The balance is already correct without this.** `points_service.balance` and `redeem` both
+    exclude expired grants on read, so a grant that expired an hour ago already stops counting. This
+    exists to make the ledger *explain* the drop — a self-explaining ledger rather than one whose
+    balance silently disagrees with the sum of its visible entries — which is the same belt-and-braces
+    the pass sweep gives Decision E.
+
+    The notification is deliberately narrow: seven days before a learner's oldest grant expires, and
+    **only if that grant alone can still buy a pass**. Notifying someone about 40 unspendable points is
+    noise, and worse than noise — it advertises a reward they cannot collect.
+    """
+    import asyncio
+
+    async def _run() -> dict:
+        from src.domains.billing.services import points_service
+
+        touched = await points_service.expire_due()
+        notified = await points_service.notify_expiring_grants()
+        return {"expired_users": touched, "notified": notified}
+
+    return asyncio.run(_run())
+
+
 def get_beat_schedule() -> dict:
     """Beat entries for the billing domain.
 
@@ -231,6 +333,8 @@ def get_beat_schedule() -> dict:
     stale paid tier on read, so a learner whose subscription ended is not treated as Plus while waiting
     for a job. What the unscheduled task would add is writing `tier` back to `FREE`.
     """
+    from celery.schedules import crontab
+
     return {
         # Every five minutes (Decision E). Not because expiry needs it — that is resolved on read —
         # but because the notification does, and five minutes is the resolution at which "your pass has
@@ -239,6 +343,23 @@ def get_beat_schedule() -> dict:
         "billing.sweep_expired_passes": {
             "task": "billing.sweep_expired_passes",
             "schedule": 300.0,
+            "options": {"queue": "default"},
+        },
+        # Daily (Decision O). Qualification is a floor a learner crosses once, not something they
+        # watch accrue, so a day's resolution is ample — a referral qualified this morning is granted
+        # tonight. `crontab(hour=2)` rather than a bare interval so it lands in the quiet window with
+        # the other nightly billing work rather than at an arbitrary offset from deploy time.
+        "billing.qualify_referrals": {
+            "task": "billing.qualify_referrals",
+            "schedule": crontab(hour=2, minute=0),
+            "options": {"queue": "default"},
+        },
+        # Nightly, after qualification, so a grant made tonight is never expired the same night. Expiry
+        # is resolved on read regardless; this writes the explaining entries and fires the one
+        # pre-expiry notification.
+        "billing.expire_points": {
+            "task": "billing.expire_points",
+            "schedule": crontab(hour=2, minute=30),
             "options": {"queue": "default"},
         },
     }

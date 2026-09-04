@@ -159,6 +159,13 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     apple_product_id: Mapped[str | None] = mapped_column("appleProductId", String, nullable=True)
 
+    # Points balance, cached over `PointsLedgerEntry` (Decision O). The ledger is the truth — each
+    # grant expires 60 days after it is earned, which a single integer cannot express — so this is
+    # `SUM(points) WHERE NOT expired`, written by `points_service` and rebuildable if it ever drifts.
+    points_balance: Mapped[int] = mapped_column(
+        "pointsBalance", Integer, default=0, server_default="0"
+    )
+
     # Feature usage (FREE tier)
     file_uploads_count: Mapped[int] = mapped_column(
         "fileUploadsCount", Integer, default=0, server_default="0"

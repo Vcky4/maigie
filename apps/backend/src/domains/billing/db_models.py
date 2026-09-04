@@ -3,7 +3,7 @@ Billing domain — SQLAlchemy models.
 
 ReferralReward, ReferralRewardClaim, AdRewardClaim, ResourceBankItem,
 ResourceBankFile, ResourceBankReport, ResourceUploadReward,
-ResourceUploadRewardClaim, UsageEvent, PlusPurchase, PlusPass.
+ResourceUploadRewardClaim, UsageEvent, PlusPurchase, PlusPass, PointsLedgerEntry.
 
 Maps to existing PostgreSQL tables created by Prisma.
 """
@@ -485,5 +485,70 @@ class PlusPass(Base):
             "userId",
             unique=True,
             postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# PointsLedgerEntry
+# ---------------------------------------------------------------------------
+
+
+class PointsLedgerEntry(Base):
+    """One movement of points — earned, redeemed, or expired. Decision O.
+
+    **A ledger rather than a balance**, because each grant expires 60 days after it is earned and a
+    single integer cannot carry per-grant expiry. The balance is `SUM(points) WHERE NOT expired`,
+    cached on `User.pointsBalance` and always rebuildable from these rows — the same relationship the
+    usage window has to `UsageEvent`.
+
+    The vocabulary is the sign and the `kind` together: a positive `referral_qualified`, a negative
+    `redemption`, a negative `expiry`, and an `adjustment` of either sign for support. `expires_at` is
+    set on positive entries only, because a redemption and an expiry are records of points already
+    leaving and have nothing left to expire — which is why the FIFO read and the sweep filter on
+    `kind` and `expires_at` together, not on sign.
+
+    One grant per referred learner is enforced by a partial unique index on
+    `(userId, kind, sourceRef) WHERE kind='referral_qualified'`, not by the service: the qualification
+    job re-evaluates everyone daily, so the constraint is what makes running it twice safe.
+    """
+
+    __tablename__ = "PointsLedgerEntry"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: str(__import__("uuid").uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    #: Signed. +100 grant, -100 / -250 redemption, -N expiry.
+    points: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: `referral_qualified` | `redemption` | `expiry` | `adjustment`.
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    #: Positive entries only. A grant expires; the entries that record points leaving do not.
+    expires_at: Mapped[datetime | None] = mapped_column(
+        "expiresAt", DateTime(timezone=True), nullable=True
+    )
+    #: The referred learner's id (grant), the redeemed `PlusPass.id` (redemption), or the expiring
+    #: entry's own id (expiry). What the entry is about.
+    source_ref: Mapped[str | None] = mapped_column("sourceRef", String, nullable=True)
+    #: Support-visible reason, for `adjustment`.
+    note: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        "createdAt",
+        DateTime(timezone=True),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+    )
+
+    __table_args__ = (
+        Index("PointsLedgerEntry_userId_createdAt_idx", "userId", "createdAt"),
+        Index("PointsLedgerEntry_userId_expiresAt_idx", "userId", "expiresAt"),
+        Index(
+            "PointsLedgerEntry_oneGrantPerReferral_idx",
+            "userId",
+            "kind",
+            "sourceRef",
+            unique=True,
+            postgresql_where=text("kind = 'referral_qualified'"),
         ),
     )

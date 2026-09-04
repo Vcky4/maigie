@@ -398,20 +398,87 @@ async def get_purchase_history(
 
 
 # ===========================================================================
-# Referrals — not mounted
+# Points (§6.9, Decision O)
+# ===========================================================================
+
+
+def _points_ledger_item(row) -> models.PointsLedgerItem:
+    return models.PointsLedgerItem(
+        id=row.id,
+        points=row.points,
+        kind=row.kind,
+        expiresAt=row.expires_at,
+        sourceRef=row.source_ref,
+        note=row.note,
+        createdAt=row.created_at,
+    )
+
+
+@router.get("/points", response_model=models.PointsBalanceResponse)
+async def get_points(current_user: CurrentUser):
+    """The learner's points wallet: balance, what it can buy, when the next batch expires, and the ledger.
+
+    `redeemable` is computed from the balance so a client offers only passes the learner can actually
+    take — it never shows a pass it will then refuse. `history` is the whole ledger, newest first,
+    because the wallet explains its own number (§6.9): the referral that earned points, the pass that
+    spent them, the grant that expired.
+    """
+    from .services import points_service
+
+    bal = await points_service.balance(current_user.id)
+    entries = await points_service.history(current_user.id)
+    return models.PointsBalanceResponse(
+        balance=bal.balance,
+        nextExpiryAt=bal.next_expiry_at,
+        nextExpiryPoints=bal.next_expiry_points,
+        redeemable=bal.redeemable,
+        history=[_points_ledger_item(row) for row in entries],
+    )
+
+
+@router.post("/points/redeem", response_model=models.PlusPassItem)
+async def redeem_points(body: models.RedeemPointsRequest, current_user: CurrentUser):
+    """Spend points on a pass. Returns the inventory pass, ready to activate.
+
+    **Only a pass.** `productId` is constrained to the two pass ids at the schema, and the service
+    refuses anything not in `POINTS_COST` before reading a thing — the subscription is unreachable from
+    here by construction, not by a check (§6.9). Not enough points held is `409 INSUFFICIENT_POINTS`,
+    the code a client turns into "you need N more"; a non-pass id is `422`.
+
+    The pass arrives in inventory with `source='points'` and no purchase behind it (Decision O), so it
+    activates through the same rail a bought pass uses — the learner starts its clock when they want it.
+    """
+    from .services import points_service
+
+    new_pass = await points_service.redeem(user_id=current_user.id, product_id=body.productId)
+    return _pass_item(new_pass)
+
+
+# ===========================================================================
+# Referrals
 # ===========================================================================
 #
-# `/referrals/stats`, `/referrals/claimable` and `/referrals/claim` are deleted here, and
-# not because they were unwritten. All three resolved into `referral_rewards_service`,
-# which was written against the Prisma client and now holds a `PrismaClientRemoved`
-# sentinel where its database used to be. Every one of them would answer 500. Mounting the
-# router with them attached would take three endpoints that are currently *honestly*
-# unreachable and make them dishonestly reachable.
-#
-# They return when the reward they describe exists. It is no longer a token grant: it is
-# points, earned when a referred learner has genuinely studied on seven distinct days,
-# redeemable for passes and for nothing else. That is a different contract, not a port,
-# which is why these are removed rather than commented out.
+# `/referrals/claimable` and `/referrals/claim` are gone with the token grant they served. A referral
+# is no longer a claim against a daily limit: it is points, earned when a referred learner has studied
+# on seven distinct days, redeemable for passes and nothing else (Decision O). The reward lives at
+# `GET /billing/points`; what remains here is the standing — the code to share and who it brought.
+
+
+@router.get("/referrals", response_model=models.ReferralsResponse)
+async def get_referrals(current_user: CurrentUser):
+    """The learner's referral code and how many learners it has brought.
+
+    The reward itself — points earned when a referred learner stays — is read from `GET /billing/points`,
+    not reported here. `referral_service.get_referral_stats` survives from before; its retired token
+    totals are dropped from the response shape (§6.9).
+    """
+    from .services import referral_service
+
+    stats = await referral_service.get_referral_stats(current_user.id)
+    return models.ReferralsResponse(
+        referralCode=stats["referralCode"],
+        totalReferrals=stats["totalReferrals"],
+    )
 
 
 # ===========================================================================
