@@ -949,6 +949,7 @@ def _to_block_response(block) -> models.StudyBlockResponse:
         googleCalendarEventId=block.google_calendar_event_id,
         googleCalendarSyncedAt=_isoformat_or_none(block.google_calendar_synced_at),
         completedAt=_isoformat_or_none(block.completed_at),
+        startedAt=_isoformat_or_none(block.started_at),
         createdAt=ensure_utc(block.created_at).isoformat(),
         updatedAt=ensure_utc(block.updated_at).isoformat(),
     )

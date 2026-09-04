@@ -79,6 +79,15 @@ def send_weekly_summaries_task() -> dict:
     return _run_producer("src.domains.progress.services.weekly_summary", "send_weekly_summaries")
 
 
+@celery_app.task(name="notifications.review_due_reminders", queue="default", time_limit=120)
+def send_review_due_reminders_task() -> dict:
+    """Produce one canonical review-due reminder per deck with cards due."""
+    return _run_producer(
+        "src.domains.personal_learning.services.review_due_reminders",
+        "send_review_due_reminders",
+    )
+
+
 def _run_notification_coro(function_name: str, module: str = "dispatcher") -> int:
     import asyncio
     import importlib
@@ -182,6 +191,15 @@ def get_beat_schedule() -> dict:
             # produces the summary and every later run that week replays it. This avoids
             # pinning delivery to one hour, which would miss anyone whose week has not
             # ended yet in their own timezone.
+            "schedule": 3600.0,
+            "options": {"queue": "default"},
+        },
+        "notifications.review_due_reminders": {
+            "task": "notifications.review_due_reminders",
+            # Hourly, guarded by a per-deck per-UTC-day idempotency key: the first run of a
+            # day announces each deck's due cards and every later run that day replays. Hourly
+            # rather than once, so a missed run is picked up within the hour and the count in
+            # the reminder stays close to current as more cards fall due.
             "schedule": 3600.0,
             "options": {"queue": "default"},
         },

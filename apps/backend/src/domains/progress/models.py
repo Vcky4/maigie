@@ -531,6 +531,9 @@ class StudyBlockUpdate(BaseModel):
     #: rather than a boolean because a Tuesday session can be marked done on Thursday and should keep
     #: Tuesday's date — the learner's own clock is the right authority for when they studied.
     completedAt: datetime | None = None
+    #: Marking a planned session started, or undoing it with an explicit `null`. Same one-PUT
+    #: pattern as `completedAt`: an explicit null clears it, an omitted key leaves it alone.
+    startedAt: datetime | None = None
 
 
 class StudyBlockResponse(BaseModel):
@@ -550,6 +553,8 @@ class StudyBlockResponse(BaseModel):
     #: When the learner recorded this block as done. `null` means not done, rather than unknown — a
     #: block is only ever completed by an explicit action.
     completedAt: str | None = None
+    #: When the learner started this session. `null` means not started.
+    startedAt: str | None = None
     createdAt: str
     updatedAt: str
 

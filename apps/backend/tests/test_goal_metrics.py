@@ -953,6 +953,7 @@ class TestBlockResponseCarriesAnOffset:
             "google_calendar_event_id": None,
             "google_calendar_synced_at": None,
             "completed_at": None,
+            "started_at": None,
             "created_at": datetime(2026, 8, 1, 0, 0),
             "updated_at": datetime(2026, 8, 1, 0, 0),
         }

@@ -9150,7 +9150,8 @@
               "WEB",
               "IOS",
               "ANDROID",
-              "EMAIL"
+              "EMAIL",
+              "SYSTEM"
             ],
             "title": "Surface",
             "type": "string"
@@ -17266,6 +17267,17 @@
             "title": "Startat",
             "type": "string"
           },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -17384,6 +17396,18 @@
               }
             ],
             "title": "Startat"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat"
           },
           "title": {
             "anyOf": [

@@ -71,16 +71,20 @@ async def update_block(*, block_id: str, user_id: str, data: dict[str, Any]) -> 
 
     updated = await progress_repo.update_block(block_id, update_data)
 
-    # A block going from not-done to done is the meaningful outcome of the study-session reminder
-    # that pointed at it, so attribute it. Only on the transition, so re-saving a done block does
-    # not re-fire; the recorder is idempotent and never raises, but the guard keeps the common
-    # edit path from doing needless work. Imported locally, matching how the rest of progress
-    # reaches into notifications, to avoid a domain import cycle.
+    # Starting or completing a block is the meaningful outcome of the study-session reminder that
+    # pointed at it, whichever comes first. Both attribute against the same (schedule_block, id), and
+    # record_action is idempotent per (notification, entity), so a learner who starts and later
+    # completes records the outcome once. Only on the null->set transition, so re-saving does not
+    # re-fire; the recorder never raises. Local import matches how progress reaches into notifications.
+    became_started = (
+        getattr(block, "started_at", None) is None
+        and getattr(updated, "started_at", None) is not None
+    )
     became_complete = (
         getattr(block, "completed_at", None) is None
         and getattr(updated, "completed_at", None) is not None
     )
-    if became_complete:
+    if became_started or became_complete:
         from src.domains.notifications import service as notification_service
 
         await notification_service.record_action(
