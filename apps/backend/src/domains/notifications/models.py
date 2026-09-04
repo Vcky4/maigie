@@ -19,7 +19,9 @@ InteractionEvent = Literal[
     "DECLINED",
     "UNSUBSCRIBED",
 ]
-InteractionSurface = Literal["WEB", "IOS", "ANDROID", "EMAIL"]
+# SYSTEM is a server-inferred interaction (an ACTIONED derived from a state change), not one a
+# client reported — kept distinct so attribution can tell the two apart.
+InteractionSurface = Literal["WEB", "IOS", "ANDROID", "EMAIL", "SYSTEM"]
 
 
 class NotificationItem(CamelModel):

@@ -71,6 +71,24 @@ async def update_block(*, block_id: str, user_id: str, data: dict[str, Any]) -> 
 
     updated = await progress_repo.update_block(block_id, update_data)
 
+    # A block going from not-done to done is the meaningful outcome of the study-session reminder
+    # that pointed at it, so attribute it. Only on the transition, so re-saving a done block does
+    # not re-fire; the recorder is idempotent and never raises, but the guard keeps the common
+    # edit path from doing needless work. Imported locally, matching how the rest of progress
+    # reaches into notifications, to avoid a domain import cycle.
+    became_complete = (
+        getattr(block, "completed_at", None) is None
+        and getattr(updated, "completed_at", None) is not None
+    )
+    if became_complete:
+        from src.domains.notifications import service as notification_service
+
+        await notification_service.record_action(
+            user_id=user_id,
+            source_entity_id=block_id,
+            source_entity_type="schedule_block",
+        )
+
     # **Re-sync, because only creation used to.** A block moved to a different hour kept its original
     # time in Google for ever, so the learner's calendar and their schedule disagreed and the calendar
     # was the one they had chosen to trust. Same tolerance as creation: a Google failure must not fail an

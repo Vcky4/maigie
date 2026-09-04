@@ -438,7 +438,7 @@ class NotificationInteraction(Base, TimestampMixin):
             name="NotificationInteraction_event_check",
         ),
         CheckConstraint(
-            "surface IN ('WEB', 'IOS', 'ANDROID', 'EMAIL')",
+            "surface IN ('WEB', 'IOS', 'ANDROID', 'EMAIL', 'SYSTEM')",
             name="NotificationInteraction_surface_check",
         ),
         Index(

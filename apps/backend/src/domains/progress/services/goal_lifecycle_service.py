@@ -203,6 +203,17 @@ async def record_answer(*, user_id: str, goal_id: str, response: str) -> Any:
     if status is not None and goal.status != status:
         await progress_repo.update_goal(goal_id, {"status": status})
 
+    # Answering the nudge is the meaningful outcome of the goal notification that asked for it, so
+    # attribute it. Local import and fail-safe recorder, the same convention `_notify` uses; the
+    # answer is already written above, so this can only ever add a data point, never lose one.
+    from src.domains.notifications import service as notification_service
+
+    await notification_service.record_action(
+        user_id=goal.user_id,
+        source_entity_id=goal_id,
+        source_entity_type="goal",
+    )
+
     # Through the shared event shape rather than a bespoke `extra`, so this ask and the post-exam review can
     # be compared in one query. The two response rates are the pair the programme is judged on, and until
     # they were written the same way, comparing them meant reconciling two log formats by hand.
