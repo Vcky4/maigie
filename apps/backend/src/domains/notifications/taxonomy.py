@@ -370,7 +370,13 @@ NOTIFICATION_SPECS: dict[str, NotificationSpec] = {
         "LEARNING",
         "NORMAL",
         IN_APP,
-        ("OPEN_HOME", "OPEN_GOAL", "OPEN_REVIEW", "OPEN_STUDY_PLAN", "OPEN_PREPARATION"),
+        (
+            "OPEN_HOME",
+            "OPEN_GOAL",
+            "OPEN_REVIEW",
+            "OPEN_STUDY_PLAN",
+            "OPEN_PREPARATION",
+        ),
         "start a useful activity or choose an alternative",
         ttl=timedelta(days=1),
         dedupe=timedelta(days=1),
@@ -856,6 +862,21 @@ NOTIFICATION_SPECS: dict[str, NotificationSpec] = {
         dedupe=None,
         allowed_channels=IN_APP_EMAIL,
         transactional=True,
+    ),
+    # Fired once, seven days before a points grant expires, and only when that grant on its own can
+    # still buy a pass (§6.9, Decision O). The success signal is spending — the learner opens the
+    # wallet and redeems — so the action is `OPEN_BILLING` and the default `ACTIONED` outcome is the
+    # right one: an open that does not lead to a redemption is a true miss, not success. Not
+    # transactional (nothing was paid), a 7-day ttl matching the warning horizon, and dedupe is left
+    # to the caller's per-grant idempotency key rather than a window — one grant, one warning.
+    "billing.points_expiring": _spec(
+        "BILLING",
+        "NORMAL",
+        IN_APP_EMAIL,
+        ("OPEN_BILLING",),
+        "redeem the expiring points for a pass",
+        ttl=timedelta(days=7),
+        dedupe=None,
     ),
     "membership.role_or_access_changed": _spec(
         "MEMBERSHIP",

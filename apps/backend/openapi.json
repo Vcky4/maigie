@@ -10862,6 +10862,123 @@
         "title": "PlusPassListResponse",
         "type": "object"
       },
+      "PointsBalanceResponse": {
+        "description": "The points wallet: what is spendable, what it can buy, and what expires next.\n\n`redeemable` is the pass ids this balance can afford right now, so a client shows exactly the\npasses a learner can take rather than offering one and refusing it. `nextExpiryAt`/`nextExpiryPoints`\ndescribe the soonest-expiring grant — `null` when nothing is live, so \"nothing to lose\" reads\ndifferently from \"loses some soon\". `history` is the full ledger, newest first, because the wallet\nexplains its own balance (§6.9).",
+        "properties": {
+          "balance": {
+            "title": "Balance",
+            "type": "integer"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/PointsLedgerItem"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "nextExpiryAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextexpiryat"
+          },
+          "nextExpiryPoints": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextexpirypoints"
+          },
+          "redeemable": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Redeemable",
+            "type": "array"
+          }
+        },
+        "required": [
+          "balance",
+          "redeemable",
+          "history"
+        ],
+        "title": "PointsBalanceResponse",
+        "type": "object"
+      },
+      "PointsLedgerItem": {
+        "description": "One entry in the points ledger — a grant, a redemption, or an expiry.\n\nEvery entry is published, not just the balance, so the wallet explains its own number: a learner\nwho sees 100 can see the referral that earned it and the pass that would spend it. `points` is\nsigned — positive for a grant, negative for a redemption or expiry — so the running total is the\nsum of what is shown, with nothing hidden.",
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "points": {
+            "title": "Points",
+            "type": "integer"
+          },
+          "sourceRef": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourceref"
+          }
+        },
+        "required": [
+          "id",
+          "points",
+          "kind",
+          "createdAt"
+        ],
+        "title": "PointsLedgerItem",
+        "type": "object"
+      },
       "PortalResponse": {
         "description": "Stripe customer portal URL.",
         "properties": {
@@ -14597,6 +14714,43 @@
           "reason"
         ],
         "title": "RecommendationResponse",
+        "type": "object"
+      },
+      "RedeemPointsRequest": {
+        "description": "Spend points on a pass.\n\n`productId` is one of the pass ids in `POINTS_COST`. The subscription is not redeemable and there\nis no code path that could grant it from points — the construction §6.9 relies on. An id that is\nnot a pass is refused 422; enough points not held is 409 `INSUFFICIENT_POINTS`.",
+        "properties": {
+          "productId": {
+            "enum": [
+              "plus_pass_5h",
+              "plus_pass_7d"
+            ],
+            "title": "Productid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "productId"
+        ],
+        "title": "RedeemPointsRequest",
+        "type": "object"
+      },
+      "ReferralsResponse": {
+        "description": "A learner's referral standing.\n\n`totalTokens*`, `claimedRewards` and `unclaimedRewards` are gone with the token currency they\nsummed (§6.9). What is left is the code to share and how many learners it brought — the reward\nitself is now points, read from `GET /billing/points`, not a token total reported here. Keeping the\ntwo questions on separate endpoints is deliberate: \"who did I bring\" and \"what can I spend\" are\ndifferent, and conflating them is what produced the retired token fields.",
+        "properties": {
+          "referralCode": {
+            "title": "Referralcode",
+            "type": "string"
+          },
+          "totalReferrals": {
+            "title": "Totalreferrals",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "referralCode",
+          "totalReferrals"
+        ],
+        "title": "ReferralsResponse",
         "type": "object"
       },
       "ReflectAchievement": {
@@ -22116,6 +22270,82 @@
         ]
       }
     },
+    "/api/v1/billing/points": {
+      "get": {
+        "description": "The learner's points wallet: balance, what it can buy, when the next batch expires, and the ledger.\n\n`redeemable` is computed from the balance so a client offers only passes the learner can actually\ntake — it never shows a pass it will then refuse. `history` is the whole ledger, newest first,\nbecause the wallet explains its own number (§6.9): the referral that earned points, the pass that\nspent them, the grant that expired.",
+        "operationId": "get_points_api_v1_billing_points_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PointsBalanceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Points",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/points/redeem": {
+      "post": {
+        "description": "Spend points on a pass. Returns the inventory pass, ready to activate.\n\n**Only a pass.** `productId` is constrained to the two pass ids at the schema, and the service\nrefuses anything not in `POINTS_COST` before reading a thing — the subscription is unreachable from\nhere by construction, not by a check (§6.9). Not enough points held is `409 INSUFFICIENT_POINTS`,\nthe code a client turns into \"you need N more\"; a non-pass id is `422`.\n\nThe pass arrives in inventory with `source='points'` and no purchase behind it (Decision O), so it\nactivates through the same rail a bought pass uses — the learner starts its clock when they want it.",
+        "operationId": "redeem_points_api_v1_billing_points_redeem_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedeemPointsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlusPassItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Redeem Points",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
     "/api/v1/billing/purchases": {
       "get": {
         "description": "Paginated purchase history: every pass and subscription the learner bought.\n\nReads `PlusPurchase` (Decision H). Was `/credits/purchases` over `CreditPurchaseTransaction`, which\nis dropped along with `CreditPack` in migration 072 — credit packs are the withdrawn product and\nnobody ever bought one. Renamed to `/purchases` because it is no longer about credits, matching §8.\n\nThe support surface for \"what did I pay you\", so it returns failed and refunded purchases too.",
@@ -22173,6 +22403,34 @@
           }
         ],
         "summary": "Get Purchase History",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/referrals": {
+      "get": {
+        "description": "The learner's referral code and how many learners it has brought.\n\nThe reward itself — points earned when a referred learner stays — is read from `GET /billing/points`,\nnot reported here. `referral_service.get_referral_stats` survives from before; its retired token\ntotals are dropped from the response shape (§6.9).",
+        "operationId": "get_referrals_api_v1_billing_referrals_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferralsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Referrals",
         "tags": [
           "billing",
           "billing"
