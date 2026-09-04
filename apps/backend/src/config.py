@@ -272,6 +272,15 @@ class Settings(BaseSettings):
     PRICE_NGN_PLUS_PASS_5H: int = 70_000  # ₦700
     PRICE_NGN_PLUS_PASS_7D: int = 150_000  # ₦1 500
     PRICE_NGN_PLUS_MONTHLY: int = 240_000  # ₦2 400
+    # NGN-only 4-month Term Pass (§6.8). The one product priced **above** ₦2 500, so it pays the
+    # flat ₦100 Paystack fee knowingly rather than by accident — do not "fix" it under the threshold,
+    # which would undercut two months of the subscription. Absent until now; a one-off charge sends
+    # this value and nothing overrides it, so it must exist before the Paystack pass rail ships.
+    PRICE_NGN_PLUS_PASS_TERM: int = 550_000  # ₦5 500
+    # 30-minute voice top-up (Decision R). Same ₦ as the 7-day pass by coincidence of the market, not
+    # a shared meaning — a voice minute costs the same in Lagos as in London, so this is the smallest
+    # discount off USD list of any product (§5.7.1).
+    PRICE_NGN_PLUS_VOICE_30: int = 150_000  # ₦1 500
     # Plan codes (create plans in Paystack Dashboard, amounts in NGN)
     PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY: str = ""
     PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY: str = ""

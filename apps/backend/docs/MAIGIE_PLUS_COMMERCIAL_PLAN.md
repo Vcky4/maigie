@@ -310,7 +310,7 @@ Prices from §6.1 (USD) and §6.8 (NGN). **NGN is a set price, not a conversion*
 | --- | --- | --- | --- | --- | --- | --- |
 | `plus_pass_5h` | 0.99 | ₦700 | one-time price | one-off charge | `plus_pass_5h`, consumable | `com.maigie.plus.pass5h`, Consumable |
 | `plus_pass_7d` | 3.99 | ₦1 500 | one-time price | one-off charge | `plus_pass_7d`, consumable | `com.maigie.plus.pass7d`, Consumable |
-| `plus_monthly` | 9.99/mo | ₦2 400/mo | recurring price, 3-day trial | plan code, monthly | `maigie_plus` / base plan `plus-monthly` | `com.maigie.plus.monthly`, group `maigie_plus` |
+| `plus_monthly` | 9.99/mo | ₦2 400/mo | recurring price, 3-day trial | plan code, monthly | `maigie_plus` / base plan `plus-monthly` | `com.maigie.plus.monthly.sub`, group `maigie_plus` |
 | `plus_pass_term` | **—** | ₦5 500 | **not created** | one-off charge | `plus_pass_term`, consumable, **NG only** | `com.maigie.plus.passterm`, Consumable, **NG only** |
 | `plus_voice_30` | 1.49 | ₦1 500 | one-time price | one-off charge | `plus_voice_30`, consumable | `com.maigie.plus.voice30`, Consumable |
 | `free` | 0 | 0 | — | — | — | — |
@@ -374,7 +374,7 @@ The longest lead time in the plan, and most of it is not engineering.
 - [ ] **Complete the Paid Applications agreement**, with banking and tax. **No in-app purchase product can be created until this is active**, and it needs details an engineer cannot supply. This is the single item most likely to add a week to the schedule, which is why it is step 1 rather than a Phase 5 task.
 - [ ] Enable **In-App Purchase on the App ID** in the Apple Developer portal. This is a portal capability, **not** an entitlements-file edit — §5.6 says why editing `Maigie.entitlements` would be wrong.
 - [ ] Create `com.maigie.plus.pass5h`, `com.maigie.plus.pass7d`, `com.maigie.plus.passterm` and `com.maigie.plus.voice30` as **Consumable**. Same irreversibility as Play.
-- [ ] Create `com.maigie.plus.monthly` as **auto-renewable** in subscription group `maigie_plus`, with a **3-day introductory free trial**.
+- [ ] Create `com.maigie.plus.monthly.sub` as **auto-renewable** in subscription group `maigie_plus`, with a **3-day introductory free trial**. **Not `com.maigie.plus.monthly`** — that id was created once as a consumable by mistake and Apple never lets a product id be reused, even after deletion. The `.sub` suffix is the replacement; the subscription **group** id `maigie_plus` is unaffected, since group and product ids are separate namespaces.
 - [ ] Set NGN prices per territory via each product's **price schedule**, and restrict `com.maigie.plus.passterm` to **Nigeria** in its availability. Apple's default is to derive every territory from the base price, which is FX parity again.
 - [ ] **Generate the In-App Purchase key — not the App Store Connect API key.** There are two Apple keys with nearly the same name, both issuing an issuer ID, a key ID and a `.p8`, and **they are not interchangeable**:
 
