@@ -438,6 +438,42 @@ class NotificationRepository:
                     raise ValueError("idempotencyId is already used for another notification")
                 return replay, False
 
+    async def find_actionable_notification(
+        self,
+        user_id: str,
+        *,
+        source_entity_id: str,
+        source_entity_type: str | None = None,
+        within: timedelta,
+    ) -> str | None:
+        """The most recent notification this learner got about one entity, for attribution.
+
+        When a learner does the thing a notification pointed at — completes the study block it
+        reminded them of, answers the goal nudge — this maps that entity back to the notification
+        so an `ACTIONED` outcome can be recorded against it. Bounded by `within` so an action taken
+        long after is not credited to a stale notification; the per-type attribution window is
+        applied again at read time, so this bound only needs to be the generous outer limit.
+
+        Scoped to `user_id`, and returns only an id, so a caller cannot use it to read another
+        learner's notification.
+        """
+
+        factory = get_session_factory()
+        async with factory() as session:
+            conditions = [
+                Notification.user_id == user_id,
+                Notification.source_entity_id == source_entity_id,
+                Notification.created_at >= datetime.now(UTC) - within,
+            ]
+            if source_entity_type is not None:
+                conditions.append(Notification.source_entity_type == source_entity_type)
+            return await session.scalar(
+                select(Notification.id)
+                .where(*conditions)
+                .order_by(Notification.created_at.desc(), Notification.id.desc())
+                .limit(1)
+            )
+
     async def count_delivered_between(
         self, user_id: str, *, since: datetime, until: datetime
     ) -> int:

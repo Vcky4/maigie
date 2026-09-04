@@ -510,6 +510,66 @@ async def create_notification(
     return row
 
 
+#: How far back an action may reach to find the notification it fulfilled. The longest per-type
+#: attribution window is a week, and the aggregation re-applies the precise per-type window, so this
+#: is only the generous outer bound that keeps a completion from crediting a month-old reminder.
+_ACTION_ATTRIBUTION_LOOKBACK = timedelta(days=7)
+
+
+async def record_action(
+    *,
+    user_id: str,
+    source_entity_id: str,
+    source_entity_type: str | None = None,
+) -> bool:
+    """Record that a learner did the thing a notification asked for, if one pointed at this entity.
+
+    This is what turns the outcome funnel from a measure of opens into a measure of meaningful
+    action. A feature domain calls it when the action completes — a study block marked done, a goal
+    nudge answered — and it maps the entity back to the notification and writes one `ACTIONED`
+    interaction on the `SYSTEM` surface, because the backend inferred it rather than a client
+    reporting it.
+
+    It never raises. Instrumentation must not be able to fail the learner's actual action, which is
+    already done and saved by the time this runs; a lookup or write fault costs one data point, not
+    the thing the learner came to do. The idempotency id is deterministic per (entity, notification),
+    so replaying the same completion cannot double-count. Returns whether an outcome was recorded,
+    for tests and logging.
+    """
+
+    try:
+        notification_id = await notification_repo.find_actionable_notification(
+            user_id,
+            source_entity_id=source_entity_id,
+            source_entity_type=source_entity_type,
+            within=_ACTION_ATTRIBUTION_LOOKBACK,
+        )
+        if notification_id is None:
+            # No notification pointed at this entity, so there is nothing to attribute — the
+            # learner reached it on their own. Not an error.
+            return False
+        row, _created = await notification_repo.append_interaction(
+            user_id,
+            notification_id,
+            {
+                "idempotency_id": f"actioned:{notification_id}:{source_entity_id}",
+                "event": "ACTIONED",
+                "surface": "SYSTEM",
+                "action": None,
+                "source_metadata": {"origin": "server_inferred"},
+                "occurred_at": datetime.now(UTC),
+            },
+        )
+        return row is not None
+    except Exception:
+        logger.warning(
+            "Could not record an ACTIONED outcome",
+            extra={"source_entity_type": source_entity_type},
+            exc_info=True,
+        )
+        return False
+
+
 async def lifecycle_metrics() -> dict[str, Any]:
     """Return redacted database-backed operational metrics for staff."""
 
