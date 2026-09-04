@@ -570,6 +570,19 @@ class Settings(BaseSettings):
     NOTIFICATION_INTELLIGENCE_ROLLOUT_PERCENT: int = Field(default=0, ge=0, le=100)
     NOTIFICATION_INTELLIGENCE_SHADOW_ONLY: bool = True
 
+    # --- LLM-assisted digest copy (Phase 6, Level 2 — bounded LLM assistance) ---
+    # A separate gate from INTELLIGENCE on purpose: the timing/channel decision engine and the
+    # digest-copy writer are different risks with different blast radii, and one must be able to run
+    # without arming the other. Default-off, and shadow-only when on, so the first thing this ever
+    # does in a deployment is propose copy that is recorded and discarded — never sent — until a human
+    # turns SHADOW_ONLY off. Same fail-closed cohort machinery as every other capability.
+    NOTIFICATION_DIGEST_LLM_ENABLED: bool = False
+    NOTIFICATION_DIGEST_LLM_DENYLIST: ListStr = []
+    NOTIFICATION_DIGEST_LLM_ALLOWLIST: ListStr = []
+    NOTIFICATION_DIGEST_LLM_INTERNAL_ALLOWLIST: ListStr = []
+    NOTIFICATION_DIGEST_LLM_ROLLOUT_PERCENT: int = Field(default=0, ge=0, le=100)
+    NOTIFICATION_DIGEST_LLM_SHADOW_ONLY: bool = True
+
     # --- Expo mobile push (staged rollout) ---
     # The code fallback is fail-closed when no environment is loaded. The deployment
     # template intentionally enables the sender at a 0% cohort, which still makes no

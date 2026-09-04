@@ -8,7 +8,7 @@ from typing import Literal
 
 from src.config import Settings, get_settings
 
-NotificationCapability = Literal["MOBILE_PUSH", "EMAIL", "WEB_PUSH", "INTELLIGENCE"]
+NotificationCapability = Literal["MOBILE_PUSH", "EMAIL", "WEB_PUSH", "INTELLIGENCE", "DIGEST_LLM"]
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,7 @@ def capability_gate(
         "EMAIL": "NOTIFICATION_EMAIL",
         "WEB_PUSH": "WEB_PUSH",
         "INTELLIGENCE": "NOTIFICATION_INTELLIGENCE",
+        "DIGEST_LLM": "NOTIFICATION_DIGEST_LLM",
     }
     prefix = prefixes[capability]
     return CapabilityGate(

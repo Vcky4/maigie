@@ -31,6 +31,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from src.config import get_settings
 from src.shared.time import LearnerTimezone, local_day_bounds, local_week_bounds
 
+from .digest_copy import resolve_digest_copy
 from .feature_flags import capability_enabled_for
 from .repository import notification_repo
 from .taxonomy import notification_spec
@@ -138,6 +139,11 @@ async def plan_due_digests(*, now: datetime | None = None, limit: int = 500) -> 
     created = 0
     skipped_empty = 0
     already = 0
+    #: Audit counters for the optional LLM copy step. `proposed` counts digests where the model
+    #: produced valid, safe copy; `applied` counts those where the learner actually received it
+    #: (only possible with shadow mode off). In the default configuration all three stay zero.
+    llm_proposed = 0
+    llm_applied = 0
 
     candidates = await notification_repo.digest_subscriptions(limit=limit)
     for subscription in candidates:
@@ -197,12 +203,31 @@ async def plan_due_digests(*, now: datetime | None = None, limit: int = 500) -> 
             already += 1
             continue
 
-        title = _TITLES[settings_category][window.period]
+        # The deterministic copy is computed first and is always the fallback. The optional LLM step
+        # may replace it, but only when its capability is enabled for this learner, shadow mode is
+        # off, and its output passed validation and the content-safety pass — otherwise `resolve`
+        # hands these exact values straight back, and it never raises.
+        deterministic_title = _TITLES[settings_category][window.period]
+        deterministic_body = render_digest_body([(item["title"], item["body"]) for item in items])
+        copy = await resolve_digest_copy(
+            user_id=user_id,
+            settings_category=settings_category,
+            period=window.period,
+            items=[(item["title"], item["body"]) for item in items],
+            deterministic_title=deterministic_title,
+            deterministic_body=deterministic_body,
+            settings=settings,
+        )
+        if copy.proposed:
+            llm_proposed += 1
+        if copy.status == "APPLIED":
+            llm_applied += 1
+
         notification = await create_notification(
             user_id=user_id,
             type=digest_type,
-            title=title,
-            body=render_digest_body([(item["title"], item["body"]) for item in items]),
+            title=copy.title,
+            body=copy.body,
             action={"version": 1, "kind": "NONE"},
             idempotency_key=f"digest:{settings_category}:{window.period}:{window.start.date()}",
             priority=6,
@@ -218,6 +243,8 @@ async def plan_due_digests(*, now: datetime | None = None, limit: int = 500) -> 
         "created": created,
         "skippedEmpty": skipped_empty,
         "alreadySummarised": already,
+        "llmProposed": llm_proposed,
+        "llmApplied": llm_applied,
     }
     if created or already:
         logger.info("Digest planning completed", extra=summary)
