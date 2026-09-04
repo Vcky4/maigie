@@ -17,7 +17,6 @@ from . import (  # noqa: F401
     daily_plan,
     daily_snapshots,
     engagement,
-    notifications,
     plan_redistribution,
     prep_result,
     preparation,
@@ -86,11 +85,6 @@ def get_beat_schedule() -> dict:
             "task": "learning.capture_daily_snapshots",
             "schedule": crontab(hour=1, minute=15),
             "options": {"queue": "heavy"},
-        },
-        "learning.notification_delivery": {
-            "task": "learning.notification_delivery",
-            "schedule": 300.0,  # Every 5 minutes
-            "options": {"queue": "default"},
         },
         # Daily rather than weekly. The task asks "which plans have not been checked in
         # for seven days", from a stored timestamp, so a daily sweep gives each learner a

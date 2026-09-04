@@ -51,9 +51,6 @@ class Notification(Base, TimestampMixin):
     dismissed_at: Mapped[datetime | None] = mapped_column(
         "dismissedAt", DateTime(timezone=True), nullable=True
     )
-    pushed_at: Mapped[datetime | None] = mapped_column(
-        "pushedAt", DateTime(timezone=True), nullable=True
-    )
     status: Mapped[str] = mapped_column(String, default="PENDING")
     schema_version: Mapped[int] = mapped_column(
         "schemaVersion", Integer, nullable=False, default=1, server_default="1"

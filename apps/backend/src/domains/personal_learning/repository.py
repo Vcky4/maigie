@@ -2348,52 +2348,6 @@ class PersonalLearningRepository:
             )
             return (await s.execute(stmt)).scalar() or 0
 
-    async def list_due_for_delivery(
-        self, *, limit: int = 500, session: AsyncSession | None = None
-    ) -> list[Notification]:
-        """Notifications whose moment has come, oldest first.
-
-        **`QUEUED` is included, and its absence was a silent drop.** `create_notification` writes that status
-        for anything held back by quiet hours, and the previous query selected `PENDING` only — so every
-        quiet-hours notification ever written was stored, pushed to a later `scheduledAt`, and then never
-        looked at by anything. The row surfaced in the learner's in-app list, because that read filters on
-        `READ`/`DISMISSED` rather than on delivery, which is why nobody noticed.
-
-        Bounded by `limit`. The sweep runs every five minutes and now does network I/O per row inside a 45
-        second soft limit, so an unbounded backlog would time out and make no progress at all rather than
-        draining gradually. Ordered oldest-first so the backlog drains in the order it formed.
-        """
-        async with self._read_session(session) as s:
-            stmt = (
-                select(Notification)
-                .where(
-                    Notification.status.in_(["PENDING", "QUEUED"]),
-                    Notification.scheduled_at <= datetime.now(UTC),
-                )
-                .order_by(Notification.scheduled_at.asc())
-                .limit(limit)
-            )
-            result = await s.execute(stmt)
-            return list(result.scalars().all())
-
-    async def update_status(
-        self,
-        notification_id: str,
-        status: str,
-        delivered_at: datetime | None = None,
-        pushed_at: datetime | None = None,
-        *,
-        session: AsyncSession | None = None,
-    ) -> None:
-        async with self._use_session(session) as s:
-            values: dict[str, Any] = {"status": status}
-            if delivered_at is not None:
-                values["delivered_at"] = delivered_at
-            if pushed_at is not None:
-                values["pushed_at"] = pushed_at
-            stmt = update(Notification).where(Notification.id == notification_id).values(**values)
-            await s.execute(stmt)
-
     # -----------------------------------------------------------------------
     # Field mapping helpers — Notifications
     # -----------------------------------------------------------------------
@@ -2409,9 +2363,6 @@ class PersonalLearningRepository:
             "actionData": "action_data",
             "scheduledAt": "scheduled_at",
             "status": "status",
-            # Never set at creation — a notification cannot have reached a device before it exists. Mapped
-            # so that adding the column without wiring it here would fail loudly rather than be dropped.
-            "pushedAt": "pushed_at",
         }
         return map_fields(data, field_map, entity="_map_notification")
 

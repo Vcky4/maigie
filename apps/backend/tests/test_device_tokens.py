@@ -221,11 +221,3 @@ class TestTheContract:
             for method in route.methods
         }
         assert methods == {"PUT", "DELETE"}
-
-    def test_the_sender_reads_what_registration_writes(self):
-        """Both sides address the same table. The sender was complete for the whole time nothing wrote to
-        it, so this pins that the two halves actually meet."""
-        from src.domains.identity.db_models import DeviceToken
-        from src.shared.infrastructure import push_notifications
-
-        assert push_notifications.DeviceToken is DeviceToken

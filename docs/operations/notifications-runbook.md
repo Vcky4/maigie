@@ -118,6 +118,6 @@ several daily passes as it drains the backlog in batches; that is expected and s
 
 - Aggregate, de-identified long-term analytics retention is not yet built; the sweep prunes raw rows
   only.
-- The legacy `learning.notification_delivery` sweep and its FCM sender remain scheduled but are a
-  confirmed no-op (no producer writes the legacy `PENDING`/`QUEUED` rows it drained, and `pushedAt` is
-  never populated). Retiring them is a tracked follow-up, not a live path.
+- The legacy `learning.notification_delivery` sweep, its FCM sender, and the write-only `pushedAt`
+  column were removed in Phase 7; push evidence lives on `NotificationDelivery`. `DeviceToken`
+  registration (`PUT /users/me/device-tokens`) still exists but now feeds nothing — a further cleanup.
