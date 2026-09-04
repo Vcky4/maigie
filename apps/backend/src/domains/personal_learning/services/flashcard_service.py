@@ -583,6 +583,20 @@ async def review_flashcard(*, user_id: str, card_id: str, quality: int) -> Any:
     # Invalidate stats cache since a review changes due counts and mastery
     await _get_statistics_cached.invalidate(user_id=user_id)
 
+    # Grading a card is the meaningful outcome of the review-due reminder for its deck, so attribute
+    # it. Keyed on the deck because that is what the reminder points at and what a card has instead
+    # of a page of its own; a deckless card has no reminder to attribute to, so it is skipped. The
+    # recorder is idempotent per (notification, deck) and never raises, so grading many cards from
+    # one deck records the outcome once and a fault here can never fail the review.
+    if card.deck_id:
+        from src.domains.notifications import service as notification_service
+
+        await notification_service.record_action(
+            user_id=user_id,
+            source_entity_id=card.deck_id,
+            source_entity_type="deck",
+        )
+
     # Record in activity feed
     from . import activity_feed_service
 

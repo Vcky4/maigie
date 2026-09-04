@@ -32,8 +32,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "073_points_ledger"
-down_revision = "072_drop_credit_tables"
+revision = "075_points_ledger"
+down_revision = "074_schedule_block_started_at"
 branch_labels = None
 depends_on = None
 

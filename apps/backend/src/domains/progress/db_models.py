@@ -489,6 +489,18 @@ class ScheduleBlock(Base, TimestampMixin):
         "completedAt", DateTime(timezone=True), nullable=True
     )
 
+    #: When the learner started this session. `None` means not started — the same explicit-action
+    #: semantics as `completed_at`, and a timestamp for the same reason.
+    #:
+    #: Added so a study-session reminder can be credited when the learner *starts*, not only when
+    #: they mark the block done. Starting is the reminder's real job — many learners study the block
+    #: and never tick "complete" — so without this the outcome funnel undercounts the reminder's
+    #: effect. `record_action` fires on the null→set transition, so whichever of start or complete
+    #: happens first records the meaningful action once.
+    started_at: Mapped[datetime | None] = mapped_column(
+        "startedAt", DateTime(timezone=True), nullable=True
+    )
+
     # Relationships
     goal: Mapped[Optional["Goal"]] = relationship("Goal", back_populates="schedules")
     review_item: Mapped[Optional["ReviewItem"]] = relationship(

@@ -79,6 +79,15 @@ def send_weekly_summaries_task() -> dict:
     return _run_producer("src.domains.progress.services.weekly_summary", "send_weekly_summaries")
 
 
+@celery_app.task(name="notifications.review_due_reminders", queue="default", time_limit=120)
+def send_review_due_reminders_task() -> dict:
+    """Produce one canonical review-due reminder per deck with cards due."""
+    return _run_producer(
+        "src.domains.personal_learning.services.review_due_reminders",
+        "send_review_due_reminders",
+    )
+
+
 def _run_notification_coro(function_name: str, module: str = "dispatcher") -> int:
     import asyncio
     import importlib
@@ -159,6 +168,49 @@ def plan_notification_digests_task() -> int:
     return int(summary.get("created", 0))
 
 
+@celery_app.task(
+    name="notifications.process_digest",
+    queue="heavy",
+    time_limit=120,
+    soft_time_limit=110,
+)
+def process_digest_task(
+    *,
+    user_id: str,
+    settings_category: str,
+    period: str,
+    timezone_name: str,
+    digest_day_of_week: int,
+) -> int:
+    """Build one learner's digest on the heavy queue, resolving its LLM copy off the planner's path.
+
+    Enqueued by `plan_due_digests` only for learners in the digest-LLM cohort, so the bounded-but-slow
+    model call parallelises across heavy workers instead of serialising inside the hourly planner. The
+    build is idempotent — it claims the period itself — so a retry or a duplicate enqueue is safe.
+    """
+    import asyncio
+
+    from src.domains.notifications.digest import process_digest_for_learner
+    from src.shared.database.session import ensure_db
+
+    async def _run() -> int:
+        await ensure_db()
+        outcome = await process_digest_for_learner(
+            user_id=user_id,
+            settings_category=settings_category,
+            period=period,
+            timezone_name=timezone_name,
+            digest_day_of_week=digest_day_of_week,
+        )
+        return 1 if outcome.get("outcome") == "created" else 0
+
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_run())
+    finally:
+        loop.close()
+
+
 def get_beat_schedule() -> dict:
     return {
         "notifications.plan_digests": {
@@ -182,6 +234,15 @@ def get_beat_schedule() -> dict:
             # produces the summary and every later run that week replays it. This avoids
             # pinning delivery to one hour, which would miss anyone whose week has not
             # ended yet in their own timezone.
+            "schedule": 3600.0,
+            "options": {"queue": "default"},
+        },
+        "notifications.review_due_reminders": {
+            "task": "notifications.review_due_reminders",
+            # Hourly, guarded by a per-deck per-UTC-day idempotency key: the first run of a
+            # day announces each deck's due cards and every later run that day replays. Hourly
+            # rather than once, so a missed run is picked up within the hour and the count in
+            # the reminder stays close to current as more cards fall due.
             "schedule": 3600.0,
             "options": {"queue": "default"},
         },
