@@ -303,9 +303,10 @@ class Settings(BaseSettings):
     GOOGLE_PLAY_PACKAGE_NAME: str = "com.maigie"
     # Subscription product ID (single subscription with multiple base plans)
     GOOGLE_PLAY_SUBSCRIPTION_ID: str = "maigie_plus"
-    # Base plan IDs within the subscription
+    # Base plan ID within the subscription. The `plus-yearly` base plan and its
+    # `GOOGLE_PLAY_BASE_PLAN_YEARLY` setting are withdrawn (Non-goals): deleted in the console, and
+    # an unrecognised base plan resolves to FREE rather than the retired PREMIUM_YEARLY tier.
     GOOGLE_PLAY_BASE_PLAN_MONTHLY: str = "plus-monthly"
-    GOOGLE_PLAY_BASE_PLAN_YEARLY: str = "plus-yearly"
     #: Audience configured on the Pub/Sub push subscription that delivers Google Play RTDN.
     #: Empty means RTDN ingestion is refused rather than trusted — the endpoint had no
     #: authentication at all before Phase 2a, and it is unauthenticated by construction, so the
