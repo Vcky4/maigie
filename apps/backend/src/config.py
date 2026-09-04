@@ -583,6 +583,24 @@ class Settings(BaseSettings):
     NOTIFICATION_DIGEST_LLM_ROLLOUT_PERCENT: int = Field(default=0, ge=0, le=100)
     NOTIFICATION_DIGEST_LLM_SHADOW_ONLY: bool = True
 
+    # --- Notification data retention (Phase 7) ---
+    # Deleting learner data is irreversible, so this is fail-closed: nothing is pruned until an
+    # operator sets `ENABLED=True` after agreeing the windows below with whatever retention policy
+    # applies. The sweep only ever removes *operational and evidence* rows past their window —
+    # delivery attempts, interactions, decisions, digest runs, provider webhook events — and never the
+    # `Notification` rows a learner sees in their history. In-flight deliveries (PLANNED/QUEUED/SENDING)
+    # are never pruned regardless of age, so a stuck row is preserved for investigation rather than
+    # silently deleted. Windows are generous by default and expressed in days.
+    NOTIFICATION_RETENTION_ENABLED: bool = False
+    NOTIFICATION_RETENTION_DELIVERY_DAYS: int = Field(default=90, ge=1)
+    NOTIFICATION_RETENTION_INTERACTION_DAYS: int = Field(default=365, ge=1)
+    NOTIFICATION_RETENTION_DECISION_DAYS: int = Field(default=365, ge=1)
+    NOTIFICATION_RETENTION_DIGEST_DAYS: int = Field(default=180, ge=1)
+    NOTIFICATION_RETENTION_EMAIL_EVENT_DAYS: int = Field(default=90, ge=1)
+    #: Rows deleted per statement, so a sweep of a large backlog holds only short locks and can be
+    #: interrupted between batches without leaving a half-done transaction.
+    NOTIFICATION_RETENTION_BATCH: int = Field(default=2000, ge=1, le=50000)
+
     # --- Expo mobile push (staged rollout) ---
     # The code fallback is fail-closed when no environment is loaded. The deployment
     # template intentionally enables the sender at a 0% cohort, which still makes no

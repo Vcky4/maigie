@@ -7,37 +7,11 @@ and push notifications (FCM). Routed to 'default' queue (lightweight).
 
 import logging
 
+from celery.schedules import crontab
+
 from src.core.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
-
-
-@celery_app.task(name="notifications.send_email", queue="default", time_limit=30)
-def send_email_task(to_email: str, template: str, context: dict):
-    """Send a transactional email."""
-    import asyncio
-
-    from src.domains.identity.emails import send_template_email
-
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(send_template_email(to_email, template, context))
-    finally:
-        loop.close()
-
-
-@celery_app.task(name="notifications.send_push", queue="default", time_limit=15)
-def send_push_task(user_id: str, title: str, body: str, data: dict | None = None):
-    """Send a push notification via FCM."""
-    import asyncio
-
-    from src.shared.infrastructure.push_notifications import send_push_to_user
-
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(send_push_to_user(user_id, title, body, data))
-    finally:
-        loop.close()
 
 
 def _run_producer(module_path: str, function_name: str) -> dict:
@@ -211,6 +185,34 @@ def process_digest_task(
         loop.close()
 
 
+@celery_app.task(
+    name="notifications.prune_retention",
+    queue="default",
+    time_limit=600,
+    soft_time_limit=580,
+)
+def prune_retention_task() -> dict:
+    """Delete notification evidence past its retention window.
+
+    A no-op unless `NOTIFICATION_RETENTION_ENABLED` is set, so it is safe to schedule everywhere and
+    does nothing until an operator opts in with agreed windows.
+    """
+    import asyncio
+
+    from src.domains.notifications.retention import prune_expired
+    from src.shared.database.session import ensure_db
+
+    async def _run() -> dict:
+        await ensure_db()
+        return await prune_expired()
+
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_run())
+    finally:
+        loop.close()
+
+
 def get_beat_schedule() -> dict:
     return {
         "notifications.plan_digests": {
@@ -274,6 +276,14 @@ def get_beat_schedule() -> dict:
         "notifications.recover_stale_mobile_push": {
             "task": "notifications.recover_stale_mobile_push",
             "schedule": 300.0,
+            "options": {"queue": "default"},
+        },
+        "notifications.prune_retention": {
+            "task": "notifications.prune_retention",
+            # Daily, in the small hours. A no-op until retention is enabled, and the batched deletes
+            # keep even a first real sweep from holding long locks. Deletes are idempotent — a run
+            # that removes nothing new is the steady state.
+            "schedule": crontab(hour=3, minute=30),
             "options": {"queue": "default"},
         },
     }
