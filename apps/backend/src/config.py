@@ -272,6 +272,15 @@ class Settings(BaseSettings):
     PRICE_NGN_PLUS_PASS_5H: int = 70_000  # ₦700
     PRICE_NGN_PLUS_PASS_7D: int = 150_000  # ₦1 500
     PRICE_NGN_PLUS_MONTHLY: int = 240_000  # ₦2 400
+    # NGN-only 4-month Term Pass (§6.8). The one product priced **above** ₦2 500, so it pays the
+    # flat ₦100 Paystack fee knowingly rather than by accident — do not "fix" it under the threshold,
+    # which would undercut two months of the subscription. Absent until now; a one-off charge sends
+    # this value and nothing overrides it, so it must exist before the Paystack pass rail ships.
+    PRICE_NGN_PLUS_PASS_TERM: int = 550_000  # ₦5 500
+    # 30-minute voice top-up (Decision R). Same ₦ as the 7-day pass by coincidence of the market, not
+    # a shared meaning — a voice minute costs the same in Lagos as in London, so this is the smallest
+    # discount off USD list of any product (§5.7.1).
+    PRICE_NGN_PLUS_VOICE_30: int = 150_000  # ₦1 500
     # Plan codes (create plans in Paystack Dashboard, amounts in NGN)
     PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY: str = ""
     PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY: str = ""
@@ -294,9 +303,10 @@ class Settings(BaseSettings):
     GOOGLE_PLAY_PACKAGE_NAME: str = "com.maigie"
     # Subscription product ID (single subscription with multiple base plans)
     GOOGLE_PLAY_SUBSCRIPTION_ID: str = "maigie_plus"
-    # Base plan IDs within the subscription
+    # Base plan ID within the subscription. The `plus-yearly` base plan and its
+    # `GOOGLE_PLAY_BASE_PLAN_YEARLY` setting are withdrawn (Non-goals): deleted in the console, and
+    # an unrecognised base plan resolves to FREE rather than the retired PREMIUM_YEARLY tier.
     GOOGLE_PLAY_BASE_PLAN_MONTHLY: str = "plus-monthly"
-    GOOGLE_PLAY_BASE_PLAN_YEARLY: str = "plus-yearly"
     #: Audience configured on the Pub/Sub push subscription that delivers Google Play RTDN.
     #: Empty means RTDN ingestion is refused rather than trusted — the endpoint had no
     #: authentication at all before Phase 2a, and it is unauthenticated by construction, so the

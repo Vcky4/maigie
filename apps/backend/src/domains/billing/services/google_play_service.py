@@ -62,8 +62,9 @@ def _base_plan_to_tier(base_plan_id: str) -> str:
     settings = get_settings()
     if base_plan_id == settings.GOOGLE_PLAY_BASE_PLAN_MONTHLY:
         return "PREMIUM_MONTHLY"
-    if base_plan_id == settings.GOOGLE_PLAY_BASE_PLAN_YEARLY:
-        return "PREMIUM_YEARLY"
+    # The yearly base plan is withdrawn (Non-goals): its `plus-yearly` id is deleted in the console
+    # and `PREMIUM_YEARLY` is carried in no tier set, so an unrecognised base plan is `FREE` rather
+    # than a tier nothing can grant.
     return "FREE"
 
 
@@ -80,7 +81,7 @@ async def verify_subscription(
         user_id: Internal user ID
         product_id: Google Play subscription ID (e.g. "maigie_plus")
         purchase_token: The purchase token from the client
-        base_plan_id: The base plan ID (e.g. "plus-monthly" or "plus-yearly")
+        base_plan_id: The base plan ID (e.g. "plus-monthly")
 
     Returns:
         Dict with verification result and updated tier info
@@ -121,15 +122,10 @@ async def verify_subscription(
     if expiry_dt < now:
         raise ValueError("Subscription has expired")
 
-    # Determine tier from base plan ID if provided, otherwise infer from billing period
-    if base_plan_id:
-        new_tier = _base_plan_to_tier(base_plan_id)
-    else:
-        # Fallback: infer from the price/period in the response
-        # If expiryTime - startTime > 60 days, it's yearly
-        start_time_millis = int(result.get("startTimeMillis", 0))
-        duration_days = (expiry_time_millis - start_time_millis) / (1000 * 60 * 60 * 24)
-        new_tier = "PREMIUM_YEARLY" if duration_days > 60 else "PREMIUM_MONTHLY"
+    # Determine tier from the base plan ID. There is one subscription base plan now — `plus-monthly`
+    # (yearly is withdrawn) — so an absent base plan defaults to it rather than inferring a period
+    # from the purchase duration, which only ever mattered to distinguish the retired yearly plan.
+    new_tier = _base_plan_to_tier(base_plan_id) if base_plan_id else "PREMIUM_MONTHLY"
 
     if new_tier == "FREE":
         raise ValueError(f"Unknown base plan: {base_plan_id}")
