@@ -168,6 +168,49 @@ def plan_notification_digests_task() -> int:
     return int(summary.get("created", 0))
 
 
+@celery_app.task(
+    name="notifications.process_digest",
+    queue="heavy",
+    time_limit=120,
+    soft_time_limit=110,
+)
+def process_digest_task(
+    *,
+    user_id: str,
+    settings_category: str,
+    period: str,
+    timezone_name: str,
+    digest_day_of_week: int,
+) -> int:
+    """Build one learner's digest on the heavy queue, resolving its LLM copy off the planner's path.
+
+    Enqueued by `plan_due_digests` only for learners in the digest-LLM cohort, so the bounded-but-slow
+    model call parallelises across heavy workers instead of serialising inside the hourly planner. The
+    build is idempotent — it claims the period itself — so a retry or a duplicate enqueue is safe.
+    """
+    import asyncio
+
+    from src.domains.notifications.digest import process_digest_for_learner
+    from src.shared.database.session import ensure_db
+
+    async def _run() -> int:
+        await ensure_db()
+        outcome = await process_digest_for_learner(
+            user_id=user_id,
+            settings_category=settings_category,
+            period=period,
+            timezone_name=timezone_name,
+            digest_day_of_week=digest_day_of_week,
+        )
+        return 1 if outcome.get("outcome") == "created" else 0
+
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_run())
+    finally:
+        loop.close()
+
+
 def get_beat_schedule() -> dict:
     return {
         "notifications.plan_digests": {

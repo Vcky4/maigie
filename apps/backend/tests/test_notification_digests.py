@@ -332,3 +332,73 @@ class TestPlanner:
         assert key.startswith("digest:LEARNING:WEEKLY:")
         # Two categories closing the same week must not collide on one key.
         assert "LEARNING" in key and "WEEKLY" in key
+
+
+class TestHighVolumeRouting:
+    """The LLM cohort's digests are built on the heavy queue; everyone else is built inline.
+
+    The point is that the bounded-but-slow model call never runs inside the serial hourly planner —
+    at volume that is what makes the planner miss its window and starve the default queue. So an
+    LLM-enabled learner is enqueued and *not* built inline, and the claim happens in the task, not
+    here; a learner outside the cohort is built inline exactly as before.
+    """
+
+    def _llm_settings(self) -> Settings:
+        return Settings(
+            _env_file=None,
+            NOTIFICATION_EMAIL_ENABLED=True,
+            NOTIFICATION_EMAIL_ROLLOUT_PERCENT=100,
+            NOTIFICATION_DIGEST_LLM_ENABLED=True,
+            NOTIFICATION_DIGEST_LLM_ALLOWLIST=["u1"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_llm_learner_is_enqueued_not_built_inline(
+        self, planner: FakeRepo, created: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(digest, "get_settings", self._llm_settings)
+        calls: list[dict[str, Any]] = []
+        monkeypatch.setattr(digest, "_enqueue_digest", lambda **kw: calls.append(kw) or True)
+
+        summary = await digest.plan_due_digests(now=datetime(2026, 9, 30, 12, tzinfo=UTC))
+
+        assert summary["enqueued"] == 1
+        assert summary["created"] == 0
+        assert created == [], "the planner must not build an LLM digest inline"
+        assert planner.claimed == [], "the claim belongs to the heavy task, not the planner"
+        assert calls[0]["user_id"] == "u1"
+        assert calls[0]["timezone_name"] == "UTC"
+
+    @pytest.mark.asyncio
+    async def test_a_broker_failure_falls_back_to_inline(
+        self, planner: FakeRepo, created: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(digest, "get_settings", self._llm_settings)
+        # The broker is unreachable, so enqueue reports failure. The digest must still be built.
+        monkeypatch.setattr(digest, "_enqueue_digest", lambda **kw: False)
+
+        summary = await digest.plan_due_digests(now=datetime(2026, 9, 30, 12, tzinfo=UTC))
+
+        assert summary["enqueued"] == 0
+        assert summary["created"] == 1
+        assert len(created) == 1
+
+    @pytest.mark.asyncio
+    async def test_the_heavy_entry_point_builds_the_digest(
+        self, planner: FakeRepo, created: list[dict[str, Any]]
+    ) -> None:
+        # What the Celery task calls. It rebuilds the timezone from a name and claims + creates.
+        # The `planner` fixture patches get_settings to email-on / digest-LLM-off, so this exercises
+        # the build/claim/create path deterministically without reaching for a model.
+
+        outcome = await digest.process_digest_for_learner(
+            user_id="u1",
+            settings_category="LEARNING",
+            period="WEEKLY",
+            timezone_name="UTC",
+            digest_day_of_week=1,
+        )
+
+        assert outcome["outcome"] == "created"
+        assert len(created) == 1
+        assert planner.claimed, "the heavy path claims the period itself"
