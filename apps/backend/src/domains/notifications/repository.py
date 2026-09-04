@@ -309,22 +309,6 @@ class NotificationRepository:
             )
         return rows[:limit], len(rows) > limit
 
-    async def list_legacy_unread(self, user_id: str) -> list[Notification]:
-        factory = get_session_factory()
-        async with factory() as session:
-            return list(
-                (
-                    await session.execute(
-                        select(Notification)
-                        .where(
-                            Notification.user_id == user_id,
-                            Notification.status.notin_(["READ", "DISMISSED"]),
-                        )
-                        .order_by(Notification.priority.asc(), Notification.scheduled_at.asc())
-                    )
-                ).scalars()
-            )
-
     async def unread_count(self, user_id: str) -> int:
         factory = get_session_factory()
         async with factory() as session:

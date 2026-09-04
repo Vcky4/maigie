@@ -196,25 +196,6 @@ async def create_notification(
     )
 
 
-async def get_unread(*, user_id: str) -> list[Any]:
-    """Legacy unread shape/order backed by the canonical repository."""
-    from src.domains.notifications.service import legacy_unread
-
-    return await legacy_unread(user_id=user_id)
-
-
-async def mark_read(*, user_id: str, notification_id: str) -> None:
-    from src.domains.notifications.service import mark_read as canonical_mark_read
-
-    await canonical_mark_read(user_id=user_id, notification_id=notification_id)
-
-
-async def dismiss(*, user_id: str, notification_id: str) -> None:
-    from src.domains.notifications.service import dismiss as canonical_dismiss
-
-    await canonical_dismiss(user_id=user_id, notification_id=notification_id)
-
-
 async def deliver_pending() -> int:
     """Release every notification whose moment has come. Returns how many were delivered.
 

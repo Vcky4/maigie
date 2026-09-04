@@ -26,7 +26,6 @@ from .services import (
     home_service,
     note_merge_service,
     note_service,
-    notification_service,
     onboarding_service,
     prep_outcome_service,
     prep_snapshot_service,
@@ -2113,26 +2112,12 @@ async def reorder_collection_items(
 
 
 # ===========================================================================
-# Notifications
+# Notifications — removed (Phase 7).
+#
+# The legacy `/learning/notifications*` read/mark/dismiss endpoints were thin adapters over the
+# canonical notifications domain. Both clients moved to `/api/v1/notifications*`, so these were
+# retired. The canonical routes live in `src/domains/notifications/routes.py`.
 # ===========================================================================
-
-
-@router.get("/notifications", response_model=list[models.NotificationResponse])
-async def get_notifications(current_user: CurrentUser):
-    """Get unread notifications."""
-    return await notification_service.get_unread(user_id=current_user.id)
-
-
-@router.post("/notifications/{notification_id}/read", status_code=204)
-async def mark_notification_read(notification_id: str, current_user: CurrentUser):
-    """Mark a notification as read."""
-    await notification_service.mark_read(user_id=current_user.id, notification_id=notification_id)
-
-
-@router.post("/notifications/{notification_id}/dismiss", status_code=204)
-async def dismiss_notification(notification_id: str, current_user: CurrentUser):
-    """Dismiss a notification."""
-    await notification_service.dismiss(user_id=current_user.id, notification_id=notification_id)
 
 
 # ===========================================================================

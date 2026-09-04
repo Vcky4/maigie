@@ -710,10 +710,6 @@ async def list_history(
     return rows, next_cursor, await notification_repo.unread_count(user_id)
 
 
-async def legacy_unread(*, user_id: str) -> list[Notification]:
-    return await notification_repo.list_legacy_unread(user_id)
-
-
 async def unread_count(*, user_id: str) -> int:
     return await notification_repo.unread_count(user_id)
 
