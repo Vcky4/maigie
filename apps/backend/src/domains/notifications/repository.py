@@ -474,23 +474,6 @@ class NotificationRepository:
             )
             return int(value or 0)
 
-    async def ensure_policy(self, user_id: str) -> NotificationPolicy:
-        factory = get_session_factory()
-        async with factory() as session:
-            async with session.begin():
-                row = await session.scalar(
-                    select(NotificationPolicy).where(NotificationPolicy.user_id == user_id)
-                )
-                if row is None:
-                    row = NotificationPolicy(user_id=user_id, engagement_enabled=False)
-                    session.add(row)
-                    try:
-                        await session.flush()
-                    except IntegrityError:
-                        await session.rollback()
-                        return await self.ensure_policy(user_id)
-                return row
-
     async def list_installations(self, user_id: str) -> list[PushInstallation]:
         factory = get_session_factory()
         async with factory() as session:

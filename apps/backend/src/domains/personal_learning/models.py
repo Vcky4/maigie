@@ -922,22 +922,6 @@ class OnboardingStatusResponse(CamelModel):
 # ===========================================================================
 
 
-class NotificationResponse(CamelModel):
-    id: str
-    user_id: str
-    type: str
-    title: str
-    body: str | None = None
-    priority: int | None = None
-    action_data: dict | None = None
-    scheduled_at: datetime | None = None
-    delivered_at: datetime | None = None
-    read_at: datetime | None = None
-    dismissed_at: datetime | None = None
-    status: str
-    created_at: datetime
-
-
 # ===========================================================================
 # Preparation Extensions
 # ===========================================================================
