@@ -324,10 +324,10 @@ Prices from §6.1 (USD) and §6.8 (NGN). **NGN is a set price, not a conversion*
 
 Three products, three prices, no review. Do this in the dashboard rather than the API so the ids are visible to whoever debugs a webhook later.
 
-- [ ] Product **Maigie Plus** → recurring price **$9.99/month**, `trial_period_days = 3`. **Create a new price and archive any existing $4.99 one.** §6.1 explains why this is free to do now and expensive later: with zero subscribers there is no migration, and the first subscriber makes this permanent.
-- [ ] Product **5-Hour Plus Pass** → one-time price **$0.99**. → `STRIPE_PRICE_ID_PLUS_PASS_5H`
-- [ ] Product **7-Day Plus Pass** → one-time price **$3.99**. → `STRIPE_PRICE_ID_PLUS_PASS_7D`
-- [ ] Product **30 Voice Minutes** → one-time price **$1.49**. → `STRIPE_PRICE_ID_PLUS_VOICE_30`
+- [x] Product **Maigie Plus** → recurring price **$9.99/month**, `trial_period_days = 3`. **Create a new price and archive any existing $4.99 one.** §6.1 explains why this is free to do now and expensive later: with zero subscribers there is no migration, and the first subscriber makes this permanent.
+- [x] Product **5-Hour Plus Pass** → one-time price **$0.99**. → `STRIPE_PRICE_ID_PLUS_PASS_5H`
+- [x] Product **7-Day Plus Pass** → one-time price **$3.99**. → `STRIPE_PRICE_ID_PLUS_PASS_7D`
+- [x] Product **30 Voice Minutes** → one-time price **$1.49**. → `STRIPE_PRICE_ID_PLUS_VOICE_30`
 - [ ] Enable **Apple Pay, Google Pay and Link** as payment methods in the dashboard. This is a checkbox, not an integration, and it is the correct place for the wallet APIs — §2 explains why using them inside the iOS app would be a guideline 3.1.1 rejection.
 - [ ] **Archive** the yearly Plus price and the three credit-pack prices. Archive rather than delete: Stripe keeps them referenceable, and archiving is what stops them being selectable.
 - [ ] Set the webhook endpoint to `POST /webhooks/stripe` for `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `charge.refunded`. **Copy the signing secret into `STRIPE_WEBHOOK_SECRET`** — an unset secret now refuses ingestion with a `503` rather than trusting the body (Phase 2a), so a missing secret fails loudly instead of granting tiers to anyone who posts.
@@ -338,8 +338,8 @@ Passes are charged with `mode: payment`, the subscription with `mode: subscripti
 
 Paystack has two shapes and the passes use the simpler one. **A subscription needs a Plan object with a plan code; a one-off charge does not** — it is `/transaction/initialize` with an amount, which is why the three passes need no console object at all and exist purely as price constants.
 
-- [ ] Create the **Plus Monthly plan**: interval `monthly`, amount **₦2 400**. → `PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY`
-- [ ] **No plan object for any pass.** All three are one-off charges. What they need is the amount, in **kobo**, in `config.py`:
+- [x] Create the **Plus Monthly plan**: interval `monthly`, amount **₦2 400**. → `PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY`
+- [x] **No plan object for any pass.** All three are one-off charges. What they need is the amount, in **kobo**, in `config.py`:
 
   | Setting | Value (kobo) | Naira |
   | --- | --- | --- |
@@ -358,11 +358,11 @@ Paystack has two shapes and the passes use the simpler one. **A subscription nee
 
 Play products go live from the console without review, so this is the fastest of the four consoles and the one most worth getting exactly right, because a wrong product **type** cannot be corrected later.
 
-- [ ] Confirm the merchant account, tax and payout profile are complete. Without them the in-app products section is read-only.
-- [ ] Create `plus_pass_5h`, `plus_pass_7d`, `plus_pass_term` and `plus_voice_30` as **in-app products of type consumable**. **Consumable is load-bearing and irreversible**: a non-consumable is permanently owned, restorable forever, and unbuyable a second time, which is the exact opposite of a pass. Getting this wrong means a new SKU, not an edit. `plus_voice_30` in particular is bought repeatedly by design (Decision R), so a non-consumable would break it on the second purchase.
-- [ ] Set the **NGN price for every product by hand** in the territory pricing table. Play's automatic conversion would apply FX parity, which §6.8 spends a section explaining is the thing that prices us out of the launch market.
-- [ ] Restrict `plus_pass_term` to **Nigeria only** in its availability settings.
-- [ ] On subscription `maigie_plus`, base plan `plus-monthly`: set **$9.99** (raised from $4.99 — no 7-day price-change notice is owed because there are no subscribers), set the NGN price to **₦2 400**, and set the **free-trial offer to 3 days**.
+- [x] Confirm the merchant account, tax and payout profile are complete. Without them the in-app products section is read-only.
+- [x] Create `plus_pass_5h`, `plus_pass_7d`, `plus_pass_term` and `plus_voice_30` as **in-app products of type consumable**. **Consumable is load-bearing and irreversible**: a non-consumable is permanently owned, restorable forever, and unbuyable a second time, which is the exact opposite of a pass. Getting this wrong means a new SKU, not an edit. `plus_voice_30` in particular is bought repeatedly by design (Decision R), so a non-consumable would break it on the second purchase.
+- [x] Set the **NGN price for every product by hand** in the territory pricing table. Play's automatic conversion would apply FX parity, which §6.8 spends a section explaining is the thing that prices us out of the launch market.
+- [x] Restrict `plus_pass_term` to **Nigeria only** in its availability settings.
+- [x] On subscription `maigie_plus`, base plan `plus-monthly`: set **$9.99** (raised from $4.99 — no 7-day price-change notice is owed because there are no subscribers), set the NGN price to **₦2 400**, and set the **free-trial offer to 3 days**.
 - [ ] **Delete, do not repurpose**: the `plus-yearly` base plan and the three `credit_pack_*` consumables, plus `GOOGLE_PLAY_BASE_PLAN_YEARLY` and the three `GOOGLE_PLAY_SKU_CREDIT_*` settings (`config.py:264-268`) and the branches reading them at `google_play_service.py:65, 191-193`. Nobody has bought any of them, so there is no RTDN history to decode. **Never rename an existing SKU into a new role** — a renamed SKU carries its old purchase history and its old type.
 - [ ] Point Real-Time Developer Notifications at the Pub/Sub topic feeding `POST /webhooks/google-play/rtdn`, and set `GOOGLE_PUBSUB_AUDIENCE` and `GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL`. The endpoint verifies the push OIDC token against Google's certs and checks the token's `email` — a Google-signed token proves Google minted it, not that our subscription sent it (Phase 2a).
 - [ ] Confirm the service account still has **View financial data** and Play Developer API access, which is what `purchases.products.get` and `purchases.subscriptions.get` authenticate as.
@@ -371,12 +371,12 @@ Play products go live from the console without review, so this is the fastest of
 
 The longest lead time in the plan, and most of it is not engineering.
 
-- [ ] **Create the app record for `com.maigie`.** It does not exist. Everything below is blocked on it.
-- [ ] **Complete the Paid Applications agreement**, with banking and tax. **No in-app purchase product can be created until this is active**, and it needs details an engineer cannot supply. This is the single item most likely to add a week to the schedule, which is why it is step 1 rather than a Phase 5 task.
-- [ ] Enable **In-App Purchase on the App ID** in the Apple Developer portal. This is a portal capability, **not** an entitlements-file edit — §5.6 says why editing `Maigie.entitlements` would be wrong.
-- [ ] Create `com.maigie.plus.pass5h`, `com.maigie.plus.pass7d`, `com.maigie.plus.passterm` and `com.maigie.plus.voice30` as **Consumable**. Same irreversibility as Play.
-- [ ] Create `com.maigie.plus.monthly.sub` as **auto-renewable** in subscription group `maigie_plus`, with a **3-day introductory free trial**. **Not `com.maigie.plus.monthly`** — that id was created once as a consumable by mistake and Apple never lets a product id be reused, even after deletion. The `.sub` suffix is the replacement; the subscription **group** id `maigie_plus` is unaffected, since group and product ids are separate namespaces.
-- [ ] Set NGN prices per territory via each product's **price schedule**, and restrict `com.maigie.plus.passterm` to **Nigeria** in its availability. Apple's default is to derive every territory from the base price, which is FX parity again.
+- [x] **Create the app record for `com.maigie`.** It does not exist. Everything below is blocked on it.
+- [x] **Complete the Paid Applications agreement**, with banking and tax. **No in-app purchase product can be created until this is active**, and it needs details an engineer cannot supply. This is the single item most likely to add a week to the schedule, which is why it is step 1 rather than a Phase 5 task.
+- [x] Enable **In-App Purchase on the App ID** in the Apple Developer portal. This is a portal capability, **not** an entitlements-file edit — §5.6 says why editing `Maigie.entitlements` would be wrong.
+- [x] Create `com.maigie.plus.pass5h`, `com.maigie.plus.pass7d`, `com.maigie.plus.passterm` and `com.maigie.plus.voice30` as **Consumable**. Same irreversibility as Play.
+- [x] Create `com.maigie.plus.monthly.sub` as **auto-renewable** in subscription group `maigie_plus`, with a **3-day introductory free trial**. **Not `com.maigie.plus.monthly`** — that id was created once as a consumable by mistake and Apple never lets a product id be reused, even after deletion. The `.sub` suffix is the replacement; the subscription **group** id `maigie_plus` is unaffected, since group and product ids are separate namespaces.
+- [x] Set NGN prices per territory via each product's **price schedule**, and restrict `com.maigie.plus.passterm` to **Nigeria** in its availability. Apple's default is to derive every territory from the base price, which is FX parity again.
 - [ ] **Generate the In-App Purchase key — not the App Store Connect API key.** There are two Apple keys with nearly the same name, both issuing an issuer ID, a key ID and a `.p8`, and **they are not interchangeable**:
 
   | Key | Generated where | Used for |
