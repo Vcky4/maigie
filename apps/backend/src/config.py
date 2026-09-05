@@ -193,16 +193,6 @@ class Settings(BaseSettings):
     STRIPE_PRICE_ID_CIRCLE_PLAN_MONTHLY: str = ""
     # Plus Seat add-on (per-seat, no trial)
     STRIPE_PRICE_ID_PLUS_SEAT_ADD_ON_MONTHLY: str = ""
-    # DEPRECATED: Study Circle tier removed from active product catalog
-    # (Requirements 1.8, 17.9). Price IDs retained only so historical
-    # billing records and webhook lookups can continue to identify the
-    # source tier; the active catalog excludes them.
-    STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY: str = ""
-    STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY: str = ""
-    # DEPRECATED: Squad tier removed from active product catalog
-    # (Requirements 1.6, 1.8, 17.9). Same retention rationale as above.
-    STRIPE_PRICE_ID_SQUAD_MONTHLY: str = ""
-    STRIPE_PRICE_ID_SQUAD_YEARLY: str = ""
     # Trial days per plan (used when creating checkout sessions).
     #
     # The Plus trial is **3 days**, not 7. A free 7-day trial sitting beside a $2.49
@@ -293,12 +283,6 @@ class Settings(BaseSettings):
     # Circle Plan / Plus Seat add-on
     PAYSTACK_PLAN_CIRCLE_PLAN_MONTHLY: str = ""
     PAYSTACK_PLAN_PLUS_SEAT_ADD_ON_MONTHLY: str = ""
-    # DEPRECATED: retained only for historical webhook lookups; excluded
-    # from the active product catalog (Requirements 1.8, 17.9).
-    PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY: str = ""
-    PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY: str = ""
-    PAYSTACK_PLAN_SQUAD_MONTHLY: str = ""
-    PAYSTACK_PLAN_SQUAD_YEARLY: str = ""
 
     # --- Google Play Billing ---
     # Service account JSON for verifying purchases via Google Play Developer API.

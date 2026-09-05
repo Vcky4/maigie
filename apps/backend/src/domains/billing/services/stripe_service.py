@@ -379,7 +379,7 @@ def _assert_price_id_is_active(price_id: str) -> None:
     """Reject creation requests against a deprecated Stripe price ID.
 
     Any subscription creation or plan switch that targets a withdrawn price must fail
-    with HTTP 410: ``PREMIUM_YEARLY``, ``STUDY_CIRCLE_*`` or ``SQUAD_*``.
+    with HTTP 410: only ``PREMIUM_YEARLY`` remains guarded here.
 
     Yearly is here as well as in ``DEPRECATED_PLAN_IDS`` because the two functions guard
     different doors. ``assert_plan_id_is_active`` guards a fresh checkout, which arrives
@@ -387,31 +387,17 @@ def _assert_price_id_is_active(price_id: str) -> None:
     price id. A monthly subscriber switching to yearly is a new purchase of a withdrawn
     product, and would otherwise slip through. Existing yearly subscribers are unaffected
     — nothing here runs on a renewal, which is why the price id survives in config.
+
+    The Study Circle and Squad price-id branches were removed with their config settings
+    (§5.7.3 / §5.1): zero subscribers on those tiers (Phase 2b) means no price-id webhook
+    or plan switch for one can arrive. The retired *plan ids* still answer 410 through
+    ``assert_plan_id_is_active`` / ``DEPRECATED_PLAN_IDS``, which is plan-id keyed and
+    needs no config setting.
     """
     if price_id and price_id == settings.STRIPE_PRICE_ID_YEARLY:
         raise DeprecatedPlanError(
             code="PLUS_YEARLY_PLAN_REMOVED",
             message="Yearly Maigie Plus has been withdrawn.",
-        )
-    if price_id and price_id == settings.STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY:
-        raise DeprecatedPlanError(
-            code="STUDY_CIRCLE_PLAN_REMOVED",
-            message="The Study Circle plan has been retired.",
-        )
-    if price_id and price_id == settings.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY:
-        raise DeprecatedPlanError(
-            code="STUDY_CIRCLE_PLAN_REMOVED",
-            message="The Study Circle plan has been retired.",
-        )
-    if price_id and price_id == settings.STRIPE_PRICE_ID_SQUAD_MONTHLY:
-        raise DeprecatedPlanError(
-            code="SQUAD_PLAN_REMOVED",
-            message="The Squad plan has been retired.",
-        )
-    if price_id and price_id == settings.STRIPE_PRICE_ID_SQUAD_YEARLY:
-        raise DeprecatedPlanError(
-            code="SQUAD_PLAN_REMOVED",
-            message="The Squad plan has been retired.",
         )
 
 
