@@ -322,6 +322,26 @@ class Settings(BaseSettings):
     #: minted it; this proves it was *our* subscription. Optional but strongly recommended.
     GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL: str = ""
 
+    # --- Apple App Store (StoreKit 2 / App Store Server API) ---
+    # From the **In-App Purchase** key (Users and Access → Integrations → Keys), NOT the App Store
+    # Connect API key used by EAS Submit — the two look alike and are not interchangeable (§5.7.5).
+    # The .p8 contents go in APPLE_PRIVATE_KEY. Unset means the Apple rail refuses, rather than
+    # trusting an unverifiable receipt.
+    APPLE_ISSUER_ID: str = ""
+    APPLE_KEY_ID: str = ""
+    APPLE_PRIVATE_KEY: str = ""
+    APPLE_BUNDLE_ID: str = "com.maigie"
+    # "Sandbox" for testing (a Sandbox Apple Account or a local StoreKit config), "Production" live.
+    APPLE_ENVIRONMENT: str = "Sandbox"
+    # The numeric App Store app id (appAppleId), used to validate server notifications. Optional in
+    # sandbox; set it in production.
+    APPLE_APP_APPLE_ID: int | None = None
+    # Directory holding Apple's public root CA certificates (AppleRootCA-G3.cer, and G2), used to
+    # verify the x5c chain on every JWS. These are public certificates, not secrets — download from
+    # https://www.apple.com/certificateauthority/ and place them here at deploy time. Empty means JWS
+    # verification cannot run, so the Apple rail fails closed.
+    APPLE_ROOT_CA_DIR: str = ""
+
     # The three `GOOGLE_PLAY_SKU_CREDIT_*` product IDs are gone with credit packs (§6.1). They must
     # not simply be renamed to pass SKUs: these were never created in the Play Console, and a pass
     # is a different kind of consumable — bought as inventory, activated later (Decision A). The

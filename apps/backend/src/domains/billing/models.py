@@ -351,6 +351,30 @@ class GooglePlayProductVerifyResponse(BaseModel):
     purchaseId: str
 
 
+# ===========================================================================
+# Apple App Store
+# ===========================================================================
+
+
+class AppleVerifyRequest(BaseModel):
+    """Verify a one-time Apple (StoreKit 2) pass/voice purchase.
+
+    `signedTransactionInfo` is the JWS the app reads from `Transaction.jwsRepresentation`. Its Apple
+    signature is the authentication — there is no shared secret — and Apple's `transactionId` inside it
+    is the idempotency key: a replay grants nothing, and one bound to another learner is `409`.
+    """
+
+    signedTransactionInfo: str
+
+
+class AppleVerifyResponse(BaseModel):
+    """Result of verifying an Apple transaction."""
+
+    verified: bool
+    productId: str
+    purchaseId: str
+
+
 class GooglePlayVerifyResponse(BaseModel):
     """Google Play verification result."""
 

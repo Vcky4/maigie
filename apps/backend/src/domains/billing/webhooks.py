@@ -242,3 +242,48 @@ async def google_play_rtdn(
         ) from e
 
     return Response(status_code=200)
+
+
+# ===========================================================================
+# Apple App Store Server Notifications V2
+# ===========================================================================
+
+
+@router.post("/apple")
+async def apple_webhook(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+):
+    """Handle an App Store Server Notification V2 (refunds, revocations, renewals).
+
+    Apple posts `{"signedPayload": "<JWS>"}`. Unlike Stripe/Paystack there is no shared secret: the
+    payload's own Apple signature is the authentication, verified against Apple's root CA inside
+    `apple_service.handle_notification`. Fails closed when the root certificates are unconfigured, and
+    answers 500 on a processing error so Apple retries.
+    """
+    if not settings.APPLE_ROOT_CA_DIR:
+        raise _unconfigured("Apple")
+
+    try:
+        body = await request.json()
+    except ValueError as e:
+        logger.error(f"Invalid Apple notification payload: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid payload")
+
+    signed_payload = body.get("signedPayload")
+    if not signed_payload:
+        logger.error("Apple notification carried no signedPayload")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing signedPayload")
+
+    from src.domains.billing.services.apple_service import handle_notification
+
+    try:
+        await handle_notification(signed_payload)
+    except Exception as e:
+        logger.error(f"Error handling Apple notification: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Webhook processing failed",
+        ) from e
+
+    return Response(status_code=200)

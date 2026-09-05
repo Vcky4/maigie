@@ -449,6 +449,47 @@ async def google_play_verify_product(
     return models.GooglePlayProductVerifyResponse(**result)
 
 
+@router.post("/purchases/apple/verify", response_model=models.AppleVerifyResponse)
+async def apple_verify_product(
+    body: models.AppleVerifyRequest,
+    current_user: CurrentUser,
+    settings: Settings = Depends(get_settings),
+):
+    """Verify a one-time Apple (StoreKit 2) pass/voice purchase and grant it.
+
+    The app sends the signed transaction JWS; the server verifies it against Apple's root CA, persists
+    a `PlusPurchase` and grants an inventory pass (Decision G, A) — or credits the voice pack. Idempotent
+    on Apple's `transactionId`; a voice-pack purchase without an active entitlement is refused `403
+    VOICE_PACK_REQUIRES_PLUS` (Decision R). Also the iOS restore path for a finished consumable, which
+    StoreKit will not return — inventory is read from `GET /billing/passes`.
+    """
+    if not settings.APPLE_ROOT_CA_DIR:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The Apple purchase rail is not configured.",
+        )
+
+    from .services import apple_service
+
+    try:
+        result = await apple_service.verify_transaction(
+            user_id=current_user.id,
+            signed_transaction_info=body.signedTransactionInfo,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        # A signature that does not verify is a bad request, not a server fault. The library raises its
+        # own VerificationException; catching broadly here keeps an unverifiable receipt a 400 rather
+        # than leaking a 500.
+        logger.warning("Apple transaction verification failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The Apple transaction could not be verified.",
+        )
+    return models.AppleVerifyResponse(**result)
+
+
 # ===========================================================================
 # Credits
 # ===========================================================================

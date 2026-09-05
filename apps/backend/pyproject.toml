@@ -62,6 +62,7 @@ weasyprint = "^69.0"
 # declares. VAPID JWTs are signed with the `python-jose[cryptography]` already here,
 # and delivery uses the existing `httpx`, so retry and expiry handling stay ours.
 http-ece = "1.2.1"
+app-store-server-library = "^3.1.2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"

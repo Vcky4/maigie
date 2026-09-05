@@ -513,6 +513,44 @@
         "title": "AnswerSubmitRequest",
         "type": "object"
       },
+      "AppleVerifyRequest": {
+        "description": "Verify a one-time Apple (StoreKit 2) pass/voice purchase.\n\n`signedTransactionInfo` is the JWS the app reads from `Transaction.jwsRepresentation`. Its Apple\nsignature is the authentication — there is no shared secret — and Apple's `transactionId` inside it\nis the idempotency key: a replay grants nothing, and one bound to another learner is `409`.",
+        "properties": {
+          "signedTransactionInfo": {
+            "title": "Signedtransactioninfo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signedTransactionInfo"
+        ],
+        "title": "AppleVerifyRequest",
+        "type": "object"
+      },
+      "AppleVerifyResponse": {
+        "description": "Result of verifying an Apple transaction.",
+        "properties": {
+          "productId": {
+            "title": "Productid",
+            "type": "string"
+          },
+          "purchaseId": {
+            "title": "Purchaseid",
+            "type": "string"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "verified",
+          "productId",
+          "purchaseId"
+        ],
+        "title": "AppleVerifyResponse",
+        "type": "object"
+      },
       "AskAction": {
         "description": "Something Maigie actually did on this turn.\n\n**Only from the model's own tool output** (Decision I). The surface previously published a\n`suggestedAction` produced by keyword-matching the learner's own words and presented as the model's\nrecommendation — which §1's second clause forbids outright, because it is a claim that is false. These\nare the executed actions, so a client offering a follow-up is offering one tied to something real.\n\n`status` is carried rather than filtered so a failed action is visible. The event frames and the\ncomponents are both success-shaped, so a turn whose tool failed otherwise looks like a turn that used\nno tools.",
         "properties": {
@@ -22408,6 +22446,54 @@
         ]
       }
     },
+    "/api/v1/billing/purchases/apple/verify": {
+      "post": {
+        "description": "Verify a one-time Apple (StoreKit 2) pass/voice purchase and grant it.\n\nThe app sends the signed transaction JWS; the server verifies it against Apple's root CA, persists\na `PlusPurchase` and grants an inventory pass (Decision G, A) — or credits the voice pack. Idempotent\non Apple's `transactionId`; a voice-pack purchase without an active entitlement is refused `403\nVOICE_PACK_REQUIRES_PLUS` (Decision R). Also the iOS restore path for a finished consumable, which\nStoreKit will not return — inventory is read from `GET /billing/passes`.",
+        "operationId": "apple_verify_product_api_v1_billing_purchases_apple_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppleVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppleVerifyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Apple Verify Product",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
     "/api/v1/billing/purchases/google-play/verify": {
       "post": {
         "description": "Verify a one-time Google Play pass/voice purchase and grant it.\n\nThe mobile client sends the `purchaseToken` Play Billing returned; the server verifies it with the\nPlay Developer API, persists a `PlusPurchase` and grants an inventory pass (Decision G, A) — or,\nfor the voice pack, credits seconds. Idempotent on the token: a replay grants nothing, and a token\nalready bound to another learner answers `409 PURCHASE_ALREADY_CLAIMED`. A voice-pack purchase by a\nlearner without an active entitlement is refused `403 VOICE_PACK_REQUIRES_PLUS` (Decision R).\n\nThis is also iOS's and Android's restore path for a finished consumable that StoreKit/Play Billing\nwill not return — inventory is read from `GET /billing/passes`, not the store.",
@@ -37842,6 +37928,27 @@
         "tags": [
           "users",
           "users"
+        ]
+      }
+    },
+    "/api/v1/webhooks/apple": {
+      "post": {
+        "description": "Handle an App Store Server Notification V2 (refunds, revocations, renewals).\n\nApple posts `{\"signedPayload\": \"<JWS>\"}`. Unlike Stripe/Paystack there is no shared secret: the\npayload's own Apple signature is the authentication, verified against Apple's root CA inside\n`apple_service.handle_notification`. Fails closed when the root certificates are unconfigured, and\nanswers 500 on a processing error so Apple retries.",
+        "operationId": "apple_webhook_api_v1_webhooks_apple_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Apple Webhook",
+        "tags": [
+          "webhooks",
+          "webhooks"
         ]
       }
     },
