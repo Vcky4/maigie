@@ -61,6 +61,21 @@ RAW_SQL_ROW_VARS = {
     "domains/learning_spaces/services/space_impl.py": {"note", "original"},
 }
 
+#: Decoded payloads from third-party SDKs whose own fields are camelCase, so the camelCase spelling is
+#: the attribute and the snake_case one would be the ``AttributeError``. The inversion of what this
+#: guard normally looks for, which is why they need naming rather than fixing.
+#:
+#: Scoped per file on purpose. ``notification`` is an ORM ``Notification`` in most of the codebase and
+#: must stay dangerous there — a global exemption for that name would blind the guard across the whole
+#: notifications domain, which is the mistake the ``c`` note above records.
+SDK_PAYLOAD_VARS = {
+    # Apple's `app-store-server-library`. `txn` is a `JWSTransactionDecodedPayload` and `notification`
+    # a `ResponseBodyV2DecodedPayload`, both returned by the JWS verifier; their attrs fields are
+    # declared camelCase upstream (`productId`, `notificationType`). They collide with this guard only
+    # because `productId` and `notificationType` are *also* column names elsewhere.
+    "domains/billing/services/apple_service.py": {"txn", "notification"},
+}
+
 
 def _column_only_names() -> set[str]:
     mapped_attrs: set[str] = set()
@@ -97,7 +112,11 @@ def test_no_source_file_reads_a_column_only_attribute():
         relative = path.relative_to(SRC).as_posix()
         if path.name in SKIP_FILENAMES or relative in UNMIGRATED_MODULES:
             continue
-        allowed_vars = NON_ORM_VARS | RAW_SQL_ROW_VARS.get(relative, set())
+        allowed_vars = (
+            NON_ORM_VARS
+            | RAW_SQL_ROW_VARS.get(relative, set())
+            | SDK_PAYLOAD_VARS.get(relative, set())
+        )
         text = path.read_text()
         for number, stripped in _code_lines(text):
             for match in pattern.finditer(stripped):
