@@ -183,10 +183,12 @@ class Settings(BaseSettings):
     # retained so a renewal webhook for a grandfathered `PREMIUM_YEARLY` subscriber can
     # still be identified; `plus_yearly` is rejected with 410 on new purchases.
     STRIPE_PRICE_ID_YEARLY: str = ""
-    # Plus passes — one-time prices (`mode: payment`), not subscriptions. A pass is a
-    # consumable product: bought, held, activated, spent. Nothing renews.
+    # Plus passes and the voice pack — one-time prices (`mode: payment`), not subscriptions. A pass is
+    # a consumable product: bought, held, activated, spent. Nothing renews. The Term Pass has no
+    # Stripe price by design (§5.7.1) — it is NGN-only and sold on Paystack and the stores.
     STRIPE_PRICE_ID_PLUS_PASS_5H: str = ""
     STRIPE_PRICE_ID_PLUS_PASS_7D: str = ""
+    STRIPE_PRICE_ID_PLUS_VOICE_30: str = ""
     # Circle Plan (per-Circle subscription, 7-day trial on first purchase)
     STRIPE_PRICE_ID_CIRCLE_PLAN_MONTHLY: str = ""
     # Plus Seat add-on (per-seat, no trial)
@@ -238,6 +240,10 @@ class Settings(BaseSettings):
     PRICE_CENTS_PLUS_PASS_5H: int = 99
     PRICE_CENTS_PLUS_PASS_7D: int = 399
     PRICE_CENTS_PLUS_MONTHLY: int = 999
+    # $1.49. Used to record the amount on a store purchase of the voice pack — the Play/App Store
+    # `products.get`/receipt do not always return the price, and §5.7.6's parity check guarantees the
+    # store price equals this, so recording it here is accurate rather than invented.
+    PRICE_CENTS_PLUS_VOICE_30: int = 149
     # DEPRECATED alongside `STRIPE_PRICE_ID_YEARLY`: retained for grandfathered
     # subscribers' billing records, excluded from the catalog.
     PRICE_CENTS_PLUS_YEARLY: int = 3900

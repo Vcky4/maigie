@@ -57,6 +57,15 @@ PLAN_IDS = (
 # refusal rather than a generic "invalid plan_id".
 PASS_PRODUCT_IDS = ("plus_pass_5h", "plus_pass_7d")
 
+# One-time products sold on the Stripe (USD) rail, mapped to the price-id setting each reads.
+# `plus_pass_term` is **absent by design** (§5.7.1): it is NGN-only, so its rails are Paystack on web
+# and the stores on mobile. A USD price for it would put an unbuyable product one API call from sale.
+ONE_TIME_PRICE_SETTINGS = {
+    "plus_pass_5h": "STRIPE_PRICE_ID_PLUS_PASS_5H",
+    "plus_pass_7d": "STRIPE_PRICE_ID_PLUS_PASS_7D",
+    "plus_voice_30": "STRIPE_PRICE_ID_PLUS_VOICE_30",
+}
+
 # Plan identifiers that have been removed from the active catalog.
 # Creation requests referencing these are rejected with HTTP 410.
 #
@@ -875,6 +884,54 @@ async def create_checkout_session(
     }
 
 
+async def create_one_time_checkout(
+    user: User,
+    product_id: str,
+    success_url: str,
+    cancel_url: str,
+) -> dict:
+    """Create a Stripe `mode: payment` checkout for a pass or the voice pack.
+
+    A one-time charge, **not** a subscription — no trial, no renewal, and none of the subscription-
+    modification logic in `create_checkout_session` (which a pass must never run through: a learner
+    already on Plus can still buy an inventory pass for later).
+
+    The `user_id` and `product_id` travel in the session and payment-intent metadata so the
+    `checkout.session.completed` webhook can attribute the payment to a learner and a product, and so a
+    later `charge.refunded` (which carries the payment intent) can find the same purchase. Verification
+    is the webhook itself: Stripe only fires `checkout.session.completed` with `payment_status == "paid"`
+    once the money has moved.
+    """
+    setting_name = ONE_TIME_PRICE_SETTINGS.get(product_id)
+    if setting_name is None:
+        # The Term Pass lands here: it has no Stripe price on purpose. Named rather than generic so a
+        # client sends it to the right rail.
+        raise ValueError(
+            f"'{product_id}' is not sold on the Stripe rail. The Term Pass is Nigeria-only "
+            f"(Paystack and the stores); the passes and voice pack on Stripe are "
+            f"{', '.join(ONE_TIME_PRICE_SETTINGS)}."
+        )
+    price_id = getattr(settings, setting_name)
+    if not price_id:
+        raise ValueError(f"Stripe price id for '{product_id}' is not configured ({setting_name}).")
+
+    customer_id = await get_or_create_stripe_customer(user)
+    metadata = {"user_id": user.id, "product_id": product_id, "product_kind": "pass"}
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        payment_method_types=["card"],
+        line_items=[{"price": price_id, "quantity": 1}],
+        mode="payment",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=metadata,
+        # Repeated on the PaymentIntent so a `charge.refunded` event — which carries the intent, not
+        # the session — can still be attributed if the reference lookup ever needs it.
+        payment_intent_data={"metadata": metadata},
+    )
+    return {"session_id": session.id, "url": session.url, "modified": False}
+
+
 async def create_portal_session(user: User, return_url: str) -> dict:
     """
     Create a Stripe customer portal session for subscription management.
@@ -1122,6 +1179,84 @@ async def update_user_subscription_from_stripe(
     except Exception as e:
         logger.error(f"Error updating user subscription: {e}")
         raise
+
+
+async def handle_stripe_event(event: dict) -> None:
+    """Route a verified Stripe event to the right handler.
+
+    The single entry point the webhook calls, replacing a dispatch that passed the whole event where
+    an event-type string was expected. Subscription events keep their existing path; the two one-time
+    branches — `checkout.session.completed` for a paid pass/voice checkout, and `charge.refunded` for a
+    revocation — are new. Anything else is ignored: Stripe sends far more than we act on, and an
+    unhandled type is not an error.
+    """
+    event_type = event.get("type", "")
+    data_object = (event.get("data") or {}).get("object") or {}
+
+    if event_type.startswith("customer.subscription."):
+        await handle_subscription_webhook(event_type, data_object)
+    elif event_type == "checkout.session.completed":
+        await _handle_checkout_completed(data_object)
+    elif event_type == "charge.refunded":
+        await _handle_charge_refunded(data_object)
+    else:
+        logger.debug("stripe: ignoring event type %s", event_type)
+
+
+async def _handle_checkout_completed(session: dict) -> None:
+    """Fulfil a one-time pass/voice checkout. Subscription checkouts are handled by their own events.
+
+    Only `mode == "payment"` sessions are ours: a subscription checkout also fires this event, but its
+    state is applied by the `customer.subscription.*` handler, so acting on it here would be a second,
+    conflicting writer. The `payment_intent` is the idempotency key carried into `PlusPurchase`, and it
+    is also what a later `charge.refunded` presents — so a refund can find exactly this purchase.
+    """
+    if session.get("mode") != "payment":
+        return
+    if session.get("payment_status") != "paid":
+        logger.info(
+            "stripe: checkout %s is %s, not paid — not fulfilling",
+            session.get("id"),
+            session.get("payment_status"),
+        )
+        return
+
+    metadata = session.get("metadata") or {}
+    user_id = metadata.get("user_id")
+    product_id = metadata.get("product_id")
+    if not user_id or not product_id:
+        logger.warning(
+            "stripe: one-time checkout %s carried no user_id/product_id metadata",
+            session.get("id"),
+        )
+        return
+
+    provider_reference = session.get("payment_intent") or session.get("id")
+    from src.domains.billing.services import purchase_service
+
+    await purchase_service.fulfill_purchase(
+        user_id=user_id,
+        product_id=product_id,
+        provider="stripe",
+        provider_reference=provider_reference,
+        amount_minor=session.get("amount_total") or 0,
+        currency=(session.get("currency") or "usd").upper(),
+        raw_payload={"stripe_session_id": session.get("id")},
+    )
+
+
+async def _handle_charge_refunded(charge: dict) -> None:
+    """Revoke the pass behind a refunded charge, if the charge was one of ours.
+
+    Keyed on the `payment_intent`, which is the `PlusPurchase.providerReference` for a one-time charge.
+    A subscription refund carries an intent that matches no purchase and is a harmless no-op.
+    """
+    payment_intent = charge.get("payment_intent")
+    if not payment_intent:
+        return
+    from src.domains.billing.services import purchase_service
+
+    await purchase_service.refund_purchase(provider_reference=payment_intent)
 
 
 async def handle_subscription_webhook(

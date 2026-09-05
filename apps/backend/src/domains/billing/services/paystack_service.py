@@ -59,6 +59,25 @@ PAYSTACK_BASE = "https://api.paystack.co"
 # what is refused. Both belong to the catalogue, and the catalogue has one owner.
 from ..services.stripe_service import DEPRECATED_PLAN_IDS, PLAN_IDS  # noqa: E402
 
+# One-time products on the NGN rail, mapped to the kobo-amount setting each reads. Unlike a
+# subscription, **nothing overrides this amount** — a one-off `/transaction/initialize` charges exactly
+# what is sent — so a wrong figure here is a wrong charge (§5.7.3). All three passes are sold on
+# Paystack, the Term Pass included (it is the NGN-only product); `plus_voice_30` too.
+NGN_ONE_TIME_SETTINGS = {
+    "plus_pass_5h": "PRICE_NGN_PLUS_PASS_5H",
+    "plus_pass_7d": "PRICE_NGN_PLUS_PASS_7D",
+    "plus_pass_term": "PRICE_NGN_PLUS_PASS_TERM",
+    "plus_voice_30": "PRICE_NGN_PLUS_VOICE_30",
+}
+
+
+def _one_time_amount_kobo(product_id: str) -> int | None:
+    """The kobo price of a one-time product from config, or `None` if it is not a Paystack one-off."""
+    setting_name = NGN_ONE_TIME_SETTINGS.get(product_id)
+    if setting_name is None:
+        return None
+    return int(getattr(get_settings(), setting_name))
+
 
 def _assert_plan_id_is_active(plan_id: str) -> None:
     """Reject creation against retired plan ids.
@@ -392,6 +411,131 @@ async def initialize_paystack_subscription(
     }
 
 
+async def initialize_pass_transaction(
+    user: User,
+    product_id: str,
+    success_url: str,
+    cancel_url: str,
+) -> dict:
+    """Initialise a one-off NGN charge for a pass or the voice pack. Returns the authorization URL.
+
+    A one-off `/transaction/initialize` with an **amount and no plan** — the simpler of Paystack's two
+    shapes (§5.7.3). Nothing overrides the amount, so it is read from config in kobo and sent exactly.
+    `user_id` and `product_id` travel in the metadata so the `charge.success` webhook can attribute the
+    payment and `PlusPurchase` can key idempotency on the transaction reference.
+
+    All three passes are sold here, the NGN-only Term Pass included. The voice-pack entitlement gate
+    (Decision R) is enforced at the route before this is reached, the same as on the Stripe rail.
+    """
+    settings = get_settings()
+    if not settings.PAYSTACK_SECRET_KEY:
+        raise ValueError("Paystack is not configured (PAYSTACK_SECRET_KEY missing)")
+
+    amount = _one_time_amount_kobo(product_id)
+    if amount is None:
+        raise ValueError(
+            f"'{product_id}' is not a one-time Paystack product "
+            f"(expected one of {', '.join(NGN_ONE_TIME_SETTINGS)})."
+        )
+
+    metadata: dict[str, Any] = {
+        "user_id": user.id,
+        "product_id": product_id,
+        "product_kind": "pass",
+    }
+    if user.name:
+        metadata["name"] = user.name
+
+    # No "plan" key: this is a one-off charge, not a subscription.
+    payload = {
+        "email": user.email,
+        "amount": str(amount),
+        "callback_url": success_url,
+        "metadata": metadata,
+    }
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{PAYSTACK_BASE}/transaction/initialize",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
+                "Content-Type": "application/json",
+            },
+        )
+    data = resp.json()
+    if not data.get("status"):
+        msg = data.get("message", "Paystack initialization failed")
+        logger.error(f"Paystack one-time init failed for user {user.id}: {msg}")
+        raise ValueError(msg)
+
+    result = data.get("data", {})
+    return {
+        "authorization_url": result.get("authorization_url"),
+        "access_code": result.get("access_code"),
+        "reference": result.get("reference"),
+    }
+
+
+async def _fetch_verified_transaction(reference: str) -> dict | None:
+    """Ask Paystack whether a reference is a genuine, successful charge. `None` if not paid.
+
+    The webhook signature proves the event came from Paystack; this proves the *charge* is real and
+    settled (Decision G: verify before granting). Returns the transaction data on success.
+    """
+    settings = get_settings()
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{PAYSTACK_BASE}/transaction/verify/{reference}",
+            headers={"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"},
+        )
+    data = resp.json()
+    if not data.get("status"):
+        return None
+    txn = data.get("data", {})
+    if txn.get("status") != "success":
+        return None
+    return txn
+
+
+async def _handle_one_time_charge(
+    data: dict, metadata: dict, reference: str, user_id: str, product_id: str
+) -> None:
+    """Fulfil a one-off pass/voice charge: verify it, then persist-and-grant through the shared seam.
+
+    Verifies the reference against Paystack directly and checks the amount paid covers the product's
+    configured price, so a tampered or under-paid charge grants nothing. Fulfilment (the `PlusPurchase`
+    write keyed on the reference, and the pass grant or voice credit) is idempotent in `purchase_service`,
+    so a webhook retry is safe.
+    """
+    verified = await _fetch_verified_transaction(reference)
+    if verified is None:
+        raise ValueError(
+            f"Paystack one-time charge {reference} did not verify as a paid transaction"
+        )
+
+    amount = int(verified.get("amount") or data.get("amount") or 0)
+    currency = str(verified.get("currency") or "NGN")
+    expected = _one_time_amount_kobo(product_id)
+    if expected is not None and amount < expected:
+        raise ValueError(
+            f"Paystack charge {reference} paid {amount} kobo, below the {expected} kobo "
+            f"price of {product_id}"
+        )
+
+    from src.domains.billing.services import purchase_service
+
+    await purchase_service.fulfill_purchase(
+        user_id=user_id,
+        product_id=product_id,
+        provider="paystack",
+        provider_reference=reference,
+        amount_minor=amount,
+        currency=currency,
+        raw_payload={"paystack_reference": reference},
+    )
+
+
 async def verify_paystack_transaction(reference: str, user_id: str) -> User | None:
     """
     Verify a Paystack transaction and sync subscription to user.
@@ -622,6 +766,13 @@ async def _handle_charge_success(payload: dict) -> None:
             f"Paystack charge.success is unattributable "
             f"(reference={reference!r}, metadata.user_id={user_id!r})"
         )
+
+    # A one-off pass/voice charge carries a `product_id` in its metadata and no plan; a subscription
+    # charge carries a plan and no `product_id`. That split is what routes the two shapes apart.
+    product_id = metadata.get("product_id")
+    if product_id:
+        await _handle_one_time_charge(data, metadata, str(reference), str(user_id), str(product_id))
+        return
 
     updated = await verify_paystack_transaction(str(reference), str(user_id))
     if updated is None:

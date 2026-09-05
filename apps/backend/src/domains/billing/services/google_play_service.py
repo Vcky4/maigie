@@ -20,6 +20,7 @@ from src.config import get_settings
 from src.domains.billing.repository import billing_repo
 from src.domains.identity.repository import IdentityRepository
 from src.shared.database import get_session_factory
+from src.shared.exceptions import MaigieError
 
 logger = logging.getLogger(__name__)
 
@@ -176,22 +177,88 @@ async def verify_subscription(
     }
 
 
-# `verify_product_purchase` and `_sku_to_credits` are removed.
-#
-# They verified a one-time Google Play purchase of `credit_pack_starter` / `_value` / `_power` and
-# granted 50 000 / 165 000 / 575 000 credits into `User.purchasedCreditsBalance`. Phase 1 withdrew
-# credit packs (§6.1) and Phase 3 dropped the column, so the function verified a product that cannot
-# be listed and credited a column that does not exist.
-#
-# Phase 1 left it standing on the grounds that the `purchases.products.get` call and the
-# token-replay check were reusable for passes. They are, but a function that compiles and cannot
-# work is a worse reference than a note saying what to reuse, so here is the note. The pass rails
-# need: `purchases().products().get()` for the state check, `purchaseState == 0`,
-# `products().consume()` so the SKU can be bought again — a pass is genuinely consumable, which is
-# exactly why Decision G makes the purchase record the source of truth rather than the store —
-# and a replay guard keyed on `purchaseToken`. What they must *not* reuse is the credit grant: a
-# pass purchase creates inactive `PlusPass` inventory, and the clock starts when the learner
-# activates it (Decision A).
+async def verify_product_purchase(user_id: str, product_id: str, purchase_token: str) -> dict:
+    """Verify a one-time Google Play pass/voice purchase and grant it. Idempotent on the token.
+
+    Replaces the credit-pack verifier this used to hold (withdrawn §6.1). Reuses what that function's
+    removal note said was reusable — `purchases().products().get()` for the state, `purchaseState == 0`,
+    and a replay guard — but grants a **pass** rather than credits: `purchase_service.fulfill_purchase`
+    persists a `PlusPurchase` keyed on the `purchaseToken` and puts an inactive `PlusPass` in inventory,
+    whose clock the learner starts on activation (Decision A). The unique `providerReference` is the
+    replay/cross-account guard: a replayed token grants nothing, a token bound to another learner is
+    `409 PURCHASE_ALREADY_CLAIMED`.
+
+    **The voice pack requires an active Plus entitlement to buy** (Decision R). A learner with none is
+    refused here and the purchase is not credited; left unacknowledged, Google auto-refunds it within a
+    few days — refund-by-revocation, the one case a valid store receipt is deliberately not honoured.
+    """
+    from src.domains.billing.services import entitlement_service, purchase_service
+
+    if product_id == purchase_service.VOICE_PACK_PRODUCT_ID:
+        entitlement = await entitlement_service.resolve(user_id)
+        if entitlement.tier != "plus":
+            raise MaigieError(
+                message=(
+                    "The voice pack is an add-on to Maigie Plus. Start a subscription or activate a "
+                    "pass first, then top up your voice minutes."
+                ),
+                status_code=403,
+                code="VOICE_PACK_REQUIRES_PLUS",
+            )
+
+    settings = get_settings()
+    package_name = settings.GOOGLE_PLAY_PACKAGE_NAME
+    service = _get_android_publisher_service()
+
+    result = (
+        service.purchases()
+        .products()
+        .get(packageName=package_name, productId=product_id, token=purchase_token)
+        .execute()
+    )
+
+    # purchaseState: 0 = purchased, 1 = canceled, 2 = pending. Only a completed purchase grants.
+    purchase_state = result.get("purchaseState", 1)
+    if purchase_state != 0:
+        raise ValueError(
+            f"Google Play purchase for {product_id} is not in the purchased state "
+            f"(purchaseState={purchase_state})."
+        )
+
+    region = result.get("regionCode")
+    amount_minor, currency = purchase_service.configured_store_amount(product_id, region)
+
+    purchase = await purchase_service.fulfill_purchase(
+        user_id=user_id,
+        product_id=product_id,
+        provider="google_play",
+        provider_reference=purchase_token,
+        amount_minor=amount_minor,
+        currency=currency,
+        raw_payload={"orderId": result.get("orderId"), "regionCode": region},
+    )
+
+    # Acknowledge so Google does not auto-refund a purchase we honoured. Non-fatal: the grant is done
+    # and the purchase recorded, so a failed acknowledgement must not fail the caller — and the client's
+    # own consumption (Play Billing) acknowledges too, so a double-ack here is expected and ignored.
+    if not result.get("acknowledgementState"):
+        try:
+            service.purchases().products().acknowledge(
+                packageName=package_name,
+                productId=product_id,
+                token=purchase_token,
+                body={},
+            ).execute()
+        except Exception as e:
+            logger.warning(f"Google Play product acknowledge failed (non-fatal): {e}")
+
+    logger.info(
+        "Google Play product verified: user=%s product=%s purchase=%s",
+        user_id,
+        product_id,
+        purchase.id,
+    )
+    return {"verified": True, "productId": product_id, "purchaseId": purchase.id}
 
 
 async def handle_rtdn_notification(message_data: dict) -> None:
@@ -204,6 +271,21 @@ async def handle_rtdn_notification(message_data: dict) -> None:
     Args:
         message_data: Decoded notification payload
     """
+    # A voided purchase — refund or chargeback — reaches every product type, and for a one-time pass or
+    # voice pack it is the revocation signal (a subscription void also arrives as a `subscriptionNotification`
+    # type below). Keyed on the `purchaseToken`, which is the `PlusPurchase.providerReference`: a pass
+    # purchase is found and revoked, and a subscription void finds no purchase and is a harmless no-op.
+    voided = message_data.get("voidedPurchaseNotification")
+    if voided:
+        token = voided.get("purchaseToken")
+        if token:
+            from src.domains.billing.services import purchase_service
+
+            await purchase_service.refund_purchase(provider_reference=token)
+        else:
+            logger.warning("RTDN voided-purchase notification carried no purchaseToken")
+        return
+
     subscription_notification = message_data.get("subscriptionNotification")
     if not subscription_notification:
         logger.debug("RTDN message is not a subscription notification, skipping")

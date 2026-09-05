@@ -88,10 +88,10 @@ async def stripe_webhook(
         logger.error(f"Stripe signature verification failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
 
-    from src.domains.billing.services.stripe_service import handle_subscription_webhook
+    from src.domains.billing.services.stripe_service import handle_stripe_event
 
     try:
-        await handle_subscription_webhook(event, None)
+        await handle_stripe_event(event)
     except Exception as e:
         # `500`, not `200`. This handler writes `User.tier` and the subscription period; losing an
         # event silently means a subscriber whose state never changed. Stripe retries with backoff.

@@ -245,6 +245,22 @@ class CheckoutResponse(BaseModel):
     current_period_end: str | None = None
 
 
+class PassCheckoutRequest(BaseModel):
+    """Start a one-time checkout for a pass or the voice pack (§5.7.1, Decision R).
+
+    Not a subscription — `mode: payment`, no trial, no renewal. `provider` selects the rail: `stripe`
+    for the USD/global market, `paystack` for NGN on web. The stores (Apple/Google) do not come through
+    here — they verify a receipt after purchase rather than starting a checkout.
+
+    `plus_pass_term` is accepted only on the Paystack rail: it is NGN-only, so a Stripe request for it
+    is refused. `plus_voice_30` requires an active Plus entitlement to buy (Decision R), enforced at the
+    endpoint before a session is created.
+    """
+
+    product_id: Literal["plus_pass_5h", "plus_pass_7d", "plus_pass_term", "plus_voice_30"]
+    provider: Literal["stripe", "paystack"] = "stripe"
+
+
 class SyncCheckoutRequest(BaseModel):
     """Sync subscription from completed checkout."""
 
@@ -311,6 +327,28 @@ class GooglePlayVerifyRequest(BaseModel):
     productId: str
     purchaseToken: str
     basePlanId: str = ""
+
+
+class GooglePlayProductVerifyRequest(BaseModel):
+    """Verify a one-time Google Play pass/voice purchase.
+
+    `productId` is the store SKU (`plus_pass_5h` / `plus_pass_7d` / `plus_pass_term` / `plus_voice_30`);
+    `purchaseToken` is what Play Billing returns on the device, and it is the idempotency key —
+    replaying it grants nothing, and presenting one bound to another learner is `409`.
+    """
+
+    productId: str
+    purchaseToken: str
+
+
+class GooglePlayProductVerifyResponse(BaseModel):
+    """Result of verifying a one-time Google Play purchase."""
+
+    verified: bool
+    productId: str
+    #: The `PlusPurchase` this created or matched. For a pass, the inventory `PlusPass` hangs off it and
+    #: is fetched from `GET /billing/passes`; the voice pack has no pass, only credited seconds.
+    purchaseId: str
 
 
 class GooglePlayVerifyResponse(BaseModel):

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from src.config import Settings, get_settings
 from src.shared.auth import CurrentUser, StaffUser
+from src.shared.exceptions import MaigieError
 
 from . import models
 from .services import credit_service, entitlement_service, subscription_service
@@ -193,6 +194,69 @@ async def activate_pass(pass_id: str, current_user: CurrentUser):
     return _pass_item(row)
 
 
+@router.post("/passes/checkout", response_model=models.CheckoutResponse)
+async def create_pass_checkout(
+    body: models.PassCheckoutRequest,
+    current_user: CurrentUser,
+    http_request: Request,
+    settings: Settings = Depends(get_settings),
+):
+    """Start a one-time checkout for a pass or the voice pack (§5.7.1, Decision R).
+
+    **`mode: payment`, never a subscription** — a pass is bought once, held as inventory, and activated
+    later. The Stripe rail serves USD, Paystack serves NGN; the stores verify a receipt instead and do
+    not come through here.
+
+    **The voice pack requires an active Plus entitlement to buy** (Decision R): its whole purpose is a
+    subscriber out of minutes who cannot activate a pass, so a learner with no entitlement is refused
+    `403 VOICE_PACK_REQUIRES_PLUS` at this boundary rather than after paying. The Term Pass is NGN-only,
+    so a Stripe request for it is refused with the door it belongs to.
+    """
+    if body.product_id == "plus_voice_30":
+        resolved = await entitlement_service.resolve(current_user.id)
+        if resolved.tier != "plus":
+            raise MaigieError(
+                message=(
+                    "The voice pack is an add-on to Maigie Plus. Start a subscription or activate a "
+                    "pass first, then top up your voice minutes."
+                ),
+                status_code=status.HTTP_403_FORBIDDEN,
+                code="VOICE_PACK_REQUIRES_PLUS",
+            )
+
+    base_url = settings.FRONTEND_URL or str(http_request.base_url).rstrip("/")
+    success_url = f"{base_url}/passes/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{base_url}/passes/cancel"
+
+    if body.provider == "stripe":
+        from .services import stripe_service
+
+        try:
+            result = await stripe_service.create_one_time_checkout(
+                current_user, body.product_id, success_url, cancel_url
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        return models.CheckoutResponse(**result)
+
+    # provider == "paystack": the NGN one-time rail. Returns the authorization URL as `url`, and the
+    # transaction reference as `session_id` — the reference is what the `charge.success` webhook and
+    # `PlusPurchase` key idempotency on.
+    from .services import paystack_service
+
+    try:
+        result = await paystack_service.initialize_pass_transaction(
+            current_user, body.product_id, success_url, cancel_url
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return models.CheckoutResponse(
+        session_id=result.get("reference") or "",
+        url=result.get("authorization_url"),
+        modified=False,
+    )
+
+
 # ===========================================================================
 # Subscriptions (Stripe)
 # ===========================================================================
@@ -354,12 +418,35 @@ async def google_play_verify(body: models.GooglePlayVerifyRequest, current_user:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# The in-app product verification endpoint that used to live here verified a credit-pack
-# purchase and granted credits. Credit packs are withdrawn, so it verified a product that
-# no longer exists. Its replacement verifies a Plus pass purchase and grants an inactive
-# pass; it arrives with the purchase rails, alongside the Apple equivalent.
-# `google_play_service.verify_product_purchase` is left in place as the basis for it —
-# the `purchases.products.get` call and the token-replay check are both reusable.
+@router.post(
+    "/purchases/google-play/verify",
+    response_model=models.GooglePlayProductVerifyResponse,
+)
+async def google_play_verify_product(
+    body: models.GooglePlayProductVerifyRequest, current_user: CurrentUser
+):
+    """Verify a one-time Google Play pass/voice purchase and grant it.
+
+    The mobile client sends the `purchaseToken` Play Billing returned; the server verifies it with the
+    Play Developer API, persists a `PlusPurchase` and grants an inventory pass (Decision G, A) — or,
+    for the voice pack, credits seconds. Idempotent on the token: a replay grants nothing, and a token
+    already bound to another learner answers `409 PURCHASE_ALREADY_CLAIMED`. A voice-pack purchase by a
+    learner without an active entitlement is refused `403 VOICE_PACK_REQUIRES_PLUS` (Decision R).
+
+    This is also iOS's and Android's restore path for a finished consumable that StoreKit/Play Billing
+    will not return — inventory is read from `GET /billing/passes`, not the store.
+    """
+    from .services.google_play_service import verify_product_purchase
+
+    try:
+        result = await verify_product_purchase(
+            user_id=current_user.id,
+            product_id=body.productId,
+            purchase_token=body.purchaseToken,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return models.GooglePlayProductVerifyResponse(**result)
 
 
 # ===========================================================================
