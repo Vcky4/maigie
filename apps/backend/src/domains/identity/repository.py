@@ -91,7 +91,6 @@ class IdentityRepository:
                 user_id=user.id,
                 theme="light",
                 language="en",
-                notifications=True,
             )
             session.add(prefs)
             session.add(NotificationPolicy(user_id=user.id, engagement_enabled=True))
@@ -373,11 +372,6 @@ class IdentityRepository:
         """Map preference field names to model attributes."""
         field_map = {
             "studyGoals": "study_goals",
-            "emailMorningSchedule": "email_morning_schedule",
-            "emailScheduleReminder": "email_schedule_reminder",
-            "emailWeeklyTips": "email_weekly_tips",
-            "pushScheduleReminder": "push_schedule_reminder",
-            "pushStudyTips": "push_study_tips",
             "timezoneSource": "timezone_source",
             "timezoneCapturedAt": "timezone_captured_at",
         }

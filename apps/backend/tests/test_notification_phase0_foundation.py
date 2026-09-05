@@ -125,7 +125,10 @@ async def test_notification_settings_defaults_are_conservative(
 
     result = await service.get_notification_settings(user_id="user-1")
     by_category = {item.category: item for item in result.categories}
-    assert result.engagement_enabled is True
+    # With the legacy columns retired, an absent policy is the conservative fallback: engagement is
+    # off (fail-closed) regardless of what the legacy row said. The category defaults still apply
+    # from no rows: in-app on for LEARNING/PROGRESS, everything else off.
+    assert result.engagement_enabled is False
     assert result.max_daily_notifications == 5
     assert by_category["LEARNING"].in_app is True
     assert by_category["PROGRESS"].in_app is True
@@ -137,7 +140,7 @@ async def test_notification_settings_defaults_are_conservative(
 
 
 @pytest.mark.asyncio
-async def test_notification_settings_update_dual_writes_legacy_contract(
+async def test_notification_settings_update_writes_policy_and_preferences_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
@@ -203,14 +206,8 @@ async def test_notification_settings_update_dual_writes_legacy_contract(
     )
     assert captured["user_id"] == "user-1"
     assert len(captured["preferences"]) == 15
-    assert captured["legacy_values"] == {
-        "notifications": True,
-        "email_schedule_reminder": True,
-        "email_weekly_tips": True,
-        "email_morning_schedule": False,
-        "push_schedule_reminder": True,
-        "push_study_tips": True,
-    }
+    # The legacy dual-write is retired: the update writes only the normalized policy and preferences.
+    assert "legacy_values" not in captured
     policy = captured["policy_values"]
     assert policy["timezone"] == "Europe/London"
     assert policy["max_daily_notifications"] == 3

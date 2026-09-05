@@ -76,12 +76,11 @@ async def _web_push_allowed(
         "WEB_PUSH",
     )
     policy = decision["policy"]
-    legacy = decision["legacy"]
     override = decision["override"]
+    # The policy is the master gate; the legacy `UserPreferences.notifications` column was normalized
+    # into it (identical for every user at retirement), so it no longer needs its own check.
     if policy is None or not policy.engagement_enabled:
         return False, "ENGAGEMENT_DISABLED", None
-    if legacy is None or not legacy.notifications:
-        return False, "LEGACY_MASTER_DISABLED", None
     if override is None:
         return False, "WEB_PUSH_CONSENT_MISSING", None
     if not override.enabled:

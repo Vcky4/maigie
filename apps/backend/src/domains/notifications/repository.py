@@ -1172,8 +1172,6 @@ class NotificationRepository:
     async def digest_subscriptions(self, *, limit: int) -> list[dict[str, Any]]:
         """Every learner/category pair whose email preference asks for a digest."""
 
-        from src.domains.identity.db_models import UserPreferences
-
         factory = get_session_factory()
         async with factory() as session:
             rows = (
@@ -1188,10 +1186,6 @@ class NotificationRepository:
                         NotificationPolicy,
                         NotificationPolicy.user_id == NotificationPreference.user_id,
                     )
-                    .join(
-                        UserPreferences,
-                        UserPreferences.user_id == NotificationPreference.user_id,
-                    )
                     .where(
                         NotificationPreference.channel == "EMAIL",
                         NotificationPreference.enabled.is_(True),
@@ -1200,10 +1194,10 @@ class NotificationRepository:
                         # A category row, not an exact-type override: a digest is a
                         # category-level promise.
                         NotificationPreference.notification_type.is_(None),
-                        # Same consent gates the dispatcher applies, so a learner with
-                        # engagement off never has a digest built for them.
+                        # The master gate the dispatcher applies, so a learner with engagement off
+                        # never has a digest built for them. The legacy `UserPreferences.notifications`
+                        # column this used to also check was retired once proven identical to it.
                         NotificationPolicy.engagement_enabled.is_(True),
-                        UserPreferences.notifications.is_(True),
                     )
                     .limit(limit)
                 )
@@ -1647,11 +1641,9 @@ class NotificationRepository:
         *,
         policy_values: dict[str, Any],
         preferences: list[dict[str, Any]],
-        legacy_values: dict[str, bool],
     ) -> None:
-        """Atomically update normalized settings and fields still read by legacy paths."""
+        """Atomically update the normalized policy, preferences, and mirrored profile fields."""
 
-        from src.domains.identity.db_models import UserPreferences
         from src.domains.personal_learning.db_models import LearningProfile
 
         factory = get_session_factory()
@@ -1673,15 +1665,6 @@ class NotificationRepository:
                 session.add(policy)
             for key, value in policy_values.items():
                 setattr(policy, key, value)
-
-            legacy = await session.scalar(
-                select(UserPreferences).where(UserPreferences.user_id == user_id).with_for_update()
-            )
-            if legacy is None:
-                legacy = UserPreferences(user_id=user_id)
-                session.add(legacy)
-            for key, value in legacy_values.items():
-                setattr(legacy, key, value)
 
             profile = await session.scalar(
                 select(LearningProfile).where(LearningProfile.user_id == user_id).with_for_update()

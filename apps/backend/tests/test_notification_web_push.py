@@ -630,12 +630,9 @@ class TestSendTimeAuthorisation:
         ("label", "attribute", "value", "expected"),
         [
             ("engagement off", "policy", _policy(engagement_enabled=False), "ENGAGEMENT_DISABLED"),
-            (
-                "legacy master off",
-                "legacy",
-                SimpleNamespace(notifications=False),
-                "LEGACY_MASTER_DISABLED",
-            ),
+            # The legacy `notifications` master gate was retired — the policy is now the sole master
+            # switch (they were verified identical for every user), so there is no longer a
+            # LEGACY_MASTER_DISABLED path to assert.
             ("no consent row", "override", None, "WEB_PUSH_CONSENT_MISSING"),
             (
                 "channel switched off",

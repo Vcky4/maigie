@@ -62,12 +62,12 @@ async def _dispatch_allowed(
         notification.user_id, notification.type, notification.category or "LEARNING"
     )
     policy = policy_data["policy"]
-    legacy = policy_data["legacy"]
     override = policy_data["override"]
+    # `policy.engagement_enabled` is the master gate. The legacy `UserPreferences.notifications`
+    # column was checked here too, but it is now normalized into the policy (they were verified
+    # identical for every user before the legacy column was retired), so the policy alone governs.
     if policy is None or not policy.engagement_enabled:
         return False, "ENGAGEMENT_DISABLED", None
-    if legacy is None or not legacy.notifications:
-        return False, "LEGACY_MASTER_DISABLED", None
     if override is None:
         return False, "MOBILE_PUSH_CONSENT_MISSING", None
     if not override.enabled or override.frequency != "IMMEDIATE":

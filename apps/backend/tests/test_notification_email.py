@@ -153,7 +153,9 @@ class TestSendTimeAuthorisation:
         [
             (_policy(engagement_enabled=False), None, None, "ENGAGEMENT_DISABLED"),
             (None, None, None, "ENGAGEMENT_DISABLED"),
-            (_policy(), SimpleNamespace(notifications=False), None, "LEGACY_MASTER_DISABLED"),
+            # Legacy master gate retired: the policy is the sole master switch now, so a legacy
+            # `notifications=False` no longer blocks — a missing consent row is what suppresses.
+            (_policy(), SimpleNamespace(notifications=False), None, "EMAIL_CONSENT_MISSING"),
             (_policy(), SimpleNamespace(notifications=True), False, "EMAIL_CONSENT_MISSING"),
             (
                 _policy(),

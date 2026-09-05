@@ -260,11 +260,8 @@ class UserPreferences(Base):
 
     theme: Mapped[str] = mapped_column(String, default="light", server_default="light")
     language: Mapped[str] = mapped_column(String, default="en", server_default="en")
-    notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     study_goals: Mapped[dict | None] = mapped_column("studyGoals", JSON, nullable=True)
 
-    # Email notification preferences
-    #
     # `timezone` is NOT NULL with a "UTC" default and predates anything asking for
     # it, so the value alone cannot distinguish "this learner is in UTC" from "we
     # never asked". `timezone_source` is what makes that readable: NULL means the
@@ -277,23 +274,10 @@ class UserPreferences(Base):
     timezone_captured_at: Mapped[datetime | None] = mapped_column(
         "timezoneCapturedAt", DateTime(timezone=True), nullable=True
     )
-    email_morning_schedule: Mapped[bool] = mapped_column(
-        "emailMorningSchedule", Boolean, default=True, server_default="true"
-    )
-    email_schedule_reminder: Mapped[bool] = mapped_column(
-        "emailScheduleReminder", Boolean, default=True, server_default="true"
-    )
-    email_weekly_tips: Mapped[bool] = mapped_column(
-        "emailWeeklyTips", Boolean, default=True, server_default="true"
-    )
 
-    # Push notification preferences
-    push_schedule_reminder: Mapped[bool] = mapped_column(
-        "pushScheduleReminder", Boolean, default=True, server_default="true"
-    )
-    push_study_tips: Mapped[bool] = mapped_column(
-        "pushStudyTips", Boolean, default=True, server_default="true"
-    )
+    # The per-notification email/push toggles (notifications, email*, push*) were retired in Phase 7:
+    # notification consent is owned by NotificationPolicy/NotificationPreference and these columns were
+    # dropped (migration 078). Nothing here mirrors notification consent any more.
 
     # Relationship
     user: Mapped["User"] = relationship("User", back_populates="preferences")
