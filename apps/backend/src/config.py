@@ -183,10 +183,12 @@ class Settings(BaseSettings):
     # retained so a renewal webhook for a grandfathered `PREMIUM_YEARLY` subscriber can
     # still be identified; `plus_yearly` is rejected with 410 on new purchases.
     STRIPE_PRICE_ID_YEARLY: str = ""
-    # Plus passes — one-time prices (`mode: payment`), not subscriptions. A pass is a
-    # consumable product: bought, held, activated, spent. Nothing renews.
+    # Plus passes and the voice pack — one-time prices (`mode: payment`), not subscriptions. A pass is
+    # a consumable product: bought, held, activated, spent. Nothing renews. The Term Pass has no
+    # Stripe price by design (§5.7.1) — it is NGN-only and sold on Paystack and the stores.
     STRIPE_PRICE_ID_PLUS_PASS_5H: str = ""
     STRIPE_PRICE_ID_PLUS_PASS_7D: str = ""
+    STRIPE_PRICE_ID_PLUS_VOICE_30: str = ""
     # Circle Plan (per-Circle subscription, 7-day trial on first purchase)
     STRIPE_PRICE_ID_CIRCLE_PLAN_MONTHLY: str = ""
     # Plus Seat add-on (per-seat, no trial)
@@ -238,6 +240,10 @@ class Settings(BaseSettings):
     PRICE_CENTS_PLUS_PASS_5H: int = 99
     PRICE_CENTS_PLUS_PASS_7D: int = 399
     PRICE_CENTS_PLUS_MONTHLY: int = 999
+    # $1.49. Used to record the amount on a store purchase of the voice pack — the Play/App Store
+    # `products.get`/receipt do not always return the price, and §5.7.6's parity check guarantees the
+    # store price equals this, so recording it here is accurate rather than invented.
+    PRICE_CENTS_PLUS_VOICE_30: int = 149
     # DEPRECATED alongside `STRIPE_PRICE_ID_YEARLY`: retained for grandfathered
     # subscribers' billing records, excluded from the catalog.
     PRICE_CENTS_PLUS_YEARLY: int = 3900
@@ -315,6 +321,26 @@ class Settings(BaseSettings):
     #: Service account email of that push subscription. A Google-signed token only proves Google
     #: minted it; this proves it was *our* subscription. Optional but strongly recommended.
     GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL: str = ""
+
+    # --- Apple App Store (StoreKit 2 / App Store Server API) ---
+    # From the **In-App Purchase** key (Users and Access → Integrations → Keys), NOT the App Store
+    # Connect API key used by EAS Submit — the two look alike and are not interchangeable (§5.7.5).
+    # The .p8 contents go in APPLE_PRIVATE_KEY. Unset means the Apple rail refuses, rather than
+    # trusting an unverifiable receipt.
+    APPLE_ISSUER_ID: str = ""
+    APPLE_KEY_ID: str = ""
+    APPLE_PRIVATE_KEY: str = ""
+    APPLE_BUNDLE_ID: str = "com.maigie"
+    # "Sandbox" for testing (a Sandbox Apple Account or a local StoreKit config), "Production" live.
+    APPLE_ENVIRONMENT: str = "Sandbox"
+    # The numeric App Store app id (appAppleId), used to validate server notifications. Optional in
+    # sandbox; set it in production.
+    APPLE_APP_APPLE_ID: int | None = None
+    # Directory holding Apple's public root CA certificates (AppleRootCA-G3.cer, and G2), used to
+    # verify the x5c chain on every JWS. These are public certificates, not secrets — download from
+    # https://www.apple.com/certificateauthority/ and place them here at deploy time. Empty means JWS
+    # verification cannot run, so the Apple rail fails closed.
+    APPLE_ROOT_CA_DIR: str = ""
 
     # The three `GOOGLE_PLAY_SKU_CREDIT_*` product IDs are gone with credit packs (§6.1). They must
     # not simply be renamed to pass SKUs: these were never created in the Play Console, and a pass

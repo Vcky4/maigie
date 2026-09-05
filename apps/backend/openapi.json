@@ -513,6 +513,44 @@
         "title": "AnswerSubmitRequest",
         "type": "object"
       },
+      "AppleVerifyRequest": {
+        "description": "Verify a one-time Apple (StoreKit 2) pass/voice purchase.\n\n`signedTransactionInfo` is the JWS the app reads from `Transaction.jwsRepresentation`. Its Apple\nsignature is the authentication — there is no shared secret — and Apple's `transactionId` inside it\nis the idempotency key: a replay grants nothing, and one bound to another learner is `409`.",
+        "properties": {
+          "signedTransactionInfo": {
+            "title": "Signedtransactioninfo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signedTransactionInfo"
+        ],
+        "title": "AppleVerifyRequest",
+        "type": "object"
+      },
+      "AppleVerifyResponse": {
+        "description": "Result of verifying an Apple transaction.",
+        "properties": {
+          "productId": {
+            "title": "Productid",
+            "type": "string"
+          },
+          "purchaseId": {
+            "title": "Purchaseid",
+            "type": "string"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "verified",
+          "productId",
+          "purchaseId"
+        ],
+        "title": "AppleVerifyResponse",
+        "type": "object"
+      },
       "AskAction": {
         "description": "Something Maigie actually did on this turn.\n\n**Only from the model's own tool output** (Decision I). The surface previously published a\n`suggestedAction` produced by keyword-matching the learner's own words and presented as the model's\nrecommendation — which §1's second clause forbids outright, because it is a claim that is false. These\nare the executed actions, so a client offering a follow-up is offering one tied to something real.\n\n`status` is carried rather than filtered so a failed action is visible. The event frames and the\ncomponents are both success-shaped, so a turn whose tool failed otherwise looks like a turn that used\nno tools.",
         "properties": {
@@ -6401,6 +6439,49 @@
         "title": "GoalUpdate",
         "type": "object"
       },
+      "GooglePlayProductVerifyRequest": {
+        "description": "Verify a one-time Google Play pass/voice purchase.\n\n`productId` is the store SKU (`plus_pass_5h` / `plus_pass_7d` / `plus_pass_term` / `plus_voice_30`);\n`purchaseToken` is what Play Billing returns on the device, and it is the idempotency key —\nreplaying it grants nothing, and presenting one bound to another learner is `409`.",
+        "properties": {
+          "productId": {
+            "title": "Productid",
+            "type": "string"
+          },
+          "purchaseToken": {
+            "title": "Purchasetoken",
+            "type": "string"
+          }
+        },
+        "required": [
+          "productId",
+          "purchaseToken"
+        ],
+        "title": "GooglePlayProductVerifyRequest",
+        "type": "object"
+      },
+      "GooglePlayProductVerifyResponse": {
+        "description": "Result of verifying a one-time Google Play purchase.",
+        "properties": {
+          "productId": {
+            "title": "Productid",
+            "type": "string"
+          },
+          "purchaseId": {
+            "title": "Purchaseid",
+            "type": "string"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "verified",
+          "productId",
+          "purchaseId"
+        ],
+        "title": "GooglePlayProductVerifyResponse",
+        "type": "object"
+      },
       "GooglePlayVerifyRequest": {
         "description": "Verify Google Play subscription purchase.",
         "properties": {
@@ -10261,6 +10342,35 @@
           "pages"
         ],
         "title": "PaginatedResponse[StudyPlanSummaryResponse]",
+        "type": "object"
+      },
+      "PassCheckoutRequest": {
+        "description": "Start a one-time checkout for a pass or the voice pack (§5.7.1, Decision R).\n\nNot a subscription — `mode: payment`, no trial, no renewal. `provider` selects the rail: `stripe`\nfor the USD/global market, `paystack` for NGN on web. The stores (Apple/Google) do not come through\nhere — they verify a receipt after purchase rather than starting a checkout.\n\n`plus_pass_term` is accepted only on the Paystack rail: it is NGN-only, so a Stripe request for it\nis refused. `plus_voice_30` requires an active Plus entitlement to buy (Decision R), enforced at the\nendpoint before a session is created.",
+        "properties": {
+          "product_id": {
+            "enum": [
+              "plus_pass_5h",
+              "plus_pass_7d",
+              "plus_pass_term",
+              "plus_voice_30"
+            ],
+            "title": "Product Id",
+            "type": "string"
+          },
+          "provider": {
+            "default": "stripe",
+            "enum": [
+              "stripe",
+              "paystack"
+            ],
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id"
+        ],
+        "title": "PassCheckoutRequest",
         "type": "object"
       },
       "PaystackInitializeRequest": {
@@ -22013,6 +22123,54 @@
         ]
       }
     },
+    "/api/v1/billing/passes/checkout": {
+      "post": {
+        "description": "Start a one-time checkout for a pass or the voice pack (§5.7.1, Decision R).\n\n**`mode: payment`, never a subscription** — a pass is bought once, held as inventory, and activated\nlater. The Stripe rail serves USD, Paystack serves NGN; the stores verify a receipt instead and do\nnot come through here.\n\n**The voice pack requires an active Plus entitlement to buy** (Decision R): its whole purpose is a\nsubscriber out of minutes who cannot activate a pass, so a learner with no entitlement is refused\n`403 VOICE_PACK_REQUIRES_PLUS` at this boundary rather than after paying. The Term Pass is NGN-only,\nso a Stripe request for it is refused with the door it belongs to.",
+        "operationId": "create_pass_checkout_api_v1_billing_passes_checkout_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PassCheckoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckoutResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Pass Checkout",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
     "/api/v1/billing/passes/{pass_id}/activate": {
       "post": {
         "description": "Start a pass's clock. **This is the moment the product begins**, not the purchase.\n\nDecision A: a pass is inventory until activated, so a $0.99 five-hour pass bought on Tuesday can be\nspent on Saturday's revision session. Decision D: `409 PASS_REDUNDANT` if the learner already has\nPlus from a subscription, a trial or another pass — and they keep the pass, since a refused\nactivation consumes nothing.\n\nActivation also resets the usage window (Decision E). Without that, a five-hour pass activated at\nminute 290 of a Free window would deliver ten minutes and then a wall.\n\nThe one-active invariant is a partial unique index rather than the check above it, so two concurrent\nactivations produce one winner and one `409` instead of a race — `pass_service.activate` turns the\n`IntegrityError` into the same refusal.",
@@ -22218,6 +22376,102 @@
           }
         ],
         "summary": "Get Purchase History",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/purchases/apple/verify": {
+      "post": {
+        "description": "Verify a one-time Apple (StoreKit 2) pass/voice purchase and grant it.\n\nThe app sends the signed transaction JWS; the server verifies it against Apple's root CA, persists\na `PlusPurchase` and grants an inventory pass (Decision G, A) — or credits the voice pack. Idempotent\non Apple's `transactionId`; a voice-pack purchase without an active entitlement is refused `403\nVOICE_PACK_REQUIRES_PLUS` (Decision R). Also the iOS restore path for a finished consumable, which\nStoreKit will not return — inventory is read from `GET /billing/passes`.",
+        "operationId": "apple_verify_product_api_v1_billing_purchases_apple_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppleVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppleVerifyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Apple Verify Product",
+        "tags": [
+          "billing",
+          "billing"
+        ]
+      }
+    },
+    "/api/v1/billing/purchases/google-play/verify": {
+      "post": {
+        "description": "Verify a one-time Google Play pass/voice purchase and grant it.\n\nThe mobile client sends the `purchaseToken` Play Billing returned; the server verifies it with the\nPlay Developer API, persists a `PlusPurchase` and grants an inventory pass (Decision G, A) — or,\nfor the voice pack, credits seconds. Idempotent on the token: a replay grants nothing, and a token\nalready bound to another learner answers `409 PURCHASE_ALREADY_CLAIMED`. A voice-pack purchase by a\nlearner without an active entitlement is refused `403 VOICE_PACK_REQUIRES_PLUS` (Decision R).\n\nThis is also iOS's and Android's restore path for a finished consumable that StoreKit/Play Billing\nwill not return — inventory is read from `GET /billing/passes`, not the store.",
+        "operationId": "google_play_verify_product_api_v1_billing_purchases_google_play_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GooglePlayProductVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GooglePlayProductVerifyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Google Play Verify Product",
         "tags": [
           "billing",
           "billing"
@@ -37610,6 +37864,27 @@
         "tags": [
           "users",
           "users"
+        ]
+      }
+    },
+    "/api/v1/webhooks/apple": {
+      "post": {
+        "description": "Handle an App Store Server Notification V2 (refunds, revocations, renewals).\n\nApple posts `{\"signedPayload\": \"<JWS>\"}`. Unlike Stripe/Paystack there is no shared secret: the\npayload's own Apple signature is the authentication, verified against Apple's root CA inside\n`apple_service.handle_notification`. Fails closed when the root certificates are unconfigured, and\nanswers 500 on a processing error so Apple retries.",
+        "operationId": "apple_webhook_api_v1_webhooks_apple_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Apple Webhook",
+        "tags": [
+          "webhooks",
+          "webhooks"
         ]
       }
     },
