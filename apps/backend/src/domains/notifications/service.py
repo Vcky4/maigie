@@ -67,9 +67,7 @@ _SETTINGS_CATEGORIES: dict[str, tuple[str, ...]] = {
 _DEFAULT_IN_APP = {"LEARNING": True, "PROGRESS": True}
 
 
-def _effective_category_setting(
-    key: str, preferences: list[Any], legacy: Any
-) -> NotificationCategorySetting:
+def _effective_category_setting(key: str, preferences: list[Any]) -> NotificationCategorySetting:
     categories = _SETTINGS_CATEGORIES[key]
 
     def rows(channel: str, *, exact: bool) -> list[Any]:
@@ -98,24 +96,15 @@ def _effective_category_setting(
     else:
         email_frequency = "OFF"
 
-    # Legacy fallback is used only when normalized rows are absent.
-    if not email_rows and legacy is not None:
-        if key == "LEARNING" and legacy.email_schedule_reminder:
-            email_frequency = "IMMEDIATE"
-        elif key == "PROGRESS" and legacy.email_weekly_tips:
-            email_frequency = "WEEKLY"
-
-    mobile_default = False
-    if not rows("MOBILE_PUSH", exact=False) and not rows("MOBILE_PUSH", exact=True):
-        if key == "LEARNING" and legacy is not None:
-            mobile_default = bool(legacy.push_schedule_reminder or legacy.push_study_tips)
-
     return NotificationCategorySetting(
         category=key,
+        # Defaults apply only when a learner has no rows for the (category, channel) at all. Since
+        # migration 077 materialized a category-level row for every user, these are effectively the
+        # values for a brand-new learner rather than a legacy-column fallback, which is retired.
         in_app=enabled("IN_APP", _DEFAULT_IN_APP.get(key, False)),
-        mobile_push=enabled("MOBILE_PUSH", mobile_default),
-        # Defaults off with no legacy fallback: there is no historical column that could
-        # express browser consent, so the only honest starting point is "not asked yet".
+        mobile_push=enabled("MOBILE_PUSH", False),
+        # There is no historical column that could express browser consent, so the honest
+        # starting point is "not asked yet".
         web_push=enabled("WEB_PUSH", False),
         email_frequency=email_frequency,
     )
@@ -128,11 +117,7 @@ async def get_notification_settings(*, user_id: str) -> NotificationSettingsResp
     profile = snapshot["profile"]
     preferences = snapshot["preferences"]
     return NotificationSettingsResponse(
-        engagement_enabled=(
-            bool(policy.engagement_enabled)
-            if policy is not None
-            else bool(legacy.notifications if legacy is not None else False)
-        ),
+        engagement_enabled=(bool(policy.engagement_enabled) if policy is not None else False),
         timezone=(
             policy.timezone
             if policy is not None
@@ -174,9 +159,7 @@ async def get_notification_settings(*, user_id: str) -> NotificationSettingsResp
         # available yet" and start reflecting whether this learner can actually turn web push
         # on — browser support is the client's half of the question, and this is ours.
         web_push_available=web_push_available_for(user_id),
-        categories=[
-            _effective_category_setting(key, preferences, legacy) for key in _SETTINGS_CATEGORIES
-        ],
+        categories=[_effective_category_setting(key, preferences) for key in _SETTINGS_CATEGORIES],
     )
 
 
@@ -242,8 +225,6 @@ async def update_notification_settings(
                 ]
             )
 
-    learning = by_key["LEARNING"]
-    progress = by_key["PROGRESS"]
     await notification_repo.update_notification_settings(
         user_id,
         policy_values={
@@ -265,14 +246,6 @@ async def update_notification_settings(
             "digest_day_of_week": request.digest_day_of_week,
         },
         preferences=preferences,
-        legacy_values={
-            "notifications": request.engagement_enabled,
-            "email_schedule_reminder": learning.email_frequency == "IMMEDIATE",
-            "email_weekly_tips": progress.email_frequency == "WEEKLY",
-            "email_morning_schedule": False,
-            "push_schedule_reminder": learning.mobile_push,
-            "push_study_tips": learning.mobile_push,
-        },
     )
     return await get_notification_settings(user_id=user_id)
 
@@ -314,12 +287,11 @@ async def _email_plan(user_id: str, *, type: str, spec: Any) -> EmailPlan | None
         user_id, type, spec.category or "LEARNING", "EMAIL"
     )
     policy = decision["policy"]
-    legacy = decision["legacy"]
     override = decision["override"]
-    # Fail closed on every missing record: absent consent is not consent.
+    # Fail closed on every missing record: absent consent is not consent. The policy's
+    # `engagement_enabled` is the master gate; the legacy `UserPreferences.notifications` column it
+    # duplicated was retired once the two were verified identical for every learner.
     if policy is None or not policy.engagement_enabled:
-        return None
-    if legacy is None or not legacy.notifications:
         return None
     if override is None or not override.enabled:
         return None

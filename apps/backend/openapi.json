@@ -10985,39 +10985,6 @@
       "PreferencesUpdateRequest": {
         "description": "Update user preferences (all fields optional).\n\nA `timezone` set through here is recorded as `MANUAL`: it came from the\nlearner, so it outranks anything a device reports later.",
         "properties": {
-          "emailMorningSchedule": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Emailmorningschedule"
-          },
-          "emailScheduleReminder": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Emailschedulereminder"
-          },
-          "emailWeeklyTips": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Emailweeklytips"
-          },
           "language": {
             "anyOf": [
               {
@@ -11028,17 +10995,6 @@
               }
             ],
             "title": "Language"
-          },
-          "notifications": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Notifications"
           },
           "studyGoals": {
             "anyOf": [
@@ -20967,32 +20923,12 @@
         "type": "object"
       },
       "UserPreferencesResponse": {
-        "description": "User preferences.",
+        "description": "User preferences.\n\nThe per-notification email/push toggles that once lived here were retired: notification consent\nis owned by the notifications domain (`/notifications/settings`), and these columns were dropped.\nWhat remains are the genuinely general preferences.",
         "properties": {
-          "emailMorningSchedule": {
-            "default": true,
-            "title": "Emailmorningschedule",
-            "type": "boolean"
-          },
-          "emailScheduleReminder": {
-            "default": true,
-            "title": "Emailschedulereminder",
-            "type": "boolean"
-          },
-          "emailWeeklyTips": {
-            "default": true,
-            "title": "Emailweeklytips",
-            "type": "boolean"
-          },
           "language": {
             "default": "en",
             "title": "Language",
             "type": "string"
-          },
-          "notifications": {
-            "default": true,
-            "title": "Notifications",
-            "type": "boolean"
           },
           "studyGoals": {
             "anyOf": [

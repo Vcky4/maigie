@@ -129,26 +129,19 @@ class MessageResponse(BaseModel):
 
 
 class UserPreferencesResponse(BaseModel):
-    """User preferences."""
+    """User preferences.
+
+    The per-notification email/push toggles that once lived here were retired: notification consent
+    is owned by the notifications domain (`/notifications/settings`), and these columns were dropped.
+    What remains are the genuinely general preferences.
+    """
 
     theme: str = "light"
     language: str = "en"
-    notifications: bool = True
     study_goals: dict | None = Field(
         None, validation_alias="studyGoals", serialization_alias="studyGoals"
     )
     timezone: str = "UTC"
-    email_morning_schedule: bool = Field(
-        True, validation_alias="emailMorningSchedule", serialization_alias="emailMorningSchedule"
-    )
-    email_schedule_reminder: bool = Field(
-        True,
-        validation_alias="emailScheduleReminder",
-        serialization_alias="emailScheduleReminder",
-    )
-    email_weekly_tips: bool = Field(
-        True, validation_alias="emailWeeklyTips", serialization_alias="emailWeeklyTips"
-    )
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -220,12 +213,8 @@ class PreferencesUpdateRequest(BaseModel):
 
     theme: str | None = None
     language: str | None = None
-    notifications: bool | None = None
     studyGoals: dict | None = None
     timezone: str | None = None
-    emailMorningSchedule: bool | None = None
-    emailScheduleReminder: bool | None = None
-    emailWeeklyTips: bool | None = None
 
 
 class DeviceTimezoneRequest(BaseModel):
