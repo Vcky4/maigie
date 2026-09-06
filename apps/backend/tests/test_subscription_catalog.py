@@ -76,10 +76,24 @@ def _by_id() -> dict:
 
 
 class TestCatalogueContents:
-    def test_there_are_exactly_four_personal_products(self):
+    def test_the_personal_products_are_the_four_tiers_plus_the_voice_top_up(self):
+        """The USD catalogue is the four Plus-duration products (`PERSONAL_PRODUCT_IDS`) plus the
+        `plus_voice_30` top-up. The voice pack is not a tier — it grants no entitlement, only
+        minutes — but it is a personal-scope product a learner buys, so it belongs here and is what
+        `voice_exhausted_message` offers. The NGN-only Term Pass is absent from the USD list by
+        design (§5.7.1) and is covered in `TestNgnCatalogue`.
+        """
         plans = stripe_svc.get_active_plan_catalog().plans
         personal = {p.id for p in plans if p.scope == "personal"}
-        assert personal == PERSONAL_PRODUCT_IDS
+        assert personal == PERSONAL_PRODUCT_IDS | {"plus_voice_30"}
+
+    def test_the_voice_top_up_is_a_purchasable_one_time_product(self):
+        """It is offered (§drift-5 / voice top-up) and bought once, not subscribed. The Plus
+        requirement is enforced at checkout, not by hiding it here."""
+        voice = _by_id()["plus_voice_30"]
+        assert voice.scope == "personal"
+        assert voice.interval == "one_time"
+        assert voice.purchasable is True
 
     def test_the_space_scoped_entries_are_untouched(self):
         """Scope guard. Every change in this phase is personal-scope by rule.
@@ -115,6 +129,42 @@ class TestCatalogueContents:
         for plan in _by_id().values():
             haystack = f"{plan.description} {plan.usage_note or ''}".lower()
             assert "unlimited" not in haystack
+
+
+class TestNgnCatalogue:
+    """The launch market. `currency=ngn` prices per Nigeria (§6.8) and adds the NGN-only Term Pass.
+
+    Prices are *set* per market, not converted, so these assert the NGN config figures directly
+    rather than a dollar rate applied to them.
+    """
+
+    def _ngn_by_id(self) -> dict:
+        return {p.id: p for p in stripe_svc.get_active_plan_catalog("ngn").plans}
+
+    def test_ngn_prices_are_the_nigerian_figures_not_converted(self):
+        cfg = get_settings()
+        by_id = self._ngn_by_id()
+        assert by_id["plus_monthly"].price_cents == cfg.PRICE_NGN_PLUS_MONTHLY
+        assert by_id["plus_monthly"].currency == "ngn"
+        assert by_id["plus_pass_5h"].price_cents == cfg.PRICE_NGN_PLUS_PASS_5H
+        assert by_id["plus_pass_7d"].price_cents == cfg.PRICE_NGN_PLUS_PASS_7D
+        assert by_id["plus_voice_30"].price_cents == cfg.PRICE_NGN_PLUS_VOICE_30
+
+    def test_the_term_pass_is_present_only_in_the_ngn_market(self):
+        cfg = get_settings()
+        ngn = self._ngn_by_id()
+        term = ngn["plus_pass_term"]
+        assert term.scope == "personal"
+        assert term.interval == "one_time"
+        assert term.currency == "ngn"
+        assert term.price_cents == cfg.PRICE_NGN_PLUS_PASS_TERM
+        assert term.purchasable is True
+        # Absent from USD, where it has no price by design (§5.7.1).
+        assert "plus_pass_term" not in _by_id()
+
+    def test_the_default_market_is_usd(self):
+        """No `currency` argument means the USD list — the pre-existing behaviour, unchanged."""
+        assert stripe_svc.get_active_plan_catalog().plans[0].currency == "usd"
 
 
 class TestCataloguePrices:

@@ -30,9 +30,14 @@ router = APIRouter(tags=["billing"])
 
 
 @router.get("/plans/catalog", response_model=models.PlanCatalogResponse)
-async def plan_catalog():
-    """Return the active product catalog (no auth required)."""
-    return await subscription_service.get_plan_catalog()
+async def plan_catalog(currency: str = "usd"):
+    """Return the active product catalog (no auth required).
+
+    `?currency=ngn` returns NGN prices set for Nigeria and adds the NGN-only Term Pass; the default
+    is the USD list. Prices are set per market, never converted (§6.8), so a client renders exactly
+    what it is given.
+    """
+    return await subscription_service.get_plan_catalog(currency)
 
 
 # ===========================================================================

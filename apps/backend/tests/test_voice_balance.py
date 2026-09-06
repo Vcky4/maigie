@@ -414,13 +414,17 @@ class TestTheExhaustedMessageTracksWhatIsActuallyOnSale:
     and nobody remembers to restore the offer that was supposed to sell it.
     """
 
-    def test_it_names_the_refill_while_the_top_up_cannot_be_bought(self):
+    def test_it_offers_the_top_up_now_the_rail_ships(self):
+        """The reverse drift the docstring warned about, closed. Phase 5 shipped the pass/voice rail
+        and Phase 7 put `plus_voice_30` in the catalogue as purchasable, so the exhausted-balance
+        message now offers the top-up rather than only naming the refill — with no edit to
+        `voice_exhausted_message`, because it reads the catalogue."""
         message = voice_routes.voice_exhausted_message()
 
-        assert "refill" in message
-        assert (
-            "Add 30 minutes" not in message
-        ), "a learner cannot buy a top-up yet, so offering one is a dead end"
+        assert "Add 30 minutes" in message, (
+            "the voice top-up is in the catalogue and purchasable, so a learner out of minutes "
+            "should be offered it"
+        )
 
     def test_it_offers_the_top_up_once_the_top_up_is_purchasable(self, monkeypatch):
         purchasable_top_up = SimpleNamespace(id=voice_routes._VOICE_TOP_UP_ID, purchasable=True)

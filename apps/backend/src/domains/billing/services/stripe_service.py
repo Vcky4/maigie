@@ -148,7 +148,7 @@ def _voice_minutes_note(voice_seconds: int) -> str:
     return f"{minutes} minutes of live voice tutoring"
 
 
-def get_active_plan_catalog() -> PlanCatalogResponse:
+def get_active_plan_catalog(currency: str = "usd") -> PlanCatalogResponse:
     """Return the active product catalog.
 
     Six entries: four ``personal`` products and the two space-scoped ones.
@@ -186,12 +186,31 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
     from src.domains.billing.services import entitlement_service as ent
 
     cfg = get_settings()
+
+    # Territory-aware pricing (§6.8): prices are *set per market*, not converted. `currency=ngn`
+    # returns the NGN figures for the personal products and adds the NGN-only Term Pass; anything
+    # else is the USD list. Space-scoped products carry no NGN price of their own and stay USD.
+    is_ngn = (currency or "usd").lower() == "ngn"
+
+    def _p(usd_cents: int, ngn_setting: str) -> tuple[int, str]:
+        """(price_cents, currency) for a personal product in the requested market."""
+        if is_ngn:
+            return int(getattr(cfg, ngn_setting)), "ngn"
+        return usd_cents, "usd"
+
+    free_price, free_currency = (0, "ngn") if is_ngn else (0, "usd")
+    pass_5h_price, pass_5h_currency = _p(cfg.PRICE_CENTS_PLUS_PASS_5H, "PRICE_NGN_PLUS_PASS_5H")
+    pass_7d_price, pass_7d_currency = _p(cfg.PRICE_CENTS_PLUS_PASS_7D, "PRICE_NGN_PLUS_PASS_7D")
+    monthly_price, monthly_currency = _p(cfg.PRICE_CENTS_PLUS_MONTHLY, "PRICE_NGN_PLUS_MONTHLY")
+    voice_price, voice_currency = _p(cfg.PRICE_CENTS_PLUS_VOICE_30, "PRICE_NGN_PLUS_VOICE_30")
+
     plans = [
         PlanItem(
             id="free",
             name="Free",
             scope="personal",
-            price_cents=0,
+            price_cents=free_price,
+            currency=free_currency,
             interval="none",
             description=(
                 "Everything Maigie does, at a standard level: notes, flashcards, "
@@ -205,7 +224,8 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
             id="plus_pass_5h",
             name="5-Hour Plus Pass",
             scope="personal",
-            price_cents=cfg.PRICE_CENTS_PLUS_PASS_5H,
+            price_cents=pass_5h_price,
+            currency=pass_5h_currency,
             # Not "none" and not "month": a pass is bought once and runs once. Clients group
             # the catalog on this field, and a pass belongs beside the other pass rather
             # than beside the subscription.
@@ -227,7 +247,8 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
             id="plus_pass_7d",
             name="7-Day Plus Pass",
             scope="personal",
-            price_cents=cfg.PRICE_CENTS_PLUS_PASS_7D,
+            price_cents=pass_7d_price,
+            currency=pass_7d_currency,
             interval="one_time",
             description=(
                 "Full Maigie Plus for 7 days, starting when you activate it. "
@@ -244,7 +265,8 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
             id="plus_monthly",
             name="Maigie Plus",
             scope="personal",
-            price_cents=cfg.PRICE_CENTS_PLUS_MONTHLY,
+            price_cents=monthly_price,
+            currency=monthly_currency,
             interval="month",
             trial_days=cfg.TRIAL_DAYS_MAIGIE_PLUS,
             description=(
@@ -285,6 +307,52 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
             ),
         ),
     ]
+
+    # 30-minute live-voice top-up (Decision R). A *top-up*, not a pass or a tier: it grants no Plus
+    # entitlement, only minutes, and requires an active Plus entitlement to buy (enforced at the
+    # checkout boundary). Listed so `study_voice.voice_exhausted_message` can offer it and clients
+    # can price it; clients keep it out of the pass-buy grid because it is not a pass.
+    plans.append(
+        PlanItem(
+            id="plus_voice_30",
+            name="30 Voice Minutes",
+            scope="personal",
+            price_cents=voice_price,
+            currency=voice_currency,
+            interval="one_time",
+            description=(
+                "30 minutes of live voice tutoring, added to your voice balance. "
+                "An add-on to Maigie Plus; the minutes never expire."
+            ),
+            usage_note="Adds 30 minutes of live voice tutoring, which do not expire.",
+            purchasable=True,
+        )
+    )
+
+    # NGN-only 4-month Term Pass (§5.7.1): it has no USD price by design — a USD figure would put an
+    # unbuyable product one API call from sale — so it appears only when the NGN market is requested.
+    if is_ngn:
+        plans.append(
+            PlanItem(
+                id="plus_pass_term",
+                name="4-Month Term Pass",
+                scope="personal",
+                price_cents=cfg.PRICE_NGN_PLUS_PASS_TERM,
+                currency="ngn",
+                interval="one_time",
+                description=(
+                    "Full Maigie Plus for 4 months, starting when you activate it. "
+                    "A term at a time. It does not renew."
+                ),
+                usage_note=(
+                    "Every Plus feature for the 4 months, including "
+                    f"{_voice_minutes_note(ent.VOICE_SECONDS_BY_PASS_PRODUCT['plus_pass_term'])} "
+                    "a month."
+                ),
+                purchasable=True,
+            )
+        )
+
     return PlanCatalogResponse(plans=plans)
 
 

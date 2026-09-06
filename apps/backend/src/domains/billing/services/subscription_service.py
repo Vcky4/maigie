@@ -16,11 +16,15 @@ from ..repository import billing_repo
 logger = logging.getLogger(__name__)
 
 
-async def get_plan_catalog() -> dict[str, Any]:
-    """Return the active product catalog (public, no auth required)."""
+async def get_plan_catalog(currency: str = "usd") -> dict[str, Any]:
+    """Return the active product catalog (public, no auth required).
+
+    `currency` selects the market: `ngn` returns the NGN prices and the NGN-only Term Pass, anything
+    else the USD list. Prices are set per market rather than converted (§6.8).
+    """
     from src.domains.billing.services.stripe_service import get_active_plan_catalog
 
-    return get_active_plan_catalog()
+    return get_active_plan_catalog(currency)
 
 
 async def create_checkout_session(
