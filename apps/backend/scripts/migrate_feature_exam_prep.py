@@ -169,12 +169,30 @@ CHECKS: list[tuple[str, str, str]] = [
 
 # Dangling-FK guards: these MUST return 0 after the migration.
 DANGLING: list[tuple[str, str]] = [
-    ("PrepTopic.prepId", 'SELECT count(*) FROM "PrepTopic" t LEFT JOIN "ExamPrep" e ON e.id=t."prepId" WHERE e.id IS NULL'),
-    ("QuizSession.prepId", 'SELECT count(*) FROM "QuizSession" s LEFT JOIN "ExamPrep" e ON e.id=s."prepId" WHERE e.id IS NULL'),
-    ("PrepQuestion.prepId", 'SELECT count(*) FROM "PrepQuestion" q LEFT JOIN "ExamPrep" e ON e.id=q."prepId" WHERE e.id IS NULL'),
-    ("QuizAnswer.questionId", 'SELECT count(*) FROM "QuizAnswer" a LEFT JOIN "PrepQuestion" q ON q.id=a."questionId" WHERE q.id IS NULL'),
-    ("QuizAnswer.quizSessionId", 'SELECT count(*) FROM "QuizAnswer" a LEFT JOIN "QuizSession" s ON s.id=a."quizSessionId" WHERE s.id IS NULL'),
-    ("QuizSessionQuestion refs", 'SELECT count(*) FROM "QuizSessionQuestion" l LEFT JOIN "QuizSession" s ON s.id=l."quizSessionId" LEFT JOIN "PrepQuestion" q ON q.id=l."prepQuestionId" WHERE s.id IS NULL OR q.id IS NULL'),
+    (
+        "PrepTopic.prepId",
+        'SELECT count(*) FROM "PrepTopic" t LEFT JOIN "ExamPrep" e ON e.id=t."prepId" WHERE e.id IS NULL',
+    ),
+    (
+        "QuizSession.prepId",
+        'SELECT count(*) FROM "QuizSession" s LEFT JOIN "ExamPrep" e ON e.id=s."prepId" WHERE e.id IS NULL',
+    ),
+    (
+        "PrepQuestion.prepId",
+        'SELECT count(*) FROM "PrepQuestion" q LEFT JOIN "ExamPrep" e ON e.id=q."prepId" WHERE e.id IS NULL',
+    ),
+    (
+        "QuizAnswer.questionId",
+        'SELECT count(*) FROM "QuizAnswer" a LEFT JOIN "PrepQuestion" q ON q.id=a."questionId" WHERE q.id IS NULL',
+    ),
+    (
+        "QuizAnswer.quizSessionId",
+        'SELECT count(*) FROM "QuizAnswer" a LEFT JOIN "QuizSession" s ON s.id=a."quizSessionId" WHERE s.id IS NULL',
+    ),
+    (
+        "QuizSessionQuestion refs",
+        'SELECT count(*) FROM "QuizSessionQuestion" l LEFT JOIN "QuizSession" s ON s.id=l."quizSessionId" LEFT JOIN "PrepQuestion" q ON q.id=l."prepQuestionId" WHERE s.id IS NULL OR q.id IS NULL',
+    ),
 ]
 
 
@@ -182,7 +200,9 @@ async def main() -> None:
     commit = "--commit" in sys.argv
     url = os.environ["TARGET_URL"]
     url = re.sub(r"^postgresql\+asyncpg://", "postgresql://", url)
-    con = await asyncpg.connect(url, statement_cache_size=0, server_settings={"search_path": "public"})
+    con = await asyncpg.connect(
+        url, statement_cache_size=0, server_settings={"search_path": "public"}
+    )
     tx = con.transaction()
     await tx.start()
     try:
