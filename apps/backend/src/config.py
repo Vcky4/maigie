@@ -49,6 +49,28 @@ def parse_optional_int(value: object) -> object:
 OptionalInt = Annotated[int | None, BeforeValidator(parse_optional_int)]
 
 
+# Backend package root (apps/backend); config.py lives at apps/backend/src/config.py.
+_BACKEND_ROOT = Path(__file__).parent.parent
+# Apple's public root CA certs are committed here so verification works in every environment.
+_DEFAULT_APPLE_ROOT_CA_DIR = str(_BACKEND_ROOT / "certs" / "apple")
+
+
+def parse_apple_root_ca_dir(value: object) -> object:
+    """Fall back to the committed cert dir when the env value is blank.
+
+    The deploy pipeline renders APPLE_ROOT_CA_DIR= (empty) into .env when the
+    secret is unset, which would otherwise override the field default with "".
+    Treat blank as "use the committed default" so the Apple rail keeps working
+    without any per-environment secret; a real path still overrides.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return _DEFAULT_APPLE_ROOT_CA_DIR
+    return value
+
+
+AppleRootCADir = Annotated[str, BeforeValidator(parse_apple_root_ca_dir)]
+
+
 class Settings(BaseSettings):
     # ... existing settings ...
 
@@ -344,10 +366,12 @@ class Settings(BaseSettings):
     # sandbox; set it in production.
     APPLE_APP_APPLE_ID: OptionalInt = None
     # Directory holding Apple's public root CA certificates (AppleRootCA-G3.cer, and G2), used to
-    # verify the x5c chain on every JWS. These are public certificates, not secrets — download from
-    # https://www.apple.com/certificateauthority/ and place them here at deploy time. Empty means JWS
-    # verification cannot run, so the Apple rail fails closed.
-    APPLE_ROOT_CA_DIR: str = ""
+    # verify the x5c chain on every JWS. These are public certificates, not secrets, and are
+    # committed to the repo under apps/backend/certs/apple. The default resolves relative to the
+    # backend root so it works unchanged locally, in Docker (/app/certs/apple), and on the server;
+    # an explicit env override still wins. Empty means JWS verification cannot run, so the Apple
+    # rail fails closed.
+    APPLE_ROOT_CA_DIR: AppleRootCADir = _DEFAULT_APPLE_ROOT_CA_DIR
 
     # The three `GOOGLE_PLAY_SKU_CREDIT_*` product IDs are gone with credit packs (§6.1). They must
     # not simply be renamed to pass SKUs: these were never created in the Play Console, and a pass
