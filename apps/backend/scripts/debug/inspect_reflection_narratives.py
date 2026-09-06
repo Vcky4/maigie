@@ -37,7 +37,7 @@ def _section_present(narrative: dict, key: str) -> bool:
     value = narrative.get(key)
     if value is None:
         return False
-    if isinstance(value, (list, str, dict)):
+    if isinstance(value, list | str | dict):
         if isinstance(value, dict) and key == "patterns":
             # `patterns` is an object with two nullable members; present means at least one is set.
             return any(value.get(side) for side in ("keep", "watch"))

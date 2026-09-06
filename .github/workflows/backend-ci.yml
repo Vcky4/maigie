@@ -192,6 +192,19 @@ jobs:
           PINECONE_REGION: ${{ secrets.PINECONE_REGION }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           ELEVENLABS_AGENT_ID: ${{ secrets.ELEVENLABS_AGENT_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+          APPLE_PRIVATE_KEY: ${{ secrets.APPLE_PRIVATE_KEY }}
+          APPLE_BUNDLE_ID: ${{ secrets.APPLE_BUNDLE_ID }}
+          APPLE_ENVIRONMENT: ${{ secrets.APPLE_ENVIRONMENT }}
+          APPLE_APP_APPLE_ID: ${{ secrets.APPLE_APP_APPLE_ID }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_FILE: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_FILE }}
+          GOOGLE_PLAY_PACKAGE_NAME: ${{ secrets.GOOGLE_PLAY_PACKAGE_NAME }}
+          GOOGLE_PLAY_SUBSCRIPTION_ID: ${{ secrets.GOOGLE_PLAY_SUBSCRIPTION_ID }}
+          GOOGLE_PLAY_BASE_PLAN_MONTHLY: ${{ secrets.GOOGLE_PLAY_BASE_PLAN_MONTHLY }}
+          GOOGLE_PUBSUB_AUDIENCE: ${{ secrets.GOOGLE_PUBSUB_AUDIENCE }}
+          GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           chmod +x scripts/load-all-secrets.sh
@@ -392,6 +405,19 @@ jobs:
             export PINECONE_REGION="${{ secrets.PINECONE_REGION }}"
             export ELEVENLABS_API_KEY="${{ secrets.ELEVENLABS_API_KEY }}"
             export ELEVENLABS_AGENT_ID="${{ secrets.ELEVENLABS_AGENT_ID }}"
+            export APPLE_ISSUER_ID="${{ secrets.APPLE_ISSUER_ID }}"
+            export APPLE_KEY_ID="${{ secrets.APPLE_KEY_ID }}"
+            export APPLE_PRIVATE_KEY="${{ secrets.APPLE_PRIVATE_KEY }}"
+            export APPLE_BUNDLE_ID="${{ secrets.APPLE_BUNDLE_ID }}"
+            export APPLE_ENVIRONMENT="${{ secrets.APPLE_ENVIRONMENT }}"
+            export APPLE_APP_APPLE_ID="${{ secrets.APPLE_APP_APPLE_ID }}"
+            export GOOGLE_PLAY_SERVICE_ACCOUNT_JSON="${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}"
+            export GOOGLE_PLAY_SERVICE_ACCOUNT_FILE="${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_FILE }}"
+            export GOOGLE_PLAY_PACKAGE_NAME="${{ secrets.GOOGLE_PLAY_PACKAGE_NAME }}"
+            export GOOGLE_PLAY_SUBSCRIPTION_ID="${{ secrets.GOOGLE_PLAY_SUBSCRIPTION_ID }}"
+            export GOOGLE_PLAY_BASE_PLAN_MONTHLY="${{ secrets.GOOGLE_PLAY_BASE_PLAN_MONTHLY }}"
+            export GOOGLE_PUBSUB_AUDIENCE="${{ secrets.GOOGLE_PUBSUB_AUDIENCE }}"
+            export GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL="${{ secrets.GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL }}"
 
             cd /opt/maigie/previews
 
@@ -905,6 +931,19 @@ jobs:
           PINECONE_REGION: ${{ secrets.PINECONE_REGION }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           ELEVENLABS_AGENT_ID: ${{ secrets.ELEVENLABS_AGENT_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+          APPLE_PRIVATE_KEY: ${{ secrets.APPLE_PRIVATE_KEY }}
+          APPLE_BUNDLE_ID: ${{ secrets.APPLE_BUNDLE_ID }}
+          APPLE_ENVIRONMENT: ${{ secrets.APPLE_ENVIRONMENT }}
+          APPLE_APP_APPLE_ID: ${{ secrets.APPLE_APP_APPLE_ID }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_FILE: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_FILE }}
+          GOOGLE_PLAY_PACKAGE_NAME: ${{ secrets.GOOGLE_PLAY_PACKAGE_NAME }}
+          GOOGLE_PLAY_SUBSCRIPTION_ID: ${{ secrets.GOOGLE_PLAY_SUBSCRIPTION_ID }}
+          GOOGLE_PLAY_BASE_PLAN_MONTHLY: ${{ secrets.GOOGLE_PLAY_BASE_PLAN_MONTHLY }}
+          GOOGLE_PUBSUB_AUDIENCE: ${{ secrets.GOOGLE_PUBSUB_AUDIENCE }}
+          GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -1218,6 +1257,19 @@ jobs:
           PINECONE_REGION: ${{ secrets.PINECONE_REGION }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           ELEVENLABS_AGENT_ID: ${{ secrets.ELEVENLABS_AGENT_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+          APPLE_PRIVATE_KEY: ${{ secrets.APPLE_PRIVATE_KEY }}
+          APPLE_BUNDLE_ID: ${{ secrets.APPLE_BUNDLE_ID }}
+          APPLE_ENVIRONMENT: ${{ secrets.APPLE_ENVIRONMENT }}
+          APPLE_APP_APPLE_ID: ${{ secrets.APPLE_APP_APPLE_ID }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_FILE: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_FILE }}
+          GOOGLE_PLAY_PACKAGE_NAME: ${{ secrets.GOOGLE_PLAY_PACKAGE_NAME }}
+          GOOGLE_PLAY_SUBSCRIPTION_ID: ${{ secrets.GOOGLE_PLAY_SUBSCRIPTION_ID }}
+          GOOGLE_PLAY_BASE_PLAN_MONTHLY: ${{ secrets.GOOGLE_PLAY_BASE_PLAN_MONTHLY }}
+          GOOGLE_PUBSUB_AUDIENCE: ${{ secrets.GOOGLE_PUBSUB_AUDIENCE }}
+          GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -1393,6 +1445,19 @@ jobs:
             export PINECONE_REGION="${{ secrets.PINECONE_REGION }}"
             export ELEVENLABS_API_KEY="${{ secrets.ELEVENLABS_API_KEY }}"
             export ELEVENLABS_AGENT_ID="${{ secrets.ELEVENLABS_AGENT_ID }}"
+            export APPLE_ISSUER_ID="${{ secrets.APPLE_ISSUER_ID }}"
+            export APPLE_KEY_ID="${{ secrets.APPLE_KEY_ID }}"
+            export APPLE_PRIVATE_KEY="${{ secrets.APPLE_PRIVATE_KEY }}"
+            export APPLE_BUNDLE_ID="${{ secrets.APPLE_BUNDLE_ID }}"
+            export APPLE_ENVIRONMENT="${{ secrets.APPLE_ENVIRONMENT }}"
+            export APPLE_APP_APPLE_ID="${{ secrets.APPLE_APP_APPLE_ID }}"
+            export GOOGLE_PLAY_SERVICE_ACCOUNT_JSON="${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}"
+            export GOOGLE_PLAY_SERVICE_ACCOUNT_FILE="${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_FILE }}"
+            export GOOGLE_PLAY_PACKAGE_NAME="${{ secrets.GOOGLE_PLAY_PACKAGE_NAME }}"
+            export GOOGLE_PLAY_SUBSCRIPTION_ID="${{ secrets.GOOGLE_PLAY_SUBSCRIPTION_ID }}"
+            export GOOGLE_PLAY_BASE_PLAN_MONTHLY="${{ secrets.GOOGLE_PLAY_BASE_PLAN_MONTHLY }}"
+            export GOOGLE_PUBSUB_AUDIENCE="${{ secrets.GOOGLE_PUBSUB_AUDIENCE }}"
+            export GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL="${{ secrets.GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL }}"
 
             cd /opt/maigie/staging
 
