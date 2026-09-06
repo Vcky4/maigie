@@ -19,7 +19,13 @@ from src.shared.exceptions import MaigieError, NotFoundError
 
 OWNER = "user-owner"
 INTRUDER = "user-intruder"
-NOW = datetime(2026, 8, 7, 9, 0, tzinfo=UTC)
+# Anchored to the real clock, not a fixed instant. `generate_preparation_plan` compares the
+# preparation's target date against `datetime.now(UTC)`, so a frozen `NOW` in the past makes the
+# default `EXAM_DATE` fall behind the real clock and the precondition tests fail as time passes —
+# which is exactly what happened once the wall clock reached the old hardcoded 2026-09-06. Every
+# offset below (EXAM_DATE, the negative past-date cases, item scheduling) is relative to this, so
+# anchoring to `now` keeps them correct on any day the suite runs.
+NOW = datetime.now(UTC).replace(microsecond=0)
 EXAM_DATE = NOW + timedelta(days=30)
 
 
