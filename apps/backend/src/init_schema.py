@@ -14,15 +14,19 @@ sys.path.insert(0, ".")
 
 
 async def init():
-    import src.domains.billing.db_models  # noqa: F401
+    # Import EVERY domain's db_models so all tables register with Base.metadata before create_all.
+    # Done by discovery rather than a hand-maintained list: the list drifted once already — `progress`
+    # was omitted, so create_all silently skipped the Goal-lifecycle tables and a fresh database came
+    # up missing an entire domain. A glob cannot be forgotten when a domain is added.
+    import glob
+    import importlib
+    import os
 
-    # Import all domain models so they register with Base.metadata
-    import src.domains.identity.db_models  # noqa: F401
-    import src.domains.intelligence.db_models  # noqa: F401
-    import src.domains.knowledge.db_models  # noqa: F401
-    import src.domains.learning_spaces.db_models  # noqa: F401
-    import src.domains.notifications.db_models  # noqa: F401
-    import src.domains.personal_learning.db_models  # noqa: F401
+    domains_dir = os.path.join(os.path.dirname(__file__), "domains")
+    for path in sorted(glob.glob(os.path.join(domains_dir, "*", "db_models.py"))):
+        domain = os.path.basename(os.path.dirname(path))
+        importlib.import_module(f"src.domains.{domain}.db_models")
+
     from src.shared.database.base import Base
     from src.shared.database.session import connect_db, get_session_factory
 
