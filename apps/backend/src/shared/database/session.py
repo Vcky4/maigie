@@ -106,8 +106,17 @@ async def _connect_db(*, pool_size: int, max_overflow: int) -> None:
         # wants its own change and its own measurement, not a quiet flip here.
         pool_pre_ping=True,
         pool_recycle=settings.DB_POOL_RECYCLE_SECONDS,
-        # Disable prepared statement caching for pgbouncer compatibility
-        connect_args={"prepared_statement_cache_size": 0, "statement_cache_size": 0},
+        # Disable prepared statement caching for pgbouncer compatibility, and pin the search_path.
+        # Supabase's connection pooler hands out sessions with an empty search_path, which makes
+        # unqualified table names — and `create_all` — fail with "no schema has been selected to
+        # create in". Pinning it so every pooled connection resolves `public` first is required for
+        # the app to work behind the pooler; `extensions` is included for Supabase-hosted extension
+        # functions (gen_random_uuid, etc.), and both are harmless where those schemas don't exist.
+        connect_args={
+            "prepared_statement_cache_size": 0,
+            "statement_cache_size": 0,
+            "server_settings": {"search_path": "public, extensions"},
+        },
     )
 
     _session_factory = async_sessionmaker(
