@@ -34,6 +34,21 @@ def parse_list_value(value: Any) -> list[str]:
 ListStr = Annotated[list[str], BeforeValidator(parse_list_value)]
 
 
+def parse_optional_int(value: object) -> object:
+    """Treat an empty/blank env string as unset for optional int fields.
+
+    The deploy pipeline renders every key from .env.example into .env, so an
+    unset secret becomes ``KEY=`` (empty string) rather than an absent key.
+    Pydantic cannot parse ``""`` as an int, so coerce it back to None here.
+    """
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+OptionalInt = Annotated[int | None, BeforeValidator(parse_optional_int)]
+
+
 class Settings(BaseSettings):
     # ... existing settings ...
 
@@ -327,7 +342,7 @@ class Settings(BaseSettings):
     APPLE_ENVIRONMENT: str = "Sandbox"
     # The numeric App Store app id (appAppleId), used to validate server notifications. Optional in
     # sandbox; set it in production.
-    APPLE_APP_APPLE_ID: int | None = None
+    APPLE_APP_APPLE_ID: OptionalInt = None
     # Directory holding Apple's public root CA certificates (AppleRootCA-G3.cer, and G2), used to
     # verify the x5c chain on every JWS. These are public certificates, not secrets — download from
     # https://www.apple.com/certificateauthority/ and place them here at deploy time. Empty means JWS
