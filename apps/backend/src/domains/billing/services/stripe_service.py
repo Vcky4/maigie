@@ -191,6 +191,7 @@ def get_active_plan_catalog(currency: str = "usd") -> PlanCatalogResponse:
     # returns the NGN figures for the personal products and adds the NGN-only Term Pass; anything
     # else is the USD list. Space-scoped products carry no NGN price of their own and stay USD.
     is_ngn = (currency or "usd").lower() == "ngn"
+    market = "ngn" if is_ngn else "global"
 
     def _p(usd_cents: int, ngn_setting: str) -> tuple[int, str]:
         """(price_cents, currency) for a personal product in the requested market."""
@@ -236,7 +237,7 @@ def get_active_plan_catalog(currency: str = "usd") -> PlanCatalogResponse:
             ),
             usage_note=(
                 "Every Plus feature for the 5 hours, including "
-                f"{_voice_minutes_note(ent.VOICE_SECONDS_PASS_5H)} — "
+                f"{_voice_minutes_note(ent.voice_seconds_for_pass('plus_pass_5h', market))} — "
                 "an allowance inside the 5 hours, not 5 unbroken hours of voice."
             ),
             # Phase 5's one-time checkout (`POST /billing/passes/checkout`) is mounted, so the
@@ -256,7 +257,7 @@ def get_active_plan_catalog(currency: str = "usd") -> PlanCatalogResponse:
             ),
             usage_note=(
                 "Every Plus feature for the 7 days, including "
-                f"{_voice_minutes_note(ent.VOICE_SECONDS_PASS_7D)} "
+                f"{_voice_minutes_note(ent.voice_seconds_for_pass('plus_pass_7d', market))} "
                 "for the week."
             ),
             purchasable=True,  # Phase 5 checkout is mounted, as above.
@@ -282,7 +283,7 @@ def get_active_plan_catalog(currency: str = "usd") -> PlanCatalogResponse:
             usage_note=(
                 "A stronger model where it shows — chat, quizzes, lessons, documents "
                 "and your growth write-ups — plus "
-                f"{_voice_minutes_note(ent.VOICE_SECONDS_PLUS_MONTHLY)} "
+                f"{_voice_minutes_note(ent.voice_seconds_plus(market))} "
                 "a month."
             ),
         ),
@@ -346,7 +347,7 @@ def get_active_plan_catalog(currency: str = "usd") -> PlanCatalogResponse:
                 ),
                 usage_note=(
                     "Every Plus feature for the 4 months, including "
-                    f"{_voice_minutes_note(ent.VOICE_SECONDS_BY_PASS_PRODUCT['plus_pass_term'])} "
+                    f"{_voice_minutes_note(ent.voice_seconds_for_pass('plus_pass_term', market))} "
                     "a month."
                 ),
                 purchasable=True,

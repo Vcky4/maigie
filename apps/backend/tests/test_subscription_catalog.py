@@ -167,6 +167,19 @@ class TestNgnCatalogue:
         """No `currency` argument means the USD list — the pre-existing behaviour, unchanged."""
         assert stripe_svc.get_active_plan_catalog().plans[0].currency == "usd"
 
+    def test_voice_minutes_are_sized_down_for_ngn(self):
+        """Voice is market-aware like price (§6.8): the NGN plan states its smaller included voice
+        allowance, not the global 60 minutes, because a voice minute costs the same everywhere."""
+        ngn = self._ngn_by_id()
+        usd = _by_id()
+        assert stripe_svc._voice_minutes_note(entitlement_service.VOICE_SECONDS_PLUS_MONTHLY_NGN) in (
+            ngn["plus_monthly"].usage_note or ""
+        )
+        # And the global catalogue still states the full 60.
+        assert stripe_svc._voice_minutes_note(entitlement_service.VOICE_SECONDS_PLUS_MONTHLY) in (
+            usd["plus_monthly"].usage_note or ""
+        )
+
 
 class TestResolveCurrency:
     """Currency is derived from the learner's country, never stored. Nigeria is the one non-USD

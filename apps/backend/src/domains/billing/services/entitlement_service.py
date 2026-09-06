@@ -175,8 +175,52 @@ VOICE_SECONDS_BY_PASS_PRODUCT: dict[str, int] = {
     "plus_pass_term": VOICE_SECONDS_PLUS_MONTHLY,
 }
 
+# --- Voice is market-aware, the same way price is (§6.8) ---
+#
+# Voice is the one capability whose COGS cannot be discounted into a market — a minute costs the same
+# in Lagos as in London (~$0.02) — so a market with a lower price cannot afford the same included
+# minutes. At the NGN monthly (₦2 400 ≈ $1.50 net) 60 minutes would be $1.20 of COGS on its own,
+# which is most of the revenue before a single chat turn; the global monthly ($9.40 net) carries it
+# comfortably. So the *minutes* are set per market, exactly as the *prices* are. Global figures above
+# are unchanged; the NGN figures below are the sized-down grants.
+VOICE_SECONDS_PLUS_MONTHLY_NGN = 20 * 60  # 20 minutes (~$0.40 COGS) against ~$1.50 NGN net
+VOICE_SECONDS_PASS_5H_NGN = 5 * 60
+VOICE_SECONDS_PASS_7D_NGN = 10 * 60
+
+
+def market_for_country(country: str | None) -> str:
+    """The pricing market for a country: ``"ngn"`` for Nigeria, ``"global"`` otherwise.
+
+    Mirrors `subscription_service.resolve_currency` (ngn ↔ NG), duplicated here rather than imported
+    because `subscription_service` → `stripe_service` → this module is an import cycle. One line is
+    cheaper than the cycle.
+    """
+    return "ngn" if (country or "").upper() == "NG" else "global"
+
+
+def voice_seconds_plus(market: str) -> int:
+    """Included voice seconds for a subscription/trial in the given market."""
+    return VOICE_SECONDS_PLUS_MONTHLY_NGN if market == "ngn" else VOICE_SECONDS_PLUS_MONTHLY
+
+
+def voice_seconds_for_pass(product_id: str, market: str) -> int:
+    """Included voice seconds for a pass product in the given market.
+
+    Unknown products fall to the smallest grant, for the same reason the window allowance does:
+    under-granting is a support ticket, over-granting is COGS on the most expensive operation.
+    """
+    ngn = market == "ngn"
+    table = {
+        "plus_pass_5h": VOICE_SECONDS_PASS_5H_NGN if ngn else VOICE_SECONDS_PASS_5H,
+        "plus_pass_7d": VOICE_SECONDS_PASS_7D_NGN if ngn else VOICE_SECONDS_PASS_7D,
+        "plus_pass_term": VOICE_SECONDS_PLUS_MONTHLY_NGN if ngn else VOICE_SECONDS_PLUS_MONTHLY,
+    }
+    return table.get(product_id, VOICE_SECONDS_PASS_5H_NGN if ngn else VOICE_SECONDS_PASS_5H)
+
+
 #: What `plus_voice_30` adds. Purchased seconds are held separately and never expire, so this is a
-#: top-up rather than a new allowance — see `voice_service`.
+#: top-up rather than a new allowance — see `voice_service`. Market-independent: a pack is 30 minutes
+#: everywhere, priced (not sized) per market, because it is bought rather than included.
 VOICE_SECONDS_TOP_UP = 30 * 60
 
 
@@ -254,6 +298,7 @@ def _compose(
     subscription_period_end: datetime | None,
     active_pass: ActivePass | None,
     active_trial: ActiveTrial | None,
+    market: str = "global",
 ) -> Entitlement:
     """Apply subscription → pass → trial → free to already-read state.
 
@@ -275,7 +320,7 @@ def _compose(
             trial_days_remaining=None,
             window_allowance=WINDOW_ALLOWANCE_PLUS,
             monthly_backstop=MONTHLY_BACKSTOP_PLUS,
-            voice_seconds_included=VOICE_SECONDS_PLUS_MONTHLY,
+            voice_seconds_included=voice_seconds_plus(market),
             # Keyed on the period end, which is what makes a renewal re-grant with no sweep and no
             # job: the id changes when the period does, so the next read after a renewal finds a
             # source it does not recognise and tops the balance back up. A period end of `None` — a
@@ -299,13 +344,9 @@ def _compose(
             ),
             # A pass is bounded by its own allowance, not by the calendar. Decision E.
             monthly_backstop=None,
-            voice_seconds_included=VOICE_SECONDS_BY_PASS_PRODUCT.get(
-                # Same defensive floor as the window allowance: an unknown pass product falls to the
-                # *smallest* grant, because under-granting is a support ticket and over-granting is
-                # COGS on the most expensive operation in the product.
-                active_pass.product_id,
-                VOICE_SECONDS_PASS_5H,
-            ),
+            # Market-aware (§6.8): the same pass grants fewer included minutes in the NGN market,
+            # for the same reason its price is lower. Unknown products fall to the smallest grant.
+            voice_seconds_included=voice_seconds_for_pass(active_pass.product_id, market),
             # Keyed on the pass rather than on its expiry, so activating a second pass after the
             # first ends is a new source and a new grant. This is what replaces the plan's sweep:
             # when the pass stops being the active entitlement the id stops matching, and the next
@@ -331,7 +372,8 @@ def _compose(
             # 3-day trial. It stays because a trial that withholds the one capability Free is missing
             # is not a trial of Plus — and Decision B's whole point is that a trialling learner is
             # indistinguishable from a subscriber. The bound is the 3 days, not a smaller allowance.
-            voice_seconds_included=VOICE_SECONDS_PLUS_MONTHLY,
+            # Market-aware like the subscription it previews.
+            voice_seconds_included=voice_seconds_plus(market),
             # Keyed on the trial end so a second trial after the cooldown is a fresh grant, and so a
             # learner cannot re-trial their way to unlimited voice inside one trial.
             voice_allowance_source_id=f"trial:{active_trial.ends_at}",
@@ -458,6 +500,7 @@ async def _resolve_uncached(user_id: str) -> Entitlement:
         select(
             User.tier,
             User.subscription_current_period_end,
+            User.country,
             LearningProfile.trial_ends_at,
             # The pass, joined rather than fetched separately. Decision C denormalises
             # `activePlusPassId` onto `User` precisely so this join is a primary-key lookup that
@@ -492,6 +535,7 @@ async def _resolve_uncached(user_id: str) -> Entitlement:
     (
         raw_tier,
         period_end,
+        country,
         trial_ends_at,
         pass_id,
         pass_product_id,
@@ -511,6 +555,8 @@ async def _resolve_uncached(user_id: str) -> Entitlement:
             units_used=pass_units_used,
         ),
         active_trial=_active_trial(trial_ends_at),
+        # The learner's market sizes the voice allowance (§6.8), the same way it sets the price.
+        market=market_for_country(country),
     )
 
 
