@@ -70,9 +70,7 @@ _DELETION_DAYS = 90
 # ===========================================================================
 
 
-async def signup(
-    *, email: str, password: str, name: str, country: str | None = None
-) -> User:
+async def signup(*, email: str, password: str, name: str, country: str | None = None) -> User:
     """Register a new user with email/password. Returns inactive user pending OTP."""
     existing = await identity_repo.find_by_email(email)
     if existing:

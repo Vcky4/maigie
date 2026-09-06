@@ -468,9 +468,7 @@ class Settings(BaseSettings):
     # so a provider blip degrades rather than fails). Global Plus keeps `LLM_TIER_ALLOWLIST_PLUS`.
     # `feature_flags.effective_tier_for_request` returns the `plus_ngn` key for an NGN Plus learner,
     # which resolves to this allowlist; it stays a *paid* tier string, so voice still bills as paid.
-    LLM_TIER_ALLOWLIST_PLUS_NGN: str = (
-        "gemini:gemini-3.1-flash-lite,gemini:gemini-3.5-flash-lite"
-    )
+    LLM_TIER_ALLOWLIST_PLUS_NGN: str = "gemini:gemini-3.1-flash-lite,gemini:gemini-3.5-flash-lite"
 
     # --- Gemini Live (voice) — was scattered os.getenv reads; keep in Settings ---
     #

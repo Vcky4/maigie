@@ -172,9 +172,9 @@ class TestNgnCatalogue:
         allowance, not the global 60 minutes, because a voice minute costs the same everywhere."""
         ngn = self._ngn_by_id()
         usd = _by_id()
-        assert stripe_svc._voice_minutes_note(entitlement_service.VOICE_SECONDS_PLUS_MONTHLY_NGN) in (
-            ngn["plus_monthly"].usage_note or ""
-        )
+        assert stripe_svc._voice_minutes_note(
+            entitlement_service.VOICE_SECONDS_PLUS_MONTHLY_NGN
+        ) in (ngn["plus_monthly"].usage_note or "")
         # And the global catalogue still states the full 60.
         assert stripe_svc._voice_minutes_note(entitlement_service.VOICE_SECONDS_PLUS_MONTHLY) in (
             usd["plus_monthly"].usage_note or ""

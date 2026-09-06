@@ -119,6 +119,7 @@ def units_allowance_for_market(product_id: str, market: str) -> int | None:
         return UNITS_ALLOWANCE_BY_PRODUCT_NGN.get(product_id, product.units_allowance)
     return product.units_allowance
 
+
 #: Statuses a pass can hold. `inventory` → `active` → `consumed`, or `refunded` from either.
 STATUS_INVENTORY = "inventory"
 STATUS_ACTIVE = "active"
