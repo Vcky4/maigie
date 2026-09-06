@@ -25,7 +25,6 @@ from src.services.usage_tracking_service import (  # noqa: E402
     get_personal_usage_summary,
 )
 
-
 # ---------------------------------------------------------------------------
 # build_circle_usage_scope
 # ---------------------------------------------------------------------------

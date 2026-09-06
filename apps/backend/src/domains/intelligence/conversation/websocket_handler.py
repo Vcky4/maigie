@@ -1,0 +1,1006 @@
+"""
+WebSocket chat endpoint — Intelligence Domain.
+
+Handles real-time streaming AI chat over WebSocket. This is the primary
+interface for learners to converse with Intelligence.
+
+Migrated from routes/chat_ws.py into domains/intelligence/conversation/.
+"""
+
+import asyncio
+import json
+import logging
+from typing import Any
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from jose import JWTError, jwt
+from sqlalchemy import func, select
+
+from src.config import settings
+from src.domains.billing.services.credit_consumption_service import (
+    UPGRADE_DEEP_LINK,
+)
+from src.domains.identity.repository import IdentityRepository
+from src.domains.intelligence.conversation import (
+    ask_service,
+    context_enrichment,
+)
+from src.domains.intelligence.conversation.chat_helpers import (
+    _serialize_reply_preview,
+)
+from src.domains.intelligence.db_models import ChatMessage, ChatSession
+from src.domains.intelligence.reasoning.llm.errors import LLMProviderError
+from src.domains.intelligence.reasoning.llm.llm_service import llm_service
+from src.domains.intelligence.repository import (
+    ActiveGenerationAttemptError,
+    AttemptFenceLostError,
+    intelligence_repo,
+)
+from src.shared.database import get_session_factory
+from src.shared.exceptions import SubscriptionLimitError
+from src.shared.infrastructure.rate_limit import check_rate_limit
+from src.shared.infrastructure.socket_manager import manager
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# LLMProviderError category → user-facing message mapping
+# ---------------------------------------------------------------------------
+
+_ERROR_CATEGORY_MESSAGES: dict[str, str] = {
+    "rate_limit": "AI service is busy. Please try again in a moment.",
+    "auth": "AI service configuration error.",
+    "invalid_request": "Unable to process this request.",
+    "server_error": "AI service temporarily unavailable.",
+    "overloaded": "All AI services are currently busy. Please try again.",
+    "unsupported_capability": "This model does not support the requested operation.",
+    "unknown": "An unexpected error occurred.",
+}
+
+
+def _retry_image_urls(message: Any, fallback: list[str]) -> list[str]:
+    """Restore persisted HTTP/WS images for a cross-transport retry."""
+    persisted = list(getattr(message, "image_urls", None) or [])
+    legacy = getattr(message, "image_url", None)
+    if legacy and not persisted:
+        persisted = [legacy]
+    return persisted or fallback
+
+
+def register_chat_websocket_routes(router: APIRouter, db: Any):
+    """Register ``/ws``; returns ``get_current_user_ws`` for the voice upload route."""
+
+    async def get_current_user_ws(token: str = Query(...)):
+        identity_repo = IdentityRepository()
+
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            email: str = payload.get("sub")
+            if not email:
+                raise HTTPException(status_code=403, detail="Invalid token")
+
+            user = await identity_repo.find_by_email(email)
+            if not user:
+                raise HTTPException(status_code=403, detail="User not found")
+
+            return user
+        except JWTError:
+            raise HTTPException(status_code=403, detail="Could not validate credentials")
+
+    @router.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_current_user_ws)):
+        """
+        Main WebSocket endpoint for AI Chat.
+        """
+        # 1. Connect
+        connection_id = await manager.connect(websocket, user.id)
+
+        # 2. Find or Create an active Chat Session
+        # NOTE: The frontend can optionally pass `context.sessionId` per message to pin a conversation.
+        factory = get_session_factory()
+        async with factory() as sa_session:
+            stmt = (
+                select(ChatSession)
+                .where(
+                    ChatSession.user_id == user.id,
+                    ChatSession.is_active == True,  # noqa: E712
+                    ChatSession.is_space_room == False,  # noqa: E712
+                )
+                .order_by(ChatSession.updated_at.desc())
+                .limit(1)
+            )
+            result = await sa_session.execute(stmt)
+            session = result.scalar_one_or_none()
+
+        if not session:
+            session = await intelligence_repo.create_chat_session(
+                ask_service.new_session_row(user.id)
+            )
+
+        # 2b. Deliver pending AI nudges on connect
+        try:
+            from src.domains.intelligence.memory.memory_service import (
+                get_pending_nudges,
+            )
+
+            pending = await get_pending_nudges(user.id)
+            if pending:
+                await manager.send_json(
+                    {"type": "nudge", "nudges": pending},
+                    user.id,
+                )
+        except Exception as e:
+            print(f"⚠️ Failed to deliver nudges: {e}")
+
+        # One reader bundle for the connection. Memoized in `context_enrichment`, so this is a
+        # lookup rather than nine imports, but binding it here says once that every stage of a turn
+        # reads through the same set — which is the property that keeps the owner filters in one
+        # place (plan §5.5.14).
+        readers = context_enrichment.production_readers()
+
+        # And one effects bundle. Not memoized: `generate` closes over the router instance, and
+        # whether a router exists is the thing that changes when the LLM layer is reconfigured.
+        effects = ask_service.production_effects()
+
+        # Background turn tasks remain alive through non-cancellable post-generation work.
+        # Request ids separately identify only provider/tool generation that a disconnect may stop.
+        open_turns: set[asyncio.Task] = set()
+        connection_attempt_ids: set[str] = set()
+
+        try:
+            while True:
+                # 3. Receive Message (Text or JSON with context)
+                raw_message = await websocket.receive_text()
+
+                # Parse message - can be plain text or JSON with context
+                user_text = raw_message
+                context = None
+                temp_id = None
+                message_type = None
+                retry_user_message = None
+                retry_prior_attempt = None
+
+                try:
+                    # Try to parse as JSON
+                    message_data = json.loads(raw_message)
+                    if isinstance(message_data, dict):
+                        message_type = message_data.get("type")
+                        if message_type == "ping":
+                            await manager.send_connection_json({"type": "pong"}, connection_id)
+                            continue
+                        if message_type == "cancel":
+                            # Reachable because the loop no longer awaits the turn. Acknowledged whether
+                            # or not there was a turn to stop: `stopped: false` means it had already
+                            # finished, which is the ordinary case for someone pressing Stop as the last
+                            # chunk lands — and a Stop that answers nothing is the defect this closes.
+                            cancel_request_id = message_data.get("requestId")
+                            stopped = (
+                                ask_service.cancel_turn(cancel_request_id)
+                                if cancel_request_id
+                                else False
+                            )
+                            await manager.send_connection_json(
+                                {
+                                    "type": "event",
+                                    "payload": {
+                                        "status": ("cancelled" if stopped else "complete"),
+                                        "action": "cancel",
+                                        "requestId": cancel_request_id,
+                                        "stopped": stopped,
+                                    },
+                                },
+                                connection_id,
+                            )
+                            continue
+                        if message_type == "retry":
+                            context = {"sessionId": message_data.get("sessionId")}
+                            temp_id = message_data.get("tempId")
+                            user_text = ""
+                        else:
+                            user_text = message_data.get("message", raw_message)
+                            context = message_data.get("context")
+                            temp_id = message_data.get("tempId")
+                        if context:
+                            print(f"📥 Received context from frontend: {context}")
+                except (json.JSONDecodeError, AttributeError):
+                    # If not JSON, treat as plain text
+                    pass
+
+                # 3.1 Resolve the session this turn belongs to and authorise the learner for it.
+                # The client pins `context.sessionId` per message to switch conversations without
+                # reconnecting, so this runs on every turn and not just at connect. The rules live in
+                # `ask_service.resolve_session_for_turn` — an unchecked session id is a write into
+                # someone else's thread, and the decision is worth testing without a socket.
+                resolution = await ask_service.resolve_session_for_turn(
+                    requested_session_id=(context or {}).get("sessionId"),
+                    current_session=session,
+                    user_id=user.id,
+                    find_session=intelligence_repo.find_chat_session,
+                )
+                if not resolution.allowed:
+                    # `retryable` distinguishes a permission refusal, which will refuse again, from a
+                    # transient read failure, which will not. Both clients already read this flag off
+                    # `error` frames — the failed-generation path put it there — so refusing a turn
+                    # whose session could not be read needs no new frame.
+                    await manager.send_connection_json(
+                        {
+                            "type": "error",
+                            "payload": {
+                                "message": ask_service.SESSION_DENIAL_MESSAGES[resolution.denial],
+                                "retryable": resolution.retryable,
+                            },
+                        },
+                        connection_id,
+                    )
+                    continue
+
+                session = resolution.session
+
+                if message_type == "retry":
+                    message_id = message_data.get("messageId")
+                    retry_prior_attempt = await intelligence_repo.find_attempt_for_retry(
+                        session_id=session.id,
+                        message_id=message_id or "",
+                        user_id=user.id,
+                    )
+                    retry_user_message = (
+                        await intelligence_repo.find_message(message_id)
+                        if message_id and retry_prior_attempt is not None
+                        else None
+                    )
+                    retry_allowed = (
+                        retry_prior_attempt is not None
+                        and retry_user_message is not None
+                        and retry_user_message.user_id == user.id
+                        and retry_prior_attempt.status in {"FAILED", "CANCELLED"}
+                        and retry_prior_attempt.retryable
+                        and not retry_prior_attempt.tool_side_effects
+                        and not await intelligence_repo.user_message_has_answer(message_id)
+                    )
+                    if not retry_allowed:
+                        await manager.send_connection_json(
+                            {
+                                "type": "error",
+                                "payload": {
+                                    "message": "This message cannot be retried.",
+                                    "retryable": False,
+                                    "sessionId": session.id,
+                                    "messageId": message_id,
+                                },
+                            },
+                            connection_id,
+                        )
+                        continue
+                    user_text = retry_user_message.content
+                    context = retry_prior_attempt.context
+
+                # 3.2 Is this worth starting a turn for?
+                #
+                # Checked before the learner's own message is written, which is the whole reason it is
+                # not inside `answer()`: a rejection after the write leaves the thread holding a row for
+                # a turn that never happened, and on reload the learner sees their question with no
+                # reply and no explanation.
+                # `screen_turn` is validation *and* the rate limit in one call, so this transport cannot
+                # apply half of it. The socket had no rate limiting at all before, and since both
+                # clients send turns over the socket, a limit on `/ask` alone would have guarded the path
+                # nobody uses (plan §4.5.9).
+                rejection = await ask_service.screen_turn(
+                    message=user_text,
+                    user_id=user.id,
+                    check_rate_limit=check_rate_limit,
+                )
+                if rejection:
+                    await manager.send_connection_json(
+                        {
+                            "type": "error",
+                            "payload": {
+                                "message": rejection.message,
+                                "code": rejection.code,
+                                # Not retryable as sent: the same message will be rejected again. The
+                                # learner has to change it, which the message tells them how to do.
+                                "retryable": False,
+                                "sessionId": session.id,
+                            },
+                        },
+                        connection_id,
+                    )
+                    continue
+
+                # One turn at a time per conversation (plan §4.5.13). Acquired before the
+                # learner's message is written, because a refused turn must leave no row, and
+                # released in a `finally`, so a turn that fails frees the slot rather than locking
+                # the learner out of their own conversation until the process restarts.
+                try:
+                    inflight = ask_service.turn_in_flight(session.id)
+                    await inflight.__aenter__()
+                except ask_service.TurnAlreadyInFlight as busy:
+                    await manager.send_connection_json(
+                        {
+                            "type": "error",
+                            "payload": {
+                                "message": busy.rejection.message,
+                                "code": busy.rejection.code,
+                                # Retryable, unlike the validation refusals: the same message will
+                                # work once the turn in flight finishes.
+                                "retryable": True,
+                                "sessionId": session.id,
+                            },
+                        },
+                        connection_id,
+                    )
+                    continue
+
+                # The turn runs as a task, and the loop goes straight back to `receive_text()`.
+                #
+                # **This is what makes stopping a turn possible at all** (plan §4.5.1). The loop used
+                # to await the whole turn inside one iteration, so a `cancel` frame could not be read
+                # until the turn it wanted to stop had already finished. Adding the frame without
+                # this restructure would have shipped a Stop that looks handled and is not, which is
+                # exactly how the original defect survived.
+                #
+                # Locals are bound as default arguments rather than captured: a closure reads them by
+                # reference, and they are rebound on the next iteration — so a turn would build its
+                # prompt from the *next* message's context. Concurrency on one session is not a
+                # worry, because `turn_in_flight` above refused it before we got here.
+                async def run_turn(
+                    session=session,
+                    context=context,
+                    user_text=user_text,
+                    temp_id=temp_id,
+                    inflight=inflight,
+                    retry_user_message=retry_user_message,
+                    retry_prior_attempt=retry_prior_attempt,
+                ):
+                    try:
+                        # 4. Extract fileUrls from context (if any) — may be a JSON array or single string
+                        raw_file_urls = context.get("fileUrls") if context else None
+                        file_urls_list: list[str] = []
+                        if raw_file_urls:
+                            if isinstance(raw_file_urls, list):
+                                file_urls_list = raw_file_urls
+                            elif isinstance(raw_file_urls, str):
+                                # Try to parse as JSON array, otherwise treat as single URL
+                                try:
+                                    import json as _json
+
+                                    parsed = _json.loads(raw_file_urls)
+                                    if isinstance(parsed, list):
+                                        file_urls_list = parsed
+                                    else:
+                                        file_urls_list = [raw_file_urls]
+                                except (ValueError, TypeError):
+                                    file_urls_list = [raw_file_urls]
+
+                        if retry_user_message is not None:
+                            file_urls_list = _retry_image_urls(retry_user_message, file_urls_list)
+
+                        # 4.1 Save User Message to DB (with imageUrl + imageUrls)
+                        reply_to_message_id = context.get("replyToMessageId") if context else None
+                        reply_target_message = None
+                        if reply_to_message_id:
+                            factory = get_session_factory()
+                            async with factory() as sa_session:
+                                stmt = select(ChatMessage).where(
+                                    ChatMessage.id == reply_to_message_id,
+                                    ChatMessage.session_id == session.id,
+                                )
+                                result = await sa_session.execute(stmt)
+                                reply_target_message = result.scalar_one_or_none()
+                            # Fetch the user for the reply target if needed
+                            if reply_target_message:
+                                reply_target_user = await IdentityRepository().find_by_id(
+                                    reply_target_message.user_id
+                                )
+                                # Attach user as attribute for downstream access
+                                reply_target_message.user = reply_target_user
+                            if not reply_target_message:
+                                await manager.send_connection_json(
+                                    {
+                                        "type": "error",
+                                        "payload": {
+                                            "message": "Reply target was not found in this room."
+                                        },
+                                    },
+                                    connection_id,
+                                )
+                                return
+
+                        user_message_data = {
+                            "sessionId": session.id,
+                            "userId": user.id,
+                            "role": "USER",
+                            "content": user_text,
+                        }
+                        # If this message was sent from a review, persist the review thread ID
+                        if context and context.get("reviewItemId"):
+                            user_message_data["reviewItemId"] = context["reviewItemId"]
+                        if file_urls_list:
+                            user_message_data["imageUrl"] = file_urls_list[0]  # backward compat
+                            user_message_data["imageUrls"] = file_urls_list
+                            print(
+                                f"🖼️ Message includes {len(file_urls_list)} image(s): {file_urls_list}"
+                            )
+                        if reply_target_message:
+                            user_message_data["replyToMessageId"] = reply_target_message.id
+
+                        try:
+                            if retry_user_message is not None:
+                                user_message = retry_user_message
+                                attempt = await intelligence_repo.create_attempt(
+                                    {
+                                        "sessionId": session.id,
+                                        "userMessageId": user_message.id,
+                                        "userId": user.id,
+                                        "status": "RUNNING",
+                                        "retryable": False,
+                                        "context": context,
+                                        "askMode": ask_service.ASK_MODE_WEBSOCKET,
+                                    }
+                                )
+                            else:
+                                (
+                                    user_message,
+                                    attempt,
+                                ) = await intelligence_repo.create_message_and_attempt(
+                                    message_data=user_message_data,
+                                    attempt_data={
+                                        "sessionId": session.id,
+                                        "userId": user.id,
+                                        "status": "RUNNING",
+                                        "retryable": False,
+                                        "context": context,
+                                        "askMode": ask_service.ASK_MODE_WEBSOCKET,
+                                    },
+                                )
+                        except ActiveGenerationAttemptError:
+                            await manager.send_connection_json(
+                                {
+                                    "type": "error",
+                                    "payload": {
+                                        "message": "Another answer is already being generated for this conversation.",
+                                        "retryable": True,
+                                        "sessionId": session.id,
+                                    },
+                                },
+                                connection_id,
+                            )
+                            return
+
+                        connection_attempt_ids.add(attempt.id)
+                        ask_service.prepare_cancellation(attempt.id)
+
+                        # Track activity without holding up message acknowledgement, title maintenance,
+                        # context enrichment, or the provider's first streamed token. This write is
+                        # best-effort and was already non-fatal when awaited inline.
+                        async def record_activity_best_effort() -> None:
+                            try:
+                                from src.domains.intelligence.observation.tracker import (
+                                    record_activity,
+                                )
+
+                                await record_activity(user.id)
+                            except Exception as activity_error:
+                                logger.debug("Failed to record chat activity: %s", activity_error)
+
+                        activity_task = asyncio.create_task(record_activity_best_effort())
+                        open_turns.add(activity_task)
+                        activity_task.add_done_callback(open_turns.discard)
+
+                        # 4.1a Send confirmation to client for ID correlation
+                        await manager.send_connection_json(
+                            {
+                                "type": "message_saved",
+                                "payload": {
+                                    "id": user_message.id,
+                                    "attemptId": attempt.id,
+                                    "requestId": attempt.id,
+                                    "isRetry": retry_user_message is not None,
+                                    "tempId": temp_id,
+                                    "role": "user",
+                                    "sessionId": session.id,
+                                    "replyToMessageId": getattr(
+                                        user_message, "reply_to_message_id", None
+                                    ),
+                                    "replyToMessage": _serialize_reply_preview(
+                                        reply_target_message
+                                    ),
+                                },
+                            },
+                            connection_id,
+                        )
+
+                        # 4.1b Index uploaded images into knowledge base (fire-and-forget)
+                        if file_urls_list:
+                            try:
+                                from src.domains.knowledge.services.knowledge_base_service import (
+                                    index_user_uploads,
+                                )
+
+                                asyncio.create_task(
+                                    index_user_uploads(
+                                        user_id=user.id,
+                                        image_urls=file_urls_list,
+                                        chat_message_id=user_message.id,
+                                    )
+                                )
+                            except Exception as e:
+                                logger.warning("Failed to start KB indexing: %s", e)
+
+                        # Name the conversation after the message that started it, so the history panel can
+                        # tell two threads apart. The gate and the wording are `ask_service`'s; the `count(*)`
+                        # stays here because it is a query, and it runs only when the cheap checks pass — a
+                        # conversation that already has a name does not pay for a count on every turn.
+                        try:
+                            is_review_thread = bool(context and context.get("reviewItemId"))
+                            if ask_service.session_needs_a_title(
+                                current_title=getattr(session, "title", None),
+                                message=user_text,
+                                is_review_thread=is_review_thread,
+                            ):
+                                factory = get_session_factory()
+                                async with factory() as sa_session:
+                                    count_stmt = (
+                                        select(func.count())
+                                        .select_from(ChatMessage)
+                                        .where(
+                                            ChatMessage.session_id == session.id,
+                                            ChatMessage.user_id == user.id,
+                                            ChatMessage.role == "USER",
+                                            ChatMessage.review_item_id.is_(None),
+                                        )
+                                    )
+                                    user_msg_count = (
+                                        await sa_session.execute(count_stmt)
+                                    ).scalar() or 0
+                                if ask_service.should_retitle_session(
+                                    current_title=getattr(session, "title", None),
+                                    user_message_count=user_msg_count,
+                                    message=user_text,
+                                    is_review_thread=is_review_thread,
+                                ):
+                                    await intelligence_repo.update_chat_session(
+                                        session.id,
+                                        {"title": ask_service.derive_session_title(user_text)},
+                                    )
+                        except Exception as e:
+                            logger.warning("Failed to update session title: %s", e)
+
+                        # 5. Answer the turn.
+                        #
+                        # Everything above the transport is `ask_service.answer()` — Decision C. History,
+                        # enrichment, recall, the credit check, generation, the tool outcomes, pricing,
+                        # consumption and the assistant row, in that order, with the reasons for the order in
+                        # its docstring. `on_chunk` is how this transport streams; HTTP will pass `None` and
+                        # must get the same answer, which is why streaming is a callback and not a branch.
+                        #
+                        # What stays here is what is genuinely the socket's: the frames.
+                        ai_request_id = attempt.id
+                        ai_reply_target_id = user_message.id
+
+                        async def send_progress(
+                            progress: int,
+                            stage: str,
+                            message: str,
+                            course_id: str = None,
+                            **kwargs,
+                        ):
+                            """Tool-execution progress, for long-running work like course generation."""
+                            await manager.send_json(
+                                {
+                                    "type": "event",
+                                    "payload": {
+                                        "status": "processing",
+                                        "action": "ai_course_generation",
+                                        "course_id": course_id,
+                                        "courseId": course_id,
+                                        "progress": progress,
+                                        "stage": stage,
+                                        "message": message,
+                                        "sessionId": session.id,
+                                    },
+                                },
+                                user.id,
+                            )
+
+                        async def stream_text(chunk: str, is_final: bool):
+                            """Stream a text chunk using the coordinated camelCase wire contract.
+
+                            ``isFinal`` is camelCase on the wire, matching the other public frame
+                            keys and the web and mobile consumers. Keep this spelling coordinated
+                            across all three repositories: a missing final flag leaves the client
+                            streaming buffer uncommitted rather than producing a protocol error.
+                            """
+                            await manager.send_json(
+                                {
+                                    "type": "stream",
+                                    "payload": {
+                                        "chunk": chunk,
+                                        "isFinal": is_final,
+                                        "sessionId": session.id,
+                                        "requestId": ai_request_id,
+                                        "replyToMessageId": ai_reply_target_id,
+                                    },
+                                },
+                                user.id,
+                            )
+
+                        identity_repo = IdentityRepository()
+                        user_obj = await identity_repo.find_by_id(user.id)
+                        if not user_obj:
+                            await websocket.close()
+                            return
+
+                        # Lease renewal covers the complete lifecycle. `answer()` itself registers
+                        # only its provider/tool generation task as cancellable; post-generation
+                        # logging, dispatch, pricing, credits and atomic persistence are never stopped.
+                        try:
+                            async with ask_service.maintain_attempt_lease(
+                                attempt.id, intelligence_repo.heartbeat_attempt
+                            ):
+                                turn = await ask_service.answer(
+                                    message=user_text,
+                                    user=user,
+                                    user_obj=user_obj,
+                                    session=session,
+                                    user_message=user_message,
+                                    context=context,
+                                    ask_mode=ask_service.ASK_MODE_WEBSOCKET,
+                                    readers=readers,
+                                    effects=effects,
+                                    cache=context_enrichment.production_cache(),
+                                    image_url=(file_urls_list[0] if file_urls_list else None),
+                                    on_chunk=stream_text,
+                                    on_progress=send_progress,
+                                    attempt_id=attempt.id,
+                                    update_attempt=intelligence_repo.update_running_attempt,
+                                )
+                        except ask_service.TurnRefused as refused:
+                            await intelligence_repo.update_running_attempt(
+                                attempt.id,
+                                {
+                                    "status": "FAILED",
+                                    "retryable": False,
+                                    "failureCode": "CREDIT_REFUSED",
+                                },
+                            )
+                            await manager.send_connection_json(
+                                {
+                                    "type": "credit_limit_error",
+                                    "message": refused.refusal.message,
+                                    "tier": refused.refusal.tier,
+                                    # `is_daily_limit` is replaced by a timestamp so the client can
+                                    # count down instead of branching on which cap it was.
+                                    # `show_referral_option` is gone: it offered a referral reward
+                                    # that no longer grants usage (Decision O), so it advertised a
+                                    # remedy that would not have helped.
+                                    "windowResetsAt": refused.refusal.window_resets_at,
+                                    "blocked": True,
+                                    "upgradeDeepLink": UPGRADE_DEEP_LINK,
+                                    "sessionId": session.id,
+                                    "requestId": ai_request_id,
+                                    "replyToMessageId": ai_reply_target_id,
+                                },
+                                connection_id,
+                            )
+                            return
+                        except SubscriptionLimitError as e:
+                            await intelligence_repo.update_running_attempt(
+                                attempt.id,
+                                {
+                                    "status": "FAILED",
+                                    "retryable": False,
+                                    "failureCode": "CREDIT_REFUSED",
+                                },
+                            )
+                            # A hard cap raised from inside the credit check rather than reported as
+                            # unavailable. Same refusal to the learner; the message is the billing layer's.
+                            await manager.send_connection_json(
+                                {
+                                    "type": "credit_limit_error",
+                                    # The meter's own message, unembellished. It used to be suffixed
+                                    # with "Start a free trial for more credits, or refer friends to
+                                    # earn bonus credits!" — appended to a refusal that already says
+                                    # what to do, offering a referral reward that grants no usage
+                                    # (Decision O) and a trial the learner may have already spent.
+                                    "message": e.message,
+                                    "tier": (str(user_obj.tier) if user_obj.tier else "FREE"),
+                                    "windowResetsAt": e.window_resets_at,
+                                    "blocked": True,
+                                    "upgradeDeepLink": UPGRADE_DEEP_LINK,
+                                    "sessionId": session.id,
+                                    "requestId": ai_request_id,
+                                    "replyToMessageId": ai_reply_target_id,
+                                },
+                                connection_id,
+                            )
+                            return
+                        # A failed generation is reported as a failure and **not persisted as an answer**.
+                        #
+                        # Both branches used to assign their error text to `response_text` and fall through to
+                        # the persistence write, so a provider outage became a message from Maigie, stored in
+                        # the learner's history and indistinguishable on reload from something the model said.
+                        # §1 forbids exactly that. `answer()` now raises instead of returning, so there is no
+                        # path from a failure to the write — and no credits are consumed, because consumption
+                        # happens after the write that is skipped.
+                        except ask_service.TurnFailed as e:
+                            await intelligence_repo.update_running_attempt(
+                                attempt.id,
+                                {
+                                    "status": "FAILED",
+                                    "retryable": bool(e.retryable),
+                                    "failureCode": "GENERATION_FAILED",
+                                },
+                            )
+                            await manager.send_connection_json(
+                                {
+                                    "type": "error",
+                                    "payload": {
+                                        "message": e.message,
+                                        "retryable": bool(e.retryable),
+                                        "sessionId": session.id,
+                                        "requestId": ai_request_id,
+                                    },
+                                },
+                                connection_id,
+                            )
+                            return
+                        except LLMProviderError as e:
+                            await intelligence_repo.update_running_attempt(
+                                attempt.id,
+                                {
+                                    "status": "FAILED",
+                                    "retryable": bool(e.retriable),
+                                    "failureCode": e.category,
+                                },
+                            )
+                            logger.error(
+                                "LLM provider error: category=%s provider=%s model=%s msg=%s",
+                                e.category,
+                                e.provider,
+                                e.model,
+                                e.message,
+                            )
+                            await manager.send_connection_json(
+                                {
+                                    "type": "error",
+                                    "payload": {
+                                        "message": _ERROR_CATEGORY_MESSAGES.get(
+                                            e.category,
+                                            _ERROR_CATEGORY_MESSAGES["unknown"],
+                                        ),
+                                        "retryable": bool(e.retriable),
+                                        "sessionId": session.id,
+                                        "requestId": ai_request_id,
+                                    },
+                                },
+                                connection_id,
+                            )
+                            return
+                        except AttemptFenceLostError:
+                            logger.info(
+                                "Attempt %s lost its lease fence before completion",
+                                attempt.id,
+                            )
+                            return
+                        except Exception as e:
+                            await intelligence_repo.update_running_attempt(
+                                attempt.id,
+                                {
+                                    "status": "FAILED",
+                                    "retryable": True,
+                                    "failureCode": "GENERATION_FAILED",
+                                },
+                            )
+                            logger.error("Generation failed: %s", e, exc_info=True)
+                            await manager.send_connection_json(
+                                {
+                                    "type": "error",
+                                    "payload": {
+                                        "message": (
+                                            "Maigie could not answer that just now. Please try again."
+                                        ),
+                                        "retryable": True,
+                                        "sessionId": session.id,
+                                        "requestId": ai_request_id,
+                                    },
+                                },
+                                connection_id,
+                            )
+                            return
+
+                        outcomes = turn.outcomes
+                        main_content = turn.content
+                        suggestion_text = turn.suggestion_text
+                        skills_used = turn.skills_used
+                        credit_result = turn.credit_result
+                        assistant_message = turn.assistant_message
+                        assistant_reply_preview = _serialize_reply_preview(
+                            user_message,
+                            fallback_user_name=getattr(user, "name", None),
+                        )
+
+                        for refusal in outcomes.connection_errors:
+                            # On the connection, not to the user: this refusal belongs to the socket that asked.
+                            await manager.send_connection_json(refusal, connection_id)
+
+                        for event in outcomes.events:
+                            await manager.send_json(event, user.id)
+
+                        # 13. Send to client: main content, then components, then suggestion (so UI order is correct)
+                        if suggestion_text:
+                            # Split response: send structured payload so frontend updates last message
+                            payload = {
+                                "type": "assistant_final",
+                                "id": assistant_message.id,
+                                "content": main_content,
+                                "suggestionText": suggestion_text,
+                                "components": outcomes.components or None,
+                                "skillsUsed": skills_used if skills_used else None,
+                                "sessionId": session.id,
+                                "requestId": ai_request_id,
+                                "scope": {
+                                    "sources": list(turn.scope.sources),
+                                    "libraryRecall": turn.scope.library_recall,
+                                },
+                                "replyToMessageId": ai_reply_target_id,
+                                "replyToMessage": assistant_reply_preview,
+                            }
+                            await manager.send_json(payload, user.id)
+                        else:
+                            if main_content:
+                                await manager.send_json(
+                                    {
+                                        "type": "assistant_final",
+                                        "id": assistant_message.id,
+                                        "content": main_content,
+                                        "components": outcomes.components or None,
+                                        "skillsUsed": (skills_used if skills_used else None),
+                                        "sessionId": session.id,
+                                        "requestId": ai_request_id,
+                                        "scope": {
+                                            "sources": list(turn.scope.sources),
+                                            "libraryRecall": turn.scope.library_recall,
+                                        },
+                                        "replyToMessageId": ai_reply_target_id,
+                                        "replyToMessage": assistant_reply_preview,
+                                    },
+                                    user.id,
+                                )
+                            # Send confirmation with ID
+                            await manager.send_json(
+                                {
+                                    "type": "message_saved",
+                                    "payload": {
+                                        "id": assistant_message.id,
+                                        "role": "assistant",
+                                        "skillsUsed": (skills_used if skills_used else None),
+                                        "sessionId": session.id,
+                                        "requestId": ai_request_id,
+                                        "replyToMessageId": ai_reply_target_id,
+                                        "replyToMessage": assistant_reply_preview,
+                                    },
+                                },
+                                user.id,
+                            )
+
+                        # 14. Send correlated component responses as a fallback for clients that
+                        # consume the standalone channel rather than assistant_final.components.
+                        for component_response in outcomes.components:
+                            await manager.send_json(
+                                {
+                                    **component_response,
+                                    "sessionId": session.id,
+                                    "requestId": ai_request_id,
+                                    "messageId": assistant_message.id,
+                                },
+                                user.id,
+                            )
+
+                        # 14b. Send credit info (warning/notice) if applicable
+                        # `notice` and `purchasedCreditsRemaining` are gone from this frame with the
+                        # purchased balance they described (§6.1). One warning, at 80% of the window,
+                        # carrying the moment it refills — which is what a learner needs in order to
+                        # decide whether to keep going or come back.
+                        if credit_result and credit_result.warning:
+                            await manager.send_json(
+                                {
+                                    "type": "credit_info",
+                                    "warning": credit_result.warning,
+                                    "windowResetsAt": credit_result.window_resets_at.isoformat(),
+                                    "upgradeDeepLink": UPGRADE_DEEP_LINK,
+                                    "sessionId": session.id,
+                                    "requestId": ai_request_id,
+                                },
+                                user.id,
+                            )
+
+                        # 15. When split, suggestion is in assistant_final; no separate send needed
+
+                        # 16. Background fact extraction from conversation (non-blocking)
+                        # Only run every 5+ user messages to avoid excessive LLM calls
+                        try:
+                            user_msg_count = sum(1 for m in turn.history if m.get("role") == "user")
+                            if user_msg_count >= 5 and user_msg_count % 5 == 0:
+                                conversation_for_extraction = [
+                                    {
+                                        "role": m.get("role", "user"),
+                                        "content": (
+                                            m.get("parts", [""])[0] if m.get("parts") else ""
+                                        ),
+                                    }
+                                    for m in turn.history
+                                ]
+                                conversation_for_extraction.append(
+                                    {"role": "user", "content": user_text}
+                                )
+                                asyncio.create_task(
+                                    llm_service.extract_user_facts_from_conversation(
+                                        conversation_for_extraction, user.id
+                                    )
+                                )
+                        except Exception as fact_err:
+                            logger.debug(
+                                f"Background fact extraction error (non-critical): {fact_err}"
+                            )
+
+                        return  # Skip to next message
+                    except asyncio.CancelledError:
+                        if "attempt" in locals():
+                            try:
+                                await intelligence_repo.update_running_attempt(
+                                    attempt.id,
+                                    {
+                                        "status": "CANCELLED",
+                                        "retryable": True,
+                                        "failureCode": "CANCELLED",
+                                    },
+                                )
+                            except AttemptFenceLostError:
+                                pass
+                        logger.info(
+                            "Turn generation cancelled by the learner on session %s",
+                            session.id,
+                        )
+                    except Exception:
+                        # The turn is its own task now, so an unhandled error here would surface as a
+                        # bare "Task exception was never retrieved" and nothing would reach the
+                        # learner. Each refusal path above sends its own frame; this is the backstop.
+                        logger.error(
+                            "Unhandled error in a turn on session %s",
+                            session.id,
+                            exc_info=True,
+                        )
+                    finally:
+                        if "attempt" in locals():
+                            connection_attempt_ids.discard(attempt.id)
+                            ask_service.clear_cancellation(attempt.id)
+                        await inflight.__aexit__(None, None, None)
+
+                turn_task = asyncio.create_task(run_turn())
+                open_turns.add(turn_task)
+                turn_task.add_done_callback(open_turns.discard)
+
+        except WebSocketDisconnect:
+            await manager.disconnect(connection_id)
+        except Exception as e:
+            print(f"WS Error: {e}")
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+            await manager.disconnect(connection_id)
+            raise
+        finally:
+            # A disconnect stops only provider/tool generation. Turns that already crossed the
+            # generation boundary remain alive to finish accounting and atomic persistence.
+            for request_id in list(connection_attempt_ids):
+                ask_service.cancel_turn(request_id)
+
+    return get_current_user_ws

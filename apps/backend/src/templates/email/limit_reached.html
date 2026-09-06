@@ -1,63 +1,47 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>You've Reached Your Monthly Limit</title>
-</head>
-<body style="font-family: Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; padding: 20px; background-color: #ffffff;">
+{% extends "base.html" %}
 
-    <div style="max-width: 600px; margin: 0;">
-        {% if logo_url %}
-        <div style="margin-bottom: 30px; text-align: center;">
-            <img src="{{ logo_url }}" alt="{{ app_name }}" style="max-width: 200px; height: auto;" />
-        </div>
-        {% endif %}
-        
-        <h1 style="color: #222222; font-size: 24px; font-weight: bold; margin-bottom: 20px;">You've reached your monthly limit</h1>
-        
-        <p style="margin-bottom: 15px;">Hi {{ name }},</p>
-        
-        <p style="margin-bottom: 25px;">
-            You've used all your AI credits for this month. The good news? You can try any of our paid plans <strong>free for 7 days</strong> — no credit card required to start.
-        </p>
-        
-        <p style="margin-bottom: 25px;">
-            <strong>We recommend Maigie Plus</strong> — our most popular plan at just <strong>$4.99/month</strong>. It gives you:
-        </p>
-        <ul style="margin-bottom: 25px;">
-            <li>Unlimited AI chat</li>
-            <li>Unlimited AI courses & goals</li>
-            <li>Voice conversation mode</li>
-            <li>Maigie Voice &amp; Exam Prep</li>
-        </ul>
-        
-        <p style="margin-bottom: 20px;">
-            Need more? Study Circle ($9.99/mo) and Squad Plan ($14.99/mo) offer higher limits for power users. Subscribe yearly and get <strong>2 months free</strong>.
-        </p>
-        
-        <div style="margin-bottom: 30px;">
-            <a href="{{ subscription_url }}" style="
-                background-color: #4F46E5; 
-                color: #ffffff; 
-                display: inline-block; 
-                padding: 12px 24px; 
-                border-radius: 5px; 
-                font-size: 16px; 
-                font-weight: bold; 
-                text-decoration: none;">
-                Start Free Trial
-            </a>
-        </div>
+{% block title %}You've reached your monthly limit | {{ app_name }}{% endblock %}
 
-        <p style="font-size: 14px; color: #666666; margin-top: 30px;">
-            Your credits will reset at the start of next month. Until then, start a free trial to keep learning without limits.
-        </p>
+{% block preheader %}Your AI credits are used up. Try any paid plan free for 7 days.{% endblock %}
 
-        <p style="font-size: 12px; color: #999999; margin-top: 24px; border-top: 1px solid #eeeeee; padding-top: 16px;">
-            Maigie — The Academic Operating System
-        </p>
+{% block heading %}You've reached your monthly limit{% endblock %}
 
-    </div>
+{% block content %}
+<p style="margin:0 0 16px 0;">Hi {{ name }},</p>
 
-</body>
-</html>
+<p style="margin:0 0 16px 0;">
+    You've used all your AI credits for this month. You can try any of our paid plans
+    <strong style="color:#111827;">free for 7 days</strong> — no credit card required to start.
+</p>
+
+<p style="margin:0 0 8px 0;">
+    <strong style="color:#111827;">We recommend Maigie Plus</strong> — our most popular plan at
+    just <strong style="color:#111827;">$4.99/month</strong>. It gives you:
+</p>
+<ul style="margin:0 0 24px 0; padding-left:20px; color:#374151;">
+    <li style="padding-bottom:6px;">Unlimited AI chat</li>
+    <li style="padding-bottom:6px;">Unlimited AI courses and goals</li>
+    <li style="padding-bottom:6px;">Voice conversation mode</li>
+    <li>Maigie Voice and Exam Prep</li>
+</ul>
+
+<p style="margin:0 0 24px 0;">
+    Need more? Study Circle ($9.99/mo) and Squad Plan ($14.99/mo) offer higher limits for power
+    users. Subscribe yearly and get <strong style="color:#111827;">2 months free</strong>.
+</p>
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+    <tr>
+        <td align="center" bgcolor="#4F46E5" style="background-color:#4F46E5; border-radius:8px;">
+            <a href="{{ subscription_url }}"
+                style="display:inline-block; padding:14px 28px; font-family:Helvetica,Arial,sans-serif; font-size:15px; font-weight:bold; line-height:1; color:#ffffff; text-decoration:none;">Start
+                free trial</a>
+        </td>
+    </tr>
+</table>
+
+<p style="margin:0; color:#6b7280; font-size:14px;">
+    Your credits reset at the start of next month. Until then, a free trial keeps you learning
+    without limits.
+</p>
+{% endblock %}

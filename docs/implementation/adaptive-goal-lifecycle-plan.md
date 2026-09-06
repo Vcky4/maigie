@@ -1,0 +1,1699 @@
+# Adaptive goal lifecycle
+
+Goals that reschedule themselves and escalate effort, instead of silently going overdue.
+
+The premise: **a goal should never quietly become overdue.** Either the learner is still pursuing it and
+the system keeps adjusting, or the learner has said otherwise — completed, deprioritised, abandoned. Silence
+is not one of those answers, and it is the only one the system currently records.
+
+The two kinds of deadline behave differently and the difference is the whole design. A **course** deadline is
+the learner's own intention, so it can move and the system should keep moving it rather than let the goal
+lapse. An **exam** date belongs to the world, so it cannot move — and when it passes, the honest act is not
+to reschedule but to **ask how it went**. That answer is what completes the preparation, and it is also the
+first ground-truth label the system has ever collected about its own readiness figure (§6).
+
+Depends on `completion-unification-plan.md`: rescheduling well requires knowing what is actually done. The
+two can be built in parallel, but the escalation ladder in §5 is only as good as the completion signal
+underneath it.
+
+---
+
+## 1. The finding that makes this cheaper than it looks
+
+**Almost all of the intelligence is already computed. Nothing consumes it.**
+
+`progress/services/goal_metrics.py` already derives, per goal, on every read:
+
+| Function | Line | Answers |
+| --- | --- | --- |
+| `elapsed_percent` | 127 | how far through its own window the goal is |
+| `is_at_risk` | 144 | has it fallen behind the pace its deadline implies (`AT_RISK_LAG_POINTS = 15`) |
+| `is_due_soon` | 176 | deadline inside `DUE_SOON_DAYS = 7` and still ahead |
+| `is_overdue` | 201 | active, unfinished, deadline passed |
+| `status_label` | 220 | `COMPLETED` / `ON_TRACK` / `NEEDS_ATTENTION` |
+| `pace_percent` | 241 | progress as a share of where the schedule says it should be |
+| `projected_outcome` | 260 | where it lands at the current rate |
+
+All pure, all correct, all **display-only**. The single goal-related periodic task is
+`progress.capture_goal_progress` (01:30, snapshot writer). **No scheduled task calls `is_at_risk`,
+`is_overdue` or `portfolio_headline`.** The system can already tell you a learner is three weeks behind and
+projected to reach 40%; it just never does anything about it.
+
+So this is largely a **consumer** problem, not a measurement one.
+
+Three more things already exist and are directly reusable:
+
+- **Auto-created goals, exactly as described.** `goal_derivation_service.derive_goals_quietly` is called on
+  course creation (`knowledge/services/course_service.py:339`) and on preparation creation
+  (`personal_learning/services/exam_prep_service.py:66`). A prep goal takes `ExamPrep.examDate` as its
+  `targetDate` and `targetReadiness` as its target, left **empty rather than guessed** when unstated.
+- **Behaviour is genuinely measured now.** `learning.analyze_behaviour` runs 02:00 daily and populates
+  `preferredStudyTimes` (with a `local` vs `utc_assumed` basis), `avgSessionMinutes`, `consistencyScore`,
+  `bestDayOfWeek` and `dropoutRisk`. Its own docstring records that these were NULL for every learner until
+  a swallowed `TypeError` was fixed.
+- **Rescheduling machinery exists in two shapes.** `study_plan_service._redistribute_plan` repacks pending
+  items inside a fixed deadline; `planning_impl.regenerate_goal_plan` rewrites schedule blocks **and moves
+  `targetDate`**.
+
+## 2. The distinction you drew is already in the schema
+
+Exam prep and course goals behave differently because **one deadline is external and the other is the
+learner's own**. That is not a new field:
+
+| | Exam prep goal | Course goal |
+| --- | --- | --- |
+| `metricKind` | `prep_readiness` | `course_progress` |
+| `targetDate` origin | `ExamPrep.examDate` — **NOT NULL**, set by the world | `Course.targetDate` — **nullable**, set by the learner |
+| Can the date move? | **No.** The exam is on the 15th. | **Yes.** It was always an intention. |
+| On falling behind | escalate effort, compress the plan, notify | move the date, keep the effort steady, keep nudging |
+| On the date passing | **decide** — the learner must answer | reschedule and continue |
+
+Call this the goal's **date authority**: `external` or `learner`. Derive it rather than store it — a prep
+link means external, otherwise the date is the learner's. Storing it would create a second thing that can
+disagree with the link, which is the mistake `Goal.progress` already is.
+
+`focused_minutes`, `topics_mastered` and `cards_reviewed` goals have no link and usually no date; they fall
+under `learner` authority and are the least urgent case.
+
+## 3. What is actively wrong today
+
+**A missed exam is recorded as a success, and nothing asks how it went.**
+`exam_prep_service.mark_overdue_preparations_completed` (`:729`) runs on beat at 01:00 daily, selects
+`examDate < now AND status != 'COMPLETED'` across all users, and sets `status = COMPLETED` — regardless of
+readiness. The preparation then drops out of `PREP_STATUSES_WORTH_A_GOAL`, so it is no longer even a
+candidate for a goal. A learner who was 30% ready for an exam they missed gets a completed preparation and a
+stale goal.
+
+**A clock is not an outcome.** The date passing says the exam happened, not that the learner was ready, not
+that they sat it, and not that it went well. The only party who knows is the learner, and nothing has ever
+asked them — `ExamPrep` has **no outcome, score, rating or reflection column at all**. §6 is the answer to
+this, and it is why the fix is not merely "stop lying".
+
+**Rescheduling only fires when the learner is active.** *(Fixed in phase 3 — §10.2.)*
+`_redistribute_plan` had exactly two triggers: `update_study_plan` when the schedule inputs change
+(`:650`), and — after a learner marks an item complete — `if len(pending_past_due) > 2` (`:952`). **A
+learner who goes silent got no redistribution at all**, which inverts the need: the learners whose plan has
+drifted furthest are the ones not completing anything. There is now a nightly pass as well.
+
+**Nothing ever learns whether an intervention worked.** *(Closed for goals in phase 6 — §10.5 — but not
+here.)* `retention_service.record_intervention_outcome` (`:213`) sets `outcome` and `outcome_at` and still has
+**zero callers** anywhere in `src` or `tests`. The `RetentionIntervention` table, the 7-day cooldown and the
+0.7 churn threshold all exist; its feedback loop does not, because the whole subsystem is unreachable. The
+goal ladder's loop is closed on `GoalLifecycleAction` instead. And the whole stack is unreachable regardless:
+`tasks/retention_check.py` is not imported by `tasks/__init__.py`, has no beat entry, and imports
+`src.workers.celery_app` rather than `src.core.celery_app`.
+
+**The one nudge that does run is not goal-aware.** *(A goal-aware one now runs alongside it — phase 4,
+§10.3.)* `learning.check_declining_engagement` (every 6h) reads `dropout_risk > 0.5` and sends one static
+message pointing at flashcards. It never mentions a deadline, a goal or a plan, and it has not been changed;
+`progress.review_goal_lifecycle` is a second, separate pass that does.
+
+**Notification delivery has three traps** worth knowing before hanging anything on it. *(All three
+addressed in phase 5 — §10.4 — and a fourth found there that was worse than any of them.)*
+
+- The daily cap **silently drops**: `create_notification` returns `None` once
+  `count_today_delivered >= max_daily_notifications` (default 5). It now defers instead.
+- Quiet hours are compared against the **naive UTC clock**, not the learner's local time.
+- `_compute_optimal_time` is a stub that returns `now`, and `deliver_pending` marks rows delivered with a
+  comment reading `# Deliver the notification (push/email would go here)`. **There is no push on the
+  learning path** — push infrastructure exists but is only used by credit purchases. A push is now
+  attempted, but it still reaches nobody: nothing registers a device token.
+
+## 4. A constraint that shapes the design
+
+`goal_derivation_service`'s docstring records an explicit decision:
+
+> **Derivation fires when intent is recorded, not on a schedule.** `progress_repo.delete_goal` is a hard
+> `DELETE`, so a nightly sweep over "courses without goals" would resurrect a goal the learner deliberately
+> threw away, every night, with no way for them to make it stop.
+
+So the nightly job proposed below **must never create a goal.** It adjusts, escalates and notifies about
+goals that already exist. Goal creation stays on the intent-recording paths. If per-topic goals are wanted
+(§8), they are created when the plan is created, not swept into existence.
+
+## 5. The design
+
+### 5.1 One nightly pass, acting on what is already derived
+
+A `goal_lifecycle_service.review_goals(user_id, now)` — and a beat task around it — that loads the
+learner's active goals, measures them with the existing `derive_current_values` / `derived_progress`, and
+takes exactly one action per goal from a **ladder**, never more:
+
+| Condition | `external` date authority | `learner` date authority |
+| --- | --- | --- |
+| On track | nothing | nothing |
+| At risk, deadline far | compress the plan: `_redistribute_plan` | compress the plan |
+| At risk, `due_soon` | notify with the real numbers, offer *deprioritise* / *keep going* | extend the date, notify that it moved |
+| Deadline passed, unfinished | **ask how it went** — the post-exam review in §6. Never extend, never infer. | extend the date, notify, keep the effort |
+| Learner answered *deprioritise* | set the goal `ARCHIVED`; stop nudging | same |
+| Learner answered *completed* | `COMPLETED` | same |
+| No answer after N days | leave `ACTIVE`, stop escalating, record the silence | same |
+
+Two rules make this honest rather than nagging:
+
+- **One action per goal per pass, and a cooldown.** Reuse the `RetentionIntervention` shape: a row per
+  action, with the 7-day `INTERVENTION_COOLDOWN_DAYS` precedent. A goal that was extended yesterday is not
+  extended again tonight.
+- **An external deadline is never moved, and never silently accepted.** For a prep goal past its exam date
+  the system has no truthful action except asking — see §6. Anything else asserts an outcome nobody
+  observed, which is the same argument migration 046 makes about `ScheduleBlock.completedAt`:
+  *"Marking historical blocks complete because their date has passed would assert attendance nobody
+  recorded."*
+
+### 5.2 Extension is bounded and recorded
+
+For `learner`-authority goals, extending the date needs limits or it becomes a goal that can never fail:
+
+- Extend by a **measured** amount, not a fixed guess: the work remaining divided by the learner's observed
+  throughput (`avgSessionMinutes`, `consistencyScore`, `preferredDays`). `_daily_minute_budget` already
+  computes the daily figure and already prefers the learner's stated session length over the observed one.
+- Cap the number of extensions. After the cap, the honest move is to ask whether the goal is still wanted
+  rather than extend a ninth time.
+- **Record every extension.** A goal quietly rewritten three times looks on-track and is not. This wants a
+  small `GoalScheduleChange` table — or `RetentionIntervention` generalised — holding the old date, the new
+  date, the reason token, and the learner's response. Without it, `elapsed_percent` silently resets its own
+  denominator on every extension and `is_at_risk` can never fire again.
+
+That last point is the subtle one. `elapsed_percent` measures from `createdAt` to `targetDate`. Moving
+`targetDate` forward *reduces* elapsed percent, which reduces the at-risk lag, which means **an
+auto-extending goal would mark itself healthy by moving its own goalposts.** The change log is what keeps
+"extended four times" visible, and the surfaces should show it.
+
+### 5.3 Learning why, honestly
+
+"Learn why" splits into three things with very different confidence, and they should not be presented as
+one:
+
+**Measured, available today.** `consistencyScore`, `avgSessionMinutes`, `bestDayOfWeek`,
+`preferredStudyTimes` (with its `basis`), `dropoutRisk`, and — from the completion work — which *kinds* of
+item stall. These support statements like "you have missed four Tuesday sessions in a row" and
+"your sessions have shortened from 40 to 15 minutes". They are facts.
+
+**Inferable with care.** Correlations across those signals: overdue clusters on particular weekdays, on
+particular item types, or after a run of `no_room` agenda days. Worth computing, worth acting on, and worth
+wording as an observation rather than a diagnosis.
+
+**Not knowable.** *Why* the learner stopped. The system can observe that they did and offer options; it
+cannot know the exam was cancelled or they got ill. **Ask, do not conclude.** The one place a real reason
+can be captured is the learner's answer to a nudge, which is exactly why the answer must be stored — and
+this is where `record_intervention_outcome` finally gets its callers.
+
+That feedback loop is what turns this from a rules engine into something that improves: intervention →
+learner response → outcome recorded → which interventions actually work for this learner. Without the
+outcome write, every future version is guessing at the same rate as the first.
+
+**The LLM's role is wording, not deciding.** This repo already holds that line — "the service decides where
+and why; the client writes the words" (`agenda_service`), and the model "narrates and never supplies a
+number". Rescheduling arithmetic, thresholds and the ladder are code. The model may phrase the nudge.
+
+### 5.4 Fix the notification path first
+
+Any escalation is only as good as its delivery, and all three traps in §3 need closing before a deadline
+nudge ships: quiet hours compared in the learner's own zone, the daily cap not silently dropping a
+high-priority deadline message, and — for this to be worth anything — push wired on the learning path. A
+"your exam is in three days and you are 30% ready" notification that lands in an in-app list the learner
+does not open has not been delivered.
+
+## 6. The post-exam review — how a preparation actually completes
+
+**A preparation is completed by the learner telling us how it went, not by a date passing.** This replaces
+the 01:00 sweep as the completion path and, in doing so, gives the system the one thing it has never had: a
+ground-truth label.
+
+### 6.1 The ask
+
+The day after `examDate`, the prep enters a state that is **awaiting the learner's answer** rather than
+completed. The learner is asked, once, with a cooldown and a bounded number of reminders:
+
+1. **Did you sit it?** — sat / missed / postponed / cancelled. Four real outcomes, and three of them are not
+   failure. A postponed exam is the one case where a new date is legitimate, and it is legitimate *because
+   the learner said so*, not because the system inferred it.
+2. **How did it go?** — a small ordinal scale, not free text alone. Ordinal so it can be correlated;
+   free text alongside it because the interesting reasons are never in the scale.
+3. **How well did the preparation serve you?** — the rating you described, and it is a **different question**
+   from how the exam went. A learner can be well prepared and still have a bad day, or scrape through badly
+   prepared. Collapsing the two would make every signal derived from them useless.
+4. **Optionally, the result** when they have it — often weeks later, which is why it must be a separate,
+   later write and not a required field on the first answer.
+
+Only after an answer does the prep become `COMPLETED`, and the prep goal resolves with it. Until then it is
+neither complete nor overdue — it is waiting, and the surfaces should say so.
+
+**If the learner never answers**, the prep stops nudging after the reminder budget and settles into a
+terminal state that asserts nothing about the outcome. That is a truthful record: the exam date passed and
+we do not know what happened. It is not `COMPLETED`.
+
+### 6.2 What this makes possible: readiness becomes falsifiable
+
+This is the part worth building the feature for.
+
+`prep_readiness.progress_percent` is `topicsStrong / topicsTotal`, where "strong" is
+`MASTERY_STRONG_THRESHOLD = 80.0` (`prep_readiness.py:45`). It is a **prediction** — "you are 72% ready" —
+and `PrepReadinessSnapshot` already records it, with `averageMasteryPercent`, `topicsTotal`, `topicsStrong`
+and `topicsFocus`, **once per prep per day**. So the full predicted trajectory up to and including the exam
+day is already in the database.
+
+**Nothing has ever compared it to what happened.** There is no outcome to compare against. The number is
+asserted, acted upon, shown to learners, used to gate goal progress — and unfalsifiable.
+
+An outcome label changes that at three levels:
+
+- **Per learner.** If this learner's "80% ready" has twice corresponded to feeling under-prepared, the
+  threshold is wrong *for them* and their readiness can be reported more conservatively.
+- **In aggregate.** Is `MASTERY_STRONG_THRESHOLD = 80` the right number? Is `topicsStrong / topicsTotal` the
+  right formula, or does `averageMasteryPercent` predict outcomes better? Both are recorded; neither has
+  ever been scored. This is answerable with a query once outcomes exist.
+- **Per preparation type.** `ExamPrep.prep_type` distinguishes exam, certification, interview and test.
+  Readiness may calibrate very differently across them, and one threshold currently serves all four.
+
+There is also a **before-and-after pairing already half-present**: `ExamPrep.confidence` (`:203`) is a
+stated self-assessment at setup. Stated confidence → measured readiness trajectory → actual outcome is a
+three-point sequence, and today only the middle point exists.
+
+### 6.3 Rules for the feedback, so it stays honest
+
+- **Store the answer, derive the conclusions.** The learner's rating is a fact and goes in a row. Anything
+  inferred from it — a recalibrated threshold, a changed nudge — is derived on read from those rows, the same
+  discipline `derived_progress` follows. A stored conclusion is wrong the moment the next answer arrives.
+- **Never overwrite readiness history with hindsight.** `PrepReadinessSnapshot` says what was believed on
+  that day. If calibration later says 72% should have read 55%, that is a *new* interpretation, not a
+  correction of the record. Migration 046's principle again: do not rewrite the past to look consistent.
+- **Two questions, two columns.** How the exam went and how the preparation served them, kept separate for
+  the reason in §6.1.
+- **Ordinal plus optional prose.** The scale is what correlates; the prose is where the actual reason lives
+  and cannot be inferred. Both, and neither pretending to be the other.
+- **Do not compute a per-learner calibration from one exam.** Most learners will have one prep, ever. The
+  aggregate signal is the useful one first; per-learner adjustment needs several outcomes and should stay
+  absent rather than confident, which is the same rule `preferredStudyTimes` follows with its
+  `MIN_SESSIONS_FOR_TIME_PATTERN` floor and its `basis` field.
+- **Asking is not free.** This is a message after a possibly-bad exam. One ask, a small reminder budget,
+  respectful wording, and an easy way to decline permanently. A learner who dismisses it is answering.
+
+### 6.4 What to store
+
+New, because none of it exists. Modelled on `CourseOutlineSatisfaction`
+(`knowledge/db_models.py:498`, the KPI-feedback precedent) and `RetentionIntervention.outcome` /
+`outcome_at` (`personal_learning/db_models.py:1873`, the outcome-recording precedent):
+
+- On `ExamPrep`, or in a `PrepOutcome` row beside it: `attended` (sat/missed/postponed/cancelled),
+  `experienceRating`, `preparationRating`, `reflection` (nullable prose), `resultValue` +
+  `resultScale` (both nullable, written later), `answeredAt`, and `askedAt` / `reminderCount` for the
+  nudge budget.
+- **A separate row rather than columns is probably right**, because a postponed exam produces a *second*
+  sitting of the same preparation, and a second outcome. Columns would overwrite the first.
+- The **readiness at the time** should be snapshotted onto the outcome — `progress_percent`,
+  `averageMasteryPercent`, `topicsStrong`, `topicsTotal` as of the exam day. They are recoverable from
+  `PrepReadinessSnapshot` today, but copying them makes the calibration query one table and immune to the
+  snapshot being pruned.
+
+## 7. Phases
+
+Assumes the §8 decisions are made first. Engineer-days of focused work, not calendar.
+
+**Phases 0 through 6 are implemented on the backend, and both clients render all of it** — web in §10.7,
+mobile in §10.9. What remains outstanding is **push**, which reaches nobody for the two independent reasons
+§10.8 sets out, and phases 7–8, which are gated on data rather than effort. **§10.13 is how you tell when
+that gate opens**: `scripts/check_adaptive_response_rates.py` reports the response rate to both asks, and its
+first reading is 0 answers from 4 asks with 18 candidates never asked. See §10 for what shipped.
+
+| | Work | Days | Risk |
+| --- | --- | --- | --- |
+| **0** | ~~**Stop declaring missed exams complete.**~~ **Shipped.** | 1 | **Low, high value** |
+| **1** | ~~**The post-exam review** (§6).~~ **Shipped end to end** — backend, web (§10.7) and mobile (§10.9). | 5–7 | Medium — new schema and new copy on a sensitive moment |
+| **2** | ~~**Derive date authority** + a `GoalScheduleChange` log + surface "extended N times".~~ **Shipped**, no behaviour change. See §10.1. | 2 | Low |
+| **3** | ~~**Time-triggered redistribution.** Make `_redistribute_plan` reachable without learner action.~~ **Shipped.** See §10.2. | 1–2 | Low |
+| **4** | ~~**The nightly pass**, ladder implemented, one action per goal, cooldown enforced.~~ **Shipped.** See §10.3. | 4–5 | Medium |
+| **5** | ~~**Notification path fixes** — learner-local quiet hours, priority bypass of the daily cap, push on the learning path.~~ **Shipped**, with push still blocked on device registration. See §10.4. | 3–4 | Medium — touches every notification |
+| **6** | ~~**The learner's answer to a nudge, stored.**~~ **Shipped end to end** — backend, web and mobile. Recorded on `GoalLifecycleAction`, not `record_intervention_outcome` — see §10.5, §10.7, §10.9. | 3 | Medium |
+| **7** | **Readiness calibration** (§6.2): score `progress_percent` and `averageMasteryPercent` against recorded outcomes, in aggregate first. | 3–4 | Low technically; **blocked on outcome volume** |
+| **8** | **Behaviour correlation** — which weekday, which item kind, which pattern precedes a stall. | 3–5 | Medium; needs data from 1–6 first |
+
+Backend ≈ **22–32 engineer-days**. Both clients are done (§10.7, §10.9). What is left of the original
+estimate is phases 7–8, and those wait on outcome volume rather than on anyone's time.
+
+**Phases 7 and 8 are gated on data, not effort.** Calibration needs recorded outcomes and most learners have
+one preparation, so the aggregate signal will take months to become meaningful. Build phase 1 early precisely
+because it starts the clock; do not schedule phase 7 against it.
+
+**Measured, once the first review was answered: neither gate is the one written above.** §10.15 sets both out.
+Phase 7 is not waiting on outcome *count* — it is waiting on an outcome that carries a **mark**, because
+`resultValue` is optional and arrives weeks later, and a readiness percentage cannot be calibrated against a
+five-point self-report. Phase 8 is not waiting on *answers* — it is waiting on the ladder to use more than one
+rung, because **1 of its 6 action/trigger combinations has ever fired**, and a 100% answer rate on one rung
+compares it against nothing.
+
+**Cheapest meaningful slice: phases 0 + 3.** Two to three days, no new schema. It stops the system asserting
+that a missed exam went fine, and makes rescheduling reach the learners who need it — the inactive ones.
+Phase 1 is the next-most valuable and the one that makes everything after it possible.
+
+## 8. Decisions needed first
+
+**Answered by §6:** what a prep goal becomes when its date passes. It waits for the learner's answer, and
+completes on that answer. The date is never pushed forward automatically; a postponed exam gets a new date
+because the learner said it was postponed.
+
+**Answered by phase 4 (§10.3):** decision 1, the extension cap — **three**, counting only the system's own
+extensions. Decision 6 in part: the cooldown is seven days per goal, so a goal produces at most one message
+a week; whether the post-exam ask bypasses the daily cap is still phase 5's to settle.
+
+Answered by shipped work:
+
+1. ~~**How many times may a `learner`-authority goal extend before the system asks instead?**~~ **Three**,
+   counting only the system's own extensions. §10.3.
+2. ~~**What state is "awaiting your answer"?**~~ **Two different answers, deliberately.** A preparation got a
+   real status value, `AWAITING_REVIEW` (§10.1) — it is a lifecycle state the learner and both clients need
+   to see. A *goal* got none: "waiting" is derived from the most recent `GoalLifecycleAction` having no
+   response, published as `pendingNudge` (§10.5). The difference is that a preparation is waiting on one
+   question with one answer, where a goal may be nudged repeatedly, so a status value would have had to
+   encode which nudge.
+3. ~~**What terminal state does an unanswered preparation reach?**~~ It stays `AWAITING_REVIEW`, and the
+   *asking* terminates rather than the state: `MAX_REVIEW_REMINDERS = 2`, after which nothing more is sent
+   (§10.1). So it is never `COMPLETED` on silence, and the learner is not nagged by their own history —
+   the row is an honest record that the exam happened and we do not know how it went.
+4. ~~**What scale for the two ratings?**~~ **1–5 for both**, same shape so they can be compared, odd so
+   "about as expected" is expressible. §10.1.
+5. ~~**Is "deprioritise" `ARCHIVED`, or a new paused state?**~~ **`ARCHIVED`.** §10.5.
+6. ~~**How many deadline nudges per goal per week, and does the post-exam ask bypass the daily cap?**~~ At
+   most **one per goal per week** (`GOAL_ACTION_COOLDOWN_DAYS = 7`, §10.3). And the cap question stopped
+   mattering: it no longer *drops* anything, it defers to the learner's next day, so the post-exam ask
+   takes its turn rather than needing an exemption. Only `goal_at_risk` is `PRIORITY_TIME_CRITICAL`, because
+   it is the one message whose value expires with the deadline it describes. §10.4.
+
+Still open:
+
+7. **Should extending a goal's date also move `Course.targetDate`?** They are two records of one intention
+   and they will disagree otherwise. Unchanged: the ladder moves the goal only.
+8. **Per-topic goals** (§9) — wanted, or does one course goal plus plan items already cover it?
+9. **Expo push or FCM?** New, and it blocks delivery outright — see §10.8. The backend sender speaks FCM;
+   every stored token is an `ExponentPushToken`. Either the mobile app registers a native FCM token, or the
+   backend gains an Expo sender. Nothing arrives until this is decided.
+
+## 9. On per-topic goals
+
+The idea of a goal per topic as the learner proceeds is appealing and probably wrong as stated.
+`MAX_DERIVED_COURSE_GOALS = 3` exists for a reason recorded in the source: one live learner has sixteen
+unarchived courses, and "deriving a goal for each would put sixteen commitments on a surface whose job is to
+show what the learner is working towards, which is the course list they already have, sorted worse." A goal
+per topic is that failure multiplied — a twelve-topic course becomes twelve goals.
+
+What is actually wanted is *per-topic dated targets inside one goal*, and that structure already exists
+twice over: `StudyPlanItem.scheduledDate` is a dated per-topic commitment, and `GoalMilestone` is the
+learner's own breakdown with `targetValue` and `achievedAt`. The right move is to make the course goal's
+milestones line up with the plan's phases — `StudyPlanItem.phase` is already the grouping label — and let
+the ladder in §5.1 act per milestone. That gives the behaviour without multiplying the goals.
+
+Also worth closing: **no path creates a goal from a StudyPlan.** `study_plan_service` never imports
+`goal_derivation_service`. A plan is stated intent with a deadline, which is exactly what the derivation
+rules accept — but note that a plan generated *from* a preparation would double up with the prep goal, so
+the link check needs to cover that.
+
+## 10. Implementation record — phases 0 and 1, backend
+
+Shipped in `maigie/apps/backend`. Verified: **3,364 tests passing** (baseline 3,325), `ruff check src tests`
+clean, `export_openapi.py --check` in sync. **24 mutations applied one at a time; 24 caught, none survived.**
+
+**The lie is gone.** `mark_overdue_preparations_completed` is now
+`exam_prep_service.mark_preparations_awaiting_review`. It moves a passed preparation to `AWAITING_REVIEW`
+and asks the learner; **only their answer sets `COMPLETED`**. The Celery task *name* is unchanged
+(`learning.mark_completed_preparations`) on purpose — the beat schedule references it, and renaming a
+registered task means a deploy where beat points at a name no worker answers to.
+
+**What was built**
+
+| Piece | Where |
+| --- | --- |
+| `AWAITING_REVIEW` status | `PreparationStatus`, now four values |
+| `PrepOutcome` table | `db_models.py`, migration `050_prep_outcome` |
+| Ask budget on the prep | `ExamPrep.reviewAskedAt` / `reviewRemindersSent` / `reviewDeclinedAt` |
+| The decisions | `services/prep_outcome_service.py` |
+| Endpoints | `GET`/`POST` `/preparations/{id}/review`, `/review/result`, `/review/decline`, `/review/history` |
+| Repo reads/writes | `upsert_prep_outcome`, `find_prep_outcome`, `list_prep_outcomes`, `list_preps_awaiting_review`, and `progress_repo.list_goals_for_prep` (which did not exist) |
+
+**Five decisions made while building, that this plan had left open**
+
+1. **Rating scale: 1–5, the same scale for both ratings** (§8 decision 4), so they can be compared and
+   "about as expected" is expressible.
+2. **`experienceRating` is refused when the exam was not sat; `preparationRating` is not.** Someone who
+   missed the exam can still say whether the preparation was any good — and that is the rating that says
+   anything about us, so refusing it would discard the signal the feature exists for.
+3. **`COMPLETED` means "this preparation is finished", not "you passed."** It is a lifecycle value; the
+   outcome row carries what happened. That is what lets `missed` and `cancelled` conclude a preparation
+   without asserting success.
+4. **A declined review does *not* complete the preparation** (§8 decision 3, partly). Nothing has been said
+   about how it went, so completing it would restore the exact lie being removed. It leaves the ask list and
+   stays out of the way.
+5. **The linked goal resolves as measured, not guessed** — `COMPLETED` when `derived_progress >= 100`,
+   `ARCHIVED` otherwise. Marking every goal complete would claim the learner was ready; archiving every one
+   would discard the achievement of those who were. Contained in a `try/except`: the answer is stored and a
+   goal that could not be resolved is a stale label, not a reason to reject it.
+
+**Four things found while implementing that the plan had not anticipated**
+
+- **A preparation in `AWAITING_REVIEW` would have vanished from the dashboard.**
+  `prepare_dashboard_service` queried only `SETUP` and `IN_PROGRESS`, so the preparation would have
+  disappeared the morning after the exam and the review would have been reachable *only* from a
+  notification — which quiet hours and the daily cap can both suppress. `AWAITING_REVIEW` is now in
+  `ACTIVE_STATUSES`.
+- **`ACTIVE_STATUSES` existed and the queries did not use it.** `_load_active_preparations` hard-coded the
+  same two strings, so changing the constant changed nothing. Its own test caught this, because that test
+  asserts the queries *issued* against the constant rather than restating the constant. It now reads it.
+- **Migration numbered 050, not 049.** `049_chat_msg_grounding` already claimed 048 as its parent while
+  this work was in progress, and two revisions with one parent is a branch alembic refuses to upgrade past.
+- **`ExamPrep.examDate` is stored without an offset** while the ORM declares otherwise, so it arrives naive
+  and comparing it against an aware `now` raises. Handled by a local `_as_utc`, the same shape as
+  `goal_metrics._utc` — which exists because that exact mismatch made `GET /progress/goals` a 500.
+
+**One test was passing for the wrong reason, and mutation is what found it.** The
+"nothing to measure is null rather than zero" case monkeypatched `prep_outcome_service.prep_readiness`, but
+`_readiness_at_answer` does a function-local `from . import prep_readiness`, which rebinds and ignores the
+patch. The real call ran, failed inside its own `try/except`, and returned `{}` — indistinguishable from the
+behaviour being asserted. Mutating the `topics_total <= 0` guard away left the test green. It now patches the
+`prep_readiness` module itself and asserts the stand-in was actually reached.
+
+**Still open on phase 1**
+
+- **Both clients.** No UI exists: the review is reachable only by calling the API. Web and mobile each need
+  the form, and mobile has an existing `preparation_review` notification `action_data.route` to honour.
+- **The `preparation_review` notification inherits the known traps** — quiet hours compared against the
+  naive UTC clock, and the daily cap of five silently dropping a message. Phase 5 fixes those; until then a
+  learner at their cap may not see the ask, which is why the ask is also on the dashboard.
+- **Nothing consumes the outcomes yet.** Calibration is phase 7 and is gated on volume, not effort.
+
+### 10.1 Implementation record — phase 2, backend
+
+Shipped in `maigie/apps/backend`. Verified: **3,464 tests passing** (baseline 3,432, +32 new), `ruff check
+src tests` clean, `export_openapi.py --check` in sync, single alembic head. **8 mutations applied one at a
+time; 8 caught.**
+
+**No behaviour change.** Nothing new moves a deadline, no predicate changed, and no existing response field
+changed meaning. What changed is that a deadline moving is now recorded and published.
+
+| Piece | Where |
+| --- | --- |
+| `date_authority(goal)` — derived, `external` \| `learner` | `goal_metrics.py`, beside the other derived labels |
+| `GoalScheduleChange` table | `progress/db_models.py`, migration `051_goal_sched_change` |
+| The one rule for what counts as a change | `services/goal_schedule_log.py`, `record_date_change` |
+| Batched read of the count | `goal_metrics.derive_schedule_history`, one query for a whole page |
+| Wire fields | `GoalResponse.dateAuthority`, `.extendedCount`, `.originalTargetDate` |
+| Writers wired | `goal_service.update_goal` (`learner_edited`), `planning_impl.regenerate_goal_plan` (`plan_regenerated`) |
+
+**Decisions made while building**
+
+1. **`extendedCount` counts only deadlines pushed *later*.** Pulling a deadline forward, and setting a first
+   deadline on a goal that had none, are both recorded as changes but excluded from the count. Neither buys
+   the learner room, and a count that includes ordinary edits is a warning light that is always on.
+2. **`dateAuthority` is snapshotted onto each log row**, though it stays derived everywhere else. `Goal.prepId`
+   is `ON DELETE SET NULL`, so deleting a preparation would retroactively reclassify every past change on its
+   goal as the learner's own — and what an entry records is what was true when the date moved. Same argument
+   `050` makes for copying readiness onto the outcome.
+3. **`originalTargetDate` is published, not applied.** It is the denominator `elapsed_percent` arguably should
+   use, but re-basing that window changes every pace figure on every surface. That is a behaviour change with
+   its own decision, and this phase was scoped not to make it.
+4. **The reason token set holds only what has a writer.** No `system_extended`, because the ladder that would
+   extend a deadline unprompted does not exist; no `learnerResponse`/`respondedAt` columns, because nothing
+   asks yet. Both arrive with their writers, on the same grounds migration 032 removed a column nothing wrote.
+5. **Derived in memory, not aggregated in SQL.** The interesting figure is *the previous date on the earliest
+   row*, not `min(previousDate)` — a deadline pulled forward and later pushed out has a minimum that was never
+   the goal's original window. One query for the page, attributed in memory, as `derive_current_values` does.
+6. **A failure to log never fails the edit.** The edit is what the learner asked for; the log is bookkeeping
+   about it.
+
+**Found while implementing**
+
+- **`regenerate_goal_plan` rewrites externally-owned deadlines today.** It recomputes `targetDate` from a
+  requested duration in weeks and writes it without reading date authority, so regenerating a plan can move a
+  date that came from an exam. Left as-is — blocking it is a behaviour change and belongs with the ladder —
+  but it is now recorded, which is what makes it findable.
+- **`POST /progress/goals/{id}/regenerate-plan` is broken for an unrelated reason.**
+  `intelligence/action/action_service.py` is a stub holding only `execute`, so the `action_service.create_schedule`
+  call in that route's block-creation loop raises `AttributeError`. The deadline write happens *before* the
+  loop, so in production the date moves and then the request 500s. Not touched here; it needs its own fix.
+- **`index=True` on the model would have named the index differently from the migration**
+  (`ix_GoalScheduleChange_userId` versus `GoalScheduleChange_userId_idx`), which is how autogenerate ends up
+  proposing to add an index that already exists. Declared in `__table_args__` with the migration's name.
+
+**Still open on phase 2**
+
+- ~~**Neither client shows any of it.**~~ **Web does now — §10.7.** `extendedCount` and
+  `originalTargetDate` render on the goal card and inside the nudge dialog, so §5.2's "extended four times"
+  is finally visible. Mobile still shows none of it.
+- **`ReflectGoal` does not carry the new fields.** It is the second goal read model
+  (`personal_learning/models.py`) with its own naming convention, so Reflect goal cards cannot show extension
+  history yet.
+- **The log starts empty and cannot be backfilled.** Past date moves left no trace anywhere, so `extendedCount`
+  reads `0` for every goal that was extended before this shipped. That is truthful but it means the number is
+  only useful going forward.
+
+### 10.2 Implementation record — phase 3, backend
+
+Shipped in `maigie/apps/backend`. Verified: **3,486 tests passing** (baseline 3,467, +19 new), `ruff check
+src tests` clean, `export_openapi.py --check` in sync (no wire change), single alembic head, beat entry and
+task registration confirmed loaded. **12 mutations applied one at a time; 12 caught.**
+
+| Piece | Where |
+| --- | --- |
+| `StudyPlan.lastRedistributedAt` | `personal_learning/db_models.py`, migration `052_plan_redistributed` |
+| The cross-user drift query | `repository.list_plans_with_drift` |
+| The sweep | `study_plan_service.redistribute_drifted_plans` |
+| Beat task, 05:00 daily | `tasks/plan_redistribution.py`, `learning.redistribute_drifted_plans` |
+| Named thresholds | `MAX_TOLERATED_PAST_DUE = 2`, `REDISTRIBUTION_COOLDOWN_DAYS = 7` |
+
+**The sweep decides nothing new.** The drift test and the placement arithmetic are the ones the completion
+path already used, so a plan repacked overnight lands exactly where it would have landed had the learner
+opened the app and ticked something off. What was missing was only the trigger.
+
+**Decisions made while building**
+
+1. **The `> 2` magic number is now a named constant shared by both paths.** It had no comment and no
+   explanation anywhere. Two definitions of "behind" would mean a plan that is drifted when the learner
+   completes something and not drifted overnight.
+2. **A cooldown was mandatory, not a nicety.** Redistribution re-anchors *every* pending item to tomorrow,
+   so an ungated nightly pass walks a silent learner's whole schedule forward one day every night — dates
+   that never settle and a diff on every client poll. Seven days, matching
+   `INTERVENTION_COOLDOWN_DAYS` and the weekly check-in.
+3. **The stamp is written even when nothing moved.** A plan whose every pending item is pinned to an
+   accepted calendar block moves nothing, and stamping only on success would leave it reconsidered every
+   night forever. Same trap `run_weekly_check_ins` documents for suppressed notifications.
+4. **The learner-triggered path is deliberately *not* throttled.** Completing an item still redistributes at
+   once. A cooldown there would look like the app ignoring them.
+5. **Expired plans are excluded.** `days_remaining = max(1, (deadline - now).days)` means a past deadline
+   yields a one-day window and every pending item piles onto tomorrow. That is a wall, not a schedule, and
+   what to do with an expired plan is a question for the learner — which is the same argument §6 makes about
+   preparations.
+6. **`PAUSED` and `SUPERSEDED` are excluded**, per `StudyPlan.status`'s own docstring: pausing is not a
+   statement about the deadline.
+7. **The learner is told.** They did not ask for this, and a schedule rewritten overnight in silence is the
+   system changing their commitments behind their back — the phase boundaries they accepted in the wizard
+   move with it, since a phase's week range is just the span of its items' dates. Delivery can still be
+   dropped by quiet hours or the daily cap; that is phase 5's defect, and the stamp does not depend on it.
+8. **Per-plan error containment**, following `check_declining_engagement`. `run_weekly_check_ins` has no such
+   guard and one bad row aborts the run.
+
+**One behaviour change to the existing paths, made deliberately**
+
+`_redistribute_plan` now **leaves items that have an accepted calendar block where they are.**
+`StudyPlanItem.scheduleBlockId` is set when the learner accepted a suggested hour, so a real `ScheduleBlock`
+sits on that day; moving `scheduledDate` and leaving the block behind gives them a calendar entry on Tuesday
+and a plan item on Friday, and the day they turn up is the one in their calendar. This affects the two
+learner-triggered paths as well as the sweep, on purpose — two different redistribution semantics would be
+worse than one changed one, and the same argument that stops redistribution rewriting the rhythm the learner
+chose stops it moving a time they explicitly accepted. `_redistribute_plan` also now returns the number of
+items it moved, so a caller that did not act on the learner's behalf can say what it did.
+
+**Still open on phase 3**
+
+- **The pile-up case is unchanged.** A plan whose deadline is two days away still packs all its remaining
+  items onto those two days. That is arguably honest and it is what the interactive path has always done, so
+  it was left alone rather than redesigned here.
+- **Per-item commits.** `_redistribute_plan` issues one `update_plan_item` per item, each in its own session,
+  so a forty-item plan is forty commits and a crash mid-plan leaves it half repacked. Survivable because the
+  next sweep converges, but a plan-scoped transaction would be better.
+- **Placement is by UTC day.** Unlike `list_items_due_today`, redistribution does not resolve the learner's
+  timezone, so an item can land on a day boundary that is not theirs.
+- **Nothing tells the learner *why*.** The notification says the plan was rescheduled, not that they have
+  missed four Tuesdays. That is §5.3, and it needs phase 8's correlation work to say anything true.
+
+### 10.3 Implementation record — phase 4, backend
+
+Shipped in `maigie/apps/backend`. Verified: **3,523 tests passing** (baseline 3,486, +37 new), `ruff check
+src tests` clean, `export_openapi.py --check` in sync (no wire change), single alembic head, task and beat
+entry confirmed loaded. **19 mutations applied one at a time; 18 caught, 1 equivalent mutant** (`len(rows) <
+2` versus `< 1` in the extension sizer — a single row still fails the span check, so both forms behave
+identically).
+
+| Piece | Where |
+| --- | --- |
+| The ladder | `progress/services/goal_lifecycle_service.py`, `review_goals` |
+| Its memory, and the cooldown | `GoalLifecycleAction`, migration `053_goal_lifecycle` |
+| `system_extended` reason token | widened `GoalScheduleChange_reason_check` in the same migration |
+| A separate count for the budget | `GoalScheduleHistory.system_extended_count` |
+| Bounded candidate query | `repository.list_goals_for_lifecycle_review` |
+| Beat task, 02:30 daily | `workers/progress_tasks.py`, `progress.review_goal_lifecycle` |
+| Named limits | `GOAL_ACTION_COOLDOWN_DAYS = 7`, `MAX_SYSTEM_EXTENSIONS = 3`, `RATE_WINDOW_DAYS = 14` |
+
+**The rungs, as built**
+
+| Condition | `external` | `learner` |
+| --- | --- | --- |
+| On track, or finished | nothing | nothing |
+| At risk, deadline far | nothing here — `redistribute_drifted_plans` owns it | same |
+| At risk, due soon | `warned`, with the real numbers | `extended`, or `asked_to_confirm` |
+| Deadline passed | nothing here — the post-exam review owns it | `extended`, or `asked_to_confirm` |
+
+**Decisions made while building**
+
+1. **The extension cap is three, counting only the system's own extensions** (§8 decision 1). An extension
+   here is sized from the learner's measured rate, so it is a date they were on pace to meet when it was
+   set. Missing three consecutive achievable dates is evidence about the goal, not the arithmetic. Counting
+   a learner's own edits against the budget would mean refusing to help someone for having re-planned —
+   which is why `GoalScheduleHistory` now carries two counts. The wire keeps publishing the wide one,
+   because a learner's question is "has this deadline moved" and it does not matter who moved it.
+2. **"Deprioritise" is deliberately still undecided** (§8 decision 5). It is a *state the learner's answer
+   puts a goal into*, and nothing asks for that answer until phase 6. Inventing the state now would add a
+   status with no writer, which is the rule this work has followed throughout.
+3. **Extensions are sized from `GoalProgressSnapshot`, and refused when they cannot be.** Fewer than two
+   recorded days, a window that collapses to one day, no progress gained, or nothing left to do all return
+   `None`, and the ladder asks the learner instead. A goal at 0% for a fortnight has no rate, and 0 is not
+   a number you can divide by to get a deadline. A fixed "add two weeks" would have been the system
+   inventing a commitment.
+4. **Each extension may at most double the goal's *original* window**, read from
+   `GoalScheduleHistory.original_target_date` rather than from `targetDate`. Using the current column would
+   let three extensions compound, each doubling a window the last had already doubled.
+5. **An overdue prep goal gets no action at all.** `mark_preparations_awaiting_review` has already asked how
+   the exam went. A second ask, in different words, from a different surface, about the same exam, reads as
+   the system not knowing what it had already said.
+6. **Rung 4 was deliberately not implemented here.** "At risk, deadline far → compress the plan" shipped as
+   phase 3, triggered by actual item-level drift rather than by derived progress lagging. Calling
+   `_redistribute_plan` from the ladder as well would bypass that sweep's cooldown and bring back the
+   nightly churn it exists to prevent. The more direct signal already has an owner.
+7. **The cooldown is a `NOT EXISTS` against the action log, not a stamp on the goal.** A stamp would say
+   when the ladder last acted but not what it did, and "extended or merely warned" is what the next decision
+   turns on.
+8. **The action row is written before anything is sent, and failing to write it fails the action.** The
+   opposite of `goal_schedule_log`, which swallows its own failures so a missing audit row cannot reject a
+   learner's edit. Here the row *is* the cooldown, so an action taken without one repeats every night after.
+   Better to lose one night's escalation than to start a loop. And it cannot be read from the notification
+   table instead: `create_notification` returns `None` under quiet hours or the daily cap, so a suppressed
+   warning would be indistinguishable from one never sent. That is the third time this programme has closed
+   that same trap.
+9. **The candidate query is bounded to the due-soon horizon.** Whether a goal is at risk needs derived
+   progress and cannot be asked in SQL, but both acting rungs need the deadline near or past, so loading
+   anything further out would be work spent to decide to do nothing.
+
+**Still open on phase 4**
+
+- **Nobody can answer.** The ladder asks "do you want to keep going, or set it aside?" and there is no
+  endpoint, no affordance and no column to receive the reply. That is phase 6, and until it lands
+  `asked_to_confirm` is a question into the void — the notification is the only thing the learner sees, and
+  the only thing they can do about it is open the goal and edit it by hand.
+- **`record_intervention_outcome` still has zero callers.** Phase 4 records what the system *did*, never
+  whether it worked. Every future version of this ladder is guessing at the same rate as the first until
+  phase 6 closes the loop.
+- **Delivery is still unreliable.** All three messages go through the path with learner-local quiet hours
+  unimplemented and a daily cap that silently drops. Phase 5.
+- **Extending a goal does not move `Course.targetDate`** (§8 decision 7, still open). The two records of one
+  intention will disagree after the first extension.
+- **The wording is server-composed.** Consistent with `run_weekly_check_ins`, and the numbers in it are the
+  server's, per §5.3's rule that the model may phrase but never supply a number. It has had no review for
+  tone on what may be a discouraging moment.
+- **Unmeasured.** How many goals this fires on, on the first night, is unknown — §11's first item. The pass
+  is bounded by `limit=500` and a seven-day cooldown, so the blast radius is capped, but the first run could
+  still put a message in front of a lot of people at once.
+
+### 10.4 Implementation record — phase 5, backend
+
+Shipped in `maigie/apps/backend`. Verified: **3,564 tests passing** (baseline 3,523, +41 net), `ruff check
+src tests` clean, `export_openapi.py --check` in sync (no wire change), single alembic head. **26 mutations
+applied one at a time; 25 caught, 1 equivalent mutant** (raising instead of logging inside `_push` — the
+per-row handler catches it after the delivery is already recorded, which is the ordering property that
+mutation 12 pins directly).
+
+| Piece | Where |
+| --- | --- |
+| One definition of quiet hours | `src/shared/time/quiet_hours.py`, read by both the notification path and the agenda |
+| The learner's own day | `learner_timezone.local_day_bounds` |
+| `Notification.pushedAt` | migration `054_notification_push` |
+| Deferral instead of destruction | `notification_service.create_notification` |
+| Delivering held-back rows | `repository.list_due_for_delivery`, `notification_service.deliver_pending` |
+| Push, honestly | `notification_service._push`, `_push_allowed` |
+| Named limits | `PRIORITY_TIME_CRITICAL = 1`, `DEFAULT_MAX_DAILY = 5`, `MAX_DEFERRAL_DAYS = 3`, `DELIVERY_BATCH = 200` |
+
+**A fourth defect, found while implementing, and worse than the three in §3**
+
+**Every notification quiet hours ever deferred was never delivered by anything.**
+`create_notification` wrote the row with `status="QUEUED"` and a later `scheduledAt`;
+`list_pending_for_delivery` selected `status == "PENDING"` only. So the row existed, had a delivery time,
+and no code path ever looked at it again. It still appeared in the learner's in-app list, because that read
+filters on `READ`/`DISMISSED` rather than on delivery — which is exactly why this survived unnoticed. Fixed
+by selecting both statuses.
+
+**Decisions made while building**
+
+1. **The cap defers; it no longer destroys.** Over the allowance, the notification is written `QUEUED` and
+   released at the start of the learner's next day. This is the substantive change: the plan asked for a
+   priority bypass, and a bypass alone would still have thrown away everything below the threshold. Nothing
+   is discarded now, so the allowance protects attention without costing information.
+2. **`create_notification` always returns the row.** There is no suppression path left that destroys a
+   notification, so callers no longer have to read `None` as "may or may not have happened". The four
+   places that documented that behaviour, and three tests that asserted it, were corrected — the belief was
+   also *half wrong* before, since quiet hours never returned `None`, only the cap did.
+3. **A priority threshold over the existing numbers would have been wrong.** Live priorities are 2–4, and
+   the deadline messages the plan wants protected sat at 3 alongside the daily plan — while engagement
+   nudges and celebrations sat at 2. Exempting "priority ≤ 3" would have exempted the recommendation
+   traffic the cap exists for. Instead `PRIORITY_TIME_CRITICAL = 1` is a new band, and exactly one message
+   was moved into it: `goal_at_risk`, the only one whose value expires with the deadline it describes.
+4. **Quiet hours hold even a time-critical message.** A deadline hours away does not justify waking
+   someone, and nothing on this path is urgent on the scale that would. The cap is about attention;
+   quiet hours are about sleep.
+5. **Held-back notifications expire after three days** rather than arriving stale. "Your exam is in two
+   days" landing after the exam is worse than silence, because the learner acts on it. This also bounds the
+   first run after deployment, when the orphaned `QUEUED` backlog is finally selected.
+6. **The delivery sweep marks a row delivered *before* pushing.** The status write is what stops the row
+   being selected again, so a crash between the two loses a push rather than repeating one — the right way
+   round for something that buzzes a phone in a pocket.
+7. **`deliveredAt` and `pushedAt` are separate events.** `deliveredAt` means released into the in-app list,
+   which always works. `pushedAt` is written only when a device actually received something, so
+   `no_tokens` and an unconfigured Firebase are never recorded as deliveries.
+8. **The dormant push preferences are now honoured.** `UserPreferences.notifications`,
+   `pushScheduleReminder` and `pushStudyTips` have existed unread for the whole life of the schema;
+   sending push without consulting them would have turned a dormant column into a broken promise. A type no
+   toggle plainly describes is allowed rather than mapped onto the nearest-sounding one, which would be
+   reading consent into an answer the learner never gave.
+9. **`parse_hhmm` fails open, `_push_allowed` fails closed.** Opposite directions, deliberately. A corrupt
+   quiet-hours string means a message at a bad hour — visible and complainable; the alternative silences
+   every notification for that learner with nothing reporting it. An unreadable preferences row means no
+   push — which costs the learner nothing, because the notification is already in their list.
+10. **`enforce_daily_limit` was deleted.** A second, uncalled copy of the cap with its own `or 5`, and a
+    limit that lives in two places is a limit that can disagree with itself.
+
+**Still open**
+
+- **Push reaches nobody.** Nothing writes `DeviceToken` rows — there is no registration endpoint, and
+  building one is client work. Every send returns `no_tokens`, `pushedAt` stays null, and the data says so
+  rather than claiming a delivery. The in-app list is the only channel that works today, which means the
+  original §5.4 worry stands: a notification that lands in a list the learner does not open has not been
+  delivered.
+- **`_compute_optimal_time` is gone rather than fixed.** It returned `now` from both branches, so it was a
+  stub pretending to be a decision. `behaviour_service._compute_optimal_times` already derives local
+  study-time slots and is the honest source if delivery timing is ever made real.
+- **The allowance now bites for the first time.** It counts *delivered* rows, and quiet-hours rows were
+  never delivered, so on any learner with quiet hours set the cap has effectively never fired. It will now.
+- **Nothing records *why* a notification was held back.** The row's status says `QUEUED`, not whether that
+  was quiet hours or a spent allowance. Enough for behaviour, not enough to answer "how often does the cap
+  defer something" without inference.
+- **No route sets quiet hours or the allowance.** `update_quiet_hours` exists in `onboarding_service` and
+  has no HTTP caller, so in practice every learner still runs with no quiet hours and a cap of five. The
+  local-time fix is correct and currently unexercised in production.
+
+### 10.5 Implementation record — phase 6, backend
+
+Shipped in `maigie/apps/backend`. Verified: **3,579 tests passing** (baseline 3,564, +15 new), `ruff check src
+tests` clean, `export_openapi.py --check` in sync, single alembic head, model and migration cross-checked.
+**13 mutations applied one at a time; 13 caught.**
+
+| Piece | Where |
+| --- | --- |
+| `learnerResponse`, `respondedAt` | `GoalLifecycleAction`, migration `055_goal_action_answer` |
+| What each answer means | `goal_lifecycle_service._STATUS_FOR_RESPONSE`, `record_answer` |
+| The endpoint | `POST /progress/goals/{goal_id}/nudge-answer` |
+| Reaching the question | `repository.latest_unanswered_actions`, `GoalResponse.pendingNudge` |
+| Attaching the reply | `repository.find_latest_lifecycle_action`, `record_lifecycle_response` |
+
+**Three answers, each one something the system cannot work out for itself**
+
+- `keep_going` — they still want it. The goal is left exactly as it is.
+- `set_aside` — stop chasing them. The goal is `ARCHIVED`.
+- `already_done` — the work happened and the measurement missed it. The goal is `COMPLETED`. **This is the
+  answer worth the most**, because it says the measurement is wrong rather than the learner, and it is the
+  only signal in the system that can say so.
+
+**Decisions made while building**
+
+1. **`set_aside` archives; there is no new paused state** (§8 decision 5). `ARCHIVED` is the only existing
+   value meaning "concluded without being achieved", which is exactly what the learner just said; it is what
+   `prep_outcome_service` already does for an unmet preparation goal, so this is consistent rather than novel;
+   it is reversible; and it removes the goal from the at-risk counts, which is what "stop chasing me" means in
+   practice. A paused state would have been a contract change both clients must handle to express a
+   distinction neither can currently render. What it would have carried — *why* the goal stopped — is on the
+   action row instead, so "archived because they chose to set it aside" is distinguishable from any other
+   archiving.
+2. **The answer is recorded on `GoalLifecycleAction`, not through `record_intervention_outcome`** — a
+   deliberate deviation from this plan's wording. That function writes to `RetentionIntervention`, whose whole
+   subsystem is unreachable: `tasks/retention_check.py` is not imported by `tasks/__init__.py`, has no beat
+   entry, and imports `src.workers.celery_app` rather than `src.core.celery_app`. Routing goal answers into a
+   table nothing reads, to satisfy the letter of the plan, would have put the feedback loop somewhere it
+   cannot be used. Reviving retention is separate work and the plan's §3 entry is updated to say so.
+3. **Null is the most informative value.** It is how "we asked and heard nothing" is told apart from "we never
+   asked", and the two justify completely different next moves — silence after three asks is an answer, while
+   never having asked is a bug. Hence nullable rather than defaulted, and a CHECK pairing the response with
+   its timestamp so a reply time without a reply cannot exist.
+4. **`pendingNudge` is on the goal response.** Otherwise the only route to answering is the notification, and
+   a notification can be held until morning, deferred to the next day by the allowance, or expire. The same
+   argument put `AWAITING_REVIEW` on the prepare dashboard. Only the *most recent* action counts, so a
+   superseded nudge is never presented as a live question.
+5. **The answer is written before the goal is touched.** If archiving fails the reply is still on record —
+   losing it would mean losing the only evidence about whether the ask worked, which is the entire point.
+6. **Answering an unasked question is a `404`.** This route answers a nudge; changing a goal nobody asked
+   about is what `PATCH /goals/{goal_id}` is for. Accepting it here would let a client record a reply to a
+   nudge that never happened, which would poison the only data this table exists to collect.
+7. **Re-answering replaces the answer.** A learner who says "keep going" on Monday and "set it aside" on
+   Thursday has changed their mind, and the last word counts.
+
+**Still open**
+
+- ~~**No client can answer.**~~ **Web can — §10.7.** Mobile still cannot, so half the learners have no way
+  to reply and `asked_to_confirm` remains a question into the void for them.
+- **Nothing consumes the answers yet.** They accumulate for phase 7's calibration and phase 8's correlation,
+  both of which are gated on volume rather than effort. Which intervention works for which learner is not yet
+  computed anywhere.
+- **`keep_going` does not shorten or lengthen the cooldown.** The next nudge comes seven days later either
+  way. A learner who says "keep going" is arguably asking to be chased *more*, and a learner ignoring three
+  asks arguably less; both would be reasonable and neither is measurable until answers exist.
+- **`record_intervention_outcome` still has zero callers**, and the retention subsystem it belongs to is
+  still unreachable.
+
+### 10.6 Migrations applied — and the reason they had not been
+
+**Six migrations shipped across five phases and none of them was applied.** `050` through `055` were
+written, reviewed, committed and left on disk while every phase's code went in depending on them. The
+symptom arrived as a `500` on `GET /api/v1/learning/home`:
+
+```
+column ExamPrep.reviewAskedAt does not exist
+```
+
+The ORM declares the column, so **every read of `ExamPrep` failed** — the home surface, the guidance
+engine, the prepare dashboard. Applied on 2026-08-27 with
+`python scripts/db_direct.py alembic upgrade head`, `049_chat_msg_grounding` → `055_goal_action_answer`.
+
+**Why 3,579 passing tests said nothing about it.** Every test either stubs the repository or builds its
+schema from the models, so the models and the tests agree with each other by construction and neither
+one ever consults the database. A schema drift of exactly this kind is invisible to the entire suite,
+and will be again. The only thing that catches it is running the application against the database.
+
+**Verified**, with `scripts/check_adaptive_050_055.py` (new, read-only, run before and after on the
+`check_prep_018.py` pattern):
+
+- `alembic_version` `049_chat_msg_grounding` → `055_goal_action_answer`.
+- All three tables and all seven columns present, with the declared nullability.
+- **Row counts identical on both sides** — `ExamPrep` 46, `StudyPlan` 105, `Notification` 160, `Goal`
+  46, `StudyPlanItem` 467. These migrations move no data, so this is the assertion that matters.
+- The three new tables are empty, as a no-backfill migration requires.
+- **No preparation was re-flagged**: 18 `COMPLETED`, 2 `IN_PROGRESS`, 26 `SETUP`, unchanged. `050`
+  refuses to backfill precisely so that learners are not asked about exams they sat months ago.
+- `reviewRemindersSent` is `NOT NULL DEFAULT 0` with **zero null rows** — correct, since nobody has
+  been asked. Metadata-only on Postgres 11+, no table rewrite.
+- `GoalScheduleChange_reason_check` now admits `system_extended`.
+- The exact ORM call from the traceback, `list_exam_preps`, re-run against the real database with the
+  real user id: succeeds. Every new repository method exercised against the live schema.
+
+**The first-run blast radius, now measurable** — §11's first unknown, answered for this database:
+
+| Sweep | Would act on |
+| --- | --- |
+| `mark_preparations_awaiting_review` (01:00) | **3** preparations |
+| `redistribute_drifted_plans` (05:00) | **69** study plans, of 105 |
+| `review_goal_lifecycle` (02:30) | **6** goals with a deadline already passed |
+
+Three asks is nothing. **69 plans is two thirds of every plan in the database**, each one repacking its
+pending items and sending a `study_plan_redistributed` notification. On this data that lands on very few
+learners, so most of those notifications will hit the daily allowance, queue, and then **expire** under
+`MAX_DEFERRAL_DAYS` rather than arriving — which is the expiry rule doing exactly the job it was added
+for, and the first evidence that phase 5's deferral was worth building before phase 3's sweep ever ran
+in anger. Worth knowing before this reaches a database where those 69 belong to 69 different people.
+
+**Also observed, not fixed.** `GET /learning/prepare/dashboard` returned **200** while logging the same
+`UndefinedColumnError`, because `prepare_dashboard_service._load_active_preparations` catches per-source
+failures and degrades to an empty list. `home_service` has no such guard and returned `500`. The `200`
+is the worse of the two: a learner was shown a dashboard with no preparations and nothing said anything
+was wrong. Recorded as its own defect rather than folded into this.
+
+**Standing correction to the way this work was sequenced.** A migration is not shipped when it is
+committed. Every phase record above that says "shipped" meant "the code is merged and the suite is
+green", which was true and insufficient. Applying is its own step, needs its own verification, and the
+repo already knew this — the Prepare plan carries `Migration 016 is not yet applied` as a standing note
+for exactly this reason, and I did not follow it.
+
+### 10.7 Implementation record — the web client
+
+Shipped in `maigie-client` (`apps/web`). Verified: typecheck holds at **13 pre-existing errors** with none in
+the new files — all pre-existing ones are in `classrooms`/`spaces`, confirmed by measuring with the work
+stashed — `eslint` clean, build green, **376 existing tests passing**, generated API types back in sync. **No
+web tests added**, per standing instruction.
+
+This is the first time any of phases 1–6 has been visible to a learner. Everything before it was endpoints.
+
+| Surface | Where |
+| --- | --- |
+| The post-exam review form | `features/prepare/components/PreparationReview.tsx` |
+| Its dialog, required on the preparation page | `PreparationReviewDialog.tsx` |
+| Its global prompt, dismissible | `PreparationReviewPrompt.tsx`, mounted in `LearningLayout` |
+| The goal nudge answer | `features/goals/components/GoalNudgeDialog.tsx` |
+| Its global prompt | `GoalNudgePrompt.tsx`, mounted in `LearningLayout` |
+| Extension history and the pending marker | `GoalsPage` card, `mapGoal.deadlineHistory` |
+| Notification deep links | `features/notifications/utils/notificationRoutes.ts` |
+
+**The asks travel with the learner, and that is the central decision.**
+
+Both prompts live in `LearningLayout`, which wraps every authenticated route, so they reach Home, Learn,
+Reflect and everywhere else. The reason is the same in both cases and it is not convenience: **the event that
+triggers the ask is the learner's absence.** An exam passing is the moment the reason to open that
+preparation disappears; a goal falling behind is by definition something that happened while they were
+elsewhere. An affordance that only exists on the page they have stopped visiting is one nobody uses — and
+§5.4's notification, the other route in, can be held by quiet hours, deferred by the daily allowance, or
+expire unread.
+
+**Optional everywhere except on the thing itself.** The global prompts are dismissible: they interrupt
+something the learner came to do, and interrupting is only acceptable when getting past it is free. Closing
+writes nothing. The post-exam review on the preparation's *own* page is **not** dismissible — no X, no
+backdrop, no Escape — because opening that preparation *is* asking about it. That is defensible only because
+the escape hatch is a real response: **"Not now" is one click**, records an honest decline, stops the
+reminders, and still does not complete the preparation. A learner is never trapped and never has an answer
+fabricated for them. An impatient decline is recorded as a decline, which is data; recording it as an outcome
+would be a lie.
+
+**Three traps the contract laid, found by building against it**
+
+1. **`AWAITING_REVIEW` stays set after a learner declines.** Filtering the global prompt on status alone
+   would re-prompt the one person who explicitly asked it to stop. The prompt checks each candidate's review
+   state instead, and takes the first that is awaiting, unanswered *and* undeclined — so one declined
+   preparation does not mask a second nobody has been asked about.
+2. **`PrepSummaryResponse` carries no review fields**, so "is anything waiting" costs a request per
+   candidate (bounded at three). `GoalResponse` publishes `pendingNudge` directly, so the goal prompt needs
+   one list read. Worth noting as an asymmetry in the contract rather than in the clients: if the preparation
+   list summary carried `reviewDeclinedAt`, the prep prompt would be as cheap as the goal one.
+3. **`/goals/:goalId` does not exist.** Writing the notification route resolver against the route table
+   rather than from memory caught it — `/goals` is a list with no detail route, and the only per-goal page is
+   the Reflect one. A resolver returning a plausible dead path is worse than one returning `null`, because a
+   card that navigates somewhere unrelated teaches the learner these are not worth clicking.
+
+**Two defects in the existing app, fixed on the way**
+
+- **`PrepareLibraryPage` had no `AWAITING_REVIEW` case**, so the badge fell through to the orange "setup"
+  style and printed the raw enum as `awaiting_review`. Now its own "To review" filter and a violet badge.
+- **`PreparationSettings` still offered "Mark complete"** to a preparation awaiting review, which would have
+  let a learner conclude it *without answering* — losing the one datum this whole programme exists to
+  collect, through a button that says nothing about the exam. Replaced by a card pointing at the review.
+- **Notification `actionData.route` was entirely dead.** Every notification the backend sends carries one and
+  nothing had ever read it, so "your exam has passed, tell us how it went" arrived with the preparation's id
+  attached and gave the learner nowhere to go.
+
+**Still open on the clients**
+
+- ~~**Mobile has none of it.**~~ **Done — §10.9.** The review form, the nudge answer and the extension
+  history all ship on `maigie-mobile`, with both prompts mounted app-wide.
+- **Neither client registers a `DeviceToken`.** The endpoint now exists (§10.8) but nothing calls it, so the
+  push half of phase 5 still reaches nobody. That remains the largest gap between "the system asks" and "the
+  learner hears".
+- **The goal detail page shows neither.** `ReflectGoalDetailPage` renders no `pendingNudge` and no extension
+  history; only the goals list card and the dialog do. Left alone deliberately under the standing instruction
+  not to touch the Reflect surfaces.
+- **None of it has been seen rendering.** Dialog sizing, scroll behaviour on a long form in a short viewport,
+  and whether a required dialog reads as reasonable rather than hostile are judgements a screenshot settles
+  and a green build does not.
+
+### 10.8 Device token registration — and why push still reaches nobody
+
+§5.4 said "fix the notification path first". The in-app half was fixed in phase 5. This is the push half, and
+the honest summary is: **the hole is now one layer deeper than it was, not closed.**
+
+**What shipped**
+
+| Piece | Where |
+| --- | --- |
+| `PUT /api/v1/users/me/device-tokens` | `identity/routes.py::register_device_token` |
+| `DELETE /api/v1/users/me/device-tokens` | `identity/routes.py::unregister_device_token` |
+| `upsert_device_token`, `delete_device_token`, `count_device_tokens` | `identity/repository.py` |
+| `DeviceTokenRequest` / `DeviceTokenResponse` | `identity/models.py` |
+| The Expo-token guard | `shared/infrastructure/push_notifications.py` |
+
+`tests/test_device_tokens.py` — **10 tests**; three more in `tests/test_push_notifications.py`, now 18.
+Mutation-tested: 4 mutations in the repository and 2 in the sender, all caught.
+
+**The upsert is keyed on the token, and reassigns the owner.** Keying on the user was the obvious shape and
+it is wrong: a device that changes hands — resold, family tablet, a spare handed to a sibling — would keep
+delivering learner A's notifications to whoever now holds it, and those notifications quote goal titles and
+exam names. Keyed on the token, registration by learner B moves ownership, which is what physically
+happened. The cost is that a shared device can only be registered to one learner at a time, which is correct
+for a push channel: whoever logged in last is who is holding it. `DELETE` is scoped to the caller's own
+`userId`, so nobody can unregister a device they do not hold.
+
+**`platform` is a closed set.** The column has no CHECK constraint, and the sender builds per-platform
+payload blocks — Android config, APNs config — so an unrecognised value produces a device that is registered,
+counted, and silently receives nothing. A `Literal` rejects it at the boundary instead.
+
+**`deviceCount` is in the response for one reason:** from outside, "push is off for this learner" and "push
+is on and nothing has ever been sent" look identical. That indistinguishability is precisely why the
+notification path went unnoticed as undeliverable for so long, and a count is the cheapest way to stop it
+recurring.
+
+**The finding: registration was not the only thing missing.** With the endpoint written, the five
+`DeviceToken` rows already in the development database became legible — and every one of them is an
+`ExponentPushToken[...]`, 41 characters, issued by **Expo's** push service. This application's sender builds
+`firebase_admin.messaging.Message` objects for **FCM**. The two are different transports.
+
+Two things follow, and both had to be handled before any send could be trusted:
+
+1. **FCM rejects an Expo token as `INVALID_ARGUMENT`**, and `INVALID_ARGUMENT` is in
+   `_DEAD_TOKEN_ERROR_CODES`, which prunes. So the first push after registration existed would have
+   **deleted all five rows** — the only record that those devices exist — and reported it as routine
+   cleanup. The guard now skips tokens with the Expo prefix and keeps them. An Expo token is not a dead FCM
+   token; it is a live token for a service this sender does not talk to. Skipping is reversible, deleting is
+   not.
+2. **`FIREBASE_SERVICE_ACCOUNT_PATH` and `_JSON` are both unset**, so even a correctly-shaped FCM token
+   returns `skipped` today. This is independent of the first problem: fixing either alone still delivers
+   nothing.
+
+**This is a decision for the product, not something to resolve by writing code.** Either mobile registers a
+native FCM token — Expo exposes it as `getDevicePushTokenAsync()` rather than
+`getExpoPushTokenAsync()` — and the existing sender is kept, or the backend gains an Expo sender and the
+FCM one becomes the fallback. The first keeps one transport and one credential; the second keeps Expo's
+build and OTA ergonomics on mobile. Both are defensible, they are not combinable without keeping two
+senders, and the tokens are preserved either way so neither choice is foreclosed. **Raised rather than
+chosen.**
+
+**Still open**
+
+- **No client calls either endpoint.** Web has no service worker and mobile has no registration call, so
+  `DeviceToken` gains no new rows from this work — the five it verified against are pre-existing.
+- **Nothing has been pushed end-to-end**, on any transport, to any device. Every claim above about the
+  sender is from reading it and from tests, not from a phone lighting up.
+
+### 10.9 Implementation record — the mobile client
+
+Shipped in `maigie-mobile`. Verified: `npm run typecheck` clean (all three passes — `tsconfig.app`,
+`tsconfig.spec`, and the relative-specifier check), `npm run lint` at **366 warnings, 0 errors** — the
+ratchet's exact ceiling, so nothing new was added — and `npm test` at **1125 passing across 41 suites**, up
+from 1080. **Mutation-tested: 8 mutations across the two pure modules, all 8 caught.**
+
+Half the learners could not reply to anything this programme asked. Now they can.
+
+| Surface | Where |
+| --- | --- |
+| The review's rules, types and copy — pure | `features/prepare/review.ts` |
+| Its reads and writes | `features/prepare/useReview.ts` |
+| The form, required or dismissible | `features/prepare/components/PreparationReviewSheet.tsx` |
+| Its global prompt | `features/prepare/components/PreparationReviewPrompt.tsx` |
+| The goal nudge answer | `features/goals/components/GoalNudgeSheet.tsx` |
+| Its global prompt | `features/goals/components/GoalNudgePrompt.tsx` |
+| Extension history, the pending badge | `app/goals/index.tsx` card, `mapGoal.deadlineHistory` |
+| Both prompts mounted | `app/_layout.tsx`, beside the `Stack` |
+
+**The logic is in pure modules, not in the components, and that is a constraint this repo imposed rather
+than a preference.** `maigie-mobile` has **no screen test and no hook test anywhere** — 40 test files, all
+of them over pure functions, and `src/test-setup.ts` is empty, so there is no expo-router or API mocking
+convention to follow. Establishing one silently, inside a feature, is the wrong place to make that decision.
+So every rule that could be got wrong lives in `review.ts` or `mapGoal.ts` and is unit-tested there:
+`isAwaitingAnswer`, `canSubmitReview`, `reconcileDraft`, `reviewRequestBody`, `resultRequestBody`,
+`suppressesReviewPrompt`, `deadlineHistory`, `nudgeAnswerLabel`. The components are wiring.
+
+**Four things mobile forced that web did not**
+
+1. **`Modal` cannot nest.** `BrandDatePicker` is itself a `Modal`, and nesting them sends the New
+   Architecture into an infinite update loop — which is why `goals/new` is a screen rather than a dialog.
+   The postponed-exam date therefore uses `InlineDatePicker`, revealed in place inside the sheet. A sheet
+   that opened a date picker would have hung the app on the one branch of the form nobody tests by hand.
+2. **A required sheet has to ignore the hardware back button**, which has no web equivalent. `dismiss` is
+   `undefined` when required: no backdrop `Pressable`, no close button, `onRequestClose` does nothing. That
+   is only defensible because **"Not now" is one tap** and records a real decline.
+3. **The nudge badge is tappable here, where web's is only a label.** A deliberate divergence: the prompt
+   that asks is dismissible and mobile's goal detail screen renders neither the ask nor the history, so
+   without it, closing the prompt once would leave a visible outstanding question with no way to answer it
+   until the next launch.
+4. **The global prompt must not appear over a quiz.** `suppressesReviewPrompt` checks for a `quiz` segment
+   anywhere in the tree as well as for a preparation detail. A learner mid-question is doing the thing this
+   product exists for, and a bottom sheet over a timed answer is worse than not asking at all. Web has no
+   equivalent because its quiz is not a route the prompt could land on.
+
+**Two defects in the existing app, fixed on the way** — the same pair web had, which is itself worth
+noting: both clients had independently built the *old* completion model.
+
+- **`prepare/library` had no `AWAITING_REVIEW` filter**, and printed the status through
+  `status.replace('_', ' ')` — so the one status that is *asking the learner something* rendered as a
+  leaked enum. Now its own "To review" filter and a `STATUS_LABELS` map.
+- **`SettingsTab` still offered "Mark as complete"** to a preparation awaiting review, which would have let
+  a learner conclude it **without answering** — losing the one datum this programme exists to collect,
+  through a control that says nothing about the exam. Replaced, in that status only, by "Tell us how the
+  exam went", which is also the way back in after a decline.
+
+**Contract note.** Mobile has no generated types: `npm run api:sync-paths` vendors only the backend's
+*path* list into `src/lib/__fixtures__/apiPaths.json`, which `endpoints.test.ts` walks. So the five new
+paths had to be synced before they could be declared, and the DTOs are hand-written against
+`PrepReviewState`, `PrepOutcomeRequest`, `PrepOutcomeResponse`, `PrepResultRequest` and `GoalResponse`.
+Nothing checks those shapes — that is the standing cost this repo already documents, and it is the one part
+of this work a contract change could break silently.
+
+**Still open on mobile**
+
+- **The goal detail screen shows neither.** `app/goals/[goalId].tsx` renders no `pendingNudge` and no
+  extension history; the library card, the sheet and the global prompt do. Same gap web has.
+- **Nothing has been seen rendering**, on either client. Sheet height on a short viewport, whether the
+  keyboard covers the reflection field, and whether a non-dismissible sheet reads as reasonable rather than
+  hostile are judgements a device settles and a green build does not.
+- **Two extra list reads at launch**, one per prompt, bounded and cached for 60s. The preparation one is
+  skipped entirely while suppressed; the goal one shares its key with the goals surfaces, so it is free
+  there and one request elsewhere.
+
+### 10.10 A preparation awaiting review was completed without an answer
+
+Reported from the library: preparations showing `COMPLETED` that had been moved to `AWAITING_REVIEW` and
+never answered. It is real, it is measured, and **the code in this repository is not what did it.**
+
+**What the database says**
+
+All four preparations the review sweep had asked about — `reviewAskedAt` set at **2026-08-27 23:47**, four
+`preparation_review` notifications delivered — were `COMPLETED` at **2026-08-28 01:00** with **zero
+`PrepOutcome` rows**. There are 22 completed preparations in the database and **not one has an outcome
+behind it**; every single completion timestamp is 01:00 (or 08:00 for the older ones, an earlier beat
+schedule) on the day after its exam date. That is not a learner pressing a button 22 times. It is a cron.
+
+01:00 UTC is `learning.mark_completed_preparations`, `crontab(hour=1, minute=0)`.
+
+**Why this repository is not the writer**
+
+`tasks/preparation.py` calls `mark_preparations_awaiting_review`, which cannot write `COMPLETED` — phase 0
+changed exactly that. The writer is a **stale deployment sharing this database**, and its own contract proves
+it: `staging-api.maigie.com/openapi.json` publishes **136 paths against this repo's 220**, has no
+`/preparations/{id}/review`, no `/goals/{id}/nudge-answer`, and **the string `AWAITING_REVIEW` appears
+nowhere in its schema**. It predates phase 0. Its beat fires the old task, which sets `COMPLETED` on every
+preparation whose `examDate` has passed, and it did so seven hours after the new sweep had asked.
+
+So the immediate fix is a deploy, not a patch. And the four rows would never have been re-asked on their
+own, because `list_preps_awaiting_review` excludes `COMPLETED`: they were terminal, with the one datum this
+programme exists to collect permanently missing.
+
+**Repaired.** `scripts/repair_prep_review_state.py` restored all four to `AWAITING_REVIEW`. It is a dry run
+by default and its `WHERE` clause is deliberately narrow — completed, **no `PrepOutcome`**, exam date
+passed, **and carrying a `reviewAskedAt`**. That last clause is what makes it safe to run rather than a
+judgement call: it repairs only rows that can be *shown* to have been taken out of `AWAITING_REVIEW` by
+something else. The other 18 completed-without-an-answer preparations are left alone, because they were
+never asked about — the old sweep completed them before this flow existed — and restoring them would put a
+question about a February exam in front of a learner with no reason to remember it. History is not repaired
+by asking about it. `--include-unasked` overrides that and warns, because the choice belongs to a person.
+
+`reviewAskedAt` and `reviewRemindersSent` are left untouched: the learner *was* asked, that is still true,
+and resetting them would spend the reminder budget a second time on someone who already got the
+notification. The script is idempotent — a second run reports nothing to repair. **The restored rows survive
+only until 01:00 UTC unless the stale worker is redeployed first.**
+
+**What was wrong in this repository, and is now fixed**
+
+The invariant was documentation, not code. `COMPLETED` is described in four places as reachable only
+through the learner's answer, and was reachable in practice by anything that could write the column —
+including `POST /preparations/{id}/complete`, which would happily complete an `AWAITING_REVIEW`
+preparation. Both clients hide that button in that state (§10.7, §10.9), but a hidden button is a UI
+decision. `mark_completed` now **refuses with a 409** when the status is `AWAITING_REVIEW`, and writes
+nothing on the refusal. Two tests, both mutation-checked: removing the guard fails one, making it
+unconditional fails two, because abandoning a preparation *before* its exam has to stay possible.
+
+**What that guard does not do, and the open question**
+
+It is Python, so it protects every writer in *this* codebase and none in a stale one. The old worker talks
+to the same database with its own old code. **The only guard that survives version skew is in the database
+itself** — a trigger refusing an `AWAITING_REVIEW → COMPLETED` transition with no `PrepOutcome` for the
+sitting. That would have prevented all 22 rows. It would also make the stale worker fail loudly every
+night, which is the correct outcome and a visible one. **Not built: it is a schema change on a hosted
+database whose blast radius includes a currently-deployed service, so it is a decision to take rather than
+a fix to apply quietly.**
+
+**One incidental correction.** Earlier entries in this section reasoned from a session date of 2026-08-21.
+The real date throughout was **2026-08-28** — `date -u` and the database's `now()` agree. Nothing above
+depends on it, but the "12 days left" and "overdue" readings in earlier notes were a week out.
+
+### 10.11 A preparation past its exam stops taking on new work
+
+**A completed preparation rendered the identical in-progress workspace.** Same "Start practice" button, same
+"Recommended next" hero, opening on the topics list; the one thing that distinguished it — what actually
+happened in the exam — was four tabs away, labelled "Outcome" among six siblings. And practice really did
+still start.
+
+**The rule.** `AWAITING_REVIEW` and `COMPLETED` take on no new study work. Extraction and starting a quiz
+answer **409**. Everything already there stays fully readable: topics, materials, the question bank, the
+timeline, the readiness history, the analytics.
+
+**Reads stay open, and that asymmetry is the whole design.** That material is the record of work the learner
+did. Hiding it would be deleting it in effect, and a learner who wants to look at their own question bank in
+January has done nothing wrong.
+
+**Why generation closes is not tidiness.** A quiz writes `QuizSession` rows and moves topic mastery, which
+feeds `averageMasteryPercent` — the readiness figure §6.2 wants to score against the recorded outcome.
+Practising afterwards **rewrites the prediction after the result is known**, which is the one measurement
+calibration cannot survive. Someone who wants to keep practising this material wants a new preparation, or
+Learn.
+
+| Where | What |
+| --- | --- |
+| `exam_prep_service.ensure_accepts_new_work` | The rule, and `CLOSED_TO_NEW_WORK` |
+| `exam_prep_service.extract_topics` | Guarded before the model is called |
+| `quiz_engine.start_quiz` | Guarded **before** the "no topics yet" check |
+| `apps/web/.../prepare/utils/prepStatus.ts` | The client vocabulary, web |
+| `maigie-mobile/src/features/prepare/prepStatus.ts` | The same, mobile, with tests |
+
+**Order matters in `start_quiz`.** The status check runs before the topics check, so a finished preparation
+with no topics says "this is finished" rather than "extract topics first" — advice for a step that is itself
+refused, which walks the learner round a loop.
+
+**`generate_preparation_plan` needed nothing**: it already refuses a target date in the past.
+
+**Two messages and two codes, not one.** `PREP_AWAITING_REVIEW` and `PREP_COMPLETED`, named the way
+`PREP_TOPICS_REQUIRED` already is. An awaiting preparation has something for the learner to *do* and a
+completed one does not, so one shared sentence would send someone with an outstanding review to a dead end —
+and a client that knows only "something conflicted" can do nothing but print it. `ConflictError` gained an
+optional `code`; existing callers keep `CONFLICT`.
+
+**Both clients: the outcome leads.** The detail surface opens on the review rather than on topics, the hero
+carries the recorded outcome or the outstanding question instead of a practice CTA, and the status is finally
+shown on the detail page — it had only ever been on the library row, so a learner arriving from a
+notification could not tell a finished preparation from an active one. The countdown is suppressed, because
+"-3 days left" is worse than meaningless.
+
+**Twelve affordances, closed in five places rather than twelve.** Almost all practice entry points read one
+derived flag, so the gate went into the flag: `hasPractice` on web's workspace, and `practiceReady` in both
+dashboard mappers. Then the picker filters past-exam preparations out (choosing from a list, an unpickable
+option is noise), while the launcher shows a blocked panel (arrived by URL asking about one preparation, so
+owed an explanation), and the runner keeps a 409 backstop for deep links — branching on the code, so it
+reads as a rule rather than "Could not start practice" beside a red cross.
+
+**Three defects found while doing it, none of them about the exam**
+
+- **Session-history rows started a new quiz.** Both clients, dashboard and workspace: tapping a *finished*
+  session under "Recent sessions" silently began a fresh one. There is no route for viewing a completed
+  session, so they now open the preparation, where that session's result already lives. One web test
+  asserted the old route and was updated with the reason.
+- **`AWAITING_REVIEW` is inside the dashboard's `ACTIVE_STATUSES`**, deliberately — it wants attention most.
+  So an awaiting preparation genuinely contributes focus topics, and every one of those rows was a live link
+  into a refusal. Both mappers now build a past-exam id set from the only place a status appears on that
+  payload.
+- **Mobile's focus rows ignored `route`** and built their own parameterised push, so a guard living only in
+  the route string would have been silently bypassed. Hence `canPractise` as a published flag.
+
+**Verification.** Backend: **231 passing** across the prep and quiz suites, 8 mutations caught across the
+guard and its two call sites. Web: typecheck at its **13 pre-existing** errors, lint byte-identical to
+baseline, **387 tests**, build green. Mobile: typecheck clean, lint at the **366** ratchet ceiling, **1138
+tests** across 42 suites, 5 mutations on `prepStatus` all caught.
+
+**Not verified.** Whether a preparation opening on its outcome reads as finished rather than broken is a
+judgement a device settles. §10.12 records what the first screenshot found.
+
+### 10.12 What the first screenshot found, and the decline rule it changed
+
+The first time any of this was seen rendering it was wrong in two ways, and one of them exposed a design
+error rather than a bug.
+
+**The review tab body had no column span.** It was a direct child of a twelve-column grid carrying no
+`col-span`, so it took **one** column — a sixty-pixel strip of vertical text. Its neighbours escape the same
+trap by carrying the span inside their own root element, and `PreparationReview` does not. Invisible until
+now because the review tab had never been the default; a finished preparation opening on it is what surfaced
+it. Fixed by wrapping the body, like the analytics tab.
+
+**The hero asked "How did Statistics final go?" above empty space.** `PreparationReview` returns `null` when
+`embedded` and there is nothing to ask, which is right for a popup that would otherwise appear to say
+"nothing to see" and wrong directly under a heading that just asked a question. Two ways to reach it, and
+the second is not fixable:
+
+1. A **declined** review — fixed at the source, below.
+2. A preparation the **old date-based sweep** closed: `COMPLETED` with no `PrepOutcome`, of which this
+   database has 18, and which will never have one. Only describable, so it is now described: "This
+   preparation was closed before we started asking how exams went…". The hero reads the review state
+   directly and renders a heading only when there is content under it, so the whole class of bug is gone
+   rather than its two instances.
+
+**The design error: `is_awaiting_review` was answering two different questions.**
+
+The screenshot showed a preparation whose badge said "to review", whose hero asked how it went, and whose
+form said **"Nothing to review yet"**. All three were reading the same database row. `awaiting` was false
+because a decline had been recorded, and a learner who tapped "Not now" once could never answer again from
+the surface built for answering.
+
+The two questions:
+
+- **"Is this preparation waiting on an answer?"** A decline is irrelevant. Nothing has been said about the
+  exam, the preparation is not finished, the question is open. This is what `awaiting` now means.
+- **"Should we chase this learner about it?"** A decline is decisive.
+
+Chasing is still stopped, in the two places that do it: `list_preps_awaiting_review` filters
+`reviewDeclinedAt IS NULL` in SQL, so the sweep and its reminder budget are untouched — there is a test for
+that and it still passes — and both clients' *global* prompt reads `declinedAt` and skips. What a decline no
+longer silences is the preparation's own page, **because there is no reason to open a preparation whose exam
+has passed except to do something about it.**
+
+**Which introduced a trap, caught before shipping.** With `declinedAt` no longer gating the dialog, "Not
+now" closed a required surface that immediately re-opened — the single exit leading straight back in. So
+"asks again when they open the preparation" is scoped to **the visit**: `reviewClosedThisVisit` on both
+clients, component state, resets on navigating away and back. Having just responded is not a new visit. Web's
+`onClose` was `() => undefined`, which had been safe only while the recorded decline did this job.
+
+`isAwaitingAnswer` (the page) and `shouldPromptGlobally` (the prompt) are now separate predicates on mobile,
+with a test asserting the second is strictly narrower — so they cannot quietly drift into being the same
+test. Three mutations on them, all caught. Backend: **233 passing**, with the old
+`test_a_dismissal_stops_the_waiting` inverted and its reasoning recorded, plus two new cases covering
+declined-then-answered.
+
+**Lesson worth keeping.** A green build, a clean typecheck and a passing suite said nothing about either
+defect. One was a missing CSS class on a branch no test renders; the other was a predicate that was
+internally consistent, tested, and answering the wrong question. **The screenshot found both in one look.**
+
+### 10.13 Instrumenting the ask — and the first reading
+
+§11 asked for this: *"Instrument the ask itself — asked, answered, dismissed — from day one, so the next
+decision has a number."* Built, because it is the only remaining item that was not waiting on data, and
+waiting cost data that cannot be recovered.
+
+**Nothing new is stored, and that was the finding.** The instinct is an events table. Every fact needed was
+already in a column: `ExamPrep.reviewAskedAt`, `reviewRemindersSent`, `reviewDeclinedAt`,
+`PrepOutcome.answeredAt`, and `GoalLifecycleAction.learnerResponse` with a `respondedAt` the schema already
+CHECK-pairs to it. What was missing was **a read** — so producing the number meant a bespoke SQL script,
+which is why nobody had.
+
+| Piece | Where |
+| --- | --- |
+| The funnels, pure | `progress/services/adaptive_response_metrics.py` |
+| The report | `scripts/check_adaptive_response_rates.py` |
+| The log line, one per transition | `log_ask_event`, called from 5 sites |
+
+**The distinction the module exists for.** *"Asked and ignored"* and *"never asked"* are different failures
+with opposite remedies — rewrite the copy, or find out why the question never left the building. A rate whose
+denominator is candidates rather than asks hides the second inside the first, and the first reading proves it
+is not hypothetical:
+
+```
+--- The post-exam review ---
+  candidates       22
+  asked             4
+  NEVER ASKED      18   <-- not a response-rate problem
+  answered          0
+  declined          1
+  no reply          3
+  response rate     0%   (answered / asked)
+  engagement rate  25%   (answered or declined / asked)
+```
+
+A naive `answered / candidates` reads **0% against a denominator that is 82% noise** — the 18 are the
+preparations the old date-based sweep closed, which will never have an outcome. Anyone acting on that number
+would go and redesign copy for a question that was never asked.
+
+**Other decisions worth keeping**
+
+- **A rate is `None`, never `0.0`, when nothing was asked.** A programme that has asked nobody has not been
+  ignored, and the report prints "not asked yet" rather than a percentage.
+- **A decline is engagement, not silence.** `engagement_rate` counts it; `response_rate` does not. The gap
+  between them is the population who saw the ask and chose not to answer — a copy problem. The gap between
+  engagement and 100% is the population it never reached — a delivery problem. Two different teams, and one
+  number would have pointed at the wrong one.
+- **`answered` means a recorded `PrepOutcome`, not a `COMPLETED` status.** Those used to be the same thing.
+- **Median, not mean, time-to-answer.** With a handful of replies one six-week answer moves a mean more than
+  it should.
+- **Split by rung and by trigger**, which is the cut phase 8 needs: one overall rate cannot say whether
+  `warned` is worth keeping.
+- **The nudge funnel reports `declined: 0` always**, because that ask has no "not now" — its dialog is
+  dismissible and a dismissal writes nothing. So its `silent` mixes "closed it" with "never saw it", which
+  the review funnel can separate and this one cannot. Stated in the code, because comparing the two response
+  rates without knowing it would be comparing unlike things.
+- **Log lines are deliberately redundant** against the queries. The rows already answer "how many"; the lines
+  make the sequence visible in an aggregator without a database, and survive a row being deleted with its
+  preparation.
+- **Instrumentation is wrapped and cannot fail the write it describes.** The learner's answer is the hard
+  thing to obtain and is already committed by the time the log line runs. At `warning`, not `debug`, so a
+  broken field is still visible — instrumentation failing quietly is instrumentation that has stopped
+  without saying so.
+
+**A test-quality fix that came out of it.** The `GoalLifecycleAction` fakes in `test_goal_lifecycle.py` were
+`SimpleNamespace(id=…, action=…)` — two of six columns. Reading `trigger`, `createdAt` and `learnerResponse`
+failed against them, which is the fake doing its job; a narrower fake would let production code read a column
+no test can see it read. Replaced with a `_action()` helper carrying every column.
+
+**Verification.** **3,676 passing** (from 3,650), `ruff` clean, OpenAPI in sync — no contract change, because
+there is no endpoint: this is an operator question and the app has no admin surface to hang one on. **21 new
+tests, 6 mutations on the funnel arithmetic, all 6 caught.** The six `test_local_imports.py` failures that
+appeared alongside this work are unrelated to it and are dealt with in §10.14.
+
+**The first reading answers the question it was built for: no, phase 7 is not worth building yet** — 0
+recorded outcomes. And it says why in a way a bare 0% could not: not because learners ignore us, but because
+4 have been asked and 18 never were. The script prints that conclusion itself, including the reminder to
+check that the deployment running the sweep is current.
+
+### 10.14 A byte-order mark had switched off a checker, one file at a time
+
+Not part of this programme, found because CI went red on it. Recorded because the mechanism is worth knowing.
+
+`test_local_imports.py` verifies that every `from src.… import name` written inside a function body actually
+resolves — the class of bug that only fires when the code path runs. It scans with `ast.parse` and had:
+
+```python
+try:
+    tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+except SyntaxError:
+    continue
+```
+
+**Four files carried a UTF-8 BOM.** Read as plain `utf-8` the BOM survives as a `\ufeff` character, `ast.parse`
+rejects it as an invalid non-printable, and `continue` dropped the file without a word. So the checker reported
+success on a set it had quietly stopped covering.
+
+Between them those four files hid **five function-local imports of names that do not exist**, from
+2026-07-15 until commit `8b74e02` stripped the BOMs in an unrelated formatting pass. Then the checker started
+doing its job — and *still* could not say so, because of a second bug: the submodule fallback called
+`find_spec("module.attr")`, which **raises** when the parent is a module rather than a package. Six genuine
+failures arrived as `ModuleNotFoundError: __path__ attribute not found` from three frames inside `importlib`,
+with nothing naming the file or the symbol.
+
+Three fixes:
+
+1. **`utf-8-sig`**, which strips a BOM if present and is a no-op otherwise.
+2. **Unparseable files are recorded and asserted empty**, so coverage can no longer shrink in silence.
+   Coverage that can quietly narrow is not coverage.
+3. **`_provides` guards the submodule probe** and returns `False` for every shape of missing target, so a
+   real miss produces this test's own message.
+
+**The five defects are registered, not fixed, and that is deliberate.** All of it is unreachable: the
+`classrooms` router is commented out in `src/app.py`, and `get_skill_registry`, `execute_skill` and
+`planning_service.generate_study_plan` have no callers anywhere. Two of the five have **no target to point
+at** — `_require_role` exists nowhere in `src`, so "fixing" it means writing an authorization check for routes
+that are not mounted, and `planning_impl.create_study_plan(user_id, goal, …)` is a different function from the
+`generate_study_plan(user_id, course_id)` the facade wants, not a rename. Inventing either to turn a test
+green would be worse than recording the truth. The honest fix is to delete the dead facades or finish the
+migration, which belongs to whoever owns those domains.
+
+The register uses **strict xfail**, so the moment one resolves — fixed, or deleted — it becomes an unexpected
+pass and fails until the entry goes. A second test asserts every entry still matches a real import. Both
+proved by mutation: adding `get_registry` fails the suite; registering a nonexistent import fails the
+staleness check.
+
+**Lesson.** Every one of these was a *checker* failing silently rather than code failing loudly, and the
+suite was green throughout. A green suite is evidence about the tests that ran, and says nothing about the
+ones that quietly stopped.
+
+### 10.15 The first answer, and what it says the real blockers are
+
+One review has been answered. It is one data point and settles nothing statistically, but it changes what
+phases 7 and 8 are actually waiting for — and both differ from §7's estimate.
+
+**The loop works end to end, for the first time.** Sweep → `AWAITING_REVIEW` → notification → ask → answer →
+`COMPLETED` with an outcome behind it. Response rate 25% of asks, median reply **0.6 days**.
+
+**And the answer came from a preparation that had been declined.** `reviewDeclinedAt` is set on it. Under the
+behaviour before §10.12, `awaiting` went false on a decline, the review surface said "Nothing to review yet",
+and this answer **could not have been given**. The change that looked like a copy fix earned the first data
+point in the programme.
+
+#### Phase 7's blocker is a mark, not a count
+
+What the outcome carries:
+
+| Prediction | Learner |
+| --- | --- |
+| `readinessPercent` **0.0** | `experienceRating` **3** — about as expected |
+| `targetReadiness` 85 | `preparationRating` **4** — prepared me well |
+| `averageMasteryPercent` 3.9, `topicsStrong` 0/10 | `resultValue` **null** |
+
+Two things follow.
+
+**`resultValue` is null**, and it is optional by design because a mark arrives weeks after the exam. So the
+only outcome signal is a 1–5 self-report, and calibrating a readiness *percentage* against a five-point
+subjective scale is not calibration. **Phase 7's gate is outcomes carrying `resultValue`**, which is a
+strictly smaller and slower population than outcomes.
+
+**More importantly, this single row already disagrees with itself in a way calibration would misread.** We
+predicted 0% ready — 0 of 10 topics practised — and the learner reported the exam went about as expected and
+the preparation served them well. `averageMasteryPercent` measures **in-app practice**, so a learner who
+revised outside the app is indistinguishable from one who did not revise. Run calibration over rows like this
+and it concludes readiness is uninformative — true, but because *absence of data is being read as evidence of
+unreadiness*, not because a model is miscalibrated. Phase 7 would surface that and could not fix it. **The
+fix is upstream, in what readiness claims to measure.**
+
+**The mark arrived: 57 out of 100, against a predicted readiness of 0.0%.** Which is the whole argument above,
+in one row. `topicsStrong` was 0 of 10 and the learner passed. Any calibration that scored this would conclude
+the readiness model is badly miscalibrated; the truth is that it was measuring something else.
+
+#### Phase 8's blocker is one rung, not zero answers
+
+`scripts/debug/check_ladder_variance.py`:
+
+```
+asked_to_confirm   deadline_passed    fired=6  answered=0
+1 of 6 combinations have ever fired.
+```
+
+Phase 8 correlates *which* intervention helped. With one rung there is nothing to correlate, and answers
+would not create the contrast — a 100% response rate on six identical asks compares that rung against nothing.
+
+**Since confirmed by the first answer.** A learner answered `keep_going` on an `asked_to_confirm` /
+`deadline_passed` nudge, 1.0 days after it was asked — the nudge response rate is now 17% of 6. The goal
+stayed `ACTIVE`, which is the behaviour working: told to leave it alone, the ladder left it alone, and a
+status write here would have been the system acting on being asked not to. It closes the second loop end to
+end, and it changes nothing about the blocker: the answer landed on the only rung that has ever fired.
+
+Why only one, from the population: 42 active learner goals with deadlines, of which **6 are overdue** — and
+those 6 are exactly the ones acted on, all with `system_extended = 0`. So:
+
+- **`extended`** needs `at_risk_due_soon`, which has never selected: the other 36 goals are neither overdue
+  nor close enough to be at risk.
+- **`warned`** needs external authority, and exactly **one** external goal exists — not overdue.
+
+Both are live code paths that have never run against real data. Worth knowing separately from phase 8: the
+extension logic, which is the most consequential thing the ladder does, is **untested outside its unit tests**.
+
+#### Confirmed: learners prepare outside the app, so calibration must condition on practice volume
+
+The hypothesis above was put to the product owner, who confirmed it: *"it's possible that the user also
+prepared outside the app."* That settles what phase 7 may and may not do.
+
+`readinessPercent` and `averageMasteryPercent` are not wrong — 0 of 10 topics at the strong threshold is an
+accurate measurement of *in-app practice*. The error is interpretive: they are being read as readiness for the
+exam. A learner who revised from a textbook is indistinguishable from one who did not revise, and both read
+as unready.
+
+So **phase 7 must not score every outcome.** Calibrating over rows where the metric had no visibility measures
+the app's engagement, not its prediction, and would produce a confident conclusion that readiness is
+uninformative. The specification changes in two ways:
+
+- **Condition on practice volume.** Only score preparations where the learner practised enough for readiness
+  to be measuring something. `topicsAssessed` and `questionsAnswered` are both on the outcome row, so the
+  threshold is expressible today; what it should be is unknown and needs the data.
+- **Report the excluded population as a first-class result.** "Readiness could not be evaluated for N of M
+  sittings because the learner did not practise here" is a finding about the product, not a gap in the
+  analysis, and it is probably the more valuable of the two numbers.
+
+Neither is a code change today. Both are constraints on phase 7's design, recorded before the data arrives so
+the first analysis is not the one that gets it wrong.
+
+### 10.16 The database-level guard, and two bugs found writing it
+
+Approved and applied: migration **056**, a `BEFORE UPDATE` trigger on `ExamPrep` refusing
+`AWAITING_REVIEW → COMPLETED` when no `PrepOutcome` exists for the sitting the row describes.
+
+**Why the database and not Python.** The invariant was already documented in four places and enforced in
+`mark_completed`, and both clients hide the control. None of it helped, because the writer was a stale
+deployment talking to the same tables with its own old repository. A Python guard protects the version that
+contains it and nothing else — and every deploy is a window where two versions coexist. The rule now lives in
+the one place both versions share.
+
+Deliberately narrow. `SETUP`/`IN_PROGRESS → COMPLETED` still works, because abandoning a preparation before
+its exam is legitimate. `AWAITING_REVIEW → IN_PROGRESS` is untouched, which is the postponed path.
+`COMPLETED → AWAITING_REVIEW` is untouched, which is how the repair script works. `ERRCODE` is a custom
+`MG001` so callers can recognise this refusal rather than parsing a message, and there is a documented
+`DISABLE TRIGGER` escape for a genuine backfill — not a config flag, because a flag that can be left on is a
+guard that is off.
+
+**Two real bugs, both caught by verifying against the database rather than reasoning about it.**
+
+1. **A timezone-dependent comparison in the trigger.** `ExamPrep."examDate"` is `timestamp without time zone`
+   and `PrepOutcome."examDate"` is `timestamp with time zone`. Comparing them directly makes Postgres read the
+   naive side in the *session's* timezone — `True` under UTC, `False` under `Africa/Lagos` or
+   `America/New_York`. The first version did that. It passed against the production pooler, which happens to
+   be UTC, and would have **refused every legitimate completion** on any connection that was not, turning a
+   guard against data loss into an outage on the path it protects. Now `AT TIME ZONE 'UTC'` explicitly, which
+   matches what `_as_utc` and `goal_metrics._utc` already do on the Python side.
+2. **A false pass in the verification script.** Its first version omitted `User.role` and `tier`, both NOT
+   NULL with no default, so every case failed on the insert — and the two "expect refused" cases *passed*,
+   agreeing with the assertion for entirely the wrong reason. Only the must-allow cases exposed it. The script
+   now checks that a refusal carries `MG001`, so an incidental failure can never be mistaken for the guard
+   working.
+
+`scripts/debug/verify_056_guard.py` asserts all six behaviours inside rolled-back savepoints and reports
+**6/6**. Its own naive-versus-aware binding bug is documented in it: asyncpg silently interprets a naive
+datetime bound to a `timestamptz` column in the *client's* local timezone, which stored the outcome an hour
+off the preparation and made the guard look broken when it was correct.
+
+**`record_outcome`'s write order is now load-bearing** — the outcome is committed before the status, so the
+trigger can see it. A comment at the call site says so, because reversing those two statements would deadlock
+the only legitimate writer against its own guard.
+
+**Lesson, and it is the same one as §10.14.** Three of the four defects in this section were in the
+*checking*, not the thing checked: a trigger that agreed with the session timezone, a probe that agreed with
+itself, and a suite that skipped what it could not parse. Asserting both directions of a guard — what it must
+refuse *and* what it must allow — is what caught two of them.
+
+#### What this means for sequencing
+
+Neither phase is closer than §7 assumed, and the reasons are more specific and more actionable:
+
+1. ~~**Prompt for the mark.**~~ **Built — §10.17.** `resultValue` is the phase 7 gate and nothing pointed at
+   the field; there is now a bounded nightly ask.
+2. **Decide whether readiness should count evidence it cannot see** before calibrating anything against it.
+3. **Phase 8 waits on the ladder exercising its other rungs**, which is a function of the goal population, not
+   of engineering. Until then it has one rung and no contrast.
+
+### 10.17 Asking for the mark — the ask phase 7 was actually waiting on
+
+Migration **057** plus a nightly sweep. `resultValue` is the only objective outcome signal the system can
+obtain, it has been on both clients since the review shipped, and **nothing ever pointed at the field** — so
+the population carrying a mark was whoever happened to volunteer, measured at one, and only because it was
+asked for by hand.
+
+| Piece | Where |
+| --- | --- |
+| `resultAskedAt`, `resultRemindersSent`, partial index | migration 057 |
+| `list_outcomes_awaiting_a_result`, `record_result_reminder` | `personal_learning/repository.py` |
+| `remind_about_missing_results` | `prep_outcome_service.py` |
+| Task + 01:30 beat entry | `tasks/prep_result.py` |
+
+**Cadence, agreed with the product owner:** first ask **14 days** after the review was answered, one more 14
+days later, then stop. Two, matching `MAX_REVIEW_REMINDERS`. Fourteen days because a mark does not exist the
+day after the exam, and an ask that arrives before the result does teaches the learner this reminder is noise —
+after which the second is ignored too. **Erring late costs a delay; erring early costs the channel.** Priority
+4, below the review ask at 3, because the review completes a preparation while this is a nice-to-have about a
+number the learner either has or does not.
+
+**Only `attended = 'sat'`.** A missed or cancelled sitting has no mark, and a `postponed` one is superseded by
+a later sitting with its own review. Asking anyway would be asking about something that did not happen.
+
+**A counter column, not a count of `Notification` rows** — the same choice `GoalLifecycleAction` documents. A
+notification is not evidence the learner was reached: delivery can be deferred by their daily allowance, held
+by quiet hours, or expire unread, and `create_notification` can return `None`. What must be bounded is how
+often *we asked*, and the counter is stamped whether or not the message went out. Refunding the budget on a
+suppressed message would let a learner whose quiet hours never open be asked forever.
+
+`resultRemindersSent + 1` is computed in SQL rather than read-then-written, so two overlapping sweeps cannot
+both read 1 and both write 2 — spending two asks and recording one.
+
+**Verified.** 17 tests, **3808 passing** overall, migration applied, columns and partial index confirmed. Six
+mutations, and the two that survived the first pass were both test defects worth recording:
+
+- **A tautological cap test.** It asserted the budget using `result_reminders_sent=MAX_RESULT_REMINDERS`, which
+  reads the constant under test — so raising the cap to 99 raised the fixture with it and the test passed. Now
+  a literal `2` in the behaviour test and a separate assertion pinning the constant, so changing either fails.
+- **A guard whose removal was invisible.** Deleting the `if prep is None` check changed no visible outcome: the
+  code went on to read `prep.id`, raised, and the per-outcome `except` swallowed it — same absence of
+  notification, same empty counter. The difference between "skipped, as designed" and "crashed, and we hid it"
+  only exists in the log, so the test now asserts **no warning was emitted**.
+
+The sweep asks nobody today, which is correct: the one outcome already carries its mark.
+
+## 11. What is not known
+
+- ~~**No runtime measurement.**~~ **Partly answered — §10.6.** Measured against the development database once
+  the migrations were applied: **6** goals with a deadline already passed, **3** preparations awaiting a
+  review, and **69 of 105** study plans drifted. So the nightly pass is correct rather than urgent for goals,
+  and the *plan* sweep is the one with real reach. Still unmeasured on any database with a realistic number of
+  learners, where those 69 plans would belong to 69 different people rather than a handful.
+- **Whether the observed-throughput extension is stable enough to schedule against.** `consistencyScore`
+  and `avgSessionMinutes` only became non-NULL recently, so there may not yet be enough history to size an
+  extension from. Phase 2's change log is what would reveal it, now that it exists — but it starts empty, so
+  the answer is some months away.
+- **Whether learners answer nudges at all.** The entire ladder past "notify" assumes a response rate that
+  has never been observed, because no deadline nudge has ever been sent. Phase 6 is where that assumption
+  gets tested, and phase 8 depends on it.
+- **Whether learners will answer the post-exam review**, which is the assumption phases 1 and 7 rest on. It
+  arrives after a possibly-bad experience, which is the worst moment to ask anyone anything. The design
+  mitigates by asking once with a small reminder budget and treating a dismissal as an answer, but the
+  response rate is unknown and the calibration in §6.2 is worthless below some threshold nobody can predict.
+  ~~Instrument the ask itself — asked, answered, dismissed — from day one, so the next decision has a
+  number.~~ **Built — §10.13.** The number is now one command away, and its first reading is **0 answers from
+  4 asks, with 18 candidates never asked at all.**
+- **How long calibration takes to mean anything.** 46 preparations exist across the whole database, and most
+  learners have one. Aggregate calibration may take many months of outcomes; per-learner calibration may
+  never be reachable for the majority. Phase 7 should be scheduled against outcome *volume*, not a date, and
+  until then readiness stays exactly as it is rather than being adjusted on thin evidence.
+- **A nudge on a space-scoped goal cannot be answered from anywhere.** `goal_service.list_goals` sets
+  `where["spaceId"] = None` when no space is requested, so a goal belonging to a space is excluded from the
+  personal goals list — and both clients' nudge prompts read exactly that list. One of the four nudged goals on
+  `okon.victor.u@gmail.com` is in a space, so its question is invisible to the prompt *and* to the library, and
+  the only record of it is a `GoalLifecycleAction` row nobody can reach. The exclusion looks deliberate for the
+  library; the prompt's need is different — it asks "you have an outstanding decision", which is not scoped to
+  a space. Fixing it by widening `list_goals` would change what the library shows, so it wants a decision
+  rather than a patch: either the prompt reads a purpose-built "goals awaiting an answer" read, or space goals
+  join the personal list.
+- `intelligence/observation/tracker.py` has five registered `@listen` handlers whose bodies are all
+  `logger.debug` plus a `# Future:` comment. It is the natural home for some of phase 6, but it has never
+  done anything, so treat it as an empty room rather than a foundation.

@@ -1,68 +1,53 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>Subscription Confirmed | Maigie</title>
-</head>
-<body style="font-family: Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; padding: 20px; background-color: #ffffff;">
+{% extends "base.html" %}
 
-    <div style="max-width: 600px; margin: 0;">
-        {% if logo_url %}
-        <div style="margin-bottom: 30px; text-align: center;">
-            <img src="{{ logo_url }}" alt="{{ app_name }}" style="max-width: 200px; height: auto;" />
-        </div>
-        {% endif %}
-        
-        <h1 style="color: #222222; font-size: 24px; font-weight: bold; margin-bottom: 20px;">Subscription Confirmed!</h1>
-        
-        <p style="margin-bottom: 15px;">Hi {{ name }},</p>
-        
-        <p style="margin-bottom: 25px;">
-            Thank you for upgrading to {{ tier_name }}! Your subscription is now active, and you have access to all premium features.
-        </p>
+{% block title %}Subscription confirmed | {{ app_name }}{% endblock %}
 
-        <p style="margin-bottom: 25px; color: #4b5563;">
-            Run your <strong>academic operating system</strong> without limits—chat, voice, courses, schedule, and reviews stay in one place.
-        </p>
-        
-        <p style="margin-bottom: 25px;">
-            Here's what you've unlocked:
-            <ul style="margin-bottom: 25px;">
-                <li>Unlimited AI chat</li>
-                <li>Unlimited courses</li>
-                <li>Priority support</li>
-                <li>Ad-free experience</li>
-                {% if tier_name == 'Premium Yearly' %}
-                <li>Offline mode</li>
-                <li>Detailed analytics</li>
-                <li>Early access</li>
-                {% endif %}
-            </ul>
-        </p>
+{% block preheader %}Your {{ tier_name }} subscription is active.{% endblock %}
 
-        <div style="margin-bottom: 30px;">
-            <a href="{{ dashboard_url }}" style="
-                background-color: #4F46E5; 
-                color: #ffffff; 
-                display: inline-block; 
-                padding: 12px 24px; 
-                border-radius: 5px; 
-                font-size: 16px; 
-                font-weight: bold; 
-                text-decoration: none;">
-                Go to Dashboard
-            </a>
-        </div>
+{% block heading %}Subscription confirmed{% endblock %}
 
-        <p style="font-size: 14px; color: #666666; margin-top: 30px;">
-            You can manage your subscription at any time from your settings.
-        </p>
+{% block content %}
+<p style="margin:0 0 16px 0;">Hi {{ name }},</p>
 
-        <p style="font-size: 12px; color: #999999; margin-top: 24px; border-top: 1px solid #eeeeee; padding-top: 16px;">
-            Maigie — The Academic Operating System
-        </p>
+<p style="margin:0 0 16px 0;">
+    Thank you for upgrading to {{ tier_name }}. Your subscription is active and every premium
+    feature is available now.
+</p>
 
-    </div>
+<p style="margin:0 0 16px 0;">
+    Run your <strong style="color:#111827;">academic operating system</strong> without limits —
+    chat, voice, courses, schedule and reviews stay in one place.
+</p>
 
-</body>
-</html>
+{#
+The list used to sit inside a <p>, which is invalid HTML: a
+<ul> closes the paragraph, so
+    Outlook and Gmail each guessed differently at the spacing. It is a sibling now.
+    #}
+    <p style="margin:0 0 8px 0; font-weight:bold; color:#111827;">Here's what you've unlocked</p>
+    <ul style="margin:0 0 24px 0; padding-left:20px; color:#374151;">
+        <li style="padding-bottom:6px;">Unlimited AI chat</li>
+        <li style="padding-bottom:6px;">Unlimited courses</li>
+        <li style="padding-bottom:6px;">Priority support</li>
+        <li{% if tier_name=='Premium Yearly' %} style="padding-bottom:6px;" {% endif %}>Ad-free experience</li>
+            {% if tier_name == 'Premium Yearly' %}
+            <li style="padding-bottom:6px;">Offline mode</li>
+            <li style="padding-bottom:6px;">Detailed analytics</li>
+            <li>Early access</li>
+            {% endif %}
+    </ul>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+        <tr>
+            <td align="center" bgcolor="#4F46E5" style="background-color:#4F46E5; border-radius:8px;">
+                <a href="{{ dashboard_url }}"
+                    style="display:inline-block; padding:14px 28px; font-family:Helvetica,Arial,sans-serif; font-size:15px; font-weight:bold; line-height:1; color:#ffffff; text-decoration:none;">Go
+                    to dashboard</a>
+            </td>
+        </tr>
+    </table>
+
+    <p style="margin:0; color:#6b7280; font-size:14px;">
+        You can manage your subscription at any time from your settings.
+    </p>
+    {% endblock %}

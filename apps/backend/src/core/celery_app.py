@@ -55,6 +55,12 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         timezone=settings.CELERY_TIMEZONE,
         enable_utc=settings.CELERY_ENABLE_UTC,
         task_always_eager=settings.CELERY_TASK_ALWAYS_EAGER,
+        # Eager tasks store their result too, which they do not by default. Without this,
+        # `CELERY_TASK_ALWAYS_EAGER=true` — the obvious way to run without a broker locally — makes
+        # every result-polling route hang: the task runs inline and completes, and `AsyncResult` still
+        # reports `PENDING` because nothing was written. Affects eager mode only, so it changes
+        # nothing in production.
+        task_store_eager_result=True,
         task_acks_late=settings.CELERY_TASK_ACKS_LATE,
         task_reject_on_worker_lost=settings.CELERY_TASK_REJECT_ON_WORKER_LOST,
         worker_prefetch_multiplier=settings.CELERY_WORKER_PREFETCH_MULTIPLIER,
@@ -71,9 +77,9 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
             "spaced_repetition.*": {"queue": "default"},
             "course.*": {"queue": "heavy"},
             "schedule.*": {"queue": "heavy"},
-            "exam_prep.process_materials": {"queue": "exam_prep"},
             "exam_prep.*": {"queue": "heavy"},
             "resources.*": {"queue": "heavy"},
+            "learning.*": {"queue": "heavy"},
         },
         # Task time limits
         task_time_limit=300,  # Hard time limit (5 minutes) — override per-task for lightweight
@@ -102,15 +108,13 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
 
 @worker_process_init.connect
 def _install_sigchld_handler(**kwargs: Any) -> None:
-    """Install SIGCHLD handler to automatically reap child processes.
+    """Initialize worker process: auto-reap children.
 
-    Prisma spawns a query-engine subprocess. If that subprocess crashes or
-    restarts, the old process becomes a zombie unless the parent (Celery
-    worker) calls wait(). Setting SIGCHLD to SIG_IGN tells the kernel to
-    automatically reap children, eliminating zombie accumulation entirely.
-
-    This runs once per forked worker process.
+    Database initialization is handled lazily per-task to avoid event loop
+    mismatch — each task creates its own asyncio loop, and asyncpg connections
+    are bound to the loop they were created on.
     """
+    # Reap zombies from Prisma engine subprocesses
     if hasattr(signal, "SIGCHLD"):
         signal.signal(signal.SIGCHLD, signal.SIG_IGN)
         logger.debug("SIGCHLD set to SIG_IGN — zombies will be auto-reaped")
@@ -120,18 +124,14 @@ def _install_sigchld_handler(**kwargs: Any) -> None:
 celery_app = create_celery_app()
 
 # Ensure feature tasks are imported so Celery registers them.
-# Celery worker entrypoint is `-A src.core.celery_app:celery_app`, so we import
-# task modules here to make them discoverable without requiring autodiscovery.
+# New domain-scoped task modules in src/workers/.
 try:
-    from ..tasks import (
-        agent_tasks,  # noqa: F401
-        course_generation,  # noqa: F401
-        email_notifications,  # noqa: F401
-        exam_prep_tasks,  # noqa: F401
-        push_notifications,  # noqa: F401
-        resource_recommendations,  # noqa: F401
-        schedule_generation,  # noqa: F401
-        spaced_repetition,  # noqa: F401
+    from src.workers import (
+        billing_tasks,  # noqa: F401
+        intelligence_tasks,  # noqa: F401
+        notification_tasks,  # noqa: F401
+        personal_learning_tasks,  # noqa: F401
+        progress_tasks,  # noqa: F401
     )
 except Exception as e:
     # Avoid crashing the app if optional modules are unavailable at import time,
@@ -139,6 +139,69 @@ except Exception as e:
     logger.exception("Failed to import Celery task modules: %s", e)
     # Celery boot logs can miss python logger output early; print ensures visibility.
     print(f"[celery_app] Failed to import Celery task modules: {e}")
+
+# Personal learning domain tasks (self-registering via @celery_app.task)
+try:
+    from src.domains.personal_learning import tasks as _learning_tasks  # noqa: F401
+
+    # Merge personal-learning beat schedule into the app
+    if not hasattr(celery_app.conf, "beat_schedule") or celery_app.conf.beat_schedule is None:
+        celery_app.conf.beat_schedule = {}
+    celery_app.conf.beat_schedule.update(_learning_tasks.get_beat_schedule())
+except Exception as e:
+    logger.exception("Failed to import personal learning task modules: %s", e)
+    print(f"[celery_app] Failed to import personal learning task modules: {e}")
+
+# Progress domain beat entries. Its tasks self-register through the `src.workers` import above; this
+# is only the schedule, kept in the domain's own module rather than folded into personal learning's so
+# a goal task is not scheduled from the learning package.
+try:
+    from src.workers import progress_tasks as _progress_tasks
+
+    if not hasattr(celery_app.conf, "beat_schedule") or celery_app.conf.beat_schedule is None:
+        celery_app.conf.beat_schedule = {}
+    celery_app.conf.beat_schedule.update(_progress_tasks.get_beat_schedule())
+except Exception as e:
+    logger.exception("Failed to load progress beat schedule: %s", e)
+    print(f"[celery_app] Failed to load progress beat schedule: {e}")
+
+
+# Canonical notification dispatch and Expo receipt/recovery schedules.
+try:
+    from src.workers import notification_tasks as _notification_tasks
+
+    if not hasattr(celery_app.conf, "beat_schedule") or celery_app.conf.beat_schedule is None:
+        celery_app.conf.beat_schedule = {}
+    celery_app.conf.beat_schedule.update(_notification_tasks.get_beat_schedule())
+except Exception as e:
+    logger.exception("Failed to load notification beat schedule: %s", e)
+    print(f"[celery_app] Failed to load notification beat schedule: {e}")
+
+
+# The pass sweep (Decision E). Expiry itself resolves on read, so this schedule is what makes a learner
+# whose pass ended get *told* rather than what makes the pass end.
+try:
+    from src.workers import billing_tasks as _billing_tasks
+
+    if not hasattr(celery_app.conf, "beat_schedule") or celery_app.conf.beat_schedule is None:
+        celery_app.conf.beat_schedule = {}
+    celery_app.conf.beat_schedule.update(_billing_tasks.get_beat_schedule())
+except Exception as e:
+    logger.exception("Failed to load billing beat schedule: %s", e)
+    print(f"[celery_app] Failed to load billing beat schedule: {e}")
+
+
+# Domain event handlers. Same reason as the task imports above: `@listen` registers on import, so a
+# worker that never imported a handler module dispatches nothing. A worker emitting an event the web
+# process handles — or the reverse — is exactly how this stayed invisible, because each process had its
+# own accidental answer depending on which modules its code path happened to touch.
+try:
+    from src.shared.events.registry import register_handlers as _register_event_handlers
+
+    _register_event_handlers()
+except Exception as e:
+    logger.exception("Failed to register domain event handlers: %s", e)
+    print(f"[celery_app] Failed to register domain event handlers: {e}")
 
 
 def get_celery_app() -> Celery:

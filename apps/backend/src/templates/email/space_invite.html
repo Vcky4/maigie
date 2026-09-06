@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Learning space invite | {{ app_name }}{% endblock %}
+
+{% block preheader %}{{ inviter_name }} invited you to join "{{ space_name }}".{% endblock %}
+
+{% block heading %}You've been invited{% endblock %}
+
+{% block content %}
+<p style="margin:0 0 16px 0;">Hi there,</p>
+
+<p style="margin:0 0 16px 0;">
+    <strong style="color:#111827;">{{ inviter_name }}</strong> has invited you to join their
+    learning space <strong style="color:#111827;">"{{ space_name }}"</strong> on {{ app_name }}.
+</p>
+
+<p style="margin:0 0 24px 0;">
+    Learning spaces are a shared layer on the academic operating system: notes, resources and
+    group learning in one place.
+</p>
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+    <tr>
+        <td align="center" bgcolor="#4F46E5" style="background-color:#4F46E5; border-radius:8px;">
+            <a href="{{ spaces_url }}"
+                style="display:inline-block; padding:14px 28px; font-family:Helvetica,Arial,sans-serif; font-size:15px; font-weight:bold; line-height:1; color:#ffffff; text-decoration:none;">View
+                invite</a>
+        </td>
+    </tr>
+</table>
+
+<p style="margin:0; color:#6b7280; font-size:14px;">
+    No account yet? Sign up free with this email address to accept the invite.
+</p>
+{% endblock %}

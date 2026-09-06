@@ -1,57 +1,32 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>Welcome to Maigie — The Academic Operating System</title>
-</head>
-<body style="font-family: Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; padding: 20px; background-color: #ffffff;">
+{% extends "base.html" %}
 
-    <div style="max-width: 600px; margin: 0;">
-        {% if logo_url %}
-        <div style="margin-bottom: 30px; text-align: center;">
-            <img src="{{ logo_url }}" alt="{{ app_name }}" style="max-width: 200px; height: auto;" />
-        </div>
-        {% endif %}
-        
-        <h1 style="color: #222222; font-size: 24px; font-weight: bold; margin-bottom: 20px;">You're in!</h1>
-        
-        <p style="margin-bottom: 15px;">Hi {{ name }},</p>
-        
-        <p style="margin-bottom: 25px;">
-            Congratulations, your account has been successfully verified. We are thrilled to have you on board.
-        </p>
+{% block title %}Welcome to {{ app_name }}{% endblock %}
 
-        <p style="margin-bottom: 25px; color: #4b5563;">
-            Maigie is your AI-powered <strong>academic operating system</strong>—courses, schedule, notes, goals, and reviews in one coordinated workflow. Study smarter, remember more, perform better.
-        </p>
-        
-        <p style="margin-bottom: 25px;">
-            You can now log in to your dashboard and start exploring.
-        </p>
+{% block preheader %}Your account is verified. Here's where to start.{% endblock %}
 
-        <div style="margin-bottom: 30px;">
-            <a href="{{ login_url }}" style="
-                background-color: #4F46E5; 
-                color: #ffffff; 
-                display: inline-block; 
-                padding: 12px 24px; 
-                border-radius: 5px; 
-                font-size: 16px; 
-                font-weight: bold; 
-                text-decoration: none;">
-                Go to Dashboard
-            </a>
-        </div>
+{% block heading %}You're in{% endblock %}
 
-        <p style="font-size: 14px; color: #666666; margin-top: 30px;">
-            If you have any questions, feel free to reply to this email.
-        </p>
+{% block content %}
+<p style="margin:0 0 16px 0;">Hi{% if name %} {{ name }}{% endif %},</p>
 
-        <p style="font-size: 12px; color: #999999; margin-top: 24px; border-top: 1px solid #eeeeee; padding-top: 16px;">
-            Maigie — The Academic Operating System
-        </p>
+<p style="margin:0 0 16px 0;">Your account is verified. {{ app_name }} is your AI-powered academic operating system: courses, schedule, notes, goals and reviews in one workflow.</p>
 
-    </div>
+<p style="margin:0 0 8px 0; font-weight:bold; color:#111827;">Three things worth doing first</p>
+<ul style="margin:0 0 24px 0; padding-left:20px; color:#374151;">
+    <li style="padding-bottom:6px;">Set your learning purpose so study plans match your goal.</li>
+    <li style="padding-bottom:6px;">Add a course or upload your first document.</li>
+    <li>Run a short quiz to get a baseline readiness score.</li>
+</ul>
 
-</body>
-</html>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+    <tr>
+        <td align="center" bgcolor="#4F46E5" style="background-color:#4F46E5; border-radius:8px;">
+            <a href="{{ login_url }}" style="display:inline-block; padding:14px 28px; font-family:Helvetica,Arial,sans-serif; font-size:15px; font-weight:bold; line-height:1; color:#ffffff; text-decoration:none;">Open {{ app_name }}</a>
+        </td>
+    </tr>
+</table>
+
+<p style="margin:0; color:#6b7280; font-size:14px;">
+    Questions? Reply to this email and a human will read it.
+</p>
+{% endblock %}

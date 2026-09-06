@@ -1,0 +1,912 @@
+"""
+Knowledge domain — Pydantic request/response schemas.
+
+Covers courses, modules, topics, resources, resource bank,
+AI generation, and progress analytics.
+"""
+
+from datetime import datetime
+from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from src.shared.schemas import CamelModel, PaginatedResponse
+from src.shared.validation import require_safe_external_url
+
+# ===========================================================================
+# Enums
+# ===========================================================================
+
+
+class DifficultyLevel(str, Enum):
+    BEGINNER = "BEGINNER"
+    INTERMEDIATE = "INTERMEDIATE"
+    ADVANCED = "ADVANCED"
+    EXPERT = "EXPERT"
+
+
+class ResourceType(str, Enum):
+    VIDEO = "VIDEO"
+    ARTICLE = "ARTICLE"
+    BOOK = "BOOK"
+    COURSE = "COURSE"
+    DOCUMENT = "DOCUMENT"
+    WEBSITE = "WEBSITE"
+    PODCAST = "PODCAST"
+    OTHER = "OTHER"
+
+
+# ===========================================================================
+# Topics
+# ===========================================================================
+
+
+SectionKind = Literal["concept", "example", "algorithm", "comparison", "check"]
+
+
+class TopicSectionStep(CamelModel):
+    """One step of a walkthrough. Kept as a title and a detail rather than a single string, because
+    the reader renders the title as a heading and the detail as prose beneath it."""
+
+    title: str
+    detail: str
+
+
+class TopicSectionCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    order: float = Field(..., ge=0)
+    kind: SectionKind = "concept"
+    eyebrow: str | None = Field(None, max_length=120)
+    summary: str | None = None
+    durationMinutes: int | None = Field(None, ge=0, le=600)
+    paragraphs: list[str] | None = None
+    keyIdea: str | None = None
+    steps: list[TopicSectionStep] | None = None
+    bullets: list[str] | None = None
+    code: str | None = None
+
+
+class TopicSectionUpdate(BaseModel):
+    """Every field optional, and read with `exclude_unset=True` so omitting a key leaves it alone
+    while sending an explicit null clears it."""
+
+    title: str | None = Field(None, min_length=1, max_length=255)
+    order: float | None = Field(None, ge=0)
+    kind: SectionKind | None = None
+    eyebrow: str | None = Field(None, max_length=120)
+    summary: str | None = None
+    durationMinutes: int | None = Field(None, ge=0, le=600)
+    paragraphs: list[str] | None = None
+    keyIdea: str | None = None
+    steps: list[TopicSectionStep] | None = None
+    bullets: list[str] | None = None
+    code: str | None = None
+
+
+class TopicSectionResponse(CamelModel):
+    """One step of a lesson.
+
+    `completed` is per section and lives beside `Topic.completed` rather than replacing it. The two
+    answer different questions — whether the learner has worked through this step, and whether they
+    consider the topic done — and the topic's flag is not derived from the sections', because a
+    learner may mark a topic complete without clicking through every section of it.
+    """
+
+    id: str
+    topic_id: str
+    order: float
+    kind: str
+    title: str
+    eyebrow: str | None = None
+    summary: str | None = None
+    #: Minutes, not a formatted string: the lesson header sums these into a total, which a
+    #: pre-formatted "6 min" could not be added up.
+    duration_minutes: int | None = None
+    paragraphs: list[str] | None = None
+    key_idea: str | None = None
+    steps: list[TopicSectionStep] | None = None
+    bullets: list[str] | None = None
+    code: str | None = None
+    completed: bool = False
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class KnowledgeCheckChoice(CamelModel):
+    """One option of a topic's knowledge check.
+
+    `correct` is still sent to the client, now that attempts *are* recorded. The reveal is immediate and
+    offline-tolerant: the reader shows the verdict and the explanation the moment the learner answers,
+    without waiting for a round trip that could fail and leave them staring at a question they have
+    already answered.
+
+    What that costs is that the answer key is visible to anyone reading the response, so the published
+    key cannot be the basis of the recorded result. It is not: `POST /topics/{id}/check/attempts` takes
+    only the chosen id and grades it against the stored check, so the row cannot be talked into saying
+    something the check does not. A learner could still read the key before answering — but this is a
+    self-test in their own course, and the only person it would mislead is them. An assessment whose
+    result matters to somebody else belongs in the preparation domain, which does not publish its keys.
+    """
+
+    id: str
+    label: str
+    correct: bool = False
+
+
+class KnowledgeCheck(CamelModel):
+    """The end-of-lesson check: one question, its choices, and why the answer is what it is."""
+
+    question: str
+    explanation: str
+    choices: list[KnowledgeCheckChoice] = []
+
+
+#: Phases writing a lesson passes through. Typed rather than a bare string so the reader gets a closed
+#: set to switch on: a wait screen that has to guess at stage names cannot report an unknown one
+#: honestly. Kept in step with `lesson_service.GenerationStage`, which owns the order and is asserted
+#: against this.
+LessonGenerationStage = Literal[
+    "PREPARING",
+    "WRITING_LESSON",
+    "STRUCTURING",
+    "SAVING",
+    "READY",
+]
+
+
+class TopicCheckAttemptCreate(CamelModel):
+    """An answer to a topic's check.
+
+    The chosen id and nothing else. No `correct` field: the server grades the attempt from the stored
+    check, so the record cannot be shaped by the page that is being tested.
+    """
+
+    choice_id: str = Field(..., min_length=1, max_length=255)
+
+
+class TopicCheckAttemptResponse(CamelModel):
+    """One recorded answer.
+
+    `question` and `choiceLabel` are as they were when the attempt was made, so the history stays
+    readable after a lesson is regenerated and its check replaced.
+    """
+
+    id: str
+    topic_id: str
+    choice_id: str
+    question: str
+    choice_label: str
+    correct: bool
+    created_at: datetime
+
+
+class TopicIllustrationResponse(CamelModel):
+    """A diagram or equation kept from a study session.
+
+    `mermaid` and `displayMath` are both optional and at least one is always present — the table has a check
+    constraint saying so, because a row with neither draws an empty panel, which reads as a broken feature
+    rather than an absent one.
+
+    The client composes its own `MessageContentBlock[]` from these two fields, which is the conversion it
+    already performs on the diagram route's reply. Sending the block array instead was considered and
+    rejected: the server would then be publishing a shape it does not validate, and the `image` variant in
+    that union would let a stored row point anywhere.
+    """
+
+    id: str
+    topic_id: str
+    mermaid: str | None = None
+    display_math: str | None = None
+    caption: str | None = None
+    #: `tutor` when the model chose to show it, `learner` when it was asked for. Shown, because a lesson
+    #: that lists both without distinction credits the learner's own question to the tutor.
+    source: str
+    created_at: datetime
+
+
+class TopicCheckSummary(CamelModel):
+    """What a learner's attempts at one check add up to.
+
+    The field that matters for review is `firstAttemptCorrect`. Understanding is what the learner knew
+    before being told, and the reader shows the answer as soon as they submit — so anything after the
+    first attempt measures whether they can copy a revealed answer.
+    """
+
+    attempts: int = 0
+    incorrect_attempts: int = 0
+    #: Null when the check has never been attempted, which is not the same as having failed it.
+    first_attempt_correct: bool | None = None
+    #: Whether any attempt was correct. A learner who failed twice and then passed has `passed` true
+    #: and `firstAttemptCorrect` false, which is the distinction the whole table exists to keep.
+    passed: bool = False
+    last_attempt_at: datetime | None = None
+    #: What they chose most recently, so reopening a lesson restores the reader rather than presenting
+    #: an answered question as unanswered.
+    last_choice_id: str | None = None
+    #: True once the learner has been wrong here even once, and it stays true after they pass. Passing
+    #: on the second attempt does not undo not knowing it on the first, and this is the flag a revisit
+    #: — a flashcard, a practice set, a nudge — should key on.
+    needs_revisit: bool = False
+
+
+class TopicCheckAttemptResult(CamelModel):
+    """The graded attempt, plus what it does to the learner's record of this check."""
+
+    attempt: TopicCheckAttemptResponse
+    summary: TopicCheckSummary
+    #: Why the correct answer is correct. Returned so the verdict and its reasoning come from the same
+    #: place as the grade, rather than the page explaining a result it did not decide.
+    explanation: str
+
+
+#: What kind of work a sitting is. Distinct from `SectionKind`, which is how one passage within a
+#: lesson explains something — see the note on `Topic.kind`.
+TopicKind = Literal["Lesson", "Practice", "Project", "Check"]
+
+
+class TopicCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    order: float = Field(..., ge=0)
+    content: str | None = None
+    estimatedHours: float | None = Field(None, ge=0)
+    kind: TopicKind | None = None
+    summary: str | None = None
+    objectives: list[str] | None = None
+    knowledgeCheck: KnowledgeCheck | None = None
+
+
+class TopicUpdate(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=255)
+    order: float | None = Field(None, ge=0)
+    content: str | None = None
+    estimatedHours: float | None = Field(None, ge=0)
+    completed: bool | None = None
+    kind: TopicKind | None = None
+    summary: str | None = None
+    objectives: list[str] | None = None
+    knowledgeCheck: KnowledgeCheck | None = None
+
+
+class TopicResponse(CamelModel):
+    """A topic as returned to the client.
+
+    Fields are snake_case and the wire format stays camelCase, which is not cosmetic here: this model
+    is validated straight off a SQLAlchemy `Topic`, and while the fields were declared camelCase that
+    validation could not find `module_id`, `created_at` or `updated_at` at all — `POST .../topics`
+    answered `500`. `estimatedHours` was worse: it has a default, so it silently came back null
+    rather than failing, and the endpoint looked like it worked.
+    """
+
+    id: str
+    module_id: str
+    title: str
+    order: float
+    content: str | None = None
+    completed: bool = False
+    # Null for a pending topic, and for one completed before the column existed — those are absent
+    # from any history rather than given a date nothing observed.
+    completed_at: datetime | None = None
+    estimated_hours: float | None = None
+    #: Lesson, Practice, Project or Check. Null on topics written before the column existed, and the
+    #: outline shows no label rather than assuming Lesson.
+    kind: str | None = None
+    #: The lesson header's one-line description. Null rather than derived: the first section's summary
+    #: describes that section, and the opening of `content` is the material rather than a description
+    #: of it, so either substitute would say something other than what the header claims.
+    summary: str | None = None
+    #: What the learner will be able to do after this topic. Null means none were written, which is
+    #: not the same as an empty list — the reader shows no objectives block rather than an empty one.
+    objectives: list[str] | None = None
+    knowledge_check: KnowledgeCheck | None = None
+    #: The lesson body as an ordered sequence of steps. Empty for a topic whose content is a single
+    #: markdown blob in `content`, which the reader falls back to rather than showing nothing.
+    sections: list[TopicSectionResponse] = []
+    created_at: datetime
+    updated_at: datetime
+
+
+class TopicGenerateRequest(BaseModel):
+    """AI content generation type for a topic."""
+
+    type: Literal["explain", "quiz", "summary", "flashcards"]
+    #: Required for `flashcards`, ignored otherwise. Generated cards have to land in a deck: an
+    #: unfiled card is invisible to the deck pages and only reachable through the flat card list.
+    deckId: str | None = None
+
+
+class TopicGenerateResponse(CamelModel):
+    """What a generation call produced, and what it stored.
+
+    `CamelModel` rather than `BaseModel`: this was one of four response models in the domain still declaring
+    camelCase field names directly, which is a second mechanism for one wire format and the reason §13 lists
+    unification. It is constructed by hand with camelCase keywords, which `populate_by_name` keeps working.
+    """
+
+    type: str
+    topic_id: str
+    content: str
+    #: What was stored, in words — "7 sections", "5 flashcards" — or null when the type deliberately
+    #: stores nothing. Stated rather than implied by the type, so a caller can report the outcome
+    #: without encoding the rule about which types persist.
+    persisted: str | None = None
+
+
+# ===========================================================================
+# Modules
+# ===========================================================================
+
+
+class TopicBulkCreate(BaseModel):
+    """A whole module's worth of topics in one request.
+
+    The create wizard saves an outline of a dozen or more topics. Sent one at a time, a failure halfway
+    leaves a course that is half an outline, and the learner is the one who has to work out which half
+    and finish it by hand. One request either writes the outline or writes none of it.
+    """
+
+    topics: list[TopicCreate] = Field(..., min_length=1, max_length=100)
+
+
+class ReorderRequest(BaseModel):
+    """The new order, as ids from first to last.
+
+    Ids rather than `{id, order}` pairs, because the caller knows the sequence it wants and not the
+    float values that encode it. Letting a client send the numbers means two clients can disagree about
+    the spacing, and a dragged item can be given an order that collides with another.
+    """
+
+    ids: list[str] = Field(..., min_length=1, max_length=500)
+
+
+class ReorderResponse(CamelModel):
+    """What the reorder wrote, so the caller can tell a no-op from a partial write."""
+
+    reordered: int
+
+
+class ModuleCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    order: float = Field(..., ge=0)
+    description: str | None = None
+
+
+class ModuleUpdate(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=255)
+    order: float | None = Field(None, ge=0)
+    description: str | None = None
+
+
+class ModuleResponse(CamelModel):
+    """A module with its topics and derived progress.
+
+    Built from `course_service.calculate_module_progress`, whose keys are camelCase and reach these
+    snake_case fields as aliases. `topics` holds raw ORM rows, validated through `TopicResponse`.
+    """
+
+    id: str
+    course_id: str
+    title: str
+    order: float
+    description: str | None = None
+    completed: bool = False
+    progress: float = 0.0
+    topic_count: int = 0
+    completed_topic_count: int = 0
+    topics: list[TopicResponse] = []
+    created_at: datetime
+    updated_at: datetime
+
+
+# ===========================================================================
+# Courses
+# ===========================================================================
+
+
+class CourseInstructor(CamelModel):
+    """Who authored or teaches the course, when anyone did.
+
+    Absent — the whole object null — for a course the learner generated for themselves, which is most
+    of them. Crediting the owner as the instructor of their own course, or crediting "Maigie", would
+    put a claim on the page that nothing supports.
+
+    Initials are not stored or returned: they are the first letters of the name, which is formatting,
+    and a stored copy is one more thing that can disagree with the name beside it.
+    """
+
+    name: str
+    role: str | None = None
+
+
+class CourseRatingSummary(CamelModel):
+    """The aggregate of a course's ratings, plus this learner's own.
+
+    `average` and `count` are null and zero for an unrated course, so the page can show no rating
+    rather than a zero — "nobody has rated this" and "everybody rated it 0" are different statements
+    and only one of them is ever true here.
+
+    `yourRating` is included so the control can show the learner what they already gave without a
+    second request, and so re-rating updates rather than adds.
+    """
+
+    average: float | None = None
+    count: int = 0
+    your_rating: int | None = None
+
+
+class CourseRatingCreate(BaseModel):
+    """Rating a course. Re-rating updates the existing row, so the average cannot be weighted by
+    submitting repeatedly."""
+
+    value: int = Field(..., ge=1, le=5)
+    comment: str | None = Field(None, max_length=2000)
+
+
+class CourseCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    description: str | None = None
+    difficulty: DifficultyLevel | None = None
+    targetDate: datetime | None = None
+    isAIGenerated: bool = False
+    spaceId: str | None = None
+    #: What the course is about. Distinct from `difficulty`, which says how hard it is — one cannot
+    #: answer for the other, and using difficulty as the badge put the wrong word on the card.
+    category: str | None = Field(None, max_length=120)
+    tags: list[str] | None = None
+    outcomes: list[str] | None = None
+    instructorName: str | None = Field(None, max_length=200)
+    instructorRole: str | None = Field(None, max_length=200)
+    #: The learner's brief, in their words — what the create wizard's description box collects. Stored
+    #: because it drives generation and because a learner should be able to see what they asked for.
+    sourcePrompt: str | None = None
+    #: Visual, Hands-on, Concept first or Mixed. Scoped to this course, overriding the learner's global
+    #: `preferredExplanationStyle` rather than replacing it.
+    teachingStyle: str | None = Field(None, max_length=60)
+
+
+class CourseUpdate(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=255)
+    description: str | None = None
+    difficulty: DifficultyLevel | None = None
+    targetDate: datetime | None = None
+    archived: bool | None = None
+    spaceId: str | None = None
+    category: str | None = Field(None, max_length=120)
+    tags: list[str] | None = None
+    outcomes: list[str] | None = None
+    instructorName: str | None = Field(None, max_length=200)
+    instructorRole: str | None = Field(None, max_length=200)
+    sourcePrompt: str | None = None
+    teachingStyle: str | None = Field(None, max_length=60)
+
+
+class CourseResponse(CamelModel):
+    """A course with its modules, topics and derived progress.
+
+    `progress`, `totalTopics` and `completedTopics` are computed per request from the topics rather
+    than read from `Course.progress`, which nothing writes — see the note on that column.
+    """
+
+    id: str
+    user_id: str
+    title: str
+    description: str | None = None
+    difficulty: DifficultyLevel | None = None
+    target_date: datetime | None = None
+    # Explicit alias: the generator would produce `isAiGenerated`, and the published contract
+    # — and every client reading it — says `isAIGenerated`. An acronym is where a camelCase
+    # generator and a hand-named field disagree, so this one is pinned rather than derived.
+    is_ai_generated: bool = Field(default=False, alias="isAIGenerated")
+    archived: bool = False
+    progress: float = 0.0
+    total_topics: int = 0
+    completed_topics: int = 0
+    modules: list[ModuleResponse] = []
+    created_at: datetime
+    updated_at: datetime
+    outline_satisfaction_recorded: bool = False
+    #: What the course is about, as a subject label — the badge on the detail page. Null for courses
+    #: created before it existed; the badge is omitted rather than guessed from the difficulty.
+    category: str | None = None
+    tags: list[str] | None = None
+    #: "What you'll be able to do" — the promise the course makes, separate from the objectives of any
+    #: one topic within it.
+    outcomes: list[str] | None = None
+    #: What the learner asked for, kept so the request that produced the course is visible and
+    #: regeneration has something to work from.
+    source_prompt: str | None = None
+    #: How this course should be explained. Null means fall through to the learner's global preference.
+    teaching_style: str | None = None
+    #: Null when nobody is credited, which is the normal case for a self-generated course.
+    instructor: CourseInstructor | None = None
+    rating: CourseRatingSummary | None = None
+
+
+class TopicLocationResponse(CamelModel):
+    """A topic, plus enough of its module and course to open it.
+
+    Exists because every caller that holds a topic id needs its course before it can show the topic,
+    and nothing could get from one to the other. Two surfaces were blocked on that:
+
+    - The lesson route, `/learn/lessons/{id}`, which had no backend concept behind it at all.
+    - A study plan item carrying a `topicId`, which could be completed but not opened.
+
+    Returns the ids and titles of the ancestors rather than the whole `CourseResponse`. A caller that
+    wants the full outline asks for the course; a caller opening one topic wants a breadcrumb, and
+    embedding every module and topic of the course to supply it would make opening one topic cost the
+    whole curriculum.
+    """
+
+    topic: TopicResponse
+    module_id: str
+    module_title: str
+    course_id: str
+    course_title: str
+    #: Position among the course's topics in outline order, 1-based, and how many there are. What a
+    #: "Topic 4 of 12" line needs, and not derivable by a caller holding only this topic.
+    position: int
+    total_topics: int
+    #: Completion of the whole course as a percentage. The lesson header shows the learner where this
+    #: sitting sits in the course, so without it the surface would have to fetch the entire course to
+    #: print one number.
+    course_progress: float = 0.0
+    #: The learner's record on this topic's check. Included here rather than left to a second request
+    #: because the reader needs it to render at all: reopening a lesson has to know whether the check
+    #: was already answered, and with what, or it presents an answered question as unanswered and gates
+    #: Continue behind work the learner already did.
+    #:
+    #: Null when the topic has no check. A topic that has one but has never been attempted carries a
+    #: summary with `attempts: 0` — "no check here" and "not attempted yet" are different facts.
+    check_progress: TopicCheckSummary | None = None
+    #: Which phase writing this lesson has reached, or null when nothing is being written.
+    #:
+    #: Writing a lesson is the longest generation in the product, and the reader used to show a pulsing
+    #: icon for all of it. The generate request stays synchronous, so the reader watches these stages by
+    #: reading this endpoint *while its own request is open*: the request resolving is the terminal
+    #: signal, and this is the detail in between. Every value has a database write behind it, the same
+    #: standard `QuizSessionResponse.generationStage` holds.
+    lesson_generation_stage: LessonGenerationStage | None = None
+    #: 0.0-1.0, derived from the stage so the two cannot disagree. Null when no stage is known.
+    lesson_generation_progress: float | None = None
+
+
+class CourseNextTopic(CamelModel):
+    """The next incomplete topic of a course, in outline order.
+
+    Deliberately not the whole `TopicResponse`: a card prints a title and needs the ids to link, and
+    `content` on a topic can be a page of markdown that no library view renders.
+    """
+
+    id: str
+    module_id: str
+    title: str
+    estimated_hours: float | None = None
+
+
+class CourseListItem(CamelModel):
+    """A course as it appears in the library, without its modules or topics.
+
+    `moduleCount` rather than the modules themselves: a library card shows a count, and the client
+    type comment already records that this is not named `totalModules`.
+    """
+
+    id: str
+    user_id: str
+    title: str
+    description: str | None = None
+    difficulty: DifficultyLevel | None = None
+    target_date: datetime | None = None
+    # Explicit alias: the generator would produce `isAiGenerated`, and the published contract
+    # — and every client reading it — says `isAIGenerated`. An acronym is where a camelCase
+    # generator and a hand-named field disagree, so this one is pinned rather than derived.
+    is_ai_generated: bool = Field(default=False, alias="isAIGenerated")
+    archived: bool = False
+    progress: float = 0.0
+    total_topics: int = 0
+    completed_topics: int = 0
+    module_count: int = 0
+    # Both derived from the topics the list response does not carry, aggregated in SQL. A card names
+    # the next thing to do and how much is left, and loading every topic of every course to work that
+    # out is what the counts above exist to avoid.
+    #
+    # `nextTopic` is null when nothing is incomplete — the course is finished, which wants a different
+    # label rather than a blank one. `remainingHours` is null when no remaining topic carries an
+    # estimate, so a client says "no estimate" instead of printing a confident `0h` for work that has
+    # never been sized.
+    next_topic: CourseNextTopic | None = None
+    remaining_hours: float | None = None
+    #: The card's own fields, restored. `difficulty` was briefly used as the category badge and a
+    #: module count as the tags, which put facts on the card that were not the ones it was showing.
+    category: str | None = None
+    tags: list[str] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CourseListResponse(PaginatedResponse[CourseListItem]):
+    """The course library, one page at a time.
+
+    Migrated onto the shared envelope: `items` rather than `courses`, and `pages` rather than
+    `hasMore`. Done now because the only consumer is being rewritten from scratch in the same change,
+    which is the cheapest this migration will ever be — every later moment costs a client rewrite as
+    well.
+
+    `pages` replaces `hasMore` because it answers strictly more: a pager needs to know how many pages
+    there are, and "is there another one" is `page < pages`. `hasMore` could not be derived the other
+    way round.
+    """
+
+
+class CourseActivityEntry(CamelModel):
+    """A topic the learner completed, with the course it belongs to.
+
+    Built from `Topic.completedAt`, not from a stored activity log. Topics completed before that
+    column existed are absent rather than dated from `updatedAt`, which moves on any edit.
+    """
+
+    topic_id: str
+    topic_title: str
+    course_id: str
+    course_title: str
+    completed_at: datetime
+    estimated_hours: float | None = None
+
+
+class CoursesDashboardResponse(CamelModel):
+    """Everything the course library shows above its grid, in one request.
+
+    Composed for the same reason as the flashcards and study-plan dashboards: assembled from the
+    endpoints that already existed this was several requests, and the recent-activity list could not
+    be produced at all.
+
+    **`weeklyHours` is estimated, not measured.** It sums the estimates on the topics completed since
+    the learner's week began. Nothing anywhere records how long a topic actually took, and a column
+    for it would not make the measurement exist — so the figure is named for what it is, exactly as
+    `completedMinutes` is on a study plan.
+
+    There is deliberately **no weekly goal**. A learner sets a weekly target on a study plan, where it
+    is asked for; nothing asks for one against their course library, and dividing by a number nobody
+    chose would put an invented target on screen.
+    """
+
+    active_courses: int
+    archived_courses: int
+    total_topics: int
+    completed_topics: int
+    #: Estimated hours on topics completed since the learner's week began. Planned effort, not time.
+    weekly_hours: float
+    #: Topics completed this week, which unlike the hours above is a count of real events.
+    weekly_topics_completed: int
+    #: Consecutive days with a completed topic, in the learner's timezone. Distinct from the flashcard
+    #: and study-plan streaks: this one counts topics, and they count graded cards and finished tasks.
+    current_streak_days: int
+    #: Flashcards due now, so the library can point at review work without inventing a figure. From
+    #: the flashcard domain, and labelled as such on screen rather than presented as course progress.
+    flashcards_due: int
+    #: The course to resume: the one whose most recent topic completion is newest.
+    featured: CourseListItem | None = None
+    recent_activity: list[CourseActivityEntry] = Field(default_factory=list)
+    #: False when the learner's timezone was never captured, so "this week" and the streak are a UTC
+    #: assumption rather than their actual week.
+    timezone_known: bool = False
+
+
+# `AICourseRequest` was deleted with the `POST /courses/generate` endpoint it served. That endpoint was a
+# published `501` whose implementation had been unreachable since the LLM migration, and a permanent `501`
+# advertises a capability while refusing it — every client has to special-case something that never worked.
+# `CourseOutlineRequest` below replaces it, and takes the learner's brief rather than a bare topic string.
+
+
+class CourseOutlineRequest(BaseModel):
+    """The brief an outline is generated from.
+
+    Everything the create wizard has gathered by its review step. `brief` is the learner's own words and is
+    the thing being answered; the rest is context that shapes it.
+    """
+
+    title: str = Field(..., min_length=1, max_length=255)
+    brief: str = Field(..., min_length=12, max_length=8000)
+    difficulty: DifficultyLevel | None = None
+    teachingStyle: str | None = Field(None, max_length=60)
+    category: str | None = Field(None, max_length=120)
+
+
+class GeneratedOutlineTopic(CamelModel):
+    """One planned sitting. No id and no order: nothing is persisted yet."""
+
+    title: str
+    kind: str = "Lesson"
+    duration_minutes: int | None = None
+
+
+class GeneratedOutlineModule(CamelModel):
+    title: str
+    description: str | None = None
+    topics: list[GeneratedOutlineTopic] = []
+
+
+class CourseOutlineResponse(CamelModel):
+    """A proposed curriculum, generated and **not saved**.
+
+    Returned for review so a learner sees what they are about to get before it exists. The wizard previously
+    showed the outline of whichever template they started from, whatever they had asked for — typing "Data
+    analytics" against the public-speaking template offered "Working with speaking nerves", and accepting it
+    saved exactly that.
+
+    Nothing here carries an id or a position, because nothing has been written. The client sends the parts it
+    keeps back through the normal create endpoints, which is what makes rejecting an outline free.
+    """
+
+    modules: list[GeneratedOutlineModule] = []
+    #: Course-level outcomes the same generation produced, so the learner is not asked for them separately.
+    outcomes: list[str] | None = None
+
+
+class CourseOutlineSatisfactionCreate(BaseModel):
+    """Learner feedback on AI-generated outline (KPI)."""
+
+    kind: Literal["SATISFIED", "NOT_SATISFIED", "MODIFICATION_REQUESTED"]
+    feedback: str | None = Field(None, max_length=4000)
+
+
+# ===========================================================================
+# Course detail, progress and analytics: deliberately absent
+# ===========================================================================
+#
+# `CourseDetailResponse`, `ProgressResponse` and `UserAnalyticsResponse` lived here with no route
+# attached, along with the eight helper models only they referenced. A response model nothing returns
+# is worse than nothing: it describes a shape, so a client author reasonably assumes an endpoint
+# exists — which is why `coursesApi.getCourseDetailView` and `getUserAnalytics` were written, and why
+# both throw.
+#
+# They are not being routed, either. Between them they carried a study streak, a contribution
+# footprint and a schedule list, none of which are facts about a course: the first two belong to the
+# progress domain and the third to scheduling, and composing them here would put a second
+# implementation of each beside the one that owns it. The detail page is served by
+# `GET /knowledge/courses/{id}` plus the endpoints that already own those figures.
+#
+# Deleted rather than commented out, because a commented-out model is the same claim in a quieter
+# voice. Nothing referenced them: FastAPI emits schemas reachable from routes, so they never reached
+# the published contract or the generated client types.
+
+# ===========================================================================
+# Resources
+# ===========================================================================
+
+
+class ResourceCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    # Rendered into an `href` by the resource surfaces, so the scheme is checked here rather than
+    # trusted. See `src/shared/validation.py`.
+    url: str
+    description: str | None = None
+    type: ResourceType = ResourceType.OTHER
+    metadata: dict | None = None
+
+    _validate_url = field_validator("url")(require_safe_external_url)
+    isRecommended: bool = False
+    recommendationScore: float | None = None
+    recommendationSource: str | None = None
+    # Added for symmetry with the other three. Its absence meant a caller could say how strongly a
+    # resource was recommended and by what, but not why — the one field of the four that carries
+    # something a learner would actually read.
+    recommendationReason: str | None = None
+    courseId: str | None = None
+    topicId: str | None = None
+    spaceId: str | None = None
+
+
+class ResourceResponse(CamelModel):
+    """A saved or recommended resource.
+
+    Snake_case fields on `CamelModel`, validated straight off the `Resource` row — which let
+    `_format_resource` be deleted rather than kept in step. That hand-written mapper is worth remembering:
+    it built a camelCase dict from snake_case reads, and when the ORM moved from Prisma it silently returned
+    `bookmarkCount: 0` and `recommendationSource: None` for every resource because its `getattr` defaults
+    swallowed the renames. A model that reads the row directly cannot drift from it.
+
+    Two fields need care and both are pinned rather than left to the generator:
+
+    - `metadata` is mapped as `metadata_json` on the ORM, because `metadata` is reserved on a declarative
+      class and resolves to SQLAlchemy's own `MetaData` object. `to_camel` would publish it as
+      `metadataJson`, so the alias holds the published name.
+    - The timestamps are `datetime`, not `str`. The old model typed them as strings because the mapper had
+      already called `.isoformat()`; reading the row means reading real datetimes, which serialise to the
+      same ISO strings on the wire.
+    """
+
+    id: str
+    user_id: str
+    title: str
+    url: str
+    description: str | None = None
+    type: str
+    # Split aliases, not one `alias`. A single `alias="metadata"` would make pydantic *read* the attribute
+    # called `metadata` off the row — which on any declarative class is SQLAlchemy's own `MetaData` object,
+    # not the column. That is the trap this file's own docstring warns about, and it fails as a validation
+    # error rather than an `AttributeError`, so it would have looked like a schema problem.
+    metadata: dict | None = Field(
+        default=None, validation_alias="metadata_json", serialization_alias="metadata"
+    )
+    is_recommended: bool = False
+    recommendation_score: float | None = None
+    recommendation_source: str | None = None
+    # Published because it is now written. The column existed unused alongside the other three
+    # recommendation fields, and this model had the other three but not this one, so even once
+    # `recommend_resources` started writing it the value would have stopped at the schema.
+    recommendation_reason: str | None = None
+    click_count: int = 0
+    bookmark_count: int = 0
+    space_id: str | None = None
+    course_id: str | None = None
+    topic_id: str | None = None
+    last_accessed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ResourceInteractionRequest(BaseModel):
+    """What a learner did with a resource.
+
+    A closed set, not a free string. The kind used to arrive as a query parameter typed `str`, so any value
+    reached `record_interaction` and the two the service actually understands were documented nowhere — a
+    caller had to read the service to find out that `RESOURCE_VIEW` does nothing.
+
+    `interactionType` on the wire because that is the convention everywhere else here; the old query
+    parameter was `interaction_type`, which is the only snake_case name this API published.
+    """
+
+    interactionType: Literal["RESOURCE_CLICK", "RESOURCE_BOOKMARK"]
+
+
+class ResourceRecommendationRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=1000)
+    limit: int = Field(5, ge=1, le=20)
+    context: dict | None = None
+
+
+class ResourceRecommendationResponse(CamelModel):
+    """Resources found for a query, as saved rows.
+
+    `recommendations` is `ResourceResponse`, not a bespoke item type. Recommendations are now
+    persisted, so they have ids and behave like every other resource — openable, filterable,
+    fileable into a collection — and a second shape would have meant a client rendering the same
+    thing two ways depending on where it came from. The `ResourceRecommendationItem` this
+    replaced described a response that was thrown away.
+
+    The two extra fields exist because a recommendation can be honestly partial:
+
+    - `grounded` — whether the model actually ran a web search. The search tool is a request, not
+      a guarantee; when it comes back false the URLs were produced from weights, and while they
+      still had to resolve to be stored, the client should say so rather than imply otherwise.
+    - `discarded` — how many proposals were dropped because their URLs did not resolve. Without
+      it, asking for five and receiving two looks like a bug instead of link checking working.
+
+    `personalized` is gone. It was hardcoded `True` on every response, including ones where the
+    reply could not be parsed and the list was empty, so it never carried information.
+    """
+
+    recommendations: list[ResourceResponse]
+    query: str
+    grounded: bool
+    discarded: int = 0
+
+
+# ===========================================================================
+# Course Filters
+# ===========================================================================
+
+
+class CourseFilters(BaseModel):
+    """Query parameters for filtering courses."""
+
+    archived: bool | None = None
+    difficulty: DifficultyLevel | None = None
+    isAIGenerated: bool | None = None
+    search: str | None = Field(None, max_length=255)
+    page: int = Field(1, ge=1)
+    pageSize: int = Field(20, ge=1, le=100)
+    sortBy: str = Field("createdAt", pattern="^(createdAt|updatedAt|title|progress)$")
+    sortOrder: str = Field("desc", pattern="^(asc|desc)$")
+    spaceId: str | None = None

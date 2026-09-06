@@ -15,6 +15,10 @@
     {
       "name": "maigie-public",
       "path": "../maigie-public"
+    },
+    {
+      "name": "maigie-book",
+      "path": "../maigie-book"
     }
   ],
   "settings": {
@@ -31,6 +35,8 @@
     },
     "java.compile.nullAnalysis.mode": "automatic",
     "java.configuration.updateBuildConfiguration": "automatic",
-    "typescript.autoClosingTags": false
+    "typescript.autoClosingTags": false,
+    "editor.formatOnSave": true,
+    "files.autoSave": "onFocusChange"
   }
 }

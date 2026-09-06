@@ -5,7 +5,7 @@ description = "Maigie FastAPI backend"
 authors = [
     {name = "Maigie Team"}
 ]
-license = {text = "BUSL-1.1"}
+license = "BUSL-1.1"
 requires-python = ">=3.11,<4.0"
 dynamic = ["dependencies"]
 
@@ -26,7 +26,6 @@ authlib = "^1.3.0"
 email-validator = "^2.1.0"
 redis = {extras = ["hiredis"], version = "^5.0.0"}
 celery = {extras = ["redis"], version = "^5.3.0"}
-prisma = "^0.15.0"
 python-json-logger = "^2.0.7"
 sentry-sdk = {extras = ["fastapi"], version = "^2.0.0"}
 prometheus-client = "^0.21.0"
@@ -43,22 +42,47 @@ google-genai = "^1.30.0"
 duckduckgo-search = "^7.0.0"
 pypdf = "^4.0.0"
 python-docx = "^1.1.0"
-fpdf2 = "^2.8.0"
-pinecone = "^6.0.0"
 mcp = "^1.2.1"
 openai = "^1.40.0"
 anthropic = "^0.34.0"
 firebase-admin = "^6.5.0"
+htmldocx = "^0.0.6"
+xhtml2pdf = "^0.2.16"
+python-pptx = "^1.0.0"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.51"}
+asyncpg = "^0.31.0"
+alembic = "^1.18.5"
+greenlet = "^3.5.3"
+weasyprint = "^69.0"
+# RFC 8188/8291 payload encryption for Web Push, from the project that owns the
+# reference implementation. Pinned exactly rather than caret-ranged because a silent
+# minor bump here changes ciphertext framing, and a payload a browser cannot decrypt
+# fails invisibly inside the push service. Deliberately *not* pywebpush: that pulls
+# `aiohttp` we do not use and forces `cryptography` past the bound `fastapi-mail`
+# declares. VAPID JWTs are signed with the `python-jose[cryptography]` already here,
+# and delivery uses the existing `httpx`, so retry and expiry handling stay ours.
+http-ece = "1.2.1"
+app-store-server-library = "^3.1.2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"
 pytest-asyncio = "^0.24.0"
+# Lets repository tests run their queries against a real engine instead of skipping
+# whenever no Postgres is configured. Test-only: nothing in `src` targets SQLite.
+aiosqlite = "^0.20.0"
+# Ruff is the only formatter and the only linter. Black and isort were both here until the
+# layout rules lived in two places at once: `[tool.black]` and `[tool.ruff]` each declared
+# `line-length` and `target-version`, and the lint config ignored `E203` purely to stay out
+# of Black's way. isort was never invoked by CI or the Dockerfile at all — ruff's `I` rules
+# have been sorting imports for as long as they have been selected.
 ruff = "^0.6.0"
-black = "^25.12.0"
 mypy = "^1.11.0"
 coverage = "^7.12.0"
-flake8 = "^7.3.0"
-isort = "^7.0.0"
+# Runs ruff on staged files before each commit. The hook definitions live in
+# `.pre-commit-config.yaml` at the *git root*, not here, because that is the only path
+# `pre-commit install` reads. Installed as a backend dev dependency rather than expected
+# globally so `poetry install` is the single setup step; activate with `pre-commit install`.
+pre-commit = "^4.0.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -74,21 +98,42 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
-# F401 = Unused imports
-# F841 = Unused local variables
-# N818 = Exception naming
-# E501 = Line length
-# E203: whitespace before ':' — Black slices; keep Black as source of truth for layout
-ignore = ["E501", "E203", "N818", "F401", "F841", "N803", "N815", "UP035"]
+# This ignore list was copied wholesale from the old `.flake8` when the project moved to ruff,
+# which carried flake8's compromises across with it. Two of them are worth revisiting rather
+# than inheriting: **F401 hides 165 unused imports and F841 hides 15 unused local variables**,
+# and an assigned-but-unused variable is usually the trace of a code path that was removed.
+# `ruff check --fix` clears the imports; the variables want reading one at a time.
+#
+# E501 = Line length. Legitimately off: neither a formatter nor a linter can wrap a long URL
+#   or a prose docstring, and this codebase has 3,647 lines over 100 characters that are
+#   almost entirely comments and strings. The formatter enforces width where width is
+#   enforceable.
+# N818 = Exception naming (five classes not suffixed `Error`).
+# F401 = Unused imports.
+# F841 = Unused local variables.
+#
+# `E203` was here too, with a comment about keeping Black as the source of truth for layout.
+# It is a preview-only rule in ruff, so ignoring it never had any effect — it was guarding
+# against a check that was never running.
+ignore = ["E501", "N818", "F401", "F841", "N803", "N815", "UP035"]
 
 [tool.ruff.lint.per-file-ignores]
 # Test files set env vars before imports (SKIP_DB_FIXTURE pattern)
 "tests/**" = ["E402"]
+# Alembic requires the config to be set up before the models are imported.
+"alembic/env.py" = ["E402"]
+# N806 flags UPPER_CASE locals as badly-named variables. In these three files they are
+# genuine constants that cannot be hoisted to module level, because they are built from
+# heavy optional dependencies (python-pptx, weasyprint) that are imported lazily inside
+# the function on purpose. N811 is the same lazy weasyprint import, aliased to keep it
+# out of the module namespace.
+"src/domains/personal_learning/services/document_impl.py" = ["N806", "N811"]
+"src/domains/billing/services/google_play_service.py" = ["N806"]
+"src/domains/intelligence/action/skills/registry.py" = ["N806"]
+# `_LazyModule` subclasses ModuleType, so `__getattr__(self, name)` is a normal instance
+# method. Ruff reads the `type(...)` base as a metaclass and expects `cls`.
+"src/workers/celery_app.py" = ["N804"]
 
-[tool.black]
-line-length = 100
-target-version = ["py312"]
-#NEW
 [tool.mypy]
 python_version = "3.12"
 warn_return_any = true
@@ -107,16 +152,7 @@ filterwarnings = [
     "ignore::DeprecationWarning:starlette.*",
     "ignore::DeprecationWarning:pytest_asyncio.*",
     "ignore::DeprecationWarning:asyncio.*",
-    # Prisma ships a Pydantic v1 compat shim that warns on newer Python
-    "ignore:Core Pydantic V1 functionality isn't compatible:UserWarning",
     # Pydantic v2 migration (our models still use class-based Config in places)
     "ignore::pydantic.warnings.PydanticDeprecatedSince20",
 ]
 
-
-
-[tool.isort]
-profile = "black"
-
-[tool.prisma]
-seed = "python prisma/seed.py"

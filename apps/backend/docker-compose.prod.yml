@@ -55,9 +55,6 @@ services:
       - .env
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
       PORT: 8000
     ports:
       - "8000:8000"
@@ -80,9 +77,7 @@ services:
           memory: 2G
     command: >
       sh -c "
-        prisma migrate deploy 2>&1 || echo '[WARN] prisma migrate failed';
-        python prisma/cleanup-duplicates.py 2>&1 || echo 'No duplicates';
-        python prisma/seed.py 2>&1 || echo 'Seed done';
+        alembic upgrade head 2>&1 || echo '[WARN] alembic upgrade failed';
         exec uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 2 --limit-max-requests 5000
       "
 
@@ -99,9 +94,6 @@ services:
       - .env
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
     depends_on:
       redis:
         condition: service_healthy
@@ -111,8 +103,6 @@ services:
       resources:
         limits:
           memory: 1G
-    healthcheck:
-      disable: true
     command: >
       sh -c "
         if [ \"$$ENVIRONMENT\" = 'production' ]; then
@@ -132,44 +122,6 @@ services:
       "
 
   # ─────────────────────────────────────────────────────────────────────────
-  # Exam Prep Worker (isolated queue, autoscales between 1 and 2 processes)
-  # ─────────────────────────────────────────────────────────────────────────
-  exam-prep-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: maigie-exam-prep-worker
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      ENVIRONMENT: ${ENVIRONMENT:-production}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - maigie_network
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-    healthcheck:
-      disable: true
-    command: >
-      celery -A src.core.celery_app worker
-      --loglevel=info
-      --autoscale=2,1
-      --max-tasks-per-child=20
-      --queues=exam_prep
-      --without-gossip
-      --without-mingle
-      --without-heartbeat
-      -Ofair
-
-  # ─────────────────────────────────────────────────────────────────────────
   # Celery Beat (scheduler)
   # ─────────────────────────────────────────────────────────────────────────
   celery-beat:
@@ -182,9 +134,6 @@ services:
       - .env
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
     depends_on:
       redis:
         condition: service_healthy
@@ -194,8 +143,6 @@ services:
       resources:
         limits:
           memory: 128M
-    healthcheck:
-      disable: true
     command: celery -A src.core.celery_app beat --loglevel=info
 
 volumes:

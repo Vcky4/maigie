@@ -68,70 +68,9 @@ services:
       - preview_${PREVIEW_ID}
     command: >
       sh -c "
-        prisma migrate deploy &&
-        python prisma/seed.py &&
+        alembic upgrade head &&
         uvicorn src.main:app --host 0.0.0.0 --port 8000
       "
-
-  celery-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: maigie-preview-celery-worker-${PREVIEW_ID}
-    environment:
-      DATABASE_URL: postgresql://maigie:${POSTGRES_PASSWORD:-preview_password}@postgres:5432/maigie_preview_${PREVIEW_ID}
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: preview
-      PREVIEW_ID: ${PREVIEW_ID}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - preview_${PREVIEW_ID}
-    healthcheck:
-      disable: true
-    command: >
-      celery -A src.core.celery_app worker
-      --loglevel=info
-      --concurrency=1
-      --max-tasks-per-child=20
-      --queues=default,heavy
-      --without-gossip
-      --without-mingle
-      --without-heartbeat
-      -Ofair
-
-  exam-prep-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: maigie-preview-exam-prep-worker-${PREVIEW_ID}
-    environment:
-      DATABASE_URL: postgresql://maigie:${POSTGRES_PASSWORD:-preview_password}@postgres:5432/maigie_preview_${PREVIEW_ID}
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: preview
-      PREVIEW_ID: ${PREVIEW_ID}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - preview_${PREVIEW_ID}
-    healthcheck:
-      disable: true
-    command: >
-      celery -A src.core.celery_app worker
-      --loglevel=info
-      --autoscale=2,1
-      --max-tasks-per-child=20
-      --queues=exam_prep
-      --without-gossip
-      --without-mingle
-      --without-heartbeat
-      -Ofair
 
 volumes:
   postgres_data_${PREVIEW_ID}:

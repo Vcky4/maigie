@@ -1,47 +1,24 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>Verify your email — Maigie</title>
-</head>
-<body style="font-family: Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; padding: 20px; background-color: #ffffff;">
+{% extends "base.html" %}
 
-    <div style="max-width: 600px; margin: 0;">
-        {% if logo_url %}
-        <div style="margin-bottom: 30px; text-align: center;">
-            <img src="{{ logo_url }}" alt="{{ app_name }}" style="max-width: 200px; height: auto;" />
-        </div>
-        {% endif %}
-        
-        <h1 style="color: #222222; font-size: 24px; font-weight: bold; margin-bottom: 20px;">Welcome to Maigie</h1>
+{% block title %}Verify your email — {{ app_name }}{% endblock %}
 
-        <p style="margin-bottom: 20px; font-size: 15px; color: #4b5563;">The AI-powered academic operating system: courses, schedule, notes, goals, and reviews in one workflow.</p>
-        
-        <p style="margin-bottom: 15px;">Hi there,</p>
-        
-        <p style="margin-bottom: 25px;">
-            Thanks for signing up. Please use the code below to confirm your email address and activate your account.
-        </p>
+{# Shown in the inbox list next to the subject, so the code is readable without opening. #}
+{% block preheader %}Your {{ app_name }} verification code is {{ code }}. It expires in {{ expires_minutes }} minutes.{% endblock %}
 
-        <div style="margin-bottom: 25px;">
-            <span style="background-color: #4F46E5; color: #ffffff; padding: 14px 28px; border-radius: 4px; font-size: 24px; font-weight: bold; letter-spacing: 4px; display: inline-block;">
-                {{ code }}
-            </span>
-        </div>
+{% block heading %}Verify your email{% endblock %}
 
-        <p style="font-size: 14px; color: #666666; margin-top: 30px;">
-            This code will expire in 15 minutes.
-        </p>
-        
-        <p style="font-size: 14px; color: #666666;">
-            If you didn't request this, you can safely ignore this email.
-        </p>
+{% block content %}
+<p style="margin:0 0 16px 0;">Hi{% if name %} {{ name }}{% endif %},</p>
 
-        <p style="font-size: 12px; color: #999999; margin-top: 24px; border-top: 1px solid #eeeeee; padding-top: 16px;">
-            Maigie — The Academic Operating System
-        </p>
+<p style="margin:0 0 4px 0;">Thanks for signing up. Enter this code to confirm your email address and activate your account.</p>
 
-    </div>
+{% include "_otp_code.html" %}
 
-</body>
-</html>
+<p style="margin:0 0 16px 0; color:#6b7280; font-size:14px;">
+    Keep this code to yourself. {{ app_name }} will never ask you for it by phone, chat or email.
+</p>
+
+<p style="margin:0; color:#6b7280; font-size:14px;">
+    If you didn't create a {{ app_name }} account, you can safely ignore this email.
+</p>
+{% endblock %}

@@ -14,14 +14,26 @@ from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
 
 import pytest  # noqa: E402
 
-from src.services.llm.base_adapter import BaseProviderAdapter  # noqa: E402
-from src.services.llm.capabilities import ChatCapability, EmbeddingCapability  # noqa: E402
-from src.services.llm.circuit_breaker import CircuitBreaker  # noqa: E402
-from src.services.llm.errors import GeminiError, LLMProviderError, OpenAIError  # noqa: E402
-from src.services.llm.feature_flags import FeatureFlagService  # noqa: E402
-from src.services.llm.router import LLMRouter  # noqa: E402
-from src.services.llm_registry import LlmTask  # noqa: E402
-
+from src.domains.intelligence.reasoning.llm.base_adapter import (
+    BaseProviderAdapter,
+)  # noqa: E402
+from src.domains.intelligence.reasoning.llm.capabilities import (  # noqa: E402
+    ChatCapability,
+    EmbeddingCapability,
+)
+from src.domains.intelligence.reasoning.llm.circuit_breaker import (
+    CircuitBreaker,
+)  # noqa: E402
+from src.domains.intelligence.reasoning.llm.errors import (  # noqa: E402
+    GeminiError,
+    LLMProviderError,
+    OpenAIError,
+)
+from src.domains.intelligence.reasoning.llm.feature_flags import (
+    FeatureFlagService,
+)  # noqa: E402
+from src.domains.intelligence.reasoning.llm.registry import LlmTask  # noqa: E402
+from src.domains.intelligence.reasoning.llm.router import LLMRouter  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Mock adapters
@@ -231,6 +243,7 @@ class TestSuccessfulRouting:
             model_preference=None,
             history=[],
             user_message="Hello",
+            attempt_id="attempt-ask",
         )
 
         mock_cost_tracker.record.assert_called_once_with(
@@ -240,11 +253,17 @@ class TestSuccessfulRouting:
             output_tokens=50,
             user_id="user-1",
             user_tier="free",
+            attempt_id="attempt-ask",
         )
 
     @pytest.mark.asyncio
     async def test_respects_model_preference(
-        self, feature_flags, circuit_breaker, mock_cost_tracker, gemini_adapter, openai_adapter
+        self,
+        feature_flags,
+        circuit_breaker,
+        mock_cost_tracker,
+        gemini_adapter,
+        openai_adapter,
     ):
         """Router uses model preference when the preferred pair is valid."""
         router = LLMRouter(
@@ -433,7 +452,7 @@ class TestFallbackBehavior:
         )
 
         # Gemini should have 1 failure recorded
-        from src.services.llm.circuit_breaker import CircuitState
+        from src.domains.intelligence.reasoning.llm.circuit_breaker import CircuitState
 
         # Not enough failures to trip (threshold=3), but failure is recorded
         assert (
@@ -479,7 +498,12 @@ class TestTierAccessControl:
 
     @pytest.mark.asyncio
     async def test_preference_ignored_when_tier_disallows(
-        self, feature_flags, circuit_breaker, mock_cost_tracker, gemini_adapter, openai_adapter
+        self,
+        feature_flags,
+        circuit_breaker,
+        mock_cost_tracker,
+        gemini_adapter,
+        openai_adapter,
     ):
         """Model preference is ignored if the model isn't allowed for the tier."""
         router = LLMRouter(
@@ -604,3 +628,100 @@ class TestCostTrackingResilience:
 
         assert text == "Gemini response"
         failing_tracker.record.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Embeddings are infrastructure, not a tier entitlement
+# ---------------------------------------------------------------------------
+
+
+class MockEmbeddingAdapter(BaseProviderAdapter):
+    """Mock embedding adapter, declaring only EmbeddingCapability."""
+
+    def __init__(self, provider: str = "gemini", model: str = "gemini-embedding-001"):
+        self._provider = provider
+        self._model = model
+
+    @property
+    def provider_name(self) -> str:
+        return self._provider
+
+    @property
+    def model_id(self) -> str:
+        return self._model
+
+    def supported_capabilities(self) -> set[type]:
+        return {EmbeddingCapability}
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0] * 8 for _ in texts]
+
+    async def get_chat_response_with_tools(self, **kwargs):
+        # `BaseProviderAdapter` declares this abstract, so an embedding-only adapter still has to
+        # satisfy it. The real `GeminiEmbeddingAdapter` raises here too; this mirrors it so the
+        # mock cannot accidentally pass a chat capability check it should fail.
+        raise AssertionError("embedding adapter does not serve chat")
+
+
+class TestEmbeddingTierExemption:
+    """`LlmTask.EMBEDDING` must resolve without appearing in any tier allowlist.
+
+    The bug this pins: `gemini-embedding-001` was registered and was the embedding task's whole
+    fallback chain, but was in no `LLM_TIER_ALLOWLIST_*`, so the entitlement filter removed the only
+    candidate and the task had zero. The router turns "no candidates" into
+    `category="overloaded"`, which the clients render as "All AI services are currently busy" — so a
+    missing allowlist entry would have looked like provider overload and a retry would never have
+    helped.
+    """
+
+    def _router(self, *, enabled_providers: str = "gemini") -> LLMRouter:
+        return LLMRouter(
+            feature_flags=FeatureFlagService(
+                enabled_providers=enabled_providers,
+                # Deliberately chat-only, and deliberately does NOT list the embedding model.
+                # That is the production shape and the whole point of the test.
+                tier_allowlists={
+                    "free": "gemini:gemini-3.5-flash",
+                    "plus": "gemini:gemini-3.5-flash",
+                },
+            ),
+            circuit_breaker=CircuitBreaker(),
+            cost_tracker=MagicMock(record=AsyncMock()),
+            adapter_registry={"gemini:gemini-embedding-001": MockEmbeddingAdapter()},
+            fallback_chains={LlmTask.EMBEDDING: [("gemini", "gemini-embedding-001")]},
+            timeout_seconds=10.0,
+        )
+
+    def test_embedding_resolves_though_no_tier_allowlist_names_it(self):
+        candidates = self._router()._select_candidates(LlmTask.EMBEDDING, "user-1", "free")
+        assert candidates == [("gemini", "gemini-embedding-001")]
+
+    def test_exemption_is_not_tier_dependent(self):
+        # There is no paid embedding tier, so free and plus must agree.
+        router = self._router()
+        assert router._select_candidates(
+            LlmTask.EMBEDDING, "user-1", "free"
+        ) == router._select_candidates(LlmTask.EMBEDDING, "user-1", "plus")
+
+    def test_disabled_provider_still_blocks_embeddings(self):
+        # The exemption drops the *allowlist* only. `LLM_ENABLED_PROVIDERS` is a kill switch and
+        # must still hold, or turning a provider off would leave embeddings pointed at it.
+        router = self._router(enabled_providers="openai")
+        assert router._select_candidates(LlmTask.EMBEDDING, "user-1", "free") == []
+
+    def test_chat_is_still_tier_gated(self):
+        # The exemption must not leak. A chat model absent from the allowlist stays rejected.
+        router = LLMRouter(
+            feature_flags=FeatureFlagService(
+                enabled_providers="gemini",
+                tier_allowlists={"free": "gemini:gemini-3.1-flash-lite", "plus": ""},
+            ),
+            circuit_breaker=CircuitBreaker(),
+            cost_tracker=MagicMock(record=AsyncMock()),
+            adapter_registry={
+                "gemini:gemini-3.5-flash": MockChatAdapter("gemini", "gemini-3.5-flash")
+            },
+            fallback_chains={LlmTask.CHAT_DEFAULT: [("gemini", "gemini-3.5-flash")]},
+            timeout_seconds=10.0,
+        )
+        assert router._select_candidates(LlmTask.CHAT_DEFAULT, "user-1", "free") == []

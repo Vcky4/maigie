@@ -35,6 +35,12 @@ fi
 poetry config virtualenvs.in-project true
 poetry install --no-root
 
+# Wire the git pre-commit hook: ruff lint + format over staged backend files. The hook
+# definitions live in `.pre-commit-config.yaml` at the *git root*, which `pre-commit install`
+# locates on its own, so running from apps/backend is fine. Not fatal if it fails — a missing
+# hook should not stop someone from getting a working backend.
+poetry run pre-commit install || echo "Warning: could not install the git pre-commit hook." >&2
+
 if [ ! -f .env ] && [ -f .env.example ]; then
   cp .env.example .env
 fi

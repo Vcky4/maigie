@@ -8,13 +8,13 @@
     "serve": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "powershell -ExecutionPolicy Bypass -File scripts/serve.ps1",
+        "command": "bash scripts/serve.sh",
         "cwd": "apps/backend",
         "forwardAllArgs": false
       },
       "configurations": {
         "production": {
-          "command": "powershell -ExecutionPolicy Bypass -File scripts/serve.ps1",
+          "command": "bash scripts/serve.sh",
           "cwd": "apps/backend"
         }
       }

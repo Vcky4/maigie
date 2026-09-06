@@ -3,4 +3,3 @@ node_modules
 .env
 __pycache__/
 *.pyc
-prisma/migrations/
