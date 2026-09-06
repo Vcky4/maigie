@@ -16,11 +16,24 @@ from ..repository import billing_repo
 logger = logging.getLogger(__name__)
 
 
+def resolve_currency(country: str | None) -> str:
+    """The pricing currency for a market, from the learner's country (§6.8).
+
+    Nigeria is the one non-USD market today, so `NG` -> `ngn` and everything else -> `usd`. Kept as a
+    single function because currency is *derived* from country, never stored: the country is the
+    durable fact, and adding a market later is a line here rather than a data migration. `None`
+    (country not set yet) falls back to USD, which is also what an anonymous caller gets.
+    """
+    return "ngn" if (country or "").upper() == "NG" else "usd"
+
+
 async def get_plan_catalog(currency: str = "usd") -> dict[str, Any]:
     """Return the active product catalog (public, no auth required).
 
     `currency` selects the market: `ngn` returns the NGN prices and the NGN-only Term Pass, anything
-    else the USD list. Prices are set per market rather than converted (§6.8).
+    else the USD list. Prices are set per market rather than converted (§6.8). The route resolves the
+    currency from the signed-in learner's country when it can; this stays currency-in so the function
+    is testable without a user and usable by anonymous callers.
     """
     from src.domains.billing.services.stripe_service import get_active_plan_catalog
 

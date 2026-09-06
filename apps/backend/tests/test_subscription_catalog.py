@@ -33,6 +33,7 @@ from src.domains.billing import models as billing_models  # noqa: E402
 from src.domains.billing.services import entitlement_service  # noqa: E402
 from src.domains.billing.services import paystack_service as paystack_svc  # noqa: E402
 from src.domains.billing.services import stripe_service as stripe_svc  # noqa: E402
+from src.domains.billing.services import subscription_service  # noqa: E402
 from src.domains.personal_learning.services import trial_service  # noqa: E402
 from src.shared.exceptions import DeprecatedPlanError  # noqa: E402
 
@@ -165,6 +166,19 @@ class TestNgnCatalogue:
     def test_the_default_market_is_usd(self):
         """No `currency` argument means the USD list — the pre-existing behaviour, unchanged."""
         assert stripe_svc.get_active_plan_catalog().plans[0].currency == "usd"
+
+
+class TestResolveCurrency:
+    """Currency is derived from the learner's country, never stored. Nigeria is the one non-USD
+    market today; everything else, and an unknown/unset country, is USD."""
+
+    def test_nigeria_is_ngn(self):
+        assert subscription_service.resolve_currency("NG") == "ngn"
+        assert subscription_service.resolve_currency("ng") == "ngn"
+
+    def test_everything_else_is_usd(self):
+        for country in ["US", "GB", "KE", "ZA", "", None, "XX"]:
+            assert subscription_service.resolve_currency(country) == "usd"
 
 
 class TestCataloguePrices:

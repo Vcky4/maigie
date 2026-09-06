@@ -21,6 +21,7 @@ from .models import (
     AccountDeletionStatusResponse,
     CancelDeletionRequest,
     ChangePasswordRequest,
+    CountryUpdateRequest,
     DeviceTimezoneRequest,
     DeviceTokenRequest,
     DeviceTokenResponse,
@@ -55,7 +56,9 @@ users_router = APIRouter(tags=["users"])
 @auth_router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def signup(data: SignupRequest):
     """Register a new user account."""
-    user = await services.signup(email=data.email, password=data.password, name=data.name)
+    user = await services.signup(
+        email=data.email, password=data.password, name=data.name, country=data.country
+    )
     return user
 
 
@@ -184,6 +187,18 @@ async def update_preferences(data: PreferencesUpdateRequest, current_user: Curre
     """Update user preferences."""
     update_data = data.model_dump(exclude_unset=True)
     user = await services.update_preferences(user_id=current_user.id, data=update_data)
+    return user
+
+
+@users_router.put("/me/country", response_model=UserResponse)
+async def set_country(data: CountryUpdateRequest, current_user: CurrentUser):
+    """Set the learner's country — the source of truth for pricing currency and payment rail.
+
+    Editable any time from profile, and set at signup/onboarding. Returns the refreshed user, so a
+    client updates its cached user straight from the response the way it does after other profile
+    edits.
+    """
+    user = await services.set_country(user_id=current_user.id, country=data.country)
     return user
 
 

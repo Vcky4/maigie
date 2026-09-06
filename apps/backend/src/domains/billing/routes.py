@@ -13,7 +13,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from src.config import Settings, get_settings
-from src.shared.auth import CurrentUser, StaffUser
+from src.shared.auth import CurrentUser, OptionalCurrentUser, StaffUser
 from src.shared.exceptions import MaigieError
 
 from . import models
@@ -30,13 +30,17 @@ router = APIRouter(tags=["billing"])
 
 
 @router.get("/plans/catalog", response_model=models.PlanCatalogResponse)
-async def plan_catalog(currency: str = "usd"):
-    """Return the active product catalog (no auth required).
+async def plan_catalog(current_user: OptionalCurrentUser, currency: str = "usd"):
+    """Return the active product catalog.
 
-    `?currency=ngn` returns NGN prices set for Nigeria and adds the NGN-only Term Pass; the default
-    is the USD list. Prices are set per market, never converted (§6.8), so a client renders exactly
-    what it is given.
+    **The market is the learner's country, not a client guess.** When the caller is signed in and has
+    set a country, the server derives the currency from it (`NG` -> NGN prices + the NGN-only Term
+    Pass, else USD) and ignores the `?currency=` hint. The query param is the fallback for anonymous
+    or marketing callers, and an explicit override. Prices are set per market, never converted (§6.8),
+    so a client renders exactly what it is given.
     """
+    if current_user is not None and current_user.country:
+        currency = subscription_service.resolve_currency(current_user.country)
     return await subscription_service.get_plan_catalog(currency)
 
 

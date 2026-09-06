@@ -46,6 +46,21 @@ def _tz_safe(dt: datetime | None) -> datetime | None:
     return dt
 
 
+def _normalize_country(country: str | None) -> str | None:
+    """An ISO 3166-1 alpha-2 code, upper-cased — or `None`.
+
+    Stored as the two-letter code because that is the durable fact; currency, tax and store region
+    derive from it. A value that is not two ASCII letters is treated as "not set" rather than stored,
+    so a stray client string cannot poison the pricing resolver.
+    """
+    if not country:
+        return None
+    code = country.strip().upper()
+    if len(code) != 2 or not code.isalpha():
+        return None
+    return code
+
+
 # Account deletion cooling-off period
 _DELETION_DAYS = 90
 
@@ -55,7 +70,9 @@ _DELETION_DAYS = 90
 # ===========================================================================
 
 
-async def signup(*, email: str, password: str, name: str) -> User:
+async def signup(
+    *, email: str, password: str, name: str, country: str | None = None
+) -> User:
     """Register a new user with email/password. Returns inactive user pending OTP."""
     existing = await identity_repo.find_by_email(email)
     if existing:
@@ -73,6 +90,7 @@ async def signup(*, email: str, password: str, name: str) -> User:
         is_active=False,
         verification_code=otp,
         verification_code_expires_at=otp_expires,
+        country=_normalize_country(country),
     )
 
     await emit_user_registered(user.id, email, "email")
@@ -343,6 +361,27 @@ async def link_referral(*, user: User, referral_code: str) -> dict:
         "alreadyReferred": False,
         "referralCode": code,
     }
+
+
+# ===========================================================================
+# Country / market
+# ===========================================================================
+
+
+async def set_country(*, user_id: str, country: str) -> User:
+    """Set the learner's country (ISO 3166-1 alpha-2), the source of truth for pricing currency.
+
+    Rejects anything that is not a two-letter code so the pricing resolver can trust the column.
+    Returns the refreshed user with preferences, matching `/auth/me`.
+    """
+    code = _normalize_country(country)
+    if code is None:
+        raise ValidationError("country must be a two-letter ISO 3166-1 alpha-2 code")
+    await identity_repo.update(user_id, {"country": code})
+    user = await identity_repo.find_by_id(user_id, include_preferences=True)
+    if not user:
+        raise NotFoundError("User", user_id)
+    return user
 
 
 # ===========================================================================

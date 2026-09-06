@@ -27,6 +27,11 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     provider_id: Mapped[str | None] = mapped_column("providerId", String, nullable=True)
     tier: Mapped[str] = mapped_column(String, default="FREE", server_default="FREE")
     role: Mapped[str] = mapped_column(String, default="USER", server_default="USER")
+    # ISO 3166-1 alpha-2 (e.g. "NG", "US"). The learner's market, and the source of truth for
+    # pricing currency and payment rail (§6.8): `NG` -> NGN/Paystack, else USD/Stripe. Nullable —
+    # `None` means "not asked yet", which the currency resolver reads as the USD default and the
+    # clients turn into a one-time prompt. Set at signup/onboarding, editable in profile.
+    country: Mapped[str | None] = mapped_column("country", String, nullable=True)
     admin_staff_role: Mapped[str | None] = mapped_column("adminStaffRole", String, nullable=True)
     is_active: Mapped[bool] = mapped_column(
         "isActive", Boolean, default=True, server_default="true"

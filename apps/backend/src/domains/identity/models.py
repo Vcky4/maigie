@@ -24,6 +24,9 @@ class SignupRequest(BaseModel):
     referral_code: str | None = Field(
         None, alias="referralCode", description="Optional referral code"
     )
+    country: str | None = Field(
+        None, description="ISO 3166-1 alpha-2 country code, e.g. 'NG'. Optional at signup."
+    )
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -162,6 +165,7 @@ class UserResponse(BaseModel):
     name: str | None = None
     tier: str
     role: str
+    country: str | None = Field(default=None, validation_alias="country")
     isActive: bool = Field(validation_alias="is_active")
     isOnboarded: bool = Field(default=False, validation_alias="is_onboarded")
     adminStaffRole: str | None = Field(default=None, validation_alias="admin_staff_role")
@@ -215,6 +219,16 @@ class PreferencesUpdateRequest(BaseModel):
     language: str | None = None
     studyGoals: dict | None = None
     timezone: str | None = None
+
+
+class CountryUpdateRequest(BaseModel):
+    """Set the learner's country — an ISO 3166-1 alpha-2 code (e.g. `NG`, `US`).
+
+    The source of truth for pricing currency and payment rail (§6.8). Two letters, so the server can
+    trust it when resolving the market; anything else is rejected.
+    """
+
+    country: str = Field(min_length=2, max_length=2)
 
 
 class DeviceTimezoneRequest(BaseModel):

@@ -70,6 +70,7 @@ class IdentityRepository:
         is_active: bool = False,
         verification_code: str | None = None,
         verification_code_expires_at: datetime | None = None,
+        country: str | None = None,
     ) -> User:
         """Create a new user with default preferences."""
         async with await self._get_session() as session:
@@ -82,6 +83,7 @@ class IdentityRepository:
                 is_active=is_active,
                 verification_code=verification_code,
                 verification_code_expires_at=verification_code_expires_at,
+                country=country,
             )
             session.add(user)
             await session.flush()
