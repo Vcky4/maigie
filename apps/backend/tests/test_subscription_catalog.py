@@ -30,10 +30,12 @@ import pytest  # noqa: E402
 
 from src.config import get_settings  # noqa: E402
 from src.domains.billing import models as billing_models  # noqa: E402
-from src.domains.billing.services import entitlement_service  # noqa: E402
+from src.domains.billing.services import (
+    entitlement_service,  # noqa: E402
+    subscription_service,  # noqa: E402
+)
 from src.domains.billing.services import paystack_service as paystack_svc  # noqa: E402
 from src.domains.billing.services import stripe_service as stripe_svc  # noqa: E402
-from src.domains.billing.services import subscription_service  # noqa: E402
 from src.domains.personal_learning.services import trial_service  # noqa: E402
 from src.shared.exceptions import DeprecatedPlanError  # noqa: E402
 

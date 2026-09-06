@@ -13,6 +13,7 @@ uses on preferences. The down-revision drops it (safe — currency falls back to
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "079_user_country"
