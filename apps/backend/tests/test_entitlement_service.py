@@ -280,6 +280,15 @@ class TestMarketAwareCaps:
             assert n.window_allowance < g.window_allowance
             assert n.monthly_backstop < g.monthly_backstop
 
+    def test_market_is_exposed_on_the_entitlement(self):
+        """Model selection reads `market` off the resolved entitlement, so it must survive `_compose`."""
+        assert compose().market == "global"
+        assert compose(market="ngn").market == "ngn"
+        # Every branch carries it, not just free.
+        assert compose(subscription_tier="PREMIUM_MONTHLY", market="ngn").market == "ngn"
+        assert compose(active_trial=A_TRIAL, market="ngn").market == "ngn"
+        assert compose(active_pass=A_PASS, market="ngn").market == "ngn"
+
 
 class TestMarketAwarePassTotals:
     """Pass totals are snapshotted at purchase (`units_allowance`), so the market lever for a pass is

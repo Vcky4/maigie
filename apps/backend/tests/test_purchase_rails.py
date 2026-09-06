@@ -75,7 +75,7 @@ class TestStoreAmountIsPricedNotConverted:
 
     def test_the_term_pass_is_only_priced_in_nigeria(self):
         amount, currency = purchase_service.configured_store_amount("plus_pass_term", "NG")
-        assert (amount, currency) == (550_000, "NGN")
+        assert (amount, currency) == (720_000, "NGN")
 
     def test_everywhere_else_is_priced_in_usd_cents(self):
         amount, currency = purchase_service.configured_store_amount("plus_pass_7d", "US")

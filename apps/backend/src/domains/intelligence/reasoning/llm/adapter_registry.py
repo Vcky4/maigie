@@ -228,6 +228,8 @@ def _build_feature_flag_service() -> FeatureFlagService:
     tier_allowlists = {
         "free": settings.LLM_TIER_ALLOWLIST_FREE,
         "plus": settings.LLM_TIER_ALLOWLIST_PLUS,
+        # NGN Plus chat runs the standard model (§6.8) — see the config note.
+        "plus_ngn": settings.LLM_TIER_ALLOWLIST_PLUS_NGN,
     }
 
     _feature_flag_service_instance = FeatureFlagService(

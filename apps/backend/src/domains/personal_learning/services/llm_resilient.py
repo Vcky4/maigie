@@ -154,7 +154,7 @@ async def model_for_operation(*, user_id: str | None, operation: str) -> str:
     try:
         from src.domains.billing.services import entitlement_service
 
-        tier = (await entitlement_service.resolve(user_id)).tier
+        entitlement = await entitlement_service.resolve(user_id)
     except Exception:
         logger.exception(
             "quality: tier resolution failed for user=%s operation=%s — using standard model",
@@ -163,7 +163,13 @@ async def model_for_operation(*, user_id: str | None, operation: str) -> str:
         )
         return standard
 
-    if tier == "plus":
+    # The premium model is a global-market lift, not a Plus entitlement everywhere. The launch
+    # market cannot afford it: a single premium run of this operation (~6× the standard cost) would
+    # exceed most of the NGN Plus monthly cap, and NGN net revenue does not fund a global-sized cap.
+    # So NGN Plus runs the standard model here exactly as Free does — the same generation quality the
+    # 1 205 free accounts already use — and buys usage, voice and every capability rather than a
+    # dearer model. Global Plus keeps the premium model.
+    if entitlement.tier == "plus" and entitlement.market != "ngn":
         return default_model_for(LlmTask.GENERATION_PREMIUM)
     return standard
 

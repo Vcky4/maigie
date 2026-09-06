@@ -206,12 +206,15 @@ class TestTheQualitySplitAtTheChokepoint:
     """
 
     @staticmethod
-    def _resolve_as(monkeypatch, tier):
+    def _resolve_as(monkeypatch, tier, market="global"):
         """Stub the resolver, not the tier string.
 
         `_compose` is the thing that knows a trial and a pass are Plus, so stubbing at
         `entitlement_service.resolve` keeps that intact — a test that patched a `"FREE"` string in
         would pass while a trialling learner got the wrong model, which is drift 11's shape.
+
+        `market` flows through `_compose` so the NGN case exercises the real market field the
+        selector reads, rather than a hand-set attribute.
         """
         from src.domains.billing.services import entitlement_service
 
@@ -221,6 +224,7 @@ class TestTheQualitySplitAtTheChokepoint:
                 subscription_period_end=None,
                 active_pass=None,
                 active_trial=None,
+                market=market,
             )
 
         monkeypatch.setattr(entitlement_service, "resolve", fake_resolve)
@@ -244,6 +248,30 @@ class TestTheQualitySplitAtTheChokepoint:
         assert (
             await llm_resilient.model_for_operation(user_id="u1", operation="lesson_body")
             == FREE_MODEL
+        )
+
+    @pytest.mark.asyncio
+    async def test_ngn_plus_gets_the_standard_model_above_the_threshold(self, monkeypatch):
+        """§6.8: the launch market cannot afford the premium model — a single premium run of this
+        operation would exceed most of the NGN Plus monthly cap. So NGN Plus runs the standard model
+        here exactly as Free does, while global Plus keeps the premium one."""
+        from src.domains.personal_learning.services import llm_resilient
+
+        self._resolve_as(monkeypatch, "plus", market="ngn")
+        assert (
+            await llm_resilient.model_for_operation(user_id="u1", operation="lesson_body")
+            == FREE_MODEL
+        )
+
+    @pytest.mark.asyncio
+    async def test_global_plus_still_gets_the_dear_model(self, monkeypatch):
+        """The split is a global-market lift, so an explicit global market keeps premium."""
+        from src.domains.personal_learning.services import llm_resilient
+
+        self._resolve_as(monkeypatch, "plus", market="global")
+        assert (
+            await llm_resilient.model_for_operation(user_id="u1", operation="lesson_body")
+            == PLUS_MODEL
         )
 
     @pytest.mark.asyncio

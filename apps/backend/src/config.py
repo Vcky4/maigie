@@ -272,7 +272,15 @@ class Settings(BaseSettings):
     # flat ₦100 Paystack fee knowingly rather than by accident — do not "fix" it under the threshold,
     # which would undercut two months of the subscription. Absent until now; a one-off charge sends
     # this value and nothing overrides it, so it must exist before the Paystack pass rail ships.
-    PRICE_NGN_PLUS_PASS_TERM: int = 550_000  # ₦5 500
+    #
+    # Raised ₦5 500 → ₦7 200. At ₦5 500 the term was a 43% discount on four months of the monthly
+    # (4 × ₦2 400 = ₦9 600), and at its 20 000-unit + 4×20-min-voice ceiling it was barely
+    # break-even. ₦7 200 is the "pay for three months, get the fourth free" price — a real discount
+    # for the no-failed-mandate value of one prepaid decision, without the near-zero ceiling margin.
+    # Still above ₦2 500, so the flat-fee note above is unchanged. **Must be re-entered by hand in
+    # Paystack, Google Play and App Store Connect** (§5.7); this constant only sets the Paystack
+    # one-off charge amount.
+    PRICE_NGN_PLUS_PASS_TERM: int = 720_000  # ₦7 200
     # 30-minute voice top-up (Decision R). Same ₦ as the 7-day pass by coincidence of the market, not
     # a shared meaning — a voice minute costs the same in Lagos as in London, so this is the smallest
     # discount off USD list of any product (§5.7.1).
@@ -451,6 +459,17 @@ class Settings(BaseSettings):
     LLM_TIER_ALLOWLIST_PLUS: str = (
         "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,"
         "gemini:gemini-3.5-flash-lite,openai:gpt-4o-mini"
+    )
+    # **Nigeria's Plus chat runs the standard model, not the premium one.** A premium chat turn is
+    # ~174 units against ~29 on the standard model (6×), so on the NGN Plus 6 000-unit monthly cap
+    # the premium model buys ~34 turns a month where the standard model buys ~200 — and NGN net
+    # revenue cannot fund a global-sized cap to make the premium model affordable. So this leads with
+    # the standard model, matching Free's chain (the second entry is the dearer Flash-Lite fallback,
+    # so a provider blip degrades rather than fails). Global Plus keeps `LLM_TIER_ALLOWLIST_PLUS`.
+    # `feature_flags.effective_tier_for_request` returns the `plus_ngn` key for an NGN Plus learner,
+    # which resolves to this allowlist; it stays a *paid* tier string, so voice still bills as paid.
+    LLM_TIER_ALLOWLIST_PLUS_NGN: str = (
+        "gemini:gemini-3.1-flash-lite,gemini:gemini-3.5-flash-lite"
     )
 
     # --- Gemini Live (voice) — was scattered os.getenv reads; keep in Settings ---

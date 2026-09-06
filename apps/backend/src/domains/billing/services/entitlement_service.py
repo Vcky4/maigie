@@ -307,6 +307,16 @@ class Entitlement:
     stops matching the value stored on `User`, the balance is stale and `voice_service` re-grants —
     which is how a renewal tops up and how a pass takes its minutes with it when it ends.
     """
+    market: str = "global"
+    """The learner's pricing market: ``"ngn"`` or ``"global"`` (see `market_for_country`).
+
+    Already used inside `_compose` to size allowances and voice; exposed on the resolved entitlement
+    because model selection needs it too. The launch market cannot afford the premium model — a
+    single premium course outline (~6 000 units) would exceed the whole NGN Plus monthly cap — so
+    NGN Plus runs the standard model everywhere, exactly as Free does. `model_for_operation` and the
+    chat tier both read this rather than re-deriving the market from a second query. Defaults to
+    ``"global"`` so `FREE_ENTITLEMENT` and any pre-existing construction stay correct.
+    """
 
     @property
     def voice_available(self) -> bool:
@@ -370,6 +380,7 @@ def _compose(
             # row in production is — grants once and never again, which is the right answer for a
             # tier nobody is billing for.
             voice_allowance_source_id=f"subscription:{subscription_period_end}",
+            market=market,
         )
 
     if active_pass is not None:
@@ -394,6 +405,7 @@ def _compose(
             # when the pass stops being the active entitlement the id stops matching, and the next
             # read discards the balance rather than waiting for a job to notice.
             voice_allowance_source_id=f"pass:{active_pass.pass_id}",
+            market=market,
         )
 
     if active_trial is not None:
@@ -419,6 +431,7 @@ def _compose(
             # Keyed on the trial end so a second trial after the cooldown is a fresh grant, and so a
             # learner cannot re-trial their way to unlimited voice inside one trial.
             voice_allowance_source_id=f"trial:{active_trial.ends_at}",
+            market=market,
         )
 
     return Entitlement(
@@ -436,6 +449,7 @@ def _compose(
         # A free learner's stored source stays null forever, which is also what makes the re-grant
         # check cheap for the 1 205 accounts that are on Free.
         voice_allowance_source_id=None,
+        market=market,
     )
 
 

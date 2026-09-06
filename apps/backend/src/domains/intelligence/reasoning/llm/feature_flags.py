@@ -77,7 +77,10 @@ logger = logging.getLogger(__name__)
 # Two-valued effective tier used by every downstream LLM gate. The legacy
 # "circle" and "squad" outcomes were removed by the Circle Reimagining
 # feature; Circle-scoped capabilities are derived from Seat_Tier instead.
-EffectiveTier = Literal["free", "plus"]
+EffectiveTier = Literal["free", "plus", "plus_ngn"]
+# `plus_ngn` is a paid tier that selects the standard chat model (§6.8): the launch market cannot
+# afford the premium model. It stays distinct from `"free"` so anything keying off "is this learner
+# paid" (voice bills paid sessions as `active_audio`, not wall-clock) still reads it as paid.
 
 # Scope under which an AI request is executed. ``"personal"`` resolves
 # against the User's Personal_Tier; ``"circle:{space_id}"`` resolves
@@ -145,6 +148,8 @@ async def read_seat_tier_for_user(user_id: str, space_id: str) -> str:
 
 TIER_TO_ALLOWLIST_KEY: dict[str, str] = {
     "free": "free",
+    # NGN Plus: a paid tier on the standard chat allowlist (§6.8).
+    "plus_ngn": "plus_ngn",
     "premium_monthly": "plus",
     "premium_yearly": "plus",
     # Maigie Plus plan aliases (used in subscription routes)
@@ -497,6 +502,11 @@ class FeatureFlagService:
             from src.domains.billing.services import entitlement_service
 
             entitlement = await entitlement_service.resolve(user_id)
+            # NGN Plus resolves to a paid tier that selects the standard chat model (§6.8): the
+            # launch market cannot afford the premium model on its allowance. `plus_ngn` is still a
+            # paid tier, so voice billing (which treats any non-"free" tier as paid) is unaffected.
+            if entitlement.tier == "plus" and entitlement.market == "ngn":
+                return "plus_ngn"
             return entitlement.tier
 
         # Space scope

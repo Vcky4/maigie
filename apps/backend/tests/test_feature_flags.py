@@ -197,6 +197,24 @@ class TestIsModelAllowed:
         # Provider not globally enabled, override doesn't help
         assert svc.is_model_allowed("anthropic", "claude-sonnet", "free", "user-1") is False
 
+    def test_plus_ngn_gets_the_standard_model_not_the_premium_one(self):
+        """§6.8: NGN Plus is a paid tier that resolves to the standard chat allowlist. The premium
+        model is allowed for global `plus` and denied for `plus_ngn`; the standard model is allowed
+        for both."""
+        svc = FeatureFlagService(
+            enabled_providers="gemini",
+            tier_allowlists={
+                "plus": "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite",
+                "plus_ngn": "gemini:gemini-3.1-flash-lite,gemini:gemini-3.5-flash-lite",
+            },
+        )
+        # Premium model: global Plus yes, NGN Plus no.
+        assert svc.is_model_allowed("gemini", "gemini-3.5-flash", "plus", "u1") is True
+        assert svc.is_model_allowed("gemini", "gemini-3.5-flash", "plus_ngn", "u1") is False
+        # Standard model: both.
+        assert svc.is_model_allowed("gemini", "gemini-3.1-flash-lite", "plus", "u1") is True
+        assert svc.is_model_allowed("gemini", "gemini-3.1-flash-lite", "plus_ngn", "u1") is True
+
 
 # ---------------------------------------------------------------------------
 # Tests: reload
@@ -689,13 +707,14 @@ class TestEffectiveTierForRequest:
     def stub_entitlement(self, monkeypatch):
         from src.domains.billing.services import entitlement_service
 
-        def _stub(tier):
+        def _stub(tier, market="global"):
             async def fake_resolve(user_id):
                 return entitlement_service._compose(
                     subscription_tier="PREMIUM_MONTHLY" if tier == "plus" else "FREE",
                     subscription_period_end=None,
                     active_pass=None,
                     active_trial=None,
+                    market=market,
                 )
 
             monkeypatch.setattr(entitlement_service, "resolve", fake_resolve)
@@ -713,6 +732,14 @@ class TestEffectiveTierForRequest:
         stub_entitlement("plus")
         result = await svc.effective_tier_for_request(user_id="u1", scope="personal")
         assert result == "plus"
+
+    @pytest.mark.asyncio
+    async def test_personal_ngn_plus_resolves_to_plus_ngn(self, svc, stub_entitlement):
+        """§6.8: NGN Plus resolves to a distinct paid tier that selects the standard chat model.
+        Distinct from `"free"` so voice still bills the session as paid."""
+        stub_entitlement("plus", market="ngn")
+        result = await svc.effective_tier_for_request(user_id="u1", scope="personal")
+        assert result == "plus_ngn"
 
     # --- Circle scope ---
 
