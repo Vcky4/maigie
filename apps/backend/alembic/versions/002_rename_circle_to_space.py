@@ -167,13 +167,44 @@ def upgrade() -> None:
         # Fresh database — tables were never named "Circle". Nothing to rename.
         return
 
-    # 1. Rename tables
-    for old_name, new_name in TABLE_RENAMES:
-        op.rename_table(old_name, new_name)
+    # Existence helpers. The rename lists were authored against one Prisma schema snapshot, but a
+    # real database can differ from it (a column added or dropped in a later Prisma migration than
+    # the one the list was written against). An unguarded rename hard-fails on the first such drift —
+    # after `001` has already irreversibly dropped the enums — so each rename is made conditional:
+    # apply it only when the source still exists and the target does not. This keeps the migration
+    # correct on a fresh DB, idempotent on one already migrated, and drift-tolerant on production.
+    def _table_exists(name: str) -> bool:
+        return bool(
+            conn.execute(
+                sa.text(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema='public' AND table_name=:t)"
+                ),
+                {"t": name},
+            ).scalar()
+        )
 
-    # 2. Rename columns
+    def _col_exists(table: str, col: str) -> bool:
+        return bool(
+            conn.execute(
+                sa.text(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name=:t AND column_name=:c)"
+                ),
+                {"t": table, "c": col},
+            ).scalar()
+        )
+
+    # 1. Rename tables (skip if already renamed or absent on this database)
+    for old_name, new_name in TABLE_RENAMES:
+        if _table_exists(old_name) and not _table_exists(new_name):
+            op.rename_table(old_name, new_name)
+
+    # 2. Rename columns (skip a rename whose source column is absent — schema drift — or whose target
+    #    already exists)
     for table, old_col, new_col in COLUMN_RENAMES:
-        op.alter_column(table, old_col, new_column_name=new_col)
+        if _table_exists(table) and _col_exists(table, old_col) and not _col_exists(table, new_col):
+            op.alter_column(table, old_col, new_column_name=new_col)
 
     # 3. Rename indexes (use raw SQL — Alembic has no rename_index)
     for old_name, new_name in INDEX_RENAMES:
@@ -208,10 +239,11 @@ def upgrade() -> None:
             DECLARE
                 fk_name TEXT;
             BEGIN
-                SELECT constraint_name INTO fk_name
+                SELECT tc.constraint_name INTO fk_name
                 FROM information_schema.table_constraints tc
                 JOIN information_schema.key_column_usage kcu
                     ON tc.constraint_name = kcu.constraint_name
+                   AND tc.table_name = kcu.table_name
                 WHERE tc.table_name = '{table}'
                   AND kcu.column_name = '{col}'
                   AND tc.constraint_type = 'FOREIGN KEY'
@@ -246,10 +278,11 @@ def downgrade() -> None:
             DECLARE
                 fk_name TEXT;
             BEGIN
-                SELECT constraint_name INTO fk_name
+                SELECT tc.constraint_name INTO fk_name
                 FROM information_schema.table_constraints tc
                 JOIN information_schema.key_column_usage kcu
                     ON tc.constraint_name = kcu.constraint_name
+                   AND tc.table_name = kcu.table_name
                 WHERE tc.table_name = '{table}'
                   AND kcu.column_name = '{col}'
                   AND tc.constraint_type = 'FOREIGN KEY'
