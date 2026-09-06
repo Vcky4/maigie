@@ -204,9 +204,18 @@ async def main():
             args += ["-t", t]
         for section in ("pre-data", "data"):
             res = subprocess.run(
-                ["pg_restore", "-d", new_url, f"--section={section}",
-                 "--no-owner", "--no-privileges", *args, dump_file],
-                capture_output=True, text=True,
+                [
+                    "pg_restore",
+                    "-d",
+                    new_url,
+                    f"--section={section}",
+                    "--no-owner",
+                    "--no-privileges",
+                    *args,
+                    dump_file,
+                ],
+                capture_output=True,
+                text=True,
             )
             errs = res.stderr.lower().count("error:")
             print(f"  {section}: pg_restore errors={errs}")
