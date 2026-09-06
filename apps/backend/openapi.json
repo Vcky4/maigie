@@ -1952,6 +1952,22 @@
         "title": "ConversationSummaryResponse",
         "type": "object"
       },
+      "CountryUpdateRequest": {
+        "description": "Set the learner's country — an ISO 3166-1 alpha-2 code (e.g. `NG`, `US`).\n\nThe source of truth for pricing currency and payment rail (§6.8). Two letters, so the server can\ntrust it when resolving the market; anything else is rejected.",
+        "properties": {
+          "country": {
+            "maxLength": 2,
+            "minLength": 2,
+            "title": "Country",
+            "type": "string"
+          }
+        },
+        "required": [
+          "country"
+        ],
+        "title": "CountryUpdateRequest",
+        "type": "object"
+      },
       "CourseActivityEntry": {
         "description": "A topic the learner completed, with the course it belongs to.\n\nBuilt from `Topic.completedAt`, not from a stored activity log. Topics completed before that\ncolumn existed are absent rather than dated from `updatedAt`, which moves on any edit.",
         "properties": {
@@ -16697,6 +16713,18 @@
       "SignupRequest": {
         "description": "User registration.",
         "properties": {
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ISO 3166-1 alpha-2 country code, e.g. 'NG'. Optional at signup.",
+            "title": "Country"
+          },
           "email": {
             "format": "email",
             "title": "Email",
@@ -20970,6 +20998,17 @@
             ],
             "title": "Adminstaffrole"
           },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
           "email": {
             "format": "email",
             "title": "Email",
@@ -22222,8 +22261,20 @@
     },
     "/api/v1/billing/plans/catalog": {
       "get": {
-        "description": "Return the active product catalog (no auth required).",
+        "description": "Return the active product catalog.\n\n**The market is the learner's country, not a client guess.** When the caller is signed in and has\nset a country, the server derives the currency from it (`NG` -> NGN prices + the NGN-only Term\nPass, else USD) and ignores the `?currency=` hint. The query param is the fallback for anonymous\nor marketing callers, and an explicit override. Prices are set per market, never converted (§6.8),\nso a client renders exactly what it is given.",
         "operationId": "plan_catalog_api_v1_billing_plans_catalog_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "currency",
+            "required": false,
+            "schema": {
+              "default": "usd",
+              "title": "Currency",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -22234,8 +22285,23 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Plan Catalog",
         "tags": [
           "billing",
@@ -37550,6 +37616,54 @@
           }
         ],
         "summary": "Delete Account Alias",
+        "tags": [
+          "users",
+          "users"
+        ]
+      }
+    },
+    "/api/v1/users/me/country": {
+      "put": {
+        "description": "Set the learner's country — the source of truth for pricing currency and payment rail.\n\nEditable any time from profile, and set at signup/onboarding. Returns the refreshed user, so a\nclient updates its cached user straight from the response the way it does after other profile\nedits.",
+        "operationId": "set_country_api_v1_users_me_country_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CountryUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Country",
         "tags": [
           "users",
           "users"
