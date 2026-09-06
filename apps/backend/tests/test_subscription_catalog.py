@@ -476,13 +476,13 @@ class TestPassesAreNotSubscriptions:
         assert billing_models.CheckoutRequest(plan_id=plan_id).plan_id == plan_id
 
     @pytest.mark.parametrize("plan_id", stripe_svc.PASS_PRODUCT_IDS)
-    def test_a_pass_is_not_advertised_as_purchasable_yet(self, plan_id):
-        """Listed, described, priced — and not offered, until Phase 5 builds the one-time rail.
-
-        Without this a client had no way to tell, and the honest reading of a catalogue entry is
-        "you can buy this", so it would have rendered a Buy button that answers 400.
+    def test_a_pass_is_purchasable_now_the_one_time_rail_exists(self, plan_id):
+        """Listed, described, priced — and offered, now Phase 5's `POST /billing/passes/checkout`
+        is mounted. Before that rail a Buy button answered 400, so the pass was listed but not
+        purchasable; with it, the honest reading of the catalogue entry — "you can buy this" — is
+        true, and the client renders the Buy button.
         """
-        assert _by_id()[plan_id].purchasable is False
+        assert _by_id()[plan_id].purchasable is True
 
     def test_the_subscription_is_purchasable(self):
         """The flag has to distinguish, or it is decoration."""

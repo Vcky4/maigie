@@ -219,10 +219,9 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 f"{_voice_minutes_note(ent.VOICE_SECONDS_PASS_5H)} — "
                 "an allowance inside the 5 hours, not 5 unbroken hours of voice."
             ),
-            # Listed so clients and generated types can be built against the real shape;
-            # the one-time checkout that sells it arrives in Phase 5. Until then a Buy
-            # button would answer 400.
-            purchasable=False,
+            # Phase 5's one-time checkout (`POST /billing/passes/checkout`) is mounted, so the
+            # pass is buyable now — the Buy button no longer answers 400.
+            purchasable=True,
         ),
         PlanItem(
             id="plus_pass_7d",
@@ -239,7 +238,7 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
                 f"{_voice_minutes_note(ent.VOICE_SECONDS_PASS_7D)} "
                 "for the week."
             ),
-            purchasable=False,  # Phase 5, as above.
+            purchasable=True,  # Phase 5 checkout is mounted, as above.
         ),
         PlanItem(
             id="plus_monthly",
