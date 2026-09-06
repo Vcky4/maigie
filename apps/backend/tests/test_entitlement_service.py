@@ -241,6 +241,75 @@ class TestWindowAllowance:
 
 
 # ---------------------------------------------------------------------------
+# Market-aware caps (§6.8 / Decision Q): a launch-market learner is sized down from the price,
+# never handed the global allowance. The global market is unchanged.
+# ---------------------------------------------------------------------------
+
+
+class TestMarketAwareCaps:
+    def test_global_is_the_default_and_unchanged(self):
+        """No market argument resolves to the global caps — the back-compatible default."""
+        free = compose()
+        plus = compose(subscription_tier="PREMIUM_MONTHLY")
+        assert (free.window_allowance, free.monthly_backstop) == (500, 5_000)
+        assert (plus.window_allowance, plus.monthly_backstop) == (4_000, 36_000)
+
+    def test_ngn_free_is_sized_down(self):
+        free = compose(market="ngn")
+        assert free.window_allowance == 400
+        assert free.monthly_backstop == 4_000
+
+    def test_ngn_subscription_is_sized_down(self):
+        """§6.8: NGN Plus is 6 000 units/month; the window is the derived 700."""
+        plus = compose(subscription_tier="PREMIUM_MONTHLY", market="ngn")
+        assert plus.window_allowance == 700
+        assert plus.monthly_backstop == 6_000
+
+    def test_ngn_trial_matches_the_ngn_subscription(self):
+        """A trialling learner previews the market they are in, allowance included."""
+        trial = compose(active_trial=A_TRIAL, market="ngn")
+        sub = compose(subscription_tier="PREMIUM_MONTHLY", market="ngn")
+        assert trial.window_allowance == sub.window_allowance == 700
+        assert trial.monthly_backstop == sub.monthly_backstop == 6_000
+
+    def test_ngn_caps_are_strictly_below_global(self):
+        """The whole point: the launch market never inherits the global allowance."""
+        for tier in ("FREE", "PREMIUM_MONTHLY"):
+            g = compose(subscription_tier=tier)
+            n = compose(subscription_tier=tier, market="ngn")
+            assert n.window_allowance < g.window_allowance
+            assert n.monthly_backstop < g.monthly_backstop
+
+
+class TestMarketAwarePassTotals:
+    """Pass totals are snapshotted at purchase (`units_allowance`), so the market lever for a pass is
+    `pass_service.units_allowance_for_market`, not `_compose`."""
+
+    def test_global_totals_are_the_product_defaults(self):
+        from src.domains.billing.services import pass_service as ps
+
+        assert ps.units_allowance_for_market("plus_pass_5h", "global") == 2_000
+        assert ps.units_allowance_for_market("plus_pass_7d", "global") == 10_000
+
+    def test_ngn_totals_are_sized_down(self):
+        from src.domains.billing.services import pass_service as ps
+
+        assert ps.units_allowance_for_market("plus_pass_5h", "ngn") == 1_800
+        assert ps.units_allowance_for_market("plus_pass_7d", "ngn") == 4_500
+
+    def test_term_pass_is_the_same_in_both_because_it_is_ngn_only(self):
+        from src.domains.billing.services import pass_service as ps
+
+        assert ps.units_allowance_for_market("plus_pass_term", "ngn") == 20_000
+        assert ps.units_allowance_for_market("plus_pass_term", "global") == 20_000
+
+    def test_unknown_product_is_none(self):
+        from src.domains.billing.services import pass_service as ps
+
+        assert ps.units_allowance_for_market("plus_pass_30d", "ngn") is None
+
+
+# ---------------------------------------------------------------------------
 # Trial reads
 # ---------------------------------------------------------------------------
 

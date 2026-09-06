@@ -179,6 +179,32 @@ class TestFulfilment:
         assert len(passes) == 1
         assert passes[0].status == "inventory"
         assert passes[0].source == "purchase"
+        # A USD purchase snapshots the global allowance.
+        assert passes[0].units_allowance == 2_000
+
+    @pytest.mark.asyncio
+    async def test_an_ngn_purchase_snapshots_the_sized_down_allowance(self, world):
+        """§6.8: the launch market's passes carry smaller totals, derived from the NGN price. The
+        rail snapshots that from the currency charged rather than inheriting the global default."""
+        user_id = await world.make_user()
+        five_hour = await purchase_service.fulfill_purchase(
+            user_id=user_id,
+            product_id="plus_pass_5h",
+            provider="paystack",
+            provider_reference=f"ps_{uuid.uuid4()}",
+            amount_minor=70_000,
+            currency="NGN",
+        )
+        seven_day = await purchase_service.fulfill_purchase(
+            user_id=user_id,
+            product_id="plus_pass_7d",
+            provider="paystack",
+            provider_reference=f"ps_{uuid.uuid4()}",
+            amount_minor=150_000,
+            currency="NGN",
+        )
+        assert (await world.passes_for(five_hour.id))[0].units_allowance == 1_800
+        assert (await world.passes_for(seven_day.id))[0].units_allowance == 4_500
 
     @pytest.mark.asyncio
     async def test_a_replayed_reference_grants_nothing_the_second_time(self, world):

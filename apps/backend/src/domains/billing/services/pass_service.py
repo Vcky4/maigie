@@ -90,6 +90,35 @@ PASS_PRODUCTS: dict[str, PassProduct] = {
     "plus_pass_term": PassProduct(duration_minutes=120 * 24 * 60, units_allowance=20_000),
 }
 
+#: The launch market's pass totals (§6.8). NGN prices are set from what Nigerians pay rather than by FX,
+#: and Decision Q derives the allowance from the price: the 5-hour pass is 1 800 units against 2 000
+#: global, the 7-day 4 500 against 10 000. The Term Pass is NGN-only, so its 20 000 is the same number
+#: in both tables — there is no global Term Pass to differ from.
+#:
+#: This is the "own figures" the `grant`/`fulfill_purchase` override docstrings refer to: the purchase
+#: rail resolves the buyer's market from the currency it charged and snapshots the right total onto the
+#: `PlusPass` row, so no reader needs a currency branch. Duration does not differ by market.
+UNITS_ALLOWANCE_BY_PRODUCT_NGN: dict[str, int] = {
+    "plus_pass_5h": 1_800,
+    "plus_pass_7d": 4_500,
+    "plus_pass_term": 20_000,
+}
+
+
+def units_allowance_for_market(product_id: str, market: str) -> int | None:
+    """The total unit allowance a pass is sold with in the given market, or `None` for an unknown id.
+
+    `market` is ``"ngn"`` or ``"global"`` (see `entitlement_service.market_for_country`). The global
+    figure is the `PASS_PRODUCTS` default; the NGN figure is the sized-down §6.8 grant. Returning the
+    global default for a market with no override keeps a new market a one-row change here.
+    """
+    product = PASS_PRODUCTS.get(product_id)
+    if product is None:
+        return None
+    if market == "ngn":
+        return UNITS_ALLOWANCE_BY_PRODUCT_NGN.get(product_id, product.units_allowance)
+    return product.units_allowance
+
 #: Statuses a pass can hold. `inventory` → `active` → `consumed`, or `refunded` from either.
 STATUS_INVENTORY = "inventory"
 STATUS_ACTIVE = "active"

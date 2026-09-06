@@ -289,10 +289,26 @@ async def redeem(*, user_id: str, product_id: str):
 
     # The pass is granted first, so the redemption entry can reference a real `PlusPass.id`. If the
     # grant somehow fails, no points have been spent — the ledger writes come after it.
-    from src.domains.billing.services import pass_service
+    from src.domains.billing.services import entitlement_service, pass_service
+
+    # §6.8 / Decision Q: allowances are never inherited across markets. A points pass has no price, but
+    # it is still the learner's market that sizes what a pass grants, so an NGN learner's redeemed pass
+    # carries the NGN total rather than the more generous global one it would otherwise inherit. Market
+    # comes from the learner's country, the same source the entitlement resolver uses.
+    from src.domains.identity.db_models import User
+
+    async with factory() as session:
+        country = (
+            await session.execute(select(User.country).where(User.id == user_id))
+        ).scalar_one_or_none()
+    market = entitlement_service.market_for_country(country)
 
     new_pass = await pass_service.grant(
-        user_id=user_id, product_id=product_id, source="points", purchase_id=None
+        user_id=user_id,
+        product_id=product_id,
+        source="points",
+        purchase_id=None,
+        units_allowance=pass_service.units_allowance_for_market(product_id, market),
     )
 
     # One negative entry per grant the cost draws from, oldest first, until the cost is met.

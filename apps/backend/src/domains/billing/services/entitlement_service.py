@@ -142,6 +142,48 @@ WINDOW_ALLOWANCE_BY_PASS_PRODUCT: dict[str, int] = {
 MONTHLY_BACKSTOP_FREE = 5_000
 MONTHLY_BACKSTOP_PLUS = 36_000
 
+# --- The window and monthly caps are market-aware, the same way price and voice are (§6.8) ---
+#
+# Decision Q, rule two: "where a price is set by the market, the allowance is derived from the price,
+# never the reverse, and never inherited across markets." §6.8 sets NGN prices from what Nigerians pay
+# for subscriptions (₦2 400 ≈ $1.73 for Plus, ~17% of the $9.99 list), so the NGN allowances are the
+# derived-down grants, not the global ones. Leaving the launch market on the global caps is exactly the
+# margin inversion §6.8 was written to remove — a two-thirds price cut with the full allowance behind
+# it is a subsidy of unstated size.
+#
+# Explicit in §6.8: Free window 400, Plus monthly backstop 6 000. The other two are not stated as cap
+# numbers, only as prices and margins, and were set here by the same logic the section uses elsewhere:
+#   * Plus window 700 — Decision Q's "a third of the price is a third of the allowance", against a
+#     ~17% NGN price; keeping the global 4 000/window against a 6 000 monthly would let one session eat
+#     most of the month, which is incoherent with the window being the visible meter.
+#   * Free monthly backstop 4 000 — the global free backstop is 10× its window (5 000 vs 500); the NGN
+#     figure preserves that ratio against the 400 window.
+# Both are backstop-adjacent and rarely bind; they set a COGS ceiling rather than a product limit.
+WINDOW_ALLOWANCE_FREE_NGN = 400
+WINDOW_ALLOWANCE_PLUS_NGN = 700
+MONTHLY_BACKSTOP_FREE_NGN = 4_000
+MONTHLY_BACKSTOP_PLUS_NGN = 6_000
+
+
+def window_allowance_free(market: str) -> int:
+    """Per-window unit allowance for a free learner in the given market."""
+    return WINDOW_ALLOWANCE_FREE_NGN if market == "ngn" else WINDOW_ALLOWANCE_FREE
+
+
+def window_allowance_plus(market: str) -> int:
+    """Per-window unit allowance for a subscription/trial in the given market."""
+    return WINDOW_ALLOWANCE_PLUS_NGN if market == "ngn" else WINDOW_ALLOWANCE_PLUS
+
+
+def monthly_backstop_free(market: str) -> int:
+    """Monthly unit backstop for a free learner in the given market."""
+    return MONTHLY_BACKSTOP_FREE_NGN if market == "ngn" else MONTHLY_BACKSTOP_FREE
+
+
+def monthly_backstop_plus(market: str) -> int:
+    """Monthly unit backstop for a subscription/trial in the given market."""
+    return MONTHLY_BACKSTOP_PLUS_NGN if market == "ngn" else MONTHLY_BACKSTOP_PLUS
+
 
 # ===========================================================================
 # Voice allowances (§6.3)
@@ -318,8 +360,8 @@ def _compose(
             subscription_tier=raw_tier,
             is_trial=False,
             trial_days_remaining=None,
-            window_allowance=WINDOW_ALLOWANCE_PLUS,
-            monthly_backstop=MONTHLY_BACKSTOP_PLUS,
+            window_allowance=window_allowance_plus(market),
+            monthly_backstop=monthly_backstop_plus(market),
             voice_seconds_included=voice_seconds_plus(market),
             # Keyed on the period end, which is what makes a renewal re-grant with no sweep and no
             # job: the id changes when the period does, so the next read after a renewal finds a
@@ -365,8 +407,8 @@ def _compose(
             trial_days_remaining=active_trial.days_remaining,
             # A trialling learner is indistinguishable from a subscriber, including here. The old
             # model router gave them Plus capabilities and free-tier models; that was drift 11.
-            window_allowance=WINDOW_ALLOWANCE_PLUS,
-            monthly_backstop=MONTHLY_BACKSTOP_PLUS,
+            window_allowance=window_allowance_plus(market),
+            monthly_backstop=monthly_backstop_plus(market),
             # A trial includes voice, and it is the one grant here worth pausing on: 60 minutes at
             # $0.02/minute is $1.20 of inference given to someone who has paid nothing, against a
             # 3-day trial. It stays because a trial that withholds the one capability Free is missing
@@ -387,8 +429,8 @@ def _compose(
         subscription_tier=raw_tier,
         is_trial=False,
         trial_days_remaining=None,
-        window_allowance=WINDOW_ALLOWANCE_FREE,
-        monthly_backstop=MONTHLY_BACKSTOP_FREE,
+        window_allowance=window_allowance_free(market),
+        monthly_backstop=monthly_backstop_free(market),
         voice_seconds_included=VOICE_SECONDS_FREE,
         # Null rather than `"free:..."`: there is nothing to grant, so there is nothing to identify.
         # A free learner's stored source stays null forever, which is also what makes the re-grant

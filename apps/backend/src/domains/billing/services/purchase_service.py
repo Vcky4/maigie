@@ -171,13 +171,25 @@ async def _grant_for_purchase(
                 )
             ).scalar_one_or_none()
         if existing_pass is None:
+            # §6.8: the launch market's passes carry smaller allowances, derived from the NGN price.
+            # An explicit override from the caller wins (a rail that already knows its figures); absent
+            # one, the total is resolved from the currency actually charged, so an NGN purchase is
+            # snapshotted with the NGN allowance rather than the global default it would otherwise
+            # inherit. Deriving from `currency` rather than the user's country uses what the learner
+            # actually paid — the honest basis for what the sale bought.
+            market = "ngn" if (purchase.currency or "").upper() == "NGN" else "global"
+            resolved_units = (
+                units_allowance
+                if units_allowance is not None
+                else pass_service.units_allowance_for_market(product_id, market)
+            )
             await pass_service.grant(
                 user_id=purchase.user_id,
                 product_id=product_id,
                 purchase_id=purchase.id,
                 source="purchase",
                 duration_minutes=duration_minutes,
-                units_allowance=units_allowance,
+                units_allowance=resolved_units,
             )
         return
 
