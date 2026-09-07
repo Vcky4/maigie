@@ -56,8 +56,12 @@ async def main() -> None:
                     "WHERE table_schema='public' AND table_name='Goal' AND column_name='metricKind')"
                 )
             )
-            legacy_exists = await conn.scalar(text("SELECT to_regclass('public.\"Goal_legacy\"') IS NOT NULL"))
-            goal_exists = await conn.scalar(text("SELECT to_regclass('public.\"Goal\"') IS NOT NULL"))
+            legacy_exists = await conn.scalar(
+                text("SELECT to_regclass('public.\"Goal_legacy\"') IS NOT NULL")
+            )
+            goal_exists = await conn.scalar(
+                text("SELECT to_regclass('public.\"Goal\"') IS NOT NULL")
+            )
 
             if goal_exists and not has_metric and not legacy_exists:
                 print("  renaming legacy Goal -> Goal_legacy (with its constraints/indexes)")
@@ -93,14 +97,18 @@ async def main() -> None:
             # even be read until these exist. Both are nullable with no default — safe on the
             # existing rows, and ADD COLUMN IF NOT EXISTS keeps this idempotent.
             await conn.execute(
-                text('ALTER TABLE "ScheduleBlock" ADD COLUMN IF NOT EXISTS "completedAt" timestamptz')
+                text(
+                    'ALTER TABLE "ScheduleBlock" ADD COLUMN IF NOT EXISTS "completedAt" timestamptz'
+                )
             )
             await conn.execute(
                 text('ALTER TABLE "ScheduleBlock" ADD COLUMN IF NOT EXISTS "startedAt" timestamptz')
             )
 
             # Copy legacy rows into the new Goal, if a legacy table is present.
-            legacy_now = await conn.scalar(text("SELECT to_regclass('public.\"Goal_legacy\"') IS NOT NULL"))
+            legacy_now = await conn.scalar(
+                text("SELECT to_regclass('public.\"Goal_legacy\"') IS NOT NULL")
+            )
             if legacy_now:
                 await conn.execute(
                     text(
@@ -134,8 +142,15 @@ async def main() -> None:
             print("\n--- result ---")
             print(f"  Goal_legacy rows: {legacy_count}")
             print(f"  new Goal rows:    {new_count}")
-            for t in ("GoalMilestone", "GoalScheduleChange", "GoalLifecycleAction", "GoalProgressSnapshot"):
-                present = await conn.scalar(text(f"SELECT to_regclass('public.\"{t}\"') IS NOT NULL"))
+            for t in (
+                "GoalMilestone",
+                "GoalScheduleChange",
+                "GoalLifecycleAction",
+                "GoalProgressSnapshot",
+            ):
+                present = await conn.scalar(
+                    text(f"SELECT to_regclass('public.\"{t}\"') IS NOT NULL")
+                )
                 print(f"  {t}: {'created' if present else 'MISSING'}")
 
             print("\n--- dangling-FK guards (must be 0) ---")
