@@ -2236,6 +2236,7 @@ class PersonalLearningRepository:
             "purpose": "purpose",
             "subjects": "subjects",
             "goalsText": "goals_text",
+            "onboardingState": "onboarding_state",
             "preferredExplanationStyle": "preferred_explanation_style",
             "proficiencyMap": "proficiency_map",
             "onboardingCompletedAt": "onboarding_completed_at",
