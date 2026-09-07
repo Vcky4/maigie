@@ -1480,6 +1480,9 @@ jobs:
               chmod +x ./generate-env-from-secrets.sh
               export ENVIRONMENT="staging"
               export REDIS_URL="redis://redis:6379/0"
+              # Staging must not send notification emails to real inboxes. Account emails
+              # (OTP/welcome/password reset) are unaffected — they bypass this channel gate.
+              export NOTIFICATION_EMAIL_ENABLED="false"
               
               echo "Running generate-env-from-secrets.sh with environment variables..."
               ./generate-env-from-secrets.sh .env .env.example
@@ -1491,6 +1494,9 @@ jobs:
               chmod +x ./generate-env-from-secrets.sh
               export ENVIRONMENT="staging"
               export REDIS_URL="redis://redis:6379/0"
+              # Staging must not send notification emails to real inboxes. Account emails
+              # (OTP/welcome/password reset) are unaffected — they bypass this channel gate.
+              export NOTIFICATION_EMAIL_ENABLED="false"
               
               echo "Running generate-env-from-secrets.sh with environment variables..."
               ./generate-env-from-secrets.sh .env .env.example
