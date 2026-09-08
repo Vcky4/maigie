@@ -549,12 +549,11 @@ async def handle_create_schedule(
     validated = models.StudyBlockCreate.model_validate(
         {key: value for key, value in block_data.items() if value is not None}
     )
-    if validated.endAt <= validated.startAt:
+    validated_data = validated.model_dump(exclude_unset=True)
+    if validated_data["endAt"] <= validated_data["startAt"]:
         return {"status": "error", "message": "end_at must be after start_at."}
 
-    block = await schedule_service.create_block(
-        user_id=user_id, data=validated.model_dump(exclude_unset=True)
-    )
+    block = await schedule_service.create_block(user_id=user_id, data=validated_data)
     persisted = {
         "id": block.id,
         "title": block.title,
