@@ -53,25 +53,28 @@ def generate_document_task(
     with the task id or wait for the WebSocket completion event.
     """
     from src.domains.personal_learning.services.document_impl import create_from_prompt
-    from src.shared.database.session import connect_db, disconnect_db
+
+    # `ensure_db`, not `connect_db`/`disconnect_db`, for the same reason as every other task
+    # in this package. `connect_db` builds the *API-sized* pool (DB_POOL_SIZE + overflow) inside
+    # a worker fork that only ever runs one task at a time, which claims several of the tenant's
+    # 15 session-mode client slots to do the work of one; and the paired `disconnect_db` nulls
+    # the module-level factory, so the next task on this fork has to rebuild it from scratch.
+    from src.shared.database.session import ensure_db
 
     async def _run() -> dict:
-        await connect_db()
-        try:
-            doc = await create_from_prompt(
-                user_id=user_id,
-                doc_type=doc_type,
-                title=title,
-                prompt=prompt,
-                format=format,
-                style=style,
-                course_id=course_id,
-                topic_id=topic_id,
-            )
-            # Return a plain dict — Celery serializes results as JSON.
-            return _serialize_document(doc)
-        finally:
-            await disconnect_db()
+        await ensure_db()
+        doc = await create_from_prompt(
+            user_id=user_id,
+            doc_type=doc_type,
+            title=title,
+            prompt=prompt,
+            format=format,
+            style=style,
+            course_id=course_id,
+            topic_id=topic_id,
+        )
+        # Return a plain dict — Celery serializes results as JSON.
+        return _serialize_document(doc)
 
     loop = asyncio.new_event_loop()
     try:
