@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.shared.database import get_session_factory
+from src.shared.exceptions import NotFoundError, ValidationError
 from src.shared.field_mapping import map_fields
 
 from .db_models import (
@@ -380,19 +381,74 @@ class ProgressRepository:
             await session.execute(stmt)
             await session.commit()
 
-    async def delete_blocks_for_goal(self, goal_id: str) -> int:
-        """Delete all schedule blocks linked to a goal. Returns count deleted."""
+    async def replace_blocks_for_goal(
+        self,
+        *,
+        goal_id: str,
+        user_id: str,
+        blocks: list[dict[str, Any]],
+        goal_data: dict[str, Any] | None = None,
+    ) -> tuple[list[ScheduleBlock], int, list[str]]:
+        """Replace an owned goal's complete block set in one transaction.
+
+        Calendar event IDs are returned for post-commit cleanup; this repository performs no network
+        I/O. New rows and optional goal metadata are flushed before old rows are deleted, so any invalid
+        part of the regenerated plan rolls the transaction back with the previous goal and schedule
+        intact.
+        """
+        if not blocks:
+            raise ValidationError("A replacement schedule must contain at least one block")
+
         async with await self._session() as session:
-            count_stmt = (
-                select(func.count())
-                .select_from(ScheduleBlock)
-                .where(ScheduleBlock.goal_id == goal_id)
-            )
-            count = (await session.execute(count_stmt)).scalar() or 0
-            stmt = delete(ScheduleBlock).where(ScheduleBlock.goal_id == goal_id)
-            await session.execute(stmt)
-            await session.commit()
-            return count
+            async with session.begin():
+                goal_stmt = (
+                    select(Goal)
+                    .where(Goal.id == goal_id, Goal.user_id == user_id)
+                    .with_for_update()
+                )
+                goal = (await session.execute(goal_stmt)).scalar_one_or_none()
+                if not goal:
+                    raise NotFoundError("Goal", goal_id)
+
+                old_rows = list(
+                    (
+                        await session.execute(
+                            select(ScheduleBlock).where(
+                                ScheduleBlock.goal_id == goal_id,
+                                ScheduleBlock.user_id == user_id,
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                old_ids = [row.id for row in old_rows]
+                old_event_ids = [
+                    row.google_calendar_event_id
+                    for row in old_rows
+                    if row.google_calendar_event_id is not None
+                ]
+
+                new_rows = [
+                    ScheduleBlock(
+                        **self._map_block_data({**block, "userId": user_id, "goalId": goal_id})
+                    )
+                    for block in blocks
+                ]
+                session.add_all(new_rows)
+                await session.flush()
+
+                if goal_data:
+                    for field, value in self._map_goal_data(goal_data).items():
+                        setattr(goal, field, value)
+                    await session.flush()
+
+                if old_ids:
+                    await session.execute(
+                        delete(ScheduleBlock).where(ScheduleBlock.id.in_(old_ids))
+                    )
+
+            return new_rows, len(old_ids), old_event_ids
 
     # -----------------------------------------------------------------------
     # Study Sessions

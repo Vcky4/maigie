@@ -549,17 +549,15 @@ class TestRegeneratePlanRecordsTheMove:
 
         with (
             patch.object(planning_impl.progress_repo, "find_goal", return_value=goal),
-            patch.object(planning_impl.progress_repo, "delete_blocks_for_goal", return_value=0),
-            patch.object(planning_impl.progress_repo, "update_goal", return_value=goal),
             patch.object(planning_impl, "_call_gemini_for_plan", _plan),
             patch.object(planning_impl, "IdentityRepository") as identity,
-            # Schedule creation is outside this test's deadline-change concern. Stub the owning
+            # Schedule replacement is outside this test's deadline-change concern. Stub the owning
             # domain service so regeneration can reach and verify the date-change record without
             # writing calendar blocks.
             patch.object(
                 planning_impl.schedule_service,
-                "create_block",
-                new=_empty_result,
+                "replace_blocks_for_goal",
+                new=_empty_replacement_result,
             ),
             patch.object(log_module, "record_date_change", _record),
         ):
@@ -595,6 +593,93 @@ class TestRegeneratePlanRecordsTheMove:
         # And an exam-derived deadline being rewritten is exactly the case worth being able to find.
         assert goal_metrics.date_authority(recorded[0]["goal"]) == "external"
 
+    @pytest.mark.asyncio
+    async def test_replacement_failure_does_not_move_or_log_the_goal(self):
+        from src.domains.intelligence.planning import planning_impl
+        from src.domains.progress.services import goal_schedule_log as log_module
+
+        goal = _goal(title="T", description=None, target_date=NOW)
+        recorded: list[dict] = []
+
+        async def _plan(_prompt, **_kwargs):
+            return {"goal": {"description": "new"}, "schedule": {}, "study_tips": []}
+
+        async def _replace(**_kwargs):
+            raise RuntimeError("replacement failed")
+
+        async def _record(**kwargs):
+            recorded.append(kwargs)
+
+        with (
+            patch.object(planning_impl.progress_repo, "find_goal", return_value=goal),
+            patch.object(planning_impl, "_call_gemini_for_plan", _plan),
+            patch.object(planning_impl, "IdentityRepository") as identity,
+            patch.object(
+                planning_impl.schedule_service,
+                "replace_blocks_for_goal",
+                new=_replace,
+            ),
+            patch.object(log_module, "record_date_change", _record),
+        ):
+            identity.return_value.find_by_id = _none_coroutine
+            with pytest.raises(RuntimeError, match="replacement failed"):
+                await planning_impl.regenerate_goal_plan(
+                    user_id="user-1", goal_id="goal-1", duration_weeks=4
+                )
+
+        assert recorded == []
+
+    @pytest.mark.asyncio
+    async def test_regeneration_submits_the_complete_schedule_once(self):
+        from src.domains.intelligence.planning import planning_impl
+        from src.domains.progress.services import goal_schedule_log as log_module
+
+        goal = _goal(title="Algorithms", description=None, target_date=NOW)
+        replacements: list[dict] = []
+
+        async def _plan(_prompt, **_kwargs):
+            return {
+                "goal": {"description": "new"},
+                "schedule": {
+                    "sessions_per_week": 2,
+                    "hours_per_session": 1,
+                    "preferred_days": ["Monday", "Wednesday"],
+                },
+                "study_tips": [],
+            }
+
+        async def _replace(**kwargs):
+            replacements.append(kwargs)
+            rows = [SimpleNamespace(id=f"new-{index}") for index, _ in enumerate(kwargs["blocks"])]
+            return rows, 3
+
+        with (
+            patch.object(planning_impl.progress_repo, "find_goal", return_value=goal),
+            patch.object(planning_impl, "_call_gemini_for_plan", _plan),
+            patch.object(planning_impl, "IdentityRepository") as identity,
+            patch.object(
+                planning_impl.schedule_service,
+                "replace_blocks_for_goal",
+                new=_replace,
+            ),
+            patch.object(log_module, "record_date_change", new=_empty_result),
+        ):
+            identity.return_value.find_by_id = _none_coroutine
+            result = await planning_impl.regenerate_goal_plan(
+                user_id="user-1", goal_id="goal-1", duration_weeks=4
+            )
+
+        assert len(replacements) == 1
+        replacement = replacements[0]
+        assert replacement["user_id"] == "user-1"
+        assert replacement["goal_id"] == "goal-1"
+        assert len(replacement["blocks"]) > 1
+        assert replacement["goal_data"]["description"] == "new"
+        assert replacement["goal_data"]["targetDate"] > NOW
+        assert all(block["title"] == "Study: Algorithms" for block in replacement["blocks"])
+        assert result["created_schedule_blocks"] == len(replacement["blocks"])
+        assert result["deleted_schedule_blocks"] == 3
+
 
 async def _none_coroutine(*_a, **_k):
     return None
@@ -602,3 +687,7 @@ async def _none_coroutine(*_a, **_k):
 
 async def _empty_result(*_a, **_k):
     return {}
+
+
+async def _empty_replacement_result(*_a, **_k):
+    return [], 0

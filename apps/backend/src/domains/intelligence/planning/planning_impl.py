@@ -455,26 +455,6 @@ Output only valid JSON."""
             "goal_id": goal_id,
         }
 
-    deleted_count = await progress_repo.delete_blocks_for_goal(goal_id)
-
-    update_data: dict[str, Any] = {"targetDate": target_date}
-    goal_desc = (plan.get("goal") or {}).get("description")
-    if isinstance(goal_desc, str) and goal_desc.strip():
-        update_data["description"] = goal_desc.strip()
-
-    await progress_repo.update_goal(goal_id, update_data)
-
-    # **This path rewrites a deadline the learner did not name.** `target_date` above is computed from
-    # the requested duration in weeks, so regenerating a plan moves the goal's date — including a date
-    # that came from an exam, since nothing here reads date authority. That is pre-existing behaviour and
-    # is left alone; recording it is what makes it visible, and an unrecorded extension is one
-    # `elapsed_percent` silently treats as a larger window the goal always had.
-    from src.domains.progress.services import goal_schedule_log
-
-    await goal_schedule_log.record_date_change(
-        goal=goal, new_date=target_date, reason="plan_regenerated"
-    )
-
     schedule_config = plan.get("schedule", {}) or {}
     sessions_per_week = schedule_config.get("sessions_per_week", 3)
     hours_per_session = schedule_config.get("hours_per_session", 1)
@@ -505,7 +485,7 @@ Output only valid JSON."""
     }
     target_weekdays = [day_map.get(str(d), 0) for d in preferred_days[:sessions_per_week]]
 
-    schedules_created = 0
+    replacement_blocks: list[dict[str, Any]] = []
     for week_num in range(duration_weeks):
         week_start = now + timedelta(weeks=week_num)
         for target_day in target_weekdays:
@@ -521,26 +501,47 @@ Output only valid JSON."""
 
             start_at = session_date.replace(hour=9, minute=0, second=0, microsecond=0)
             end_at = start_at + timedelta(hours=hours_per_session)
-
-            await schedule_service.create_block(
-                user_id=user_id,
-                data={
+            replacement_blocks.append(
+                {
                     "title": f"Study: {goal.title[:40]}",
                     "description": f"Study session for goal: {goal.title}",
                     "startAt": start_at,
                     "endAt": end_at,
                     "courseId": goal.course_id,
                     "topicId": goal.topic_id,
-                    "goalId": goal_id,
-                },
+                }
             )
-            schedules_created += 1
+
+    update_data: dict[str, Any] = {"targetDate": target_date}
+    goal_desc = (plan.get("goal") or {}).get("description")
+    if isinstance(goal_desc, str) and goal_desc.strip():
+        update_data["description"] = goal_desc.strip()
+
+    new_blocks, deleted_count = await schedule_service.replace_blocks_for_goal(
+        user_id=user_id,
+        goal_id=goal_id,
+        blocks=replacement_blocks,
+        goal_data=update_data,
+    )
+
+    # The complete local plan — blocks, deadline, and description — has committed as one transaction.
+    # Only external Calendar reconciliation is best-effort and outside that transaction.
+    # **This path rewrites a deadline the learner did not name.** `target_date` is computed from
+    # the requested duration in weeks, so regenerating a plan moves the goal's date — including a date
+    # that came from an exam, since nothing here reads date authority. That is pre-existing behaviour and
+    # is left alone; recording it is what makes it visible, and an unrecorded extension is one
+    # `elapsed_percent` silently treats as a larger window the goal always had.
+    from src.domains.progress.services import goal_schedule_log
+
+    await goal_schedule_log.record_date_change(
+        goal=goal, new_date=target_date, reason="plan_regenerated"
+    )
 
     return {
         "status": "success",
         "goal_id": goal_id,
         "deleted_schedule_blocks": deleted_count,
-        "created_schedule_blocks": schedules_created,
+        "created_schedule_blocks": len(new_blocks),
         "target_date": target_date.isoformat(),
         "study_tips": plan.get("study_tips", []) or [],
         "message": "Plan regenerated successfully",

@@ -432,10 +432,11 @@ written; see §8. The three columns exist with the intended nullability, and all
 the migration specifies. That does not change the paragraph above: the tests that need SQL still skip,
 because they need a database they can *write* to, and this one holds real data.
 
-**Still skipped, and why:**
+**Still skipped, and why (historical step-5 snapshot):**
 `test_llm_agentic_roundtrip.py` (47 — still wants the legacy `GeminiService`; the open decision to
-port it or delete the test is unchanged); `test_chat.py`, `test_circle_billing.py`,
-`test_circle_repository.py`, `test_moderation_service.py` (pre-domain architecture).
+port it or delete the test is unchanged); `test_circle_billing.py`, `test_circle_repository.py`,
+`test_moderation_service.py` (pre-domain architecture). `test_chat.py` was removed in the 2026-09-08
+ActionService follow-up described in §7 and §10.
 
 Two more are now *nearly* recoverable and were left alone because both need more than a retarget —
 worth knowing since both cover code this step touched:
@@ -594,11 +595,27 @@ now delegate to the domains that own their data and policy:
   callers of the same missing methods outside the skill handlers.
 
 No production references remained, so `action/action_service.py` was deleted rather than expanded
-into a duplicate orchestration layer. Verification: 1,057 affected and import-guard tests passed
-(64 skipped, 6 expected failures), repository-wide Ruff and focused formatting passed, and direct
-mocked dispatch smoke calls returned successful persisted-result envelopes for all six actions.
-Dedicated committed dispatch tests for these handlers are still absent; that is a coverage gap, not
-a known runtime failure.
+into a duplicate orchestration layer. Initial verification covered 1,057 affected and import-guard
+tests (64 skipped, 6 expected failures), repository-wide Ruff, focused formatting, and direct mocked
+dispatch smoke calls.
+
+**Direct follow-ups completed, 2026-09-08.** The temporary smoke calls are now committed as
+`test_action_skill_handlers.py`, covering course creation and allowance refusal, goal creation,
+schedule validation, note retake/summary, and additive deduplicated tags. A real SQLite regression
+also proves that a late outline failure rolls back the course, modules, and topics together. The
+wholly collection-skipped `test_chat.py` was removed: it targeted deleted `src.services`, `src.routes`,
+and Prisma-era APIs, while its one relevant mutation assertion is superseded by current handler and
+repository tests.
+
+Goal-plan regeneration is now one owner-scoped local transaction: it locks the goal, flushes the full
+new block set and deadline/description, then removes only the captured old rows. Any invalid insert
+rolls back the goal metadata and preserves the previous schedule. Google Calendar deletion/sync stays
+post-commit and best-effort, so network I/O never holds the SQL transaction. The ignored local `.env`
+multiline `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` value was quoted without changing its contents; both
+dotenv parsing and JSON decoding now succeed without emitting credentials.
+
+Final affected-suite verification: **1,077 passed, 64 skipped, 6 expected failures**; all 503 backend
+source/test files pass Ruff lint and formatting, and `git diff --check` is clean.
 
 The rest of the inventory remains:
 
@@ -739,7 +756,7 @@ non-vacuity guard), `test_email_infrastructure.py` (33), `test_push_notification
 `test_restored_stubs.py` (46), `test_background_tasks.py` (23), plus the recovered
 `test_space_gates.py` (26) and two `topicId` mapping guards.
 
-**Skipped at collection: 24 → 20 → 12 → 11** (as of step 6, 2026-08-27).
+**Skipped at collection: 24 → 20 → 12 → 11 → 10** (latest update 2026-09-08).
 `conftest.pytest_ignore_collect` skips any file containing `src.services.`, `src.routes.`,
 `src.core.database` or `src.schemas.subscription`. Recovered so far: `test_cost_calculator`,
 `test_credit_service`, `test_gemini_tool_handlers` (11) and `test_space_gates` (26) in the earlier
@@ -748,7 +765,9 @@ pass; then `test_circuit_breaker` (28), `test_tool_normalizer` + `test_stream_no
 steps 1–4; then `test_end_to_end_routing` (11) and `test_feature_flags` (65) in step 5; then
 `test_openai_chat_tools` (23) in step 6.
 
-The remaining 11 are **not dead and should not be deleted**:
+The remaining 10 are **not dead and should not be deleted**. The eleventh, `test_chat.py`, was
+removed on 2026-09-08 because it was wholly Prisma/`src.services`/`src.routes`-era and its only
+relevant mutation behavior now has current handler and transactional repository coverage:
 
 - **1 is a test for an LLM module that was deliberately not restored** (§6):
   `test_llm_agentic_roundtrip` wants the legacy `GeminiService`, which is not on the router path — the
@@ -863,8 +882,10 @@ target state for now, not debt to delete, so they are counted here as scope rath
 4. **Device-token registration** (§2) — until an endpoint writes `DeviceToken` rows, push
    cannot deliver. Tied to mobile scope.
 5. ~~**Fix the six live ActionService handler failures** (§7).~~ **Completed 2026-09-08.** The
-   stub and every production reference are gone. What remains in this area is the inert chat-assembly
-   stub inventory in §7 and committed dispatch-level regression coverage for the migrated handlers.
+   stub and every production reference are gone; committed dispatch, atomic course-outline, and
+   failure-safe goal-regeneration coverage now guard the migrated paths. The wholly legacy
+   `test_chat.py` was removed. What remains here is only the separate inert chat-assembly stub
+   inventory in §7.
 6. **`AuditLog.adminUserId`** (§2) — `NOT NULL` with an `ON DELETE SET NULL` FK; needs a
    migration to reconcile.
 7. **The web Prepare surface is still 100% mocks.** Phases 5–6 of the integration plan are not
@@ -882,6 +903,10 @@ target state for now, not debt to delete, so they are counted here as scope rath
   proportional to chase further.
 - Multi-worker websocket fan-out. The connection registry is in memory, so with more than one
   worker a message reaches only the worker holding that user's socket. Needs a shared broker.
+- Durable retry for Google Calendar event deletion after schedule regeneration. Local goal and block
+  replacement is atomic and remote work is post-commit by design, but an unconfirmed Google deletion
+  is currently logged rather than persisted to an outbox for retry; a stale remote event can therefore
+  require later reconciliation.
 - `check_freebusy` / `has_conflict` in the calendar integration, and `log_user_activity` in the
   audit service. All three exist in history and nothing calls them; restoring them would be
   adding dead code. Note that `handlers.py` returns a hardcoded `"has_conflicts": False`, which

@@ -814,3 +814,24 @@ async def test_reorder_topics_ignores_a_topic_from_another_module(repo):
 
     assert moved == 1
     assert (await repo.find_topic(elsewhere.id)).order == 10
+
+
+# ---------------------------------------------------------------------------
+# Atomic course outline creation
+# ---------------------------------------------------------------------------
+
+
+async def test_a_invalid_topic_rolls_back_the_whole_course_outline(repo):
+    """A late topic failure must not leave course metadata or earlier outline rows behind."""
+    from sqlalchemy.exc import IntegrityError
+
+    with pytest.raises(IntegrityError):
+        await repo.create_course_with_outline(
+            {"userId": USER, "title": "Must not survive", "isAIGenerated": True},
+            [
+                {"title": "Valid first module", "topics": ["Valid topic"]},
+                {"title": "Broken second module", "topics": [None]},
+            ],
+        )
+
+    assert await repo.count_courses({"userId": USER}) == 0
