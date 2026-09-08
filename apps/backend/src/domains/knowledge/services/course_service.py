@@ -277,21 +277,8 @@ async def ensure_can_create_course(user: User) -> None:
     )
 
 
-async def create_course(*, user: User, data: dict[str, Any]) -> Any:
-    """Create a course manually."""
-    await ensure_can_create_course(user)
-
-    # The fields a client may set when creating a course.
-    #
-    # Previously this was assembled by naming each field, which made every addition to `CourseCreate`
-    # a chance to lose data: a field the client sent and this dict did not name was accepted, dropped,
-    # and reported as created. That happened — `category`, `tags`, `outcomes` and both instructor
-    # fields were all silently discarded on their first day.
-    #
-    # It is still an allowlist, because that job is real: without it a client could set `progress`,
-    # `userId` or `archived` by naming them in a request body. What changed is that an unrecognised
-    # field is now a refusal rather than a silent drop, so the failure lands on the developer who
-    # added the field instead of on the learner whose input vanished.
+def _prepare_course_create(user: User, data: dict[str, Any]) -> dict[str, Any]:
+    """Validate client-settable fields and map policy-owned defaults."""
     unknown = set(data) - _COURSE_CREATE_FIELDS
     if unknown:
         raise ValidationError(
@@ -305,36 +292,79 @@ async def create_course(*, user: User, data: dict[str, Any]) -> Any:
             continue
         if data.get(field) is not None:
             create_data[field] = data[field]
-    # Explicit rather than inferred from absence, because the repository default and this default must
-    # not be able to disagree about what an unspecified course is.
     create_data.setdefault("isAIGenerated", False)
 
-    # A generated course is taught by Maigie, and the credit is written at creation rather than
-    # inferred at read time. Inferring it would mean every reader repeating the rule "if AI-generated
-    # and nobody named, say Maigie", and the moment one reader forgot, the same course would show an
-    # instructor on one page and none on another.
-    #
-    # Only when the caller named nobody: an explicit instructor always wins, which is what lets a
-    # course authored for a space keep its author after being generated from a syllabus.
     if create_data["isAIGenerated"] and not create_data.get("instructorName"):
         create_data["instructorName"] = AI_INSTRUCTOR_NAME
         create_data["instructorRole"] = AI_INSTRUCTOR_ROLE
+    return create_data
 
-    course = await knowledge_repo.create_course(create_data)
-    await emit_course_created(user.id, course.id, is_ai_generated=create_data["isAIGenerated"])
 
-    # Enrolling in a course states what the learner is working towards, so it earns a goal that
-    # measures the course's own progress. Idempotent, and it never touches a course that already has
-    # a goal.
-    #
-    # Called directly rather than hung off `course.created`. The event bus dispatches to whichever
-    # handler modules happen to have been imported, and after importing the app that set is empty —
-    # every `@listen` handler in this codebase is currently unreachable. A goal that silently never
-    # appears because a module was not imported is the same defect as a schedule block writer nobody
-    # ever called.
+async def _finish_course_creation(
+    user: User, course: Any, *, is_ai_generated: bool, derive_goal: bool = True
+) -> None:
+    await emit_course_created(user.id, course.id, is_ai_generated=is_ai_generated)
+    if not derive_goal:
+        return
+
     from src.domains.progress.services import goal_derivation_service
 
     await goal_derivation_service.derive_goals_quietly(user.id, course_id=course.id)
+
+
+async def create_course(*, user: User, data: dict[str, Any]) -> Any:
+    """Create course metadata through the canonical lifecycle."""
+    await ensure_can_create_course(user)
+    create_data = _prepare_course_create(user, data)
+    course = await knowledge_repo.create_course(create_data)
+    await emit_course_created(
+        user.id, course.id, is_ai_generated=bool(create_data["isAIGenerated"])
+    )
+
+    # Keep this call explicit: recording a course is also recording the learner's intent, and the
+    # id passed here must be the row that was just committed rather than one inferred from input.
+    from src.domains.progress.services import goal_derivation_service
+
+    await goal_derivation_service.derive_goals_quietly(user.id, course_id=course.id)
+    return course
+
+
+async def create_course_with_outline(
+    *,
+    user: User,
+    data: dict[str, Any],
+    modules: list[dict[str, Any]],
+    derive_goal: bool = True,
+) -> Any:
+    """Create an AI course and its supplied outline atomically."""
+    if not isinstance(modules, list) or not modules:
+        raise ValidationError("A generated course must contain at least one module.")
+
+    normalized_modules: list[dict[str, Any]] = []
+    for module_index, module in enumerate(modules, start=1):
+        if not isinstance(module, dict):
+            raise ValidationError(f"Module {module_index} must be an object.")
+        title = str(module.get("title") or "").strip()
+        topics = module.get("topics")
+        if not title:
+            raise ValidationError(f"Module {module_index} needs a title.")
+        if not isinstance(topics, list) or not topics:
+            raise ValidationError(f'Module "{title}" must contain at least one topic.')
+        topic_titles = [str(topic).strip() for topic in topics]
+        if any(not topic for topic in topic_titles):
+            raise ValidationError(f'Module "{title}" contains a blank topic title.')
+        normalized_modules.append(
+            {
+                "title": title,
+                "description": module.get("description"),
+                "topics": topic_titles,
+            }
+        )
+
+    await ensure_can_create_course(user)
+    create_data = _prepare_course_create(user, {**data, "isAIGenerated": True})
+    course = await knowledge_repo.create_course_with_outline(create_data, normalized_modules)
+    await _finish_course_creation(user, course, is_ai_generated=True, derive_goal=derive_goal)
     return course
 
 

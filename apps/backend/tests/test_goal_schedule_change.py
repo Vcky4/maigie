@@ -553,16 +553,12 @@ class TestRegeneratePlanRecordsTheMove:
             patch.object(planning_impl.progress_repo, "update_goal", return_value=goal),
             patch.object(planning_impl, "_call_gemini_for_plan", _plan),
             patch.object(planning_impl, "IdentityRepository") as identity,
-            # `create=True` because **`action_service` is a stub that has no `create_schedule`**
-            # (`intelligence/action/action_service.py` holds only `execute`, returning `None`). So this
-            # route raises `AttributeError` the moment it reaches its block-creation loop, today, for
-            # reasons that have nothing to do with this change. Patched in rather than worked around so
-            # these tests exercise the deadline write, which happens before that loop and is therefore
-            # reached in production too — the date moves, then the request 500s.
+            # Schedule creation is outside this test's deadline-change concern. Stub the owning
+            # domain service so regeneration can reach and verify the date-change record without
+            # writing calendar blocks.
             patch.object(
-                planning_impl.action_service,
-                "create_schedule",
-                create=True,
+                planning_impl.schedule_service,
+                "create_block",
                 new=_empty_result,
             ),
             patch.object(log_module, "record_date_change", _record),

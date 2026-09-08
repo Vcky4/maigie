@@ -491,6 +491,29 @@ class KnowledgeRepository:
             await session.refresh(course)
             return course
 
+    async def create_course_with_outline(
+        self, data: dict[str, Any], modules: list[dict[str, Any]]
+    ) -> Course:
+        """Create course metadata, modules, and topics in one transaction."""
+        async with await self._session() as session:
+            course = Course(**self._map_course_data(data))
+            for module_index, module_data in enumerate(modules):
+                module = Module(
+                    title=module_data["title"],
+                    description=module_data.get("description"),
+                    order=float(module_index),
+                )
+                module.topics = [
+                    Topic(title=topic_title, order=float(topic_index))
+                    for topic_index, topic_title in enumerate(module_data["topics"])
+                ]
+                course.modules.append(module)
+
+            session.add(course)
+            await session.commit()
+            await session.refresh(course)
+            return course
+
     async def update_course(self, course_id: str, data: dict[str, Any]) -> None:
         async with await self._session() as session:
             stmt = (

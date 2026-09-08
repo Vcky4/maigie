@@ -572,16 +572,39 @@ been made to a real provider from this codebase.**
 
 ## 7. Remaining stubs
 
-22 stub functions across 11 modules, down from 40 across 22. None are the dangerous kind any
-more — everything that corrupted data, bypassed a check or discarded a user action is fixed.
-What remains is almost entirely the chat subsystem. These were blocked behind the missing router,
-which step 5 restored (§6), so they are now individually worth doing — and a turn that reaches the
-model will start exercising them, so their stub behaviour is now visible rather than unreachable:
+The original audit counted 22 stub functions across 11 modules, down from 40 across 22. That count
+has not been rerun for this incremental review; the ActionService stub described below has now been
+deleted, so the old headline is no longer current.
+
+**ActionService migration completed, 2026-09-08.** Seven live handlers had called methods that did
+not exist on `action/action_service.py`. `recommend_resources` first exposed the debt through a real
+`AttributeError` and now uses the intended asynchronous outcome/Celery path. The other six actions
+now delegate to the domains that own their data and policy:
+
+- AI course creation uses `knowledge/services/course_service.py`; course metadata, modules, and topics
+  commit atomically, while course allowance checks, AI attribution, events, and derived goals stay on
+  the canonical lifecycle.
+- Goal creation and study-block scheduling use the progress services. Input is validated through the
+  REST-domain models, schedule end time must follow start time, and schedule creation retains
+  best-effort Google Calendar sync.
+- Note rewrite and summary use `personal_learning/services/note_service.py`, preserving owner scoping,
+  metered resilient generation, marker stripping, and rewrite history. Add-tags now preserves existing
+  tags and deduplicates additions instead of replacing the set.
+- Multi-step study-plan creation and goal-plan regeneration were migrated too; they were additional
+  callers of the same missing methods outside the skill handlers.
+
+No production references remained, so `action/action_service.py` was deleted rather than expanded
+into a duplicate orchestration layer. Verification: 1,057 affected and import-guard tests passed
+(64 skipped, 6 expected failures), repository-wide Ruff and focused formatting passed, and direct
+mocked dispatch smoke calls returned successful persisted-result envelopes for all six actions.
+Dedicated committed dispatch tests for these handlers are still absent; that is a coverage gap, not
+a known runtime failure.
+
+The rest of the inventory remains:
 
 - `conversation/chat_greeting.py` (4), `chat_helpers.py` (7), `component_response.py` (3),
   `session_service.py` (2) — chat message assembly
 - `identity/onboarding.py` (5) — conversational onboarding
-- `action/action_service.py` (2) — tool dispatch
 - `intelligence/memory/memory_service.py` (1) — memory retrieval
 - `knowledge_base_service.py` (2), `kb_context_service.py` (2) — retrieval, blocked on the
   vector-store decision in §8
@@ -839,8 +862,9 @@ target state for now, not debt to delete, so they are counted here as scope rath
      not now. Needs a `SystemConfig` model, which no longer exists, and a mounted admin router.
 4. **Device-token registration** (§2) — until an endpoint writes `DeviceToken` rows, push
    cannot deliver. Tied to mobile scope.
-5. **The chat subsystem stubs** (§7) — 22 functions. No longer blocked behind item 3; the router
-   exists, so these are now the next thing a real turn hits.
+5. ~~**Fix the six live ActionService handler failures** (§7).~~ **Completed 2026-09-08.** The
+   stub and every production reference are gone. What remains in this area is the inert chat-assembly
+   stub inventory in §7 and committed dispatch-level regression coverage for the migrated handlers.
 6. **`AuditLog.adminUserId`** (§2) — `NOT NULL` with an `ON DELETE SET NULL` FK; needs a
    migration to reconcile.
 7. **The web Prepare surface is still 100% mocks.** Phases 5–6 of the integration plan are not
