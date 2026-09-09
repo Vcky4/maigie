@@ -532,6 +532,8 @@ async def handle_create_schedule(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a study block through the progress domain."""
+    from pydantic import ValidationError
+
     from src.domains.progress import models
     from src.domains.progress.services import schedule_service
     from src.shared.time import ensure_utc
@@ -546,9 +548,19 @@ async def handle_create_schedule(
         "topicId": args.get("topic_id"),
         "goalId": args.get("goal_id"),
     }
-    validated = models.StudyBlockCreate.model_validate(
-        {key: value for key, value in block_data.items() if value is not None}
-    )
+    try:
+        validated = models.StudyBlockCreate.model_validate(
+            {key: value for key, value in block_data.items() if value is not None}
+        )
+    except ValidationError as exc:
+        message = str(exc)
+        return {
+            "status": "error",
+            "message": message,
+            "error": message,
+            "error_type": "ValidationError",
+        }
+
     validated_data = validated.model_dump(exclude_unset=True)
     if validated_data["endAt"] <= validated_data["startAt"]:
         return {"status": "error", "message": "end_at must be after start_at."}

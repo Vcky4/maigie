@@ -63,3 +63,39 @@ def test_merge_create_schedule_nested():
         {"status": "success", "schedule": {"id": "s-1", "title": "Study"}},
     )
     assert d["schedule_id"] == "s-1"
+
+
+@pytest.mark.asyncio
+async def test_enrich_repairs_one_terminal_comma_on_valid_schedule_datetimes():
+    args = {
+        "title": "Study",
+        "start_at": "2026-09-09T01:49:00Z,",
+        "end_at": "2026-09-09T02:49:00Z,",
+    }
+
+    out = await enrich(
+        "create_schedule",
+        args,
+        context=None,
+        created_ids=None,
+        user_id="u1",
+    )
+
+    assert out["start_at"] == "2026-09-09T01:49:00Z"
+    assert out["end_at"] == "2026-09-09T02:49:00Z"
+    assert args["end_at"] == "2026-09-09T02:49:00Z,"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["tomorrow,", "2026-09-09T02:49:00Z,,"])
+async def test_enrich_leaves_unrepairable_schedule_datetimes_for_validation(value):
+    out = await enrich(
+        "create_schedule",
+        {"title": "Study", "start_at": value, "end_at": value},
+        context=None,
+        created_ids=None,
+        user_id="u1",
+    )
+
+    assert out["start_at"] == value
+    assert out["end_at"] == value

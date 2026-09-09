@@ -163,6 +163,25 @@ async def test_create_schedule_rejects_an_inverted_window_before_persistence():
     create.assert_not_awaited()
 
 
+async def test_create_schedule_returns_validation_error_without_logging_an_exception():
+    create = AsyncMock()
+    with patch("src.domains.progress.services.schedule_service.create_block", create):
+        result = await handle_tool_call(
+            "create_schedule",
+            {
+                "title": "Malformed block",
+                "start_at": "2026-09-09T01:49:00Z",
+                "end_at": "tomorrow,",
+            },
+            USER_ID,
+        )
+
+    assert result["status"] == "error"
+    assert result["error_type"] == "ValidationError"
+    assert "endAt" in result["message"]
+    create.assert_not_awaited()
+
+
 async def test_retake_note_delegates_to_the_owner_scoped_note_service():
     note = SimpleNamespace(id="note-1", title="Vectors")
     retake = AsyncMock(return_value=note)

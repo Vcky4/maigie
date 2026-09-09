@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from datetime import datetime
 from typing import Any
 
 from src.domains.intelligence.conversation import note_service
@@ -259,7 +260,28 @@ def _enrich_recommend_resources_args(out: dict, ctx: dict) -> None:
         out["circle_id"] = ctx["circleId"]
 
 
+def _repair_iso_datetime_artifact(value: Any) -> Any:
+    """Remove one terminal comma only when the remaining value is a valid ISO datetime."""
+    if not isinstance(value, str):
+        return value
+
+    candidate = value.strip()
+    if not candidate.endswith(","):
+        return value
+
+    repaired = candidate[:-1].rstrip()
+    try:
+        datetime.fromisoformat(repaired.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    return repaired
+
+
 def _enrich_create_schedule_args(out: dict, ctx: dict) -> None:
+    for field in ("start_at", "end_at"):
+        if field in out:
+            out[field] = _repair_iso_datetime_artifact(out[field])
+
     pairs = (
         ("course_id", "courseId"),
         ("topic_id", "topicId"),
