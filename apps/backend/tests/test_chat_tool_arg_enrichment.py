@@ -63,3 +63,80 @@ def test_merge_create_schedule_nested():
         {"status": "success", "schedule": {"id": "s-1", "title": "Study"}},
     )
     assert d["schedule_id"] == "s-1"
+
+
+@pytest.mark.asyncio
+async def test_enrich_repairs_one_terminal_comma_on_valid_schedule_datetimes():
+    args = {
+        "title": "Study",
+        "start_at": "2026-09-09T01:49:00Z,",
+        "end_at": "2026-09-09T02:49:00Z,",
+    }
+
+    out = await enrich(
+        "create_schedule",
+        args,
+        context=None,
+        created_ids=None,
+        user_id="u1",
+    )
+
+    assert out["start_at"] == "2026-09-09T01:49:00Z"
+    assert out["end_at"] == "2026-09-09T02:49:00Z"
+    assert args["end_at"] == "2026-09-09T02:49:00Z,"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["tomorrow,", "2026-09-09T02:49:00Z,,"])
+async def test_enrich_leaves_unrepairable_schedule_datetimes_for_validation(value):
+    out = await enrich(
+        "create_schedule",
+        {"title": "Study", "start_at": value, "end_at": value},
+        context=None,
+        created_ids=None,
+        user_id="u1",
+    )
+
+    assert out["start_at"] == value
+    assert out["end_at"] == value
+
+
+@pytest.mark.asyncio
+async def test_create_note_context_topic_replaces_model_associations_without_mutating_input():
+    args = {
+        "title": "Note",
+        "content": "Body",
+        "topic_id": "model-topic",
+        "course_id": "model-course",
+    }
+
+    out = await enrich(
+        "create_note",
+        args,
+        context={"topicId": "context-topic"},
+        created_ids=None,
+        user_id="u1",
+    )
+
+    assert out["topic_id"] == "context-topic"
+    assert "course_id" not in out
+    assert args == {
+        "title": "Note",
+        "content": "Body",
+        "topic_id": "model-topic",
+        "course_id": "model-course",
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_note_context_course_removes_a_model_topic():
+    out = await enrich(
+        "create_note",
+        {"title": "Note", "content": "Body", "topic_id": "model-topic"},
+        context={"courseId": "context-course"},
+        created_ids=None,
+        user_id="u1",
+    )
+
+    assert out["course_id"] == "context-course"
+    assert "topic_id" not in out

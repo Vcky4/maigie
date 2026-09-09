@@ -458,14 +458,46 @@ async def handle_create_note(
     user_id: str,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Handle create_note tool call through the same durable service as the REST endpoint."""
+    """Handle create_note with owner-scoped canonicalization of optional links."""
+    from src.domains.knowledge.services import course_service
     from src.domains.personal_learning.services import note_service
+    from src.shared.exceptions import ForbiddenError, NotFoundError
+
+    ctx = context or {}
+    context_topic_id = ctx.get("topicId")
+    context_course_id = ctx.get("courseId")
+
+    # Page scope takes precedence over model-generated IDs, but becomes trusted only after the
+    # owning domain resolves it for this learner. A topic is authoritative for its parent course.
+    topic_id = context_topic_id or (None if context_course_id else args.get("topic_id"))
+    course_id = context_course_id or args.get("course_id")
+
+    if topic_id:
+        try:
+            topic, _module, course = await course_service.check_topic_ownership(topic_id, user_id)
+        except (NotFoundError, ForbiddenError):
+            if context_topic_id:
+                return {"status": "error", "message": "Topic not found or access denied."}
+            topic_id = None
+        else:
+            topic_id = topic.id
+            course_id = course.id
+
+    if not topic_id and course_id:
+        try:
+            course = await course_service.check_course_ownership(course_id, user_id)
+        except (NotFoundError, ForbiddenError):
+            if context_course_id:
+                return {"status": "error", "message": "Course not found or access denied."}
+            course_id = None
+        else:
+            course_id = course.id
 
     note_data = {
         "title": args["title"],
         "content": args["content"],
-        "topicId": args.get("topic_id"),
-        "courseId": args.get("course_id"),
+        "topicId": topic_id,
+        "courseId": course_id,
         "spaceId": args.get("space_id"),
         "summary": args.get("summary"),
     }
@@ -532,6 +564,8 @@ async def handle_create_schedule(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a study block through the progress domain."""
+    from pydantic import ValidationError
+
     from src.domains.progress import models
     from src.domains.progress.services import schedule_service
     from src.shared.time import ensure_utc
@@ -546,9 +580,19 @@ async def handle_create_schedule(
         "topicId": args.get("topic_id"),
         "goalId": args.get("goal_id"),
     }
-    validated = models.StudyBlockCreate.model_validate(
-        {key: value for key, value in block_data.items() if value is not None}
-    )
+    try:
+        validated = models.StudyBlockCreate.model_validate(
+            {key: value for key, value in block_data.items() if value is not None}
+        )
+    except ValidationError as exc:
+        message = str(exc)
+        return {
+            "status": "error",
+            "message": message,
+            "error": message,
+            "error_type": "ValidationError",
+        }
+
     validated_data = validated.model_dump(exclude_unset=True)
     if validated_data["endAt"] <= validated_data["startAt"]:
         return {"status": "error", "message": "end_at must be after start_at."}

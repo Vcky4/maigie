@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from datetime import datetime
 from typing import Any
 
 from src.domains.intelligence.conversation import note_service
@@ -224,15 +225,25 @@ async def _enrich_note_tool_args(out: dict, ctx: dict, user_id: str | None) -> N
 
 
 async def _enrich_create_note_args(out: dict, ctx: dict) -> None:
-    tid = out.get("topic_id")
-    if _is_bad_id(tid) and ctx.get("topicId"):
+    # Page scope is a stronger signal than a model-generated association. The handler still performs
+    # owner-scoped resolution before persistence; this layer only removes contradictory model args.
+    if ctx.get("topicId"):
         out["topic_id"] = ctx["topicId"]
-    elif _is_bad_id(tid):
+        if ctx.get("courseId"):
+            out["course_id"] = ctx["courseId"]
+        else:
+            out.pop("course_id", None)
+        return
+    if ctx.get("courseId"):
+        out["course_id"] = ctx["courseId"]
+        out.pop("topic_id", None)
+        return
+
+    tid = out.get("topic_id")
+    if _is_bad_id(tid):
         out.pop("topic_id", None)
     cid = out.get("course_id")
-    if _is_bad_id(cid) and ctx.get("courseId"):
-        out["course_id"] = ctx["courseId"]
-    elif _is_bad_id(cid):
+    if _is_bad_id(cid):
         out.pop("course_id", None)
 
 
@@ -259,7 +270,28 @@ def _enrich_recommend_resources_args(out: dict, ctx: dict) -> None:
         out["circle_id"] = ctx["circleId"]
 
 
+def _repair_iso_datetime_artifact(value: Any) -> Any:
+    """Remove one terminal comma only when the remaining value is a valid ISO datetime."""
+    if not isinstance(value, str):
+        return value
+
+    candidate = value.strip()
+    if not candidate.endswith(","):
+        return value
+
+    repaired = candidate[:-1].rstrip()
+    try:
+        datetime.fromisoformat(repaired.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    return repaired
+
+
 def _enrich_create_schedule_args(out: dict, ctx: dict) -> None:
+    for field in ("start_at", "end_at"):
+        if field in out:
+            out[field] = _repair_iso_datetime_artifact(out[field])
+
     pairs = (
         ("course_id", "courseId"),
         ("topic_id", "topicId"),

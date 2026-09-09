@@ -163,6 +163,25 @@ async def test_create_schedule_rejects_an_inverted_window_before_persistence():
     create.assert_not_awaited()
 
 
+async def test_create_schedule_returns_validation_error_without_logging_an_exception():
+    create = AsyncMock()
+    with patch("src.domains.progress.services.schedule_service.create_block", create):
+        result = await handle_tool_call(
+            "create_schedule",
+            {
+                "title": "Malformed block",
+                "start_at": "2026-09-09T01:49:00Z",
+                "end_at": "tomorrow,",
+            },
+            USER_ID,
+        )
+
+    assert result["status"] == "error"
+    assert result["error_type"] == "ValidationError"
+    assert "endAt" in result["message"]
+    create.assert_not_awaited()
+
+
 async def test_retake_note_delegates_to_the_owner_scoped_note_service():
     note = SimpleNamespace(id="note-1", title="Vectors")
     retake = AsyncMock(return_value=note)
@@ -216,3 +235,134 @@ async def test_add_tags_preserves_existing_tags_and_deduplicates_requested_tags(
         data={"tags": ["LinearAlgebra", "Geometry"]},
     )
     assert result["tags"] == ["LinearAlgebra", "Geometry"]
+
+
+async def test_create_note_drops_an_unavailable_model_course_before_persistence():
+    from src.shared.exceptions import NotFoundError
+
+    created = SimpleNamespace(id="note-1")
+    persisted = SimpleNamespace(id="note-1", title="Upper Limb Bones")
+    create = AsyncMock(return_value=created)
+
+    with (
+        patch(
+            "src.domains.knowledge.services.course_service.check_course_ownership",
+            AsyncMock(side_effect=NotFoundError("Course", "anatomy_bone_extremities_12345")),
+        ) as check_course,
+        patch("src.domains.personal_learning.services.note_service.create_note", create),
+        patch(
+            "src.domains.personal_learning.services.note_service.get_note",
+            AsyncMock(return_value=persisted),
+        ),
+    ):
+        result = await handle_tool_call(
+            "create_note",
+            {
+                "title": "Upper Limb Bones",
+                "content": "Flashcards",
+                "course_id": "anatomy_bone_extremities_12345",
+            },
+            USER_ID,
+        )
+
+    check_course.assert_awaited_once_with("anatomy_bone_extremities_12345", USER_ID)
+    assert "courseId" not in create.await_args.kwargs["data"]
+    assert result["status"] == "success"
+    assert result["note_id"] == "note-1"
+
+
+async def test_create_note_context_topic_wins_and_supplies_its_owned_course():
+    topic = SimpleNamespace(id="topic-owned")
+    module = SimpleNamespace(id="module-owned")
+    course = SimpleNamespace(id="course-owned")
+    created = SimpleNamespace(id="note-1")
+    persisted = SimpleNamespace(id="note-1", title="Owned topic note")
+    create = AsyncMock(return_value=created)
+    check_course = AsyncMock()
+
+    with (
+        patch(
+            "src.domains.knowledge.services.course_service.check_topic_ownership",
+            AsyncMock(return_value=(topic, module, course)),
+        ) as check_topic,
+        patch(
+            "src.domains.knowledge.services.course_service.check_course_ownership",
+            check_course,
+        ),
+        patch("src.domains.personal_learning.services.note_service.create_note", create),
+        patch(
+            "src.domains.personal_learning.services.note_service.get_note",
+            AsyncMock(return_value=persisted),
+        ),
+    ):
+        result = await handle_tool_call(
+            "create_note",
+            {
+                "title": "Owned topic note",
+                "content": "Content",
+                "topic_id": "model-topic",
+                "course_id": "model-course",
+            },
+            USER_ID,
+            context={"topicId": "topic-owned", "courseId": "context-course"},
+        )
+
+    check_topic.assert_awaited_once_with("topic-owned", USER_ID)
+    check_course.assert_not_awaited()
+    assert create.await_args.kwargs["data"]["topicId"] == "topic-owned"
+    assert create.await_args.kwargs["data"]["courseId"] == "course-owned"
+    assert result["status"] == "success"
+
+
+async def test_create_note_owned_model_topic_replaces_a_mismatched_model_course():
+    topic = SimpleNamespace(id="topic-owned")
+    course = SimpleNamespace(id="course-owned")
+    create = AsyncMock(return_value=SimpleNamespace(id="note-1"))
+
+    with (
+        patch(
+            "src.domains.knowledge.services.course_service.check_topic_ownership",
+            AsyncMock(return_value=(topic, SimpleNamespace(id="module-1"), course)),
+        ),
+        patch("src.domains.personal_learning.services.note_service.create_note", create),
+        patch(
+            "src.domains.personal_learning.services.note_service.get_note",
+            AsyncMock(return_value=SimpleNamespace(id="note-1", title="Topic note")),
+        ),
+    ):
+        result = await handle_tool_call(
+            "create_note",
+            {
+                "title": "Topic note",
+                "content": "Content",
+                "topic_id": "topic-owned",
+                "course_id": "wrong-course",
+            },
+            USER_ID,
+        )
+
+    assert create.await_args.kwargs["data"]["topicId"] == "topic-owned"
+    assert create.await_args.kwargs["data"]["courseId"] == "course-owned"
+    assert result["status"] == "success"
+
+
+async def test_create_note_rejects_unowned_context_topic_without_writing():
+    from src.shared.exceptions import ForbiddenError
+
+    create = AsyncMock()
+    with (
+        patch(
+            "src.domains.knowledge.services.course_service.check_topic_ownership",
+            AsyncMock(side_effect=ForbiddenError("You do not own this topic")),
+        ),
+        patch("src.domains.personal_learning.services.note_service.create_note", create),
+    ):
+        result = await handle_tool_call(
+            "create_note",
+            {"title": "Unsafe note", "content": "Content"},
+            USER_ID,
+            context={"topicId": "other-users-topic"},
+        )
+
+    assert result == {"status": "error", "message": "Topic not found or access denied."}
+    create.assert_not_awaited()
