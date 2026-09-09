@@ -225,15 +225,25 @@ async def _enrich_note_tool_args(out: dict, ctx: dict, user_id: str | None) -> N
 
 
 async def _enrich_create_note_args(out: dict, ctx: dict) -> None:
-    tid = out.get("topic_id")
-    if _is_bad_id(tid) and ctx.get("topicId"):
+    # Page scope is a stronger signal than a model-generated association. The handler still performs
+    # owner-scoped resolution before persistence; this layer only removes contradictory model args.
+    if ctx.get("topicId"):
         out["topic_id"] = ctx["topicId"]
-    elif _is_bad_id(tid):
+        if ctx.get("courseId"):
+            out["course_id"] = ctx["courseId"]
+        else:
+            out.pop("course_id", None)
+        return
+    if ctx.get("courseId"):
+        out["course_id"] = ctx["courseId"]
+        out.pop("topic_id", None)
+        return
+
+    tid = out.get("topic_id")
+    if _is_bad_id(tid):
         out.pop("topic_id", None)
     cid = out.get("course_id")
-    if _is_bad_id(cid) and ctx.get("courseId"):
-        out["course_id"] = ctx["courseId"]
-    elif _is_bad_id(cid):
+    if _is_bad_id(cid):
         out.pop("course_id", None)
 
 

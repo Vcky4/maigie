@@ -99,3 +99,44 @@ async def test_enrich_leaves_unrepairable_schedule_datetimes_for_validation(valu
 
     assert out["start_at"] == value
     assert out["end_at"] == value
+
+
+@pytest.mark.asyncio
+async def test_create_note_context_topic_replaces_model_associations_without_mutating_input():
+    args = {
+        "title": "Note",
+        "content": "Body",
+        "topic_id": "model-topic",
+        "course_id": "model-course",
+    }
+
+    out = await enrich(
+        "create_note",
+        args,
+        context={"topicId": "context-topic"},
+        created_ids=None,
+        user_id="u1",
+    )
+
+    assert out["topic_id"] == "context-topic"
+    assert "course_id" not in out
+    assert args == {
+        "title": "Note",
+        "content": "Body",
+        "topic_id": "model-topic",
+        "course_id": "model-course",
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_note_context_course_removes_a_model_topic():
+    out = await enrich(
+        "create_note",
+        {"title": "Note", "content": "Body", "topic_id": "model-topic"},
+        context={"courseId": "context-course"},
+        created_ids=None,
+        user_id="u1",
+    )
+
+    assert out["course_id"] == "context-course"
+    assert "topic_id" not in out
