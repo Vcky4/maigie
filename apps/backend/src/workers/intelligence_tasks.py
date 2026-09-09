@@ -51,14 +51,38 @@ def generate_schedule_task(user_id: str, preferences: dict | None = None):
 
 
 @celery_app.task(name="intelligence.recommend_resources", queue="heavy", time_limit=60)
-def recommend_resources_task(user_id: str, query: str, limit: int = 5):
+def recommend_resources_task(
+    user_id: str,
+    query: str,
+    limit: int = 5,
+    topic_id: str | None = None,
+    course_id: str | None = None,
+    circle_id: str | None = None,
+):
     """Generate resource recommendations in background."""
     import asyncio
 
     from src.domains.knowledge.services.resource_service import recommend_resources
 
+    recommendation_context = {
+        key: value
+        for key, value in {
+            "topic_id": topic_id,
+            "course_id": course_id,
+            "circle_id": circle_id,
+        }.items()
+        if value
+    }
+
     loop = asyncio.new_event_loop()
     try:
-        loop.run_until_complete(recommend_resources(user_id=user_id, query=query, limit=limit))
+        loop.run_until_complete(
+            recommend_resources(
+                user_id=user_id,
+                query=query,
+                limit=limit,
+                context=recommendation_context or None,
+            )
+        )
     finally:
         loop.close()

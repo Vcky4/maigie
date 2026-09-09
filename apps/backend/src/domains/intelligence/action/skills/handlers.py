@@ -1,9 +1,9 @@
 """
 Handlers for tool calls (provider-agnostic).
 
-Executes DB queries or calls action_service methods based on tool calls.
-These handlers are registered with the skill registry and also accessible
-directly via the legacy `handle_tool_call` dispatch function.
+Executes DB queries or delegates mutations to their owning domain services. These handlers are
+registered with the skill registry and also accessible directly via the legacy `handle_tool_call`
+dispatch function.
 
 NOTE: The canonical tool definitions now live in src/services/skills/skill_*.py.
 This module contains the handler implementations that skills reference.
@@ -13,7 +13,6 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from src.domains.intelligence.action.action_service import action_service
 from src.domains.intelligence.repository import intelligence_repo
 from src.domains.knowledge.repository import knowledge_repo
 from src.domains.progress.repository import progress_repo
@@ -368,33 +367,63 @@ async def handle_create_course(
     context: dict[str, Any] | None = None,
     progress_callback=None,
 ) -> dict[str, Any]:
-    """Handle create_course tool call.
+    """Create an AI-authored course and supplied outline through the knowledge domain."""
+    from fastapi import HTTPException
 
-    Args:
-        args: Tool arguments (title, description, difficulty, modules)
-        user_id: User ID
-        context: Additional context
-        progress_callback: Optional async callback for progress updates
-    """
-    # Map tool args to action_service format
-    action_data = {
+    from src.domains.identity.repository import IdentityRepository
+    from src.domains.knowledge.services import course_service
+
+    user = await IdentityRepository().find_by_id(user_id)
+    if not user:
+        return {"status": "error", "message": "User not found."}
+
+    space_id = args.get("space_id") or args.get("circle_id")
+    if space_id:
+        from src.domains.learning_spaces.repository import space_repo
+
+        if not await space_repo.find_member(space_id, user_id):
+            return {"status": "error", "message": "Space not found or access denied."}
+
+    if progress_callback:
+        await progress_callback(10, "validating", "Validating the course outline...")
+
+    course_data = {
         "title": args["title"],
         "description": args.get("description", ""),
         "difficulty": args.get("difficulty", "BEGINNER"),
-        "modules": args.get("modules", []),
+        "spaceId": space_id,
     }
+    try:
+        course = await course_service.create_course_with_outline(
+            user=user,
+            data={key: value for key, value in course_data.items() if value is not None},
+            modules=args.get("modules", []),
+        )
+    except HTTPException as error:
+        detail = error.detail if isinstance(error.detail, dict) else {}
+        return {
+            "status": "error",
+            "message": detail.get("reason", str(error.detail)),
+            "upgrade_required": bool(detail.get("upgradeRequired")),
+            "upgrade": detail,
+        }
 
-    # Send initial progress if callback provided
     if progress_callback:
         await progress_callback(
-            10, "generating_outline", f"Generating course outline for {action_data['title']}..."
+            100,
+            "completed",
+            f'Created course "{course.title}".',
+            course_id=course.id,
         )
 
-    # Call existing action service with progress callback
-    result = await action_service.create_course(
-        action_data, user_id, progress_callback=progress_callback
-    )
-    return result
+    return {
+        "status": "success",
+        "action": "create_course",
+        "course_id": course.id,
+        "courseId": course.id,
+        "title": course.title,
+        "message": f'Created course "{course.title}".',
+    }
 
 
 async def handle_delete_course(
@@ -462,19 +491,39 @@ async def handle_create_goal(
     user_id: str,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Handle create_goal tool call."""
-    # Map tool args to action_service format
-    action_data = {
+    """Create a learning goal through the progress domain."""
+    from src.domains.progress import models
+    from src.domains.progress.services import goal_service
+
+    goal_data = {
         "title": args["title"],
         "description": args.get("description"),
         "targetDate": args.get("target_date"),
         "courseId": args.get("course_id"),
         "topicId": args.get("topic_id"),
     }
+    validated = models.GoalCreate.model_validate(
+        {key: value for key, value in goal_data.items() if value is not None}
+    )
+    data = validated.model_dump(exclude_unset=True)
 
-    # Call existing action service
-    result = await action_service.create_goal(action_data, user_id)
-    return result
+    space_id = args.get("space_id") or args.get("circle_id")
+    if space_id:
+        from src.domains.learning_spaces.repository import space_repo
+
+        if not await space_repo.find_member(space_id, user_id):
+            return {"status": "error", "message": "Space not found or access denied."}
+        data["spaceId"] = space_id
+
+    goal = await goal_service.create_goal(user_id=user_id, data=data)
+    return {
+        "status": "success",
+        "action": "create_goal",
+        "goal_id": goal.id,
+        "goalId": goal.id,
+        "title": goal.title,
+        "message": f'Created goal "{goal.title}".',
+    }
 
 
 async def handle_create_schedule(
@@ -482,9 +531,12 @@ async def handle_create_schedule(
     user_id: str,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Handle create_schedule tool call."""
-    # Map tool args to action_service format
-    action_data = {
+    """Create a study block through the progress domain."""
+    from src.domains.progress import models
+    from src.domains.progress.services import schedule_service
+    from src.shared.time import ensure_utc
+
+    block_data = {
         "title": args["title"],
         "description": args.get("description"),
         "startAt": args["start_at"],
@@ -494,10 +546,34 @@ async def handle_create_schedule(
         "topicId": args.get("topic_id"),
         "goalId": args.get("goal_id"),
     }
+    validated = models.StudyBlockCreate.model_validate(
+        {key: value for key, value in block_data.items() if value is not None}
+    )
+    validated_data = validated.model_dump(exclude_unset=True)
+    if validated_data["endAt"] <= validated_data["startAt"]:
+        return {"status": "error", "message": "end_at must be after start_at."}
 
-    # Call existing action service
-    result = await action_service.create_schedule(action_data, user_id)
-    return result
+    block = await schedule_service.create_block(user_id=user_id, data=validated_data)
+    persisted = {
+        "id": block.id,
+        "title": block.title,
+        "description": block.description,
+        "startAt": ensure_utc(block.start_at).isoformat(),
+        "endAt": ensure_utc(block.end_at).isoformat(),
+        "recurringRule": block.recurring_rule,
+        "courseId": block.course_id,
+        "topicId": block.topic_id,
+        "goalId": block.goal_id,
+    }
+    return {
+        "status": "success",
+        "action": "create_schedule",
+        "schedule_id": block.id,
+        "scheduleId": block.id,
+        "schedule": persisted,
+        "data": persisted,
+        "message": f'Created schedule block "{block.title}".',
+    }
 
 
 async def handle_regenerate_schedule(
@@ -593,20 +669,23 @@ async def handle_recommend_resources(
     user_id: str,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Handle recommend_resources tool call."""
-    # Map tool args to action_service format
-    action_data = {
-        "query": args["query"],
-        "limit": args.get("limit", 10),
-        "topicId": args.get("topic_id"),
-        "courseId": args.get("course_id"),
-    }
-    if args.get("space_id"):
-        action_data["spaceId"] = args["space_id"]
+    """Validate and acknowledge a resource recommendation background job."""
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return {"status": "error", "message": "A resource search query is required."}
 
-    # Call existing action service
-    result = await action_service.recommend_resources(action_data, user_id)
-    return result
+    limit = args.get("limit", 10)
+    if isinstance(limit, bool) or not isinstance(limit, int | float) or limit < 1 or limit > 20:
+        limit = 10
+
+    # ``collect_tool_outcomes`` queues the grounded web search after the assistant's
+    # response so the learner does not have to wait for external resource lookups.
+    args["query"] = query.strip()
+    args["limit"] = int(limit)
+    return {
+        "status": "success",
+        "message": "Resource recommendations are being gathered and will be added to your library.",
+    }
 
 
 async def handle_retake_note(
@@ -614,15 +693,18 @@ async def handle_retake_note(
     user_id: str,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Handle retake_note tool call."""
-    # Map tool args to action_service format
-    action_data = {
-        "noteId": args["note_id"],
-    }
+    """Rewrite a note through the ownership-scoped note service."""
+    from src.domains.personal_learning.services import note_service
 
-    # Call existing action service
-    result = await action_service.retake_note(action_data, user_id)
-    return result
+    note = await note_service.retake_note(user_id=user_id, note_id=args["note_id"])
+    return {
+        "status": "success",
+        "action": "retake_note",
+        "message": f'Rewrote note "{note.title}".',
+        "note_id": note.id,
+        "noteId": note.id,
+        "title": note.title,
+    }
 
 
 async def handle_add_summary_to_note(
@@ -630,15 +712,19 @@ async def handle_add_summary_to_note(
     user_id: str,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Handle add_summary_to_note tool call."""
-    # Map tool args to action_service format (note: action_service uses "add_summary")
-    action_data = {
-        "noteId": args["note_id"],
-    }
+    """Generate and persist a summary through the note service."""
+    from src.domains.personal_learning.services import note_service
 
-    # Call existing action service
-    result = await action_service.add_summary(action_data, user_id)
-    return result
+    note = await note_service.add_summary(user_id=user_id, note_id=args["note_id"])
+    return {
+        "status": "success",
+        "action": "add_summary",
+        "message": f'Added a summary to "{note.title}".',
+        "note_id": note.id,
+        "noteId": note.id,
+        "title": note.title,
+        "summary": note.summary,
+    }
 
 
 async def handle_add_tags_to_note(
@@ -646,16 +732,41 @@ async def handle_add_tags_to_note(
     user_id: str,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Handle add_tags_to_note tool call."""
-    # Map tool args to action_service format
-    action_data = {
-        "noteId": args["note_id"],
-        "tags": args["tags"],
-    }
+    """Add tags without replacing the note's existing tag set."""
+    from src.domains.personal_learning.services import note_service
 
-    # Call existing action service
-    result = await action_service.add_tags(action_data, user_id)
-    return result
+    requested = args.get("tags")
+    if not isinstance(requested, list):
+        return {"status": "error", "message": "tags must be an array of strings."}
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in requested:
+        if not isinstance(value, str) or not value.strip():
+            return {"status": "error", "message": "Tags must be non-empty strings."}
+        tag = value.strip()
+        if tag not in seen:
+            normalized.append(tag)
+            seen.add(tag)
+    if not normalized:
+        return {"status": "error", "message": "At least one tag is required."}
+
+    note = await note_service.get_note(user_id=user_id, note_id=args["note_id"])
+    existing = [tag.tag for tag in note.tags]
+    merged = existing + [tag for tag in normalized if tag not in set(existing)]
+    updated = await note_service.update_note(
+        user_id=user_id, note_id=note.id, data={"tags": merged}
+    )
+    tags = [tag.tag for tag in updated.tags]
+    return {
+        "status": "success",
+        "action": "add_tags",
+        "message": f'Added tags to "{updated.title}".',
+        "note_id": updated.id,
+        "noteId": updated.id,
+        "title": updated.title,
+        "tags": tags,
+    }
 
 
 async def handle_complete_review(

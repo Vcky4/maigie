@@ -502,7 +502,9 @@ async def send_transactional_email(
     """
     if not _email_transport_configured():
         logger.warning(
-            "No usable outbound email provider. Skipping email to %s: %s", to_email, subject
+            "No usable outbound email provider. Skipping email to %s: %s",
+            to_email,
+            subject,
         )
         # Recorded as SKIPPED rather than silently returning: "we never tried" and "the
         # provider refused" are different answers to "why did the code not arrive".
@@ -544,7 +546,9 @@ async def send_templated_email(
     """
     if not _email_transport_configured():
         logger.warning(
-            "No usable outbound email provider. Skipping email to %s: %s", to_email, subject
+            "No usable outbound email provider. Skipping email to %s: %s",
+            to_email,
+            subject,
         )
         if evidence is not None:
             await record_transactional_message(
@@ -686,21 +690,26 @@ async def send_limit_reached_email(
     return True
 
 
+#: Plan id or tier → the name a learner reads in a confirmation email.
+#:
+#: **Only live products.** This listed `plus_yearly` and `maigie_plus_yearly` under a comment reading
+#: "Current plan ids" — yearly Plus is withdrawn and `assert_plan_id_is_active` answers 410 for both,
+#: so the only way to reach those rows was a bug, and reaching them would have emailed the learner a
+#: confirmation naming a plan we do not sell.
+#:
+#: The `PREMIUM_YEARLY` / `STUDY_CIRCLE_*` / `SQUAD_*` rows are gone too. They were justified as
+#: "retired ids still reachable through historical webhook replays", and there is no such history:
+#: `scripts/count_legacy_commercial_state.py` found zero payment relationships and zero users on a
+#: retired tier. They also earned nothing, because the caller already falls back to
+#: `str(tier).replace("_", " ").title()` — so an unmapped value reads as "Premium Yearly" rather than
+#: as a raw enum either way.
 _TIER_DISPLAY_NAMES = {
-    # Current plan ids.
     "plus_monthly": "Maigie Plus Monthly",
-    "plus_yearly": "Maigie Plus Yearly",
     "maigie_plus_monthly": "Maigie Plus Monthly",
-    "maigie_plus_yearly": "Maigie Plus Yearly",
+    "PREMIUM_MONTHLY": "Maigie Plus Monthly",
+    # Space-scoped, and out of scope for the personal commercial work (Decision F). Live products.
     "circle_plan_monthly": "Circle Plan Monthly",
     "plus_seat_add_on_monthly": "Plus Seat Add-on",
-    # Retired ids still reachable through historical webhook replays.
-    "PREMIUM_MONTHLY": "Maigie Plus Monthly",
-    "PREMIUM_YEARLY": "Maigie Plus Yearly",
-    "STUDY_CIRCLE_MONTHLY": "Study Circle Monthly",
-    "STUDY_CIRCLE_YEARLY": "Study Circle Yearly",
-    "SQUAD_MONTHLY": "Squad Plan Monthly",
-    "SQUAD_YEARLY": "Squad Plan Yearly",
 }
 
 

@@ -26,6 +26,52 @@ async def create_block(*, user_id: str, data: dict[str, Any]) -> Any:
     return block
 
 
+async def replace_blocks_for_goal(
+    *,
+    user_id: str,
+    goal_id: str,
+    blocks: list[dict[str, Any]],
+    goal_data: dict[str, Any] | None = None,
+) -> tuple[list[ScheduleBlock], int]:
+    """Atomically replace a goal's local plan, then reconcile Calendar best-effort."""
+    new_blocks, replaced_count, old_event_ids = await progress_repo.replace_blocks_for_goal(
+        goal_id=goal_id,
+        user_id=user_id,
+        blocks=blocks,
+        goal_data=goal_data,
+    )
+
+    # Network calls deliberately happen after the database transaction commits. A Calendar outage
+    # cannot roll back local planning, and a database failure cannot delete the learner's old events.
+    try:
+        from src.integrations.google_calendar import (
+            delete_schedule_block_event,
+            sync_schedule_block,
+        )
+    except Exception as e:
+        logger.debug(f"Calendar reconciliation skipped: {e}")
+        return new_blocks, replaced_count
+
+    for event_id in old_event_ids:
+        try:
+            deleted = await delete_schedule_block_event(user_id, event_id)
+            if not deleted:
+                logger.warning(
+                    "Calendar event removal was not confirmed for regenerated goal %s",
+                    goal_id,
+                )
+        except Exception as e:
+            logger.debug(f"Calendar event removal skipped: {e}")
+
+    for block in new_blocks:
+        try:
+            await sync_schedule_block(user_id, block.id)
+        except Exception as e:
+            logger.debug(f"Calendar sync skipped: {e}")
+
+    return new_blocks, replaced_count
+
+
 async def list_blocks(
     *,
     user_id: str,

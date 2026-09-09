@@ -77,7 +77,12 @@ def test_outbound_provider_order(monkeypatch, strategy, expected):
 
 @pytest.mark.parametrize(
     "message",
-    ["552 daily quota exceeded", "451 try again later", "plan limit reached", "account suspended"],
+    [
+        "552 daily quota exceeded",
+        "451 try again later",
+        "plan limit reached",
+        "account suspended",
+    ],
 )
 def test_quota_like_smtp_errors_are_recognised(message):
     assert em._smtp_error_suggests_quota(Exception(message))
@@ -128,7 +133,9 @@ async def test_every_provider_failing_is_reported_not_swallowed(monkeypatch):
         await em._send_multipart_email("a@b.c", "subject", "<p>html</p>", "text")
 
 
-async def test_no_configured_provider_raises_a_message_naming_both_settings(monkeypatch):
+async def test_no_configured_provider_raises_a_message_naming_both_settings(
+    monkeypatch,
+):
     monkeypatch.setattr(settings, "SMTP_HOST", None, raising=False)
     monkeypatch.setattr(settings, "RESEND_API_KEY", "", raising=False)
 
@@ -260,15 +267,44 @@ async def test_send_failure_does_not_propagate_to_a_webhook_caller(transport, mo
     "tier,expected",
     [
         ("plus_monthly", "Maigie Plus Monthly"),
-        ("plus_yearly", "Maigie Plus Yearly"),
+        ("maigie_plus_monthly", "Maigie Plus Monthly"),
         ("circle_plan_monthly", "Circle Plan Monthly"),
         ("PREMIUM_MONTHLY", "Maigie Plus Monthly"),
         ("something_unknown", "Something Unknown"),
+        # `plus_yearly` used to be mapped to "Maigie Plus Yearly" here, under a comment calling it a
+        # current plan id. Yearly Plus is withdrawn and `assert_plan_id_is_active` answers 410, so
+        # nothing can buy one and this row asserted the copy for an email that cannot be sent. It now
+        # falls through the titlecase fallback like any other unrecognised value — which is the
+        # behaviour that matters: a confirmation email must never print a raw enum.
+        ("plus_yearly", "Plus Yearly"),
     ],
 )
 async def test_subscription_email_names_the_tier(transport, tier, expected):
     await em.send_subscription_success_email("a@b.c", "Ada", tier)
     assert transport["smtp"][0]["subject"] == f"Your {expected} subscription is active"
+
+
+def test_no_withdrawn_product_has_confirmation_copy():
+    """A withdrawn product with a friendly label is a confirmation email waiting to be sent.
+
+    The map held six: `plus_yearly`, `maigie_plus_yearly`, `PREMIUM_YEARLY`, and the four
+    `STUDY_CIRCLE_*` / `SQUAD_*` tiers. They were kept for "historical webhook replays", of which
+    there are none — `scripts/count_legacy_commercial_state.py` found zero payment relationships and
+    zero users on a retired tier.
+    """
+    for withdrawn in (
+        "plus_yearly",
+        "maigie_plus_yearly",
+        "PREMIUM_YEARLY",
+        "STUDY_CIRCLE_MONTHLY",
+        "STUDY_CIRCLE_YEARLY",
+        "SQUAD_MONTHLY",
+        "SQUAD_YEARLY",
+    ):
+        assert withdrawn not in em._TIER_DISPLAY_NAMES, (
+            f"`{withdrawn}` is withdrawn and answers 410 at checkout; giving it subscription "
+            f"confirmation copy means something can still reach a success path for it"
+        )
 
 
 def test_the_email_module_no_longer_re_exports_notification_producers():

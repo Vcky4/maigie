@@ -127,22 +127,30 @@ class Settings(BaseSettings):
     # --- Database ---
     DATABASE_URL: str = ""  # Loaded from .env
 
-    # Connection pool sizing, per API process.
+    # Connection pool sizing, per API process. Applies to the API only: Celery forks run
+    # unpooled (`connect_db_worker`), because a task's connections cannot outlive the
+    # per-task event loop anyway, so they contribute at most one connection each while a
+    # query is actually in flight.
     #
     # These must be set against the *tenant's* connection allowance, not against
-    # what one process would like. Supabase session mode allows 15 concurrent
-    # clients, and the arithmetic is multiplicative:
+    # what one process would like:
     #
-    #     (API processes x (DB_POOL_SIZE + DB_MAX_OVERFLOW)) + Celery workers x 2
+    #     (API processes x (DB_POOL_SIZE + DB_MAX_OVERFLOW)) + Celery forks in flight
+    #
+    # How binding that sum is depends on which pooler port `DATABASE_URL` names.
+    # Transaction mode (:6543) multiplexes, so the sum is measured against a client cap in
+    # the hundreds. Session mode (:5432) holds one direct connection per client for its whole
+    # life, so the cap *is* the tenant pool size — 15 — and exceeding it fails queries with
+    # `EMAXCONNSESSION: max clients reached in session mode`. Session mode is for migrations
+    # (`scripts/db_direct.py`); the app belongs on :6543.
     #
     # The previous values (20 + 10) meant a single API process could claim 30 —
-    # double the entire allowance — and both compose files run `--workers 2`, so
+    # double the session-mode allowance — and both compose files run `--workers 2`, so
     # the real ceiling was 60. In practice one local dev server was enough to make
     # migrations fail with `EMAXCONNSESSION`, which is how this was found.
     #
-    # At the defaults below, two API workers plus a Celery worker reserve 12 of 15,
-    # leaving room for a migration or a psql session. Raise them only alongside a
-    # raised allowance.
+    # At the defaults below, two API workers reserve 12, leaving room under session mode for
+    # a migration or a psql session. Raise them only alongside a raised allowance.
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 1
     # Recycled well inside PgBouncer's own idle timeout so a checked-out

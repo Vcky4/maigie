@@ -19,9 +19,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from src.domains.identity.repository import IdentityRepository
-from src.domains.intelligence.action.action_service import action_service
 from src.domains.knowledge.repository import knowledge_repo
+from src.domains.knowledge.services import course_service
 from src.domains.progress.repository import progress_repo
+from src.domains.progress.services import goal_service, schedule_service
 from src.shared.time import ensure_utc
 
 logger = logging.getLogger(__name__)
@@ -242,21 +243,24 @@ Output only valid JSON. Make it realistic and achievable."""
                 break
 
     if not course_id:
-        # Create new course
+        # Create new course and its generated outline through the knowledge domain.
         try:
-            course_result = await action_service.create_course(
+            if not user:
+                raise ValueError("User not found")
+            course = await course_service.create_course_with_outline(
+                user=user,
                 data={
                     "title": course_data.get("title", plan.get("plan_title", goal)),
                     "description": course_data.get("description", f"Study plan for: {goal}"),
-                    "modules": course_data.get("modules", []),
                 },
-                user_id=user_id,
-                progress_callback=progress_callback,
+                modules=course_data.get("modules", []),
+                # This orchestration creates its own main goal below. Deriving the default course
+                # goal here as well would give a new-course plan two top-level commitments.
+                derive_goal=False,
             )
-            if course_result.get("status") == "success":
-                course_id = course_result.get("course_id")
-                created_ids["course_id"] = course_id
-                results.append({"type": "course_created", "id": course_id})
+            course_id = course.id
+            created_ids["course_id"] = course_id
+            results.append({"type": "course_created", "id": course_id})
         except Exception as e:
             logger.warning("Failed to create course for plan: %s", e)
 
@@ -266,20 +270,26 @@ Output only valid JSON. Make it realistic and achievable."""
     # 5. Create main goal
     goal_data = plan.get("goal", {})
     try:
-        goal_result = await action_service.create_goal(
+        created_goal = await goal_service.create_goal(
+            user_id=user_id,
             data={
                 "title": goal_data.get("title", goal),
                 "description": goal_data.get("description", f"Study plan goal: {goal}"),
-                "targetDate": target_date.isoformat(),
+                "targetDate": target_date,
                 "courseId": course_id,
             },
-            user_id=user_id,
         )
-        if goal_result.get("status") == "success":
-            created_ids["goal_id"] = goal_result.get("goal_id")
-            results.append({"type": "goal_created", "id": goal_result.get("goal_id")})
+        created_ids["goal_id"] = created_goal.id
+        results.append({"type": "goal_created", "id": created_goal.id})
     except Exception as e:
         logger.warning("Failed to create goal for plan: %s", e)
+        # A newly created course suppressed its automatic goal because this explicit plan goal was
+        # meant to replace it. If that write fails, restore the canonical derived goal so the course
+        # is not left without a measurable commitment.
+        if created_ids.get("course_id"):
+            from src.domains.progress.services import goal_derivation_service
+
+            await goal_derivation_service.derive_goals_quietly(user_id, course_id=course_id)
 
     # 6. Create milestone sub-goals
     milestones = plan.get("milestones", [])
@@ -287,17 +297,16 @@ Output only valid JSON. Make it realistic and achievable."""
         week = ms.get("week", 1)
         ms_date = now + timedelta(weeks=week)
         try:
-            ms_result = await action_service.create_goal(
+            milestone = await goal_service.create_goal(
+                user_id=user_id,
                 data={
                     "title": f"Milestone: {ms.get('title', f'Week {week} checkpoint')}",
                     "description": ms.get("description", ""),
-                    "targetDate": ms_date.isoformat(),
+                    "targetDate": ms_date,
                     "courseId": course_id,
                 },
-                user_id=user_id,
             )
-            if ms_result.get("status") == "success":
-                results.append({"type": "milestone_created", "id": ms_result.get("goal_id")})
+            results.append({"type": "milestone_created", "id": milestone.id})
         except Exception as e:
             logger.warning("Failed to create milestone: %s", e)
 
@@ -341,19 +350,18 @@ Output only valid JSON. Make it realistic and achievable."""
             end_at = start_at + timedelta(hours=hours_per_session)
 
             try:
-                sched_result = await action_service.create_schedule(
+                await schedule_service.create_block(
+                    user_id=user_id,
                     data={
                         "title": f"Study: {course_data.get('title', goal)[:40]}",
                         "description": f"Study session for plan: {plan.get('plan_title', goal)}",
-                        "startAt": start_at.isoformat(),
-                        "endAt": end_at.isoformat(),
+                        "startAt": start_at,
+                        "endAt": end_at,
                         "courseId": course_id,
                         "goalId": created_ids.get("goal_id"),
                     },
-                    user_id=user_id,
                 )
-                if sched_result.get("status") == "success":
-                    schedules_created += 1
+                schedules_created += 1
             except Exception as e:
                 logger.warning("Failed to create schedule block: %s", e)
 
@@ -447,26 +455,6 @@ Output only valid JSON."""
             "goal_id": goal_id,
         }
 
-    deleted_count = await progress_repo.delete_blocks_for_goal(goal_id)
-
-    update_data: dict[str, Any] = {"targetDate": target_date}
-    goal_desc = (plan.get("goal") or {}).get("description")
-    if isinstance(goal_desc, str) and goal_desc.strip():
-        update_data["description"] = goal_desc.strip()
-
-    await progress_repo.update_goal(goal_id, update_data)
-
-    # **This path rewrites a deadline the learner did not name.** `target_date` above is computed from
-    # the requested duration in weeks, so regenerating a plan moves the goal's date — including a date
-    # that came from an exam, since nothing here reads date authority. That is pre-existing behaviour and
-    # is left alone; recording it is what makes it visible, and an unrecorded extension is one
-    # `elapsed_percent` silently treats as a larger window the goal always had.
-    from src.domains.progress.services import goal_schedule_log
-
-    await goal_schedule_log.record_date_change(
-        goal=goal, new_date=target_date, reason="plan_regenerated"
-    )
-
     schedule_config = plan.get("schedule", {}) or {}
     sessions_per_week = schedule_config.get("sessions_per_week", 3)
     hours_per_session = schedule_config.get("hours_per_session", 1)
@@ -497,7 +485,7 @@ Output only valid JSON."""
     }
     target_weekdays = [day_map.get(str(d), 0) for d in preferred_days[:sessions_per_week]]
 
-    schedules_created = 0
+    replacement_blocks: list[dict[str, Any]] = []
     for week_num in range(duration_weeks):
         week_start = now + timedelta(weeks=week_num)
         for target_day in target_weekdays:
@@ -513,27 +501,47 @@ Output only valid JSON."""
 
             start_at = session_date.replace(hour=9, minute=0, second=0, microsecond=0)
             end_at = start_at + timedelta(hours=hours_per_session)
-
-            sched_result = await action_service.create_schedule(
-                data={
+            replacement_blocks.append(
+                {
                     "title": f"Study: {goal.title[:40]}",
                     "description": f"Study session for goal: {goal.title}",
-                    "startAt": start_at.isoformat(),
-                    "endAt": end_at.isoformat(),
+                    "startAt": start_at,
+                    "endAt": end_at,
                     "courseId": goal.course_id,
                     "topicId": goal.topic_id,
-                    "goalId": goal_id,
-                },
-                user_id=user_id,
+                }
             )
-            if sched_result.get("status") == "success":
-                schedules_created += 1
+
+    update_data: dict[str, Any] = {"targetDate": target_date}
+    goal_desc = (plan.get("goal") or {}).get("description")
+    if isinstance(goal_desc, str) and goal_desc.strip():
+        update_data["description"] = goal_desc.strip()
+
+    new_blocks, deleted_count = await schedule_service.replace_blocks_for_goal(
+        user_id=user_id,
+        goal_id=goal_id,
+        blocks=replacement_blocks,
+        goal_data=update_data,
+    )
+
+    # The complete local plan — blocks, deadline, and description — has committed as one transaction.
+    # Only external Calendar reconciliation is best-effort and outside that transaction.
+    # **This path rewrites a deadline the learner did not name.** `target_date` is computed from
+    # the requested duration in weeks, so regenerating a plan moves the goal's date — including a date
+    # that came from an exam, since nothing here reads date authority. That is pre-existing behaviour and
+    # is left alone; recording it is what makes it visible, and an unrecorded extension is one
+    # `elapsed_percent` silently treats as a larger window the goal always had.
+    from src.domains.progress.services import goal_schedule_log
+
+    await goal_schedule_log.record_date_change(
+        goal=goal, new_date=target_date, reason="plan_regenerated"
+    )
 
     return {
         "status": "success",
         "goal_id": goal_id,
         "deleted_schedule_blocks": deleted_count,
-        "created_schedule_blocks": schedules_created,
+        "created_schedule_blocks": len(new_blocks),
         "target_date": target_date.isoformat(),
         "study_tips": plan.get("study_tips", []) or [],
         "message": "Plan regenerated successfully",

@@ -31,7 +31,7 @@ _ACTION_EVENTS: dict[str, str] = {
 _ACTIONS_CARRYING_COURSE_ID = frozenset({"create_course", "update_course_outline"})
 
 #: The Celery task that turns a `recommend_resources` tool call into actual recommendations.
-RESOURCE_RECOMMENDATION_TASK = "resources.recommend_from_chat"
+RESOURCE_RECOMMENDATION_TASK = "intelligence.recommend_resources"
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,24 +181,25 @@ def action_event(*, action_type: str, action_result: dict[str, Any]) -> dict[str
 def credit_limit_frame(
     *, action_type: str, action_result: dict[str, Any], upgrade_deep_link: str
 ) -> dict[str, Any] | None:
-    """The refusal frame for a tool that exhausted the learner's allowance, or `None`.
-
-    Only `create_course` reports this, because course generation is the only tool that spends enough to
-    be refused on its own. The turn's own allowance was already checked before generation; this is the
-    *tool* running out part-way through a turn that was affordable when it started.
-
-    `is_daily_limit` and `show_referral_option` are replaced by `windowResetsAt` — one window, one
-    remedy, and a timestamp instead of a category. See `ask_service.CreditRefusal`.
-    """
-    if action_type != "create_course" or not action_result.get("credit_limit_error"):
+    """The refusal frame for a course tool blocked by usage or product allowance."""
+    if action_type != "create_course":
         return None
+
+    upgrade = action_result.get("upgrade")
+    canonical_upgrade = upgrade if isinstance(upgrade, dict) else {}
+    if not action_result.get("credit_limit_error") and not action_result.get("upgrade_required"):
+        return None
+
     return {
         "type": "credit_limit_error",
         "message": action_result.get("message", "Usage limit reached."),
         "tier": action_result.get("tier", "FREE"),
         "windowResetsAt": action_result.get("windowResetsAt"),
         "blocked": True,
-        "upgradeDeepLink": upgrade_deep_link,
+        "upgradeDeepLink": canonical_upgrade.get("upgradeUrl", upgrade_deep_link),
+        "capability": canonical_upgrade.get("capability"),
+        "trialAvailable": canonical_upgrade.get("trialAvailable"),
+        "upgradeValue": canonical_upgrade.get("upgradeValue"),
     }
 
 
@@ -216,8 +217,9 @@ def resource_recommendation_task(
         {
             "user_id": user_id,
             "query": data.get("query", ""),
-            "topic_id": data.get("topicId"),
-            "course_id": data.get("courseId"),
+            "topic_id": data.get("topic_id") or data.get("topicId"),
+            "course_id": data.get("course_id") or data.get("courseId"),
+            "circle_id": data.get("circle_id") or data.get("circleId"),
             "limit": data.get("limit", 10),
         },
     )
@@ -285,7 +287,7 @@ def collect_tool_outcomes(
         if event:
             outcomes.events.append(event)
 
-        if action_type == "recommend_resources":
+        if action_type == "recommend_resources" and action_result.get("status") != "error":
             task = resource_recommendation_task(user_id=user_id, action_data=action_data)
             if task:
                 outcomes.background_tasks.append(task)

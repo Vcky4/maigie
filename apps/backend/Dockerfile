@@ -16,8 +16,12 @@
 FROM python:3.12-slim AS builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y build-essential curl && rm -rf /var/lib/apt/lists/*
-RUN curl -sSL https://install.python-poetry.org | python3 -
-ENV PATH="/root/.local/bin:$PATH"
+# Install Poetry from PyPI into its own venv. Avoids install.python-poetry.org,
+# which is flaky from CI runners, and keeps Poetry out of the app's site-packages.
+ENV POETRY_VERSION=2.4.1
+RUN python3 -m venv /opt/poetry \
+  && /opt/poetry/bin/pip install --no-cache-dir --retries 5 --timeout 60 "poetry==${POETRY_VERSION}"
+ENV PATH="/opt/poetry/bin:$PATH"
 COPY pyproject.toml poetry.lock ./
 RUN poetry config virtualenvs.create false && poetry install --no-root --no-interaction --no-ansi
 
