@@ -135,3 +135,10 @@ class ClaimResponse(CamelModel):
     reason: str | None = None
     purpose: str | None = None
     subjects: list[str] = Field(default_factory=list)
+    #: Whether the claim also finished onboarding.
+    #:
+    #: True when the draft was substantive enough to answer the whole wizard (a purpose *and*
+    #: subjects). A purpose-only draft leaves this false and the learner still goes through the wizard,
+    #: because auto-setup has nothing to build from without subjects. The client uses this to decide
+    #: whether to route to Home or to the wizard, rather than inferring it.
+    onboarding_completed: bool = False

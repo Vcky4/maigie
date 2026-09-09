@@ -139,7 +139,9 @@ class LandingDraftApiTests(unittest.TestCase):
     # --- create ---
 
     def test_create_returns_token_once(self):
-        res = self.client.post("/api/v1/public/landing-drafts", json={"purpose": "exam_prep"})
+        res = self.client.post(
+            "/api/v1/public/landing-drafts", json={"purpose": "exam_prep"}
+        )
         self.assertEqual(res.status_code, 201, res.text)
         body = res.json()
         self.assertTrue(body["token"])
@@ -156,7 +158,9 @@ class LandingDraftApiTests(unittest.TestCase):
         self.assertNotIn("token", read.json())
 
     def test_create_rejects_unknown_purpose(self):
-        res = self.client.post("/api/v1/public/landing-drafts", json={"purpose": "world_domination"})
+        res = self.client.post(
+            "/api/v1/public/landing-drafts", json={"purpose": "world_domination"}
+        )
         self.assertEqual(res.status_code, 422)
 
     def test_token_hash_is_stored_not_the_token(self):
@@ -193,7 +197,9 @@ class LandingDraftApiTests(unittest.TestCase):
 
     def test_expired_draft_reads_as_not_found(self):
         created = self.client.post("/api/v1/public/landing-drafts", json={}).json()
-        self.repo.rows[created["id"]].expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        self.repo.rows[created["id"]].expires_at = datetime.now(UTC) - timedelta(
+            seconds=1
+        )
         res = self.client.get(
             f"/api/v1/public/landing-drafts/{created['id']}",
             headers={"X-Draft-Token": created["token"]},
@@ -211,7 +217,11 @@ class LandingDraftApiTests(unittest.TestCase):
         res = self.client.patch(
             f"/api/v1/public/landing-drafts/{created['id']}",
             headers=headers,
-            json={"subjects": ["Biology"], "examName": "A-Level Biology", "examDate": "2027-06-01"},
+            json={
+                "subjects": ["Biology"],
+                "examName": "A-Level Biology",
+                "examDate": "2027-06-01",
+            },
         )
         self.assertEqual(res.status_code, 200, res.text)
         self.assertEqual(res.json()["subjects"], ["Biology"])
@@ -318,11 +328,15 @@ class FailClosedTests(unittest.TestCase):
         )
         self.assertEqual(res.status_code, 429)
         self.assertEqual(res.json()["detail"]["code"], "GENERATE_RATE_LIMITED")
-        self.assertEqual(res.headers.get("Retry-After"), str(draft_routes.GENERATE_LIMIT[1]))
+        self.assertEqual(
+            res.headers.get("Retry-After"), str(draft_routes.GENERATE_LIMIT[1])
+        )
 
     def test_create_still_works_when_cache_is_unavailable(self):
         """Creating a draft costs nothing, so it keeps the fail-open limiter."""
-        res = self.client.post("/api/v1/public/landing-drafts", json={"purpose": "exam_prep"})
+        res = self.client.post(
+            "/api/v1/public/landing-drafts", json={"purpose": "exam_prep"}
+        )
         self.assertEqual(res.status_code, 201)
 
 
@@ -428,6 +442,9 @@ class ClaimTests(unittest.IsolatedAsyncioTestCase):
             self.calls.append(("set_subjects", kwargs))
             return SimpleNamespace()
 
+        async def complete_onboarding(*, user_id):
+            self.calls.append(("complete_onboarding", {"user_id": user_id}))
+
         self.onboarding = SimpleNamespace(
             set_purpose=set_purpose,
             set_exam_details=set_exam_details,
@@ -455,6 +472,10 @@ class ClaimTests(unittest.IsolatedAsyncioTestCase):
                 set_subjects,
             ),
             patch(
+                "src.domains.personal_learning.services.onboarding_service.complete_onboarding",
+                complete_onboarding,
+            ),
+            patch(
                 "src.domains.personal_learning.repository.personal_learning_repo."
                 "get_profile_by_user",
                 get_profile_by_user,
@@ -468,7 +489,9 @@ class ClaimTests(unittest.IsolatedAsyncioTestCase):
             p.stop()
 
     async def _open_draft(self, **fields):
-        draft, token = await draft_service.create_draft(purpose=fields.pop("purpose", None))
+        draft, token = await draft_service.create_draft(
+            purpose=fields.pop("purpose", None)
+        )
         for key, value in fields.items():
             setattr(draft, key, value)
         return draft, token
@@ -484,21 +507,35 @@ class ClaimTests(unittest.IsolatedAsyncioTestCase):
         result = await draft_service.claim_draft(token=token, user_id="user_1")
 
         self.assertTrue(result["applied"])
-        self.assertEqual([name for name, _ in self.calls], ["set_purpose", "set_exam_details"])
+        self.assertEqual(
+            [name for name, _ in self.calls],
+            ["set_purpose", "set_exam_details", "complete_onboarding"],
+        )
+        self.assertTrue(result["onboarding_completed"])
         details = self.calls[1][1]
         self.assertEqual(details["exam_name"], "A-Level Biology")
         self.assertEqual(details["subjects"], ["Biology"])
         self.assertEqual(details["goals"], "Aim for an A")
 
     async def test_skill_draft_runs_the_skill_sequence(self):
-        _draft, token = await self._open_draft(purpose="skill_building", subjects=["Python"])
+        _draft, token = await self._open_draft(
+            purpose="skill_building", subjects=["Python"]
+        )
         await draft_service.claim_draft(token=token, user_id="user_1")
-        self.assertEqual([name for name, _ in self.calls], ["set_purpose", "set_skill_details"])
+        self.assertEqual(
+            [name for name, _ in self.calls],
+            ["set_purpose", "set_skill_details", "complete_onboarding"],
+        )
 
     async def test_generic_draft_falls_back_to_subjects(self):
-        _draft, token = await self._open_draft(purpose="general_learning", subjects=["Anatomy"])
+        _draft, token = await self._open_draft(
+            purpose="general_learning", subjects=["Anatomy"]
+        )
         await draft_service.claim_draft(token=token, user_id="user_1")
-        self.assertEqual([name for name, _ in self.calls], ["set_purpose", "set_subjects"])
+        self.assertEqual(
+            [name for name, _ in self.calls],
+            ["set_purpose", "set_subjects", "complete_onboarding"],
+        )
 
     async def test_exam_name_becomes_the_subject_when_none_was_given(self):
         """Auto-setup refuses a profile with no subjects, so a name-only draft must supply one."""
@@ -507,13 +544,17 @@ class ClaimTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls[1][1]["subjects"], ["MCAT"])
 
     async def test_purpose_only_draft_applies_without_content(self):
+        """And must *not* finish onboarding: auto-setup skipped, so there is nothing to land on."""
         _draft, token = await self._open_draft(purpose="exam_prep")
         result = await draft_service.claim_draft(token=token, user_id="user_1")
         self.assertTrue(result["applied"])
+        self.assertFalse(result["onboarding_completed"])
         self.assertEqual([name for name, _ in self.calls], ["set_purpose"])
 
     async def test_claim_is_single_use(self):
-        _draft, token = await self._open_draft(purpose="exam_prep", subjects=["Biology"])
+        _draft, token = await self._open_draft(
+            purpose="exam_prep", subjects=["Biology"]
+        )
         first = await draft_service.claim_draft(token=token, user_id="user_1")
         second = await draft_service.claim_draft(token=token, user_id="user_2")
 
@@ -521,7 +562,10 @@ class ClaimTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(second["applied"])
         self.assertEqual(second["reason"], "already_claimed")
         # And the second attempt ran no onboarding at all.
-        self.assertEqual([name for name, _ in self.calls], ["set_purpose", "set_exam_details"])
+        self.assertEqual(
+            [name for name, _ in self.calls],
+            ["set_purpose", "set_exam_details", "complete_onboarding"],
+        )
 
     async def test_unknown_token_is_soft(self):
         result = await draft_service.claim_draft(token="nonsense", user_id="user_1")
@@ -539,10 +583,30 @@ class ClaimTests(unittest.IsolatedAsyncioTestCase):
         result = await draft_service.claim_draft(token=token, user_id="user_1")
         self.assertEqual(result["reason"], "empty")
 
+    async def test_failing_to_complete_onboarding_is_non_fatal(self):
+        """The draft is still applied; the learner just sees the wizard, as they did before."""
+
+        async def boom(*, user_id):
+            raise RuntimeError("profile vanished")
+
+        with patch(
+            "src.domains.personal_learning.services.onboarding_service.complete_onboarding",
+            boom,
+        ):
+            _draft, token = await self._open_draft(
+                purpose="exam_prep", subjects=["Biology"]
+            )
+            result = await draft_service.claim_draft(token=token, user_id="user_1")
+
+        self.assertTrue(result["applied"])
+        self.assertFalse(result["onboarding_completed"])
+
     async def test_existing_profile_is_left_alone(self):
         """A learner who has already onboarded must not have their state rewound."""
         self.profile = SimpleNamespace(purpose="skill_building")
-        _draft, token = await self._open_draft(purpose="exam_prep", subjects=["Biology"])
+        _draft, token = await self._open_draft(
+            purpose="exam_prep", subjects=["Biology"]
+        )
         result = await draft_service.claim_draft(token=token, user_id="user_1")
 
         self.assertFalse(result["applied"])
@@ -584,7 +648,8 @@ class PreviewCoercionTests(unittest.TestCase):
 
     def test_incomplete_entries_are_dropped(self):
         items = draft_service._coerce_items(
-            [{"label": "Only a label"}, {"label": "Good", "detail": "Fine."}], self.fallback
+            [{"label": "Only a label"}, {"label": "Good", "detail": "Fine."}],
+            self.fallback,
         )
         self.assertEqual([i.label for i in items], ["Good"])
 
@@ -619,7 +684,11 @@ class PromptTests(unittest.TestCase):
 
     def test_prompt_forbids_outcome_promises(self):
         draft = SimpleNamespace(
-            purpose="exam_prep", exam_name=None, exam_date=None, goals_text=None, subjects=[]
+            purpose="exam_prep",
+            exam_name=None,
+            exam_date=None,
+            goals_text=None,
+            subjects=[],
         )
         prompt = draft_service._preview_prompt(draft, [], "Biology")
         self.assertIn("Do not promise outcomes", prompt)

@@ -281,34 +281,53 @@ def _static_preview(draft: LandingDraft, subject: str) -> list[DraftPreviewItem]
     if draft.purpose == "exam_prep":
         target = f" by {draft.exam_date.isoformat()}" if draft.exam_date else ""
         return [
-            DraftPreviewItem(label="A study plan", detail=f"Milestones for {subject}{target}."),
             DraftPreviewItem(
-                label="Practice sets", detail=f"Questions on {subject}, harder as you improve."
+                label="A study plan", detail=f"Milestones for {subject}{target}."
             ),
             DraftPreviewItem(
-                label="Weak-spot review", detail="Timed review focused on what you miss most."
+                label="Practice sets",
+                detail=f"Questions on {subject}, harder as you improve.",
+            ),
+            DraftPreviewItem(
+                label="Weak-spot review",
+                detail="Timed review focused on what you miss most.",
             ),
         ]
     if draft.purpose == "skill_building":
         return [
-            DraftPreviewItem(label="A learning path", detail=f"{subject}, broken into stages."),
-            DraftPreviewItem(label="Practice as you go", detail="Exercises after each new idea."),
-            DraftPreviewItem(label="Checkpoints", detail="Short reviews that show what stuck."),
+            DraftPreviewItem(
+                label="A learning path", detail=f"{subject}, broken into stages."
+            ),
+            DraftPreviewItem(
+                label="Practice as you go", detail="Exercises after each new idea."
+            ),
+            DraftPreviewItem(
+                label="Checkpoints", detail="Short reviews that show what stuck."
+            ),
         ]
     if draft.purpose == "course_completion":
         return [
-            DraftPreviewItem(label="A unified view", detail=f"Everything for {subject} in one place."),
+            DraftPreviewItem(
+                label="A unified view", detail=f"Everything for {subject} in one place."
+            ),
             DraftPreviewItem(
                 label='"What matters now"', detail="The next priority stays visible."
             ),
             DraftPreviewItem(
-                label="Smart review", detail="Retention checks arranged around your workload."
+                label="Smart review",
+                detail="Retention checks arranged around your workload.",
             ),
         ]
     return [
-        DraftPreviewItem(label="A course outline", detail=f"{subject}, in a sensible order."),
-        DraftPreviewItem(label="Flashcards", detail="Made from what you read, reviewed on time."),
-        DraftPreviewItem(label="Spaced review", detail="Topics return before you forget them."),
+        DraftPreviewItem(
+            label="A course outline", detail=f"{subject}, in a sensible order."
+        ),
+        DraftPreviewItem(
+            label="Flashcards", detail="Made from what you read, reviewed on time."
+        ),
+        DraftPreviewItem(
+            label="Spaced review", detail="Topics return before you forget them."
+        ),
     ]
 
 
@@ -383,7 +402,9 @@ async def claim_draft(*, token: str, user_id: str) -> dict[str, Any]:
     # learner already has.
     existing = await personal_learning_repo.get_profile_by_user(user_id)
     if existing is not None and existing.purpose:
-        logger.info("Landing draft %s not applied: user %s already onboarded", draft.id, user_id)
+        logger.info(
+            "Landing draft %s not applied: user %s already onboarded", draft.id, user_id
+        )
         return {"applied": False, "reason": "profile_exists"}
 
     # Take the draft first. The claim is what makes this single-use, and it has to happen before the
@@ -414,11 +435,45 @@ async def claim_draft(*, token: str, user_id: str) -> dict[str, Any]:
             goals=goals,
         )
     elif subjects:
-        await onboarding_service.set_subjects(user_id=user_id, subjects=subjects, goals=goals)
+        await onboarding_service.set_subjects(
+            user_id=user_id, subjects=subjects, goals=goals
+        )
     else:
         # Purpose only. Worth applying — it shapes the first question the app asks — but there is
         # nothing for auto-setup to build from, and calling it would be a no-op that logs a skip.
-        logger.info("Landing draft %s applied as purpose-only for user %s", draft.id, user_id)
+        logger.info(
+            "Landing draft %s applied as purpose-only for user %s", draft.id, user_id
+        )
+
+    # **Finish onboarding here, not in the client.**
+    #
+    # A substantive draft has answered everything the wizard asks — purpose, subjects, goals, exam
+    # details — so leaving `isOnboarded` false would send the learner into a form to re-type what they
+    # already told the marketing site. Doing it server-side rather than in the web client means every
+    # client gets it: mobile, and anything built later, would otherwise each need to know that a
+    # claimed draft implies a finished wizard.
+    #
+    # **Only when subjects are present.** A purpose-only draft has *not* answered enough: auto-setup
+    # needs subjects and skipped, so completing here would leave the learner on Home with an empty
+    # workspace and nothing prompting them to say what they are studying. Those still go through the
+    # wizard, which is the correct outcome rather than a shortcut.
+    #
+    # Content is still generating when this returns, which is fine: Home already reports a
+    # `setting_up` stage and both clients poll it.
+    onboarding_completed = False
+    if subjects:
+        try:
+            await onboarding_service.complete_onboarding(user_id=user_id)
+            onboarding_completed = True
+        except Exception as e:
+            # Non-fatal, like everything else on this path. The learner simply sees the wizard, which
+            # is the pre-existing behaviour rather than a broken state.
+            logger.warning(
+                "Landing draft %s applied but completing onboarding failed for user %s: %s",
+                draft.id,
+                user_id,
+                e,
+            )
 
     logger.info(
         "Landing draft claimed: id=%s user=%s purpose=%s subjects=%d",
@@ -432,6 +487,7 @@ async def claim_draft(*, token: str, user_id: str) -> dict[str, Any]:
         "reason": None,
         "purpose": draft.purpose,
         "subjects": subjects,
+        "onboarding_completed": onboarding_completed,
     }
 
 
