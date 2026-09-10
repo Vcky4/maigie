@@ -213,6 +213,14 @@ def _openapi_tags() -> list[dict]:
             ),
         },
         {
+            "name": "landing-drafts",
+            "description": (
+                "**Landing Drafts Domain** — Unauthenticated. The starter setup a visitor builds "
+                "on maigie.com before signing up, authorised by a per-draft token and claimed by "
+                "the account they create."
+            ),
+        },
+        {
             "name": "personal-learning",
             "description": (
                 "**Personal Learning Domain** — The learner's private environment: "
@@ -310,6 +318,21 @@ def _register_domains(app: FastAPI) -> None:
     from src.domains.personal_learning.routes import router as learning_router
 
     app.include_router(learning_router, prefix=f"{prefix}/learning", tags=["personal-learning"])
+
+    # --- Landing drafts (marketing site, unauthenticated) ---
+    #
+    # Mounted under `/public/` rather than beside the learning routes, so the routing table says out
+    # loud that these paths take no user token. Authorisation is a per-draft bearer token in
+    # `X-Draft-Token`; abuse control is a hashed-IP rate limit on every route, fail-closed on the one
+    # that spends LLM budget. The matching claim endpoint is *not* here — it needs an authenticated
+    # learner and lives with the rest of onboarding in `personal_learning`.
+    from src.domains.landing_drafts import router as landing_drafts_router
+
+    app.include_router(
+        landing_drafts_router,
+        prefix=f"{prefix}/public/landing-drafts",
+        tags=["landing-drafts"],
+    )
 
     # --- Notifications (canonical in-app platform) ---
     from src.domains.notifications.routes import (

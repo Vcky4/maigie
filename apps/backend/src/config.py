@@ -756,6 +756,11 @@ def get_settings() -> Settings:
         "http://127.0.0.1:5173",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        # Astro's dev server, for the marketing site. It calls the public landing-draft endpoints,
+        # so without this a developer working on the wizard locally gets a CORS failure that looks
+        # like a broken API rather than a missing origin.
+        "http://localhost:4321",
+        "http://127.0.0.1:4321",
     ]
 
     # Merge environment-provided origins with required production origins

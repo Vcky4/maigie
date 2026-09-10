@@ -10,6 +10,8 @@ import logging
 from datetime import UTC, date, datetime
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
+
 from src.domains.identity.repository import IdentityRepository
 from src.shared.exceptions import NotFoundError
 
@@ -36,14 +38,25 @@ async def set_purpose(*, user_id: str, purpose: str) -> Any:
             user_id, {"purpose": purpose, "onboardingState": "purpose_set"}
         )
 
-    # Create new profile with onboarding state
-    return await repo.create_profile(
-        {
-            "userId": user_id,
-            "purpose": purpose,
-            "onboardingState": "purpose_set",
-        }
-    )
+    # Create new profile with onboarding state. A resumed handoff can submit this request
+    # concurrently (for example, two mounted effects). Both requests may miss the lookup,
+    # but the unique userId index allows only one insert. The loser reuses the winner.
+    try:
+        return await repo.create_profile(
+            {
+                "userId": user_id,
+                "purpose": purpose,
+                "onboardingState": "purpose_set",
+            }
+        )
+    except IntegrityError:
+        raced = await repo.get_profile_by_user(user_id)
+        if raced is None:
+            # The integrity violation was unrelated to userId uniqueness.
+            raise
+        return await repo.update_profile(
+            user_id, {"purpose": purpose, "onboardingState": "purpose_set"}
+        )
 
 
 async def set_exam_details(
@@ -53,12 +66,12 @@ async def set_exam_details(
     exam_date: date | None = None,
     subjects: list[str] | None = None,
     goals: str | None = None,
+    trigger_auto_setup: bool = True,
 ) -> Any:
-    """
-    Set exam preparation details and trigger content generation.
+    """Set exam preparation details, optionally starting content generation.
 
-    This endpoint is for EXAM_PREP purpose learners. Sets exam-specific
-    context and triggers background content generation job.
+    Normal onboarding keeps the default. Temporary landing-draft claims disable it so applying
+    deterministic answers cannot silently trigger LLM work.
     """
     profile = await repo.get_profile_by_user(user_id)
     if not profile:
@@ -85,17 +98,17 @@ async def set_exam_details(
 
     profile = await repo.update_profile(user_id, update_data)
 
-    # Trigger background content generation
-    try:
-        _spawn_content_generation(
-            user_id=user_id,
-            exam_name=exam_name,
-            exam_date=exam_date,
-            subjects=subjects or [],
-            goals=goals,
-        )
-    except Exception as e:
-        logger.error(f"Failed to start content generation: {e}")
+    if trigger_auto_setup:
+        try:
+            _spawn_content_generation(
+                user_id=user_id,
+                exam_name=exam_name,
+                exam_date=exam_date,
+                subjects=subjects or [],
+                goals=goals,
+            )
+        except Exception as e:
+            logger.error(f"Failed to start content generation: {e}")
 
     return profile
 
@@ -107,12 +120,12 @@ async def set_skill_details(
     current_level: str | None = None,
     subjects: list[str] | None = None,
     goals: str | None = None,
+    trigger_auto_setup: bool = True,
 ) -> Any:
-    """
-    Set skill building details and trigger content generation.
+    """Set skill-building details, optionally starting content generation.
 
-    This endpoint is for SKILL_BUILDING purpose learners. Sets skill-specific
-    context and triggers background content generation job.
+    Normal onboarding keeps the default. Temporary landing-draft claims disable it so applying
+    deterministic answers cannot silently trigger LLM work.
     """
     profile = await repo.get_profile_by_user(user_id)
     if not profile:
@@ -139,17 +152,17 @@ async def set_skill_details(
 
     profile = await repo.update_profile(user_id, update_data)
 
-    # Trigger background content generation
-    try:
-        _spawn_content_generation(
-            user_id=user_id,
-            skill_name=skill_name,
-            current_level=current_level,
-            subjects=subjects or [],
-            goals=goals,
-        )
-    except Exception as e:
-        logger.error(f"Failed to start content generation: {e}")
+    if trigger_auto_setup:
+        try:
+            _spawn_content_generation(
+                user_id=user_id,
+                skill_name=skill_name,
+                current_level=current_level,
+                subjects=subjects or [],
+                goals=goals,
+            )
+        except Exception as e:
+            logger.error(f"Failed to start content generation: {e}")
 
     return profile
 
@@ -301,21 +314,12 @@ async def set_subjects(
     user_id: str,
     subjects: list[str] | None = None,
     goals: str | None = None,
+    trigger_auto_setup: bool = True,
 ) -> Any:
-    """
-    Set initial subjects and/or goals for the learner.
+    """Set initial subjects/goals and optionally create initial content.
 
-    After subjects are set, automatically create initial content:
-    - Preparation (exam prep, certification, etc.)
-    - Topics extracted via AI
-    - Initial flashcards
-    - Study plan
-
-    The learner provides intent — the system prepares everything.
-
-    Req 14.2: When subjects provided, create study plan seeds.
-              When goals provided without subjects, create topic
-              interests.
+    ``trigger_auto_setup`` is disabled only by flows that deliberately persist profile answers
+    without generating LLM-backed content, such as the temporary landing handoff.
     """
     profile = await repo.get_profile_by_user(user_id)
     if not profile:
@@ -331,17 +335,13 @@ async def set_subjects(
     if update_data:
         profile = await repo.update_profile(user_id, update_data)
 
-    # Trigger auto-setup: create preparation, topics, flashcards,
-    # study plan. This runs inline so the learner sees "setting up"
-    # in the next Home request and content is ready by the time they
-    # check again
-    try:
-        from . import auto_setup_service
+    if trigger_auto_setup:
+        try:
+            from . import auto_setup_service
 
-        await auto_setup_service.auto_setup_for_learner(user_id=user_id)
-    except Exception as e:
-        logger.error(f"Auto-setup failed after subjects set: {e}")
-        # Don't fail the subjects endpoint — auto-setup is best-effort
+            await auto_setup_service.auto_setup_for_learner(user_id=user_id)
+        except Exception as e:
+            logger.error(f"Auto-setup failed after subjects set: {e}")
 
     return profile
 

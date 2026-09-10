@@ -64,6 +64,52 @@ async def check_rate_limit(
         return True, max_requests
 
 
+async def check_rate_limit_strict(
+    key: str,
+    max_requests: int,
+    window_seconds: int,
+) -> tuple[bool, int]:
+    """Like `check_rate_limit`, but **fails closed** when Redis is unavailable.
+
+    `check_rate_limit` degrades open, which is the right call for a logged-in convenience
+    endpoint: a Redis outage should not stop a paying learner from working, and the caller is
+    already identified and metered elsewhere.
+
+    That reasoning inverts for an **unauthenticated** endpoint that spends money. There is no
+    account to charge, no usage window to exhaust, and no name in the logs — the rate limit *is*
+    the whole control. Degrading open there means a Redis blip converts into an open tap on the
+    LLM budget, and the first signal is the bill.
+
+    So this variant refuses when it cannot count. A visitor sees "try again shortly" during an
+    outage, which is a worse minute for them and a bounded one for us. Use it only where the cost
+    of allowing an uncounted request exceeds the cost of refusing a legitimate one.
+
+    Returns:
+        Tuple of (allowed, remaining). If Redis is down, returns (False, 0).
+    """
+    if not cache._connected or not cache.redis:
+        logger.warning("Strict rate limit refusing %s — cache unavailable", key)
+        return False, 0
+
+    try:
+        full_key = cache.make_key(["rl", key])
+        current = await cache.increment(full_key, 1)
+
+        if current is None:
+            logger.warning("Strict rate limit refusing %s — increment returned nothing", key)
+            return False, 0
+
+        if current == 1:
+            await cache.expire(full_key, window_seconds)
+
+        remaining = max(0, max_requests - current)
+        return current <= max_requests, remaining
+
+    except Exception as e:
+        logger.warning("Strict rate limit check failed for %s, refusing: %s", key, e)
+        return False, 0
+
+
 async def enforce_rate_limit(
     user_id: str,
     endpoint: str,

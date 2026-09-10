@@ -13,6 +13,8 @@ from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 
+from src.domains.landing_drafts import models as landing_draft_models
+from src.domains.landing_drafts.services import draft_service as landing_draft_service
 from src.shared.auth import CurrentUser, OptionalCurrentUser
 from src.shared.exceptions import NotFoundError
 
@@ -144,6 +146,26 @@ async def set_subjects(body: models.SubjectsSetRequest, current_user: CurrentUse
 async def complete_onboarding(current_user: CurrentUser) -> None:
     """Complete onboarding and record the profile completion time."""
     await onboarding_service.complete_onboarding(user_id=current_user.id)
+
+
+@router.post(
+    "/onboarding/claim-landing-draft",
+    response_model=landing_draft_models.ClaimResponse,
+)
+async def claim_landing_draft(
+    body: landing_draft_models.ClaimRequest, current_user: CurrentUser
+) -> landing_draft_models.ClaimResponse:
+    """Claim a starter setup for this account and return its saved onboarding answers.
+
+    The claim only establishes single-user ownership. The web onboarding flow then sends the returned
+    answers through the normal purpose and details endpoints, preserving their existing auto-setup,
+    readiness, and completion behavior.
+
+    Every expected miss returns ``applied: false`` with a reason and a 200 so a stale marketing token
+    cannot block access to a newly created account.
+    """
+    result = await landing_draft_service.claim_draft(token=body.token, user_id=current_user.id)
+    return landing_draft_models.ClaimResponse(**result)
 
 
 @router.get("/profile", response_model=models.LearningProfileResponse)
@@ -352,7 +374,9 @@ async def get_note(note_id: str, current_user: CurrentUser):
 async def update_note(note_id: str, body: models.NoteUpdate, current_user: CurrentUser):
     """Update a note."""
     return await note_service.update_note(
-        user_id=current_user.id, note_id=note_id, data=body.model_dump(exclude_unset=True)
+        user_id=current_user.id,
+        note_id=note_id,
+        data=body.model_dump(exclude_unset=True),
     )
 
 
@@ -365,7 +389,9 @@ async def delete_note(note_id: str, current_user: CurrentUser):
 
 
 @router.post(
-    "/notes/{note_id}/attachments", response_model=models.NoteAttachmentResponse, status_code=201
+    "/notes/{note_id}/attachments",
+    response_model=models.NoteAttachmentResponse,
+    status_code=201,
 )
 async def add_attachment(
     note_id: str, body: models.NoteAttachmentCreate, current_user: CurrentUser
@@ -566,7 +592,9 @@ async def update_preparation(
 ):
     """Update a preparation."""
     return await exam_prep_service.update_preparation(
-        user_id=current_user.id, prep_id=prep_id, data=body.model_dump(exclude_unset=True)
+        user_id=current_user.id,
+        prep_id=prep_id,
+        data=body.model_dump(exclude_unset=True),
     )
 
 
@@ -579,7 +607,9 @@ async def delete_preparation(prep_id: str, current_user: CurrentUser):
 
 
 @router.post(
-    "/preparations/{prep_id}/materials", response_model=models.PrepMaterialResponse, status_code=201
+    "/preparations/{prep_id}/materials",
+    response_model=models.PrepMaterialResponse,
+    status_code=201,
 )
 async def upload_material(
     prep_id: str, body: models.PrepMaterialCreateRequest, current_user: CurrentUser
@@ -672,7 +702,8 @@ async def delete_material(prep_id: str, material_id: str, current_user: CurrentU
 
 
 @router.post(
-    "/preparations/{prep_id}/extract-topics", response_model=list[models.PrepTopicResponse]
+    "/preparations/{prep_id}/extract-topics",
+    response_model=list[models.PrepTopicResponse],
 )
 async def extract_topics(prep_id: str, current_user: CurrentUser):
     """Trigger AI topic extraction from materials."""
@@ -1216,7 +1247,10 @@ async def generate_from_note(
         raise HTTPException(status_code=404, detail="Deck not found") from error
 
 
-@router.post("/flashcards/generate/topic/{topic_id}", response_model=list[models.FlashcardResponse])
+@router.post(
+    "/flashcards/generate/topic/{topic_id}",
+    response_model=list[models.FlashcardResponse],
+)
 async def generate_from_topic(
     topic_id: str, current_user: CurrentUser, deckId: str | None = Query(None)
 ):
@@ -1413,7 +1447,8 @@ async def create_study_plan(body: models.StudyPlanCreate, current_user: CurrentU
 
 
 @router.get(
-    "/study-plans", response_model=models.PaginatedResponse[models.StudyPlanSummaryResponse]
+    "/study-plans",
+    response_model=models.PaginatedResponse[models.StudyPlanSummaryResponse],
 )
 async def list_study_plans(
     current_user: CurrentUser,
@@ -1556,7 +1591,8 @@ async def link_study_plan_courses(
 
 
 @router.delete(
-    "/study-plans/{plan_id}/courses/{course_id}", response_model=models.StudyPlanResponse
+    "/study-plans/{plan_id}/courses/{course_id}",
+    response_model=models.StudyPlanResponse,
 )
 async def unlink_study_plan_course(plan_id: str, course_id: str, current_user: CurrentUser):
     """Remove a course link. The course itself is untouched."""
@@ -1592,7 +1628,8 @@ async def add_study_plan_material(
 
 
 @router.delete(
-    "/study-plans/{plan_id}/materials/{material_id}", response_model=models.StudyPlanResponse
+    "/study-plans/{plan_id}/materials/{material_id}",
+    response_model=models.StudyPlanResponse,
 )
 async def delete_study_plan_material(plan_id: str, material_id: str, current_user: CurrentUser):
     """Remove a reference file from a plan, and from storage."""
@@ -1602,7 +1639,9 @@ async def delete_study_plan_material(plan_id: str, material_id: str, current_use
 
 
 @router.post(
-    "/study-plans/{plan_id}/items", response_model=models.StudyPlanResponse, status_code=201
+    "/study-plans/{plan_id}/items",
+    response_model=models.StudyPlanResponse,
+    status_code=201,
 )
 async def add_study_plan_item(
     plan_id: str, body: models.StudyPlanItemCreate, current_user: CurrentUser
@@ -1619,7 +1658,10 @@ async def add_study_plan_item(
 
 @router.patch("/study-plans/{plan_id}/items/{item_id}", response_model=models.StudyPlanResponse)
 async def update_study_plan_item(
-    plan_id: str, item_id: str, body: models.StudyPlanItemUpdate, current_user: CurrentUser
+    plan_id: str,
+    item_id: str,
+    body: models.StudyPlanItemUpdate,
+    current_user: CurrentUser,
 ):
     """Reschedule, retitle, resize, regroup, or restatus one item."""
     data = body.model_dump(exclude_unset=True)
@@ -1643,7 +1685,8 @@ async def delete_study_plan_item(plan_id: str, item_id: str, current_user: Curre
 
 
 @router.post(
-    "/study-plans/{plan_id}/items/{item_id}/complete", response_model=models.StudyPlanResponse
+    "/study-plans/{plan_id}/items/{item_id}/complete",
+    response_model=models.StudyPlanResponse,
 )
 async def complete_plan_item(plan_id: str, item_id: str, current_user: CurrentUser):
     """Complete a study plan item."""
@@ -1653,7 +1696,8 @@ async def complete_plan_item(plan_id: str, item_id: str, current_user: CurrentUs
 
 
 @router.post(
-    "/study-plans/{plan_id}/items/{item_id}/uncomplete", response_model=models.StudyPlanResponse
+    "/study-plans/{plan_id}/items/{item_id}/uncomplete",
+    response_model=models.StudyPlanResponse,
 )
 async def uncomplete_plan_item(plan_id: str, item_id: str, current_user: CurrentUser):
     """Return an item to pending — the inverse of completing it.
@@ -1853,7 +1897,10 @@ async def get_document_job(task_id: str, current_user: CurrentUser):
     if result.successful():
         payload = result.result
         # Defence in depth: never hand back a document owned by someone else.
-        if isinstance(payload, dict) and payload.get("user_id") not in (None, current_user.id):
+        if isinstance(payload, dict) and payload.get("user_id") not in (
+            None,
+            current_user.id,
+        ):
             logger.error(
                 "Document job result owner mismatch",
                 extra={"user_id": current_user.id, "task_id": task_id},
@@ -2098,7 +2145,8 @@ async def remove_collection_item(collection_id: str, item_id: str, current_user:
 
 
 @router.patch(
-    "/collections/{collection_id}/items/reorder", response_model=models.CollectionResponse
+    "/collections/{collection_id}/items/reorder",
+    response_model=models.CollectionResponse,
 )
 async def reorder_collection_items(
     collection_id: str, body: models.CollectionReorder, current_user: CurrentUser
@@ -2777,8 +2825,8 @@ async def start_space_trial(current_user: CurrentUser):
         trial_status = await transition_service.start_space_trial(user_id=current_user.id)
         return {
             "isActive": trial_status.is_active,
-            "startedAt": trial_status.started_at.isoformat() if trial_status.started_at else None,
-            "endsAt": trial_status.ends_at.isoformat() if trial_status.ends_at else None,
+            "startedAt": (trial_status.started_at.isoformat() if trial_status.started_at else None),
+            "endsAt": (trial_status.ends_at.isoformat() if trial_status.ends_at else None),
             "maxLearners": trial_status.max_learners,
         }
     except ValueError as e:
