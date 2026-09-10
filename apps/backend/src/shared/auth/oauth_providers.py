@@ -16,6 +16,7 @@ import httpx
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
+from jose import JWTError, jwt
 
 from src.config import get_settings
 
@@ -64,6 +65,40 @@ class GoogleIdTokenVerifier:
             lambda: google_id_token.verify_oauth2_token(token, self._request, self._client_id),
         )
         return claims
+
+
+class AppleIdTokenVerifier:
+    """Verify native Sign in with Apple identity tokens against Apple's JWKS."""
+
+    _jwks_url = "https://appleid.apple.com/auth/keys"
+    _issuer = "https://appleid.apple.com"
+
+    def __init__(self, client_id: str):
+        self._client_id = client_id
+
+    async def verify(self, token: str) -> dict[str, Any]:
+        """Validate signature, issuer, audience, and expiry and return verified claims."""
+        header = jwt.get_unverified_header(token)
+        key_id = header.get("kid")
+        if not key_id:
+            raise JWTError("Apple identity token is missing a key id")
+
+        async with httpx.AsyncClient(timeout=_OAUTH_HTTP_TIMEOUT) as client:
+            response = await client.get(self._jwks_url)
+            response.raise_for_status()
+            keys = response.json().get("keys", [])
+
+        signing_key = next((key for key in keys if key.get("kid") == key_id), None)
+        if signing_key is None:
+            raise JWTError("Apple identity token uses an unknown signing key")
+
+        return jwt.decode(
+            token,
+            signing_key,
+            algorithms=["RS256"],
+            audience=self._client_id,
+            issuer=self._issuer,
+        )
 
 
 class OAuthProvider(Protocol):

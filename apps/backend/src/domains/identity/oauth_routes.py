@@ -19,12 +19,18 @@ import google.auth.exceptions
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
+from jose import JWTError
 
 from src.config import Settings, get_settings
 from src.shared.auth import create_access_token, create_refresh_token
-from src.shared.auth.oauth_providers import GoogleIdTokenVerifier, OAuthProviderFactory
+from src.shared.auth.oauth_providers import (
+    AppleIdTokenVerifier,
+    GoogleIdTokenVerifier,
+    OAuthProviderFactory,
+)
 
 from .models import (
+    NativeAppleCallbackRequest,
     NativeGoogleCallbackRequest,
     OAuthAuthorizeResponse,
     OAuthUserInfo,
@@ -90,6 +96,48 @@ async def google_native_callback(data: NativeGoogleCallbackRequest):
     )
     refresh = create_refresh_token(data={"sub": user.email})
 
+    return TokenResponse(access_token=access, refresh_token=refresh)
+
+
+@oauth_router.post("/oauth/apple/native-callback", response_model=TokenResponse)
+async def apple_native_callback(data: NativeAppleCallbackRequest):
+    """Verify a native Apple identity token and return Maigie tokens."""
+    settings = get_settings()
+    verifier = AppleIdTokenVerifier(settings.OAUTH_APPLE_CLIENT_ID)
+
+    try:
+        claims = await verifier.verify(data.identity_token)
+    except (JWTError, ValueError, KeyError):
+        raise HTTPException(status_code=401, detail="Invalid or expired Apple identity token")
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="Apple authentication service unavailable")
+    except Exception:
+        logger.exception("Unexpected error during Apple identity token verification")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+    provider_user_id = claims.get("sub")
+    email = claims.get("email")
+    email_verified = claims.get("email_verified")
+    if not provider_user_id:
+        raise HTTPException(status_code=422, detail="Apple identity token missing subject claim")
+    if not email:
+        raise HTTPException(status_code=422, detail="Apple identity token missing email claim")
+    if email_verified is not True and str(email_verified).lower() != "true":
+        raise HTTPException(status_code=401, detail="Apple identity token email is not verified")
+
+    oauth_info = OAuthUserInfo(
+        email=email,
+        full_name=data.full_name,
+        provider="apple",
+        provider_user_id=provider_user_id,
+    )
+    user = await get_or_create_oauth_user(oauth_info)
+
+    access = create_access_token(
+        data={"sub": user.email},
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    refresh = create_refresh_token(data={"sub": user.email})
     return TokenResponse(access_token=access, refresh_token=refresh)
 
 

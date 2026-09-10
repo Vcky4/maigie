@@ -172,6 +172,8 @@ class Settings(BaseSettings):
     # --- OAuth Providers ---
     OAUTH_GOOGLE_CLIENT_ID: str | None = None
     OAUTH_GOOGLE_CLIENT_SECRET: str | None = None
+    # Native Sign in with Apple identity tokens use the iOS bundle ID as their audience.
+    OAUTH_APPLE_CLIENT_ID: str = "com.maigie"
     # OAuth base URL for redirect URI (use deployed domain for both local and production)
     # If set, this will override the dynamically constructed base URL from request
     # Example: https://api.maigie.com or https://pr-51-api-preview.maigie.com
