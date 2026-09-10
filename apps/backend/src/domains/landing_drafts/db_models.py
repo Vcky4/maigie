@@ -62,6 +62,13 @@ class LandingDraft(Base, TimestampMixin):
     # All nullable. A draft is created by the first chip click, before there is anything else to
     # say, and a visitor who leaves after step 1 still leaves a usable row: the purpose alone is
     # enough to shape onboarding if they come back and sign up.
+    # The visitor's address, asked for in the wizard before the preview.
+    #
+    # Nullable and never a credential: the token still authorises the row. This exists so an
+    # abandoned draft is a person who can be followed up rather than an anonymous row, and so signup
+    # can prefill the address they already typed.
+    email: Mapped[str | None] = mapped_column("email", String, nullable=True, index=True)
+
     purpose: Mapped[str | None] = mapped_column(String, nullable=True)
     subjects: Mapped[list | None] = mapped_column("subjects", JSONB, nullable=True)
     goals_text: Mapped[str | None] = mapped_column("goalsText", Text, nullable=True)
@@ -92,7 +99,9 @@ class LandingDraft(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(
         String, nullable=False, default="open", server_default="open"
     )
-    expires_at: Mapped[datetime] = mapped_column("expiresAt", DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        "expiresAt", DateTime(timezone=True), nullable=False
+    )
     claimed_at: Mapped[datetime | None] = mapped_column(
         "claimedAt", DateTime(timezone=True), nullable=True
     )
@@ -122,7 +131,7 @@ class LandingDraft(Base, TimestampMixin):
         # cannot say whose — and the analytics built on it would be quietly wrong rather than
         # loudly broken.
         CheckConstraint(
-            "(status <> 'claimed') OR (\"claimedBy\" IS NOT NULL AND \"claimedAt\" IS NOT NULL)",
+            '(status <> \'claimed\') OR ("claimedBy" IS NOT NULL AND "claimedAt" IS NOT NULL)',
             name="LandingDraft_claimed_link_check",
         ),
     )

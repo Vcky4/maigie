@@ -48,15 +48,32 @@ class LandingDraftRepository:
             return (await session.execute(stmt)).scalar_one_or_none()
 
     async def update_fields(self, draft_id: str, values: dict[str, Any]) -> LandingDraft | None:
-        """Apply a partial update and return the row as it now stands."""
-        if not values:
-            return await self.get_by_id_internal(draft_id)
+        """Update a draft only while it is still open and unexpired.
+
+        The condition belongs on the write, not only on the preceding token lookup: claim and PATCH
+        can race, and a PATCH must never report success after claim has consumed the token.
+        """
+        now = datetime.now(UTC)
         async with await self._session() as session:
-            await session.execute(
-                update(LandingDraft).where(LandingDraft.id == draft_id).values(**values)
+            if values:
+                result = await session.execute(
+                    update(LandingDraft)
+                    .where(
+                        LandingDraft.id == draft_id,
+                        LandingDraft.status == "open",
+                        LandingDraft.expires_at > now,
+                    )
+                    .values(**values)
+                )
+                if not (result.rowcount or 0):
+                    await session.rollback()
+                    return None
+                await session.commit()
+            stmt = select(LandingDraft).where(
+                LandingDraft.id == draft_id,
+                LandingDraft.status == "open",
+                LandingDraft.expires_at > now,
             )
-            await session.commit()
-            stmt = select(LandingDraft).where(LandingDraft.id == draft_id)
             return (await session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_id_internal(self, draft_id: str) -> LandingDraft | None:
@@ -74,10 +91,10 @@ class LandingDraftRepository:
         """Claim a draft, once.
 
         **The single-use guarantee is this WHERE clause, not a preceding read.** A check-then-write
-        would let two concurrent claims both see `open` and both proceed, and the thing they would
-        both go on to do is run auto-setup — which is not idempotent, so the learner would end up
-        with two of every generated object. Making the status transition itself the contended write
-        means the database picks a winner and the loser gets `False`.
+        would let two concurrent claims both see `open` and both proceed with profile application.
+        Making the status transition itself the contended write means the database picks a single
+        owning account; that owner may safely resume idempotent, generation-free setters after a
+        transient failure, while every other account is refused.
 
         Returns True if this call is the one that claimed it.
         """
@@ -118,9 +135,7 @@ class LandingDraftRepository:
             if not due:
                 return 0
             await session.execute(
-                update(LandingDraft)
-                .where(LandingDraft.id.in_(list(due)))
-                .values(status="expired")
+                update(LandingDraft).where(LandingDraft.id.in_(list(due))).values(status="expired")
             )
             await session.commit()
             return len(due)

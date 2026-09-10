@@ -84,9 +84,7 @@ async def get_learn_dashboard(
 )
 async def set_purpose(body: models.PurposeSetRequest, current_user: CurrentUser):
     """Set the learner's purpose. First step of onboarding."""
-    return await onboarding_service.set_purpose(
-        user_id=current_user.id, purpose=body.purpose
-    )
+    return await onboarding_service.set_purpose(user_id=current_user.id, purpose=body.purpose)
 
 
 @router.post(
@@ -108,9 +106,7 @@ async def set_exam_details(body: models.ExamDetailsRequest, current_user: Curren
     "/onboarding/skill-details",
     response_model=models.LearningProfileResponse,
 )
-async def set_skill_details(
-    body: models.SkillDetailsRequest, current_user: CurrentUser
-):
+async def set_skill_details(body: models.SkillDetailsRequest, current_user: CurrentUser):
     """Set skill building details. For SKILL_BUILDING purpose learners."""
     return await onboarding_service.set_skill_details(
         user_id=current_user.id,
@@ -159,20 +155,16 @@ async def complete_onboarding(current_user: CurrentUser) -> None:
 async def claim_landing_draft(
     body: landing_draft_models.ClaimRequest, current_user: CurrentUser
 ) -> landing_draft_models.ClaimResponse:
-    """Apply a starter setup built anonymously on maigie.com to this account.
+    """Claim a starter setup for this account and return its saved onboarding answers.
 
-    Lives here rather than in the `landing_drafts` domain because it is an onboarding step: it needs
-    an authenticated learner and it writes their profile. The draft domain owns the anonymous half.
+    The claim only establishes single-user ownership. The web onboarding flow then sends the returned
+    answers through the normal purpose and details endpoints, preserving their existing auto-setup,
+    readiness, and completion behavior.
 
-    **Never fails the caller.** Every expected miss — unknown token, expired draft, second claim, or
-    an account that is already set up — returns `applied: false` with a reason and a 200. The client
-    is a learner who has just created an account, and a stale marketing token must not be able to
-    stand between them and it. The token is single-use, enforced by a conditional update rather than
-    a read-then-write, because the work behind a claim is not idempotent.
+    Every expected miss returns ``applied: false`` with a reason and a 200 so a stale marketing token
+    cannot block access to a newly created account.
     """
-    result = await landing_draft_service.claim_draft(
-        token=body.token, user_id=current_user.id
-    )
+    result = await landing_draft_service.claim_draft(token=body.token, user_id=current_user.id)
     return landing_draft_models.ClaimResponse(**result)
 
 
@@ -192,9 +184,7 @@ async def get_profile(current_user: CurrentUser):
     "/profile/llm-provider",
     response_model=models.LearningProfileResponse,
 )
-async def set_llm_provider(
-    body: models.LlmProviderSetRequest, current_user: CurrentUser
-):
+async def set_llm_provider(body: models.LlmProviderSetRequest, current_user: CurrentUser):
     """Set the provider used for the learner's personal-learning AI calls."""
     return await onboarding_service.set_preferred_llm_provider(
         user_id=current_user.id,
@@ -439,9 +429,7 @@ async def upload_attachment(
 
 
 @router.delete("/notes/{note_id}/attachments/{attachment_id}", status_code=204)
-async def remove_attachment(
-    note_id: str, attachment_id: str, current_user: CurrentUser
-):
+async def remove_attachment(note_id: str, attachment_id: str, current_user: CurrentUser):
     """Remove an attachment from a note, and its stored file."""
     removed = await note_service.remove_attachment(
         user_id=current_user.id, note_id=note_id, attachment_id=attachment_id
@@ -480,12 +468,8 @@ async def list_note_history_entries(
     )
 
 
-@router.post(
-    "/notes/{note_id}/history/{version_id}/restore", response_model=models.NoteResponse
-)
-async def restore_note_version(
-    note_id: str, version_id: str, current_user: CurrentUser
-):
+@router.post("/notes/{note_id}/history/{version_id}/restore", response_model=models.NoteResponse)
+async def restore_note_version(note_id: str, version_id: str, current_user: CurrentUser):
     """Put a note's content back to a recorded version.
 
     The current content is snapshotted first, so restoring the wrong version is itself undoable.
@@ -510,9 +494,7 @@ async def retake_note(note_id: str, current_user: CurrentUser):
 
 
 @router.post("/notes/{note_id}/import", response_model=models.MessageResponse)
-async def import_note(
-    note_id: str, body: models.NoteImportRequest, current_user: CurrentUser
-):
+async def import_note(note_id: str, body: models.NoteImportRequest, current_user: CurrentUser):
     """Import a personal note to a learning space."""
     await note_service.import_to_space(
         user_id=current_user.id, note_id=note_id, space_id=body.spaceId
@@ -548,9 +530,7 @@ async def get_prepare_dashboard(
     )
 
 
-@router.post(
-    "/preparations", response_model=models.PrepSummaryResponse, status_code=201
-)
+@router.post("/preparations", response_model=models.PrepSummaryResponse, status_code=201)
 async def create_preparation(body: models.PrepCreateRequest, current_user: CurrentUser):
     """Create a new preparation."""
     return await exam_prep_service.create_preparation(
@@ -558,9 +538,7 @@ async def create_preparation(body: models.PrepCreateRequest, current_user: Curre
     )
 
 
-@router.get(
-    "/preparations", response_model=models.PaginatedResponse[models.PrepSummaryResponse]
-)
+@router.get("/preparations", response_model=models.PaginatedResponse[models.PrepSummaryResponse])
 async def list_preparations(
     current_user: CurrentUser,
     page: int = Query(1, ge=1),
@@ -605,9 +583,7 @@ async def get_preparation(prep_id: str, current_user: CurrentUser):
     linked to it. Previously this returned the bare row, which carried no progress
     at all and left the workspace with nothing to render its header from.
     """
-    return await exam_prep_service.get_preparation_detail(
-        user_id=current_user.id, prep_id=prep_id
-    )
+    return await exam_prep_service.get_preparation_detail(user_id=current_user.id, prep_id=prep_id)
 
 
 @router.patch("/preparations/{prep_id}", response_model=models.PrepSummaryResponse)
@@ -625,9 +601,7 @@ async def update_preparation(
 @router.delete("/preparations/{prep_id}", status_code=204)
 async def delete_preparation(prep_id: str, current_user: CurrentUser):
     """Delete a preparation."""
-    deleted = await exam_prep_service.delete_preparation(
-        user_id=current_user.id, prep_id=prep_id
-    )
+    deleted = await exam_prep_service.delete_preparation(user_id=current_user.id, prep_id=prep_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Preparation not found")
 
@@ -692,14 +666,10 @@ async def upload_material_file(
     )
 
 
-@router.get(
-    "/preparations/{prep_id}/materials", response_model=list[models.PrepMaterialSummary]
-)
+@router.get("/preparations/{prep_id}/materials", response_model=list[models.PrepMaterialSummary])
 async def list_materials(prep_id: str, current_user: CurrentUser):
     """List a preparation's materials. Excludes extracted text."""
-    return await exam_prep_service.list_materials(
-        user_id=current_user.id, prep_id=prep_id
-    )
+    return await exam_prep_service.list_materials(user_id=current_user.id, prep_id=prep_id)
 
 
 @router.patch(
@@ -737,14 +707,10 @@ async def delete_material(prep_id: str, material_id: str, current_user: CurrentU
 )
 async def extract_topics(prep_id: str, current_user: CurrentUser):
     """Trigger AI topic extraction from materials."""
-    return await exam_prep_service.extract_topics(
-        user_id=current_user.id, prep_id=prep_id
-    )
+    return await exam_prep_service.extract_topics(user_id=current_user.id, prep_id=prep_id)
 
 
-@router.get(
-    "/preparations/{prep_id}/topics", response_model=list[models.PrepTopicDetail]
-)
+@router.get("/preparations/{prep_id}/topics", response_model=list[models.PrepTopicDetail])
 async def list_topics(prep_id: str, current_user: CurrentUser):
     """List a preparation's topics with their band and question counts.
 
@@ -754,9 +720,7 @@ async def list_topics(prep_id: str, current_user: CurrentUser):
     return await exam_prep_service.list_topics(user_id=current_user.id, prep_id=prep_id)
 
 
-@router.patch(
-    "/preparations/{prep_id}/topics/{topic_id}", response_model=models.PrepTopicResponse
-)
+@router.patch("/preparations/{prep_id}/topics/{topic_id}", response_model=models.PrepTopicResponse)
 async def update_topic(
     prep_id: str,
     topic_id: str,
@@ -782,9 +746,7 @@ async def delete_topic(prep_id: str, topic_id: str, current_user: CurrentUser):
         raise HTTPException(status_code=404, detail="Topic not found")
 
 
-@router.post(
-    "/preparations/{prep_id}/study-plan", response_model=models.StudyPlanResponse
-)
+@router.post("/preparations/{prep_id}/study-plan", response_model=models.StudyPlanResponse)
 async def generate_prep_study_plan(prep_id: str, current_user: CurrentUser):
     """Generate a study plan for a preparation.
 
@@ -796,9 +758,7 @@ async def generate_prep_study_plan(prep_id: str, current_user: CurrentUser):
     )
 
 
-@router.post(
-    "/preparations/{prep_id}/complete", response_model=models.PrepSummaryResponse
-)
+@router.post("/preparations/{prep_id}/complete", response_model=models.PrepSummaryResponse)
 async def mark_prep_completed(prep_id: str, current_user: CurrentUser):
     """Mark a preparation as completed.
 
@@ -806,9 +766,7 @@ async def mark_prep_completed(prep_id: str, current_user: CurrentUser):
     are done. Once the date has passed this **refuses with a 409**: the honest completion path is then the
     review below, which records how it actually went rather than only that it is over.
     """
-    return await exam_prep_service.mark_completed(
-        user_id=current_user.id, prep_id=prep_id
-    )
+    return await exam_prep_service.mark_completed(user_id=current_user.id, prep_id=prep_id)
 
 
 # ===========================================================================
@@ -827,9 +785,7 @@ async def get_prep_review(prep_id: str, current_user: CurrentUser):
     One field (`awaiting`) rather than leaving each client to infer it from `status` and a date
     comparison, which is how two clients come to disagree about the same preparation.
     """
-    return await prep_outcome_service.get_review_state(
-        user_id=current_user.id, prep_id=prep_id
-    )
+    return await prep_outcome_service.get_review_state(user_id=current_user.id, prep_id=prep_id)
 
 
 @router.post(
@@ -853,9 +809,7 @@ async def record_prep_outcome(
     )
 
 
-@router.post(
-    "/preparations/{prep_id}/review/result", response_model=models.PrepOutcomeResponse
-)
+@router.post("/preparations/{prep_id}/review/result", response_model=models.PrepOutcomeResponse)
 async def record_prep_result(
     prep_id: str, body: models.PrepResultRequest, current_user: CurrentUser
 ):
@@ -871,9 +825,7 @@ async def record_prep_result(
     )
 
 
-@router.post(
-    "/preparations/{prep_id}/review/decline", response_model=models.PrepSummaryResponse
-)
+@router.post("/preparations/{prep_id}/review/decline", response_model=models.PrepSummaryResponse)
 async def decline_prep_review(prep_id: str, current_user: CurrentUser):
     """The learner saying they would rather not answer.
 
@@ -881,9 +833,7 @@ async def decline_prep_review(prep_id: str, current_user: CurrentUser):
     of the reminder budget is to exhaust it, so the learner who least wants to discuss the exam is the one
     asked most. The preparation is *not* marked completed: nothing has been said about how it went.
     """
-    return await prep_outcome_service.decline_review(
-        user_id=current_user.id, prep_id=prep_id
-    )
+    return await prep_outcome_service.decline_review(user_id=current_user.id, prep_id=prep_id)
 
 
 @router.get(
@@ -892,9 +842,7 @@ async def decline_prep_review(prep_id: str, current_user: CurrentUser):
 )
 async def list_prep_outcomes(prep_id: str, current_user: CurrentUser):
     """Every recorded sitting, oldest first. More than one means the exam was postponed."""
-    return await prep_outcome_service.list_outcomes(
-        user_id=current_user.id, prep_id=prep_id
-    )
+    return await prep_outcome_service.list_outcomes(user_id=current_user.id, prep_id=prep_id)
 
 
 # ===========================================================================
@@ -916,9 +864,7 @@ async def list_prep_outcomes(prep_id: str, current_user: CurrentUser):
         }
     },
 )
-async def start_quiz(
-    prep_id: str, body: models.QuizStartRequest, current_user: CurrentUser
-):
+async def start_quiz(prep_id: str, body: models.QuizStartRequest, current_user: CurrentUser):
     """Start a quiz session.
 
     Questions come back without their answer key. `correctAnswer` and
@@ -987,9 +933,7 @@ async def get_prep_timeline(prep_id: str, current_user: CurrentUser):
     from a separate milestone entity — a second source of truth for "what should I
     do by when" would drift from the plan the first time either changed.
     """
-    return await exam_prep_service.get_timeline(
-        user_id=current_user.id, prep_id=prep_id
-    )
+    return await exam_prep_service.get_timeline(user_id=current_user.id, prep_id=prep_id)
 
 
 @router.get(
@@ -1049,18 +993,14 @@ async def unflag_question(prep_id: str, question_id: str, current_user: CurrentU
     )
 
 
-@router.get(
-    "/preparations/{prep_id}/quizzes", response_model=list[models.QuizSessionResponse]
-)
+@router.get("/preparations/{prep_id}/quizzes", response_model=list[models.QuizSessionResponse])
 async def list_quizzes(prep_id: str, current_user: CurrentUser):
     """List all quiz sessions for a preparation."""
     return await quiz_engine.list_prep_quizzes(user_id=current_user.id, prep_id=prep_id)
 
 
 @router.post("/quizzes/{quiz_id}/answer", response_model=models.AnswerResultResponse)
-async def submit_answer(
-    quiz_id: str, body: models.AnswerSubmitRequest, current_user: CurrentUser
-):
+async def submit_answer(quiz_id: str, body: models.AnswerSubmitRequest, current_user: CurrentUser):
     """Submit an answer to a quiz question."""
     return await quiz_engine.submit_answer(
         user_id=current_user.id, quiz_id=quiz_id, data=body.model_dump()
@@ -1182,18 +1122,12 @@ async def get_due_flashcards(
 
 
 @router.get("/flashcards/stats", response_model=models.FlashcardStats)
-async def get_flashcard_stats(
-    current_user: CurrentUser, deckId: str | None = Query(None)
-):
+async def get_flashcard_stats(current_user: CurrentUser, deckId: str | None = Query(None)):
     """Get flashcard statistics, for the whole library or one deck."""
-    return await flashcard_service.get_statistics(
-        user_id=current_user.id, deck_id=deckId
-    )
+    return await flashcard_service.get_statistics(user_id=current_user.id, deck_id=deckId)
 
 
-@router.get(
-    "/flashcards", response_model=models.PaginatedResponse[models.FlashcardResponse]
-)
+@router.get("/flashcards", response_model=models.PaginatedResponse[models.FlashcardResponse])
 async def list_flashcards(
     current_user: CurrentUser,
     page: int = Query(1, ge=1),
@@ -1261,18 +1195,14 @@ async def review_flashcard(
 @router.get("/flashcards/{card_id}", response_model=models.FlashcardResponse)
 async def get_flashcard(card_id: str, current_user: CurrentUser):
     """Get one flashcard."""
-    card = await flashcard_service.get_flashcard(
-        user_id=current_user.id, card_id=card_id
-    )
+    card = await flashcard_service.get_flashcard(user_id=current_user.id, card_id=card_id)
     if not card:
         raise HTTPException(status_code=404, detail="Flashcard not found")
     return card
 
 
 @router.patch("/flashcards/{card_id}", response_model=models.FlashcardResponse)
-async def update_flashcard(
-    card_id: str, body: models.FlashcardUpdate, current_user: CurrentUser
-):
+async def update_flashcard(card_id: str, body: models.FlashcardUpdate, current_user: CurrentUser):
     """Edit a card's text, or move it to another deck.
 
     ``exclude_unset`` is what makes an explicit ``"deckId": null`` mean "unfile this
@@ -1280,9 +1210,7 @@ async def update_flashcard(
     """
     data = body.model_dump(exclude_unset=True)
     if not data:
-        card = await flashcard_service.get_flashcard(
-            user_id=current_user.id, card_id=card_id
-        )
+        card = await flashcard_service.get_flashcard(user_id=current_user.id, card_id=card_id)
         if not card:
             raise HTTPException(status_code=404, detail="Flashcard not found")
         return card
@@ -1300,17 +1228,13 @@ async def update_flashcard(
 @router.delete("/flashcards/{card_id}", status_code=204)
 async def delete_flashcard(card_id: str, current_user: CurrentUser):
     """Delete a flashcard. Its past reviews are kept, detached from the card."""
-    if not await flashcard_service.delete_flashcard(
-        user_id=current_user.id, card_id=card_id
-    ):
+    if not await flashcard_service.delete_flashcard(user_id=current_user.id, card_id=card_id):
         # 404 for another learner's card as well as a missing one, so the route
         # cannot be used to discover which ids exist.
         raise HTTPException(status_code=404, detail="Flashcard not found")
 
 
-@router.post(
-    "/flashcards/generate/note/{note_id}", response_model=list[models.FlashcardResponse]
-)
+@router.post("/flashcards/generate/note/{note_id}", response_model=list[models.FlashcardResponse])
 async def generate_from_note(
     note_id: str, current_user: CurrentUser, deckId: str | None = Query(None)
 ):
@@ -1390,9 +1314,7 @@ async def update_deck(deck_id: str, body: models.DeckUpdate, current_user: Curre
     """Rename a deck, or change its description, subject, colour or daily pace."""
     data = body.model_dump(exclude_unset=True)
     deck = (
-        await flashcard_service.update_deck(
-            user_id=current_user.id, deck_id=deck_id, data=data
-        )
+        await flashcard_service.update_deck(user_id=current_user.id, deck_id=deck_id, data=data)
         if data
         else await flashcard_service.get_deck(user_id=current_user.id, deck_id=deck_id)
     )
@@ -1410,9 +1332,7 @@ async def delete_deck(deck_id: str, current_user: CurrentUser):
     review history attached to them. Cards are removed one at a time through
     `DELETE /flashcards/{id}`.
     """
-    if not await flashcard_service.delete_deck(
-        user_id=current_user.id, deck_id=deck_id
-    ):
+    if not await flashcard_service.delete_deck(user_id=current_user.id, deck_id=deck_id):
         raise HTTPException(status_code=404, detail="Deck not found")
 
 
@@ -1436,14 +1356,10 @@ async def generate_deck_starter_cards(deck_id: str, current_user: CurrentUser):
         raise HTTPException(status_code=404, detail="Deck not found") from error
 
 
-@router.get(
-    "/decks/{deck_id}/flashcards", response_model=list[models.FlashcardResponse]
-)
+@router.get("/decks/{deck_id}/flashcards", response_model=list[models.FlashcardResponse])
 async def list_deck_flashcards(deck_id: str, current_user: CurrentUser):
     """List flashcards in a deck."""
-    return await flashcard_service.list_deck_flashcards(
-        user_id=current_user.id, deck_id=deck_id
-    )
+    return await flashcard_service.list_deck_flashcards(user_id=current_user.id, deck_id=deck_id)
 
 
 # ===========================================================================
@@ -1454,14 +1370,10 @@ async def list_deck_flashcards(deck_id: str, current_user: CurrentUser):
 @router.post("/resources", response_model=models.SavedResourceResponse, status_code=201)
 async def save_resource(body: models.SavedResourceCreate, current_user: CurrentUser):
     """Save a resource to personal library."""
-    return await resource_service.save_resource(
-        user_id=current_user.id, data=body.model_dump()
-    )
+    return await resource_service.save_resource(user_id=current_user.id, data=body.model_dump())
 
 
-@router.get(
-    "/resources", response_model=models.PaginatedResponse[models.SavedResourceResponse]
-)
+@router.get("/resources", response_model=models.PaginatedResponse[models.SavedResourceResponse])
 async def list_resources(
     current_user: CurrentUser,
     page: int = Query(1, ge=1),
@@ -1505,16 +1417,12 @@ async def track_resource_access(resource_id: str, current_user: CurrentUser):
     so `lastAccessedAt` is null on every saved resource in the database — a column that exists to
     order "recently used" and has never been written. This is the caller.
     """
-    tracked = await resource_service.track_access(
-        user_id=current_user.id, resource_id=resource_id
-    )
+    tracked = await resource_service.track_access(user_id=current_user.id, resource_id=resource_id)
     if not tracked:
         raise HTTPException(status_code=404, detail="Resource not found")
 
 
-@router.patch(
-    "/resources/{resource_id}/tags", response_model=models.SavedResourceResponse
-)
+@router.patch("/resources/{resource_id}/tags", response_model=models.SavedResourceResponse)
 async def update_resource_tags(
     resource_id: str, body: models.SavedResourceTagUpdate, current_user: CurrentUser
 ):
@@ -1535,9 +1443,7 @@ async def update_resource_tags(
 @router.post("/study-plans", response_model=models.StudyPlanResponse, status_code=201)
 async def create_study_plan(body: models.StudyPlanCreate, current_user: CurrentUser):
     """Generate a study plan."""
-    return await study_plan_service.generate_plan(
-        user_id=current_user.id, data=body.model_dump()
-    )
+    return await study_plan_service.generate_plan(user_id=current_user.id, data=body.model_dump())
 
 
 @router.get(
@@ -1632,9 +1538,7 @@ async def get_study_plan(plan_id: str, current_user: CurrentUser):
     return await study_plan_service.get_plan(user_id=current_user.id, plan_id=plan_id)
 
 
-@router.get(
-    "/study-plans/{plan_id}/metrics", response_model=models.StudyPlanMetricsResponse
-)
+@router.get("/study-plans/{plan_id}/metrics", response_model=models.StudyPlanMetricsResponse)
 async def get_study_plan_metrics(plan_id: str, current_user: CurrentUser):
     """Progress figures for one plan, derived from its items.
 
@@ -1642,15 +1546,11 @@ async def get_study_plan_metrics(plan_id: str, current_user: CurrentUser):
     items describe what to do, these describe how it has gone — and because a client
     rendering only the schedule should not pay for the aggregates.
     """
-    return await study_plan_service.get_plan_metrics(
-        user_id=current_user.id, plan_id=plan_id
-    )
+    return await study_plan_service.get_plan_metrics(user_id=current_user.id, plan_id=plan_id)
 
 
 @router.patch("/study-plans/{plan_id}", response_model=models.StudyPlanResponse)
-async def update_study_plan(
-    plan_id: str, body: models.StudyPlanUpdate, current_user: CurrentUser
-):
+async def update_study_plan(plan_id: str, body: models.StudyPlanUpdate, current_user: CurrentUser):
     """Rename a plan, restate its goal, move its deadline, or pause and resume it.
 
     Moving the deadline redistributes pending items, so the schedule cannot end up
@@ -1658,12 +1558,8 @@ async def update_study_plan(
     """
     data = body.model_dump(exclude_unset=True)
     if not data:
-        return await study_plan_service.get_plan(
-            user_id=current_user.id, plan_id=plan_id
-        )
-    return await study_plan_service.update_plan(
-        user_id=current_user.id, plan_id=plan_id, data=data
-    )
+        return await study_plan_service.get_plan(user_id=current_user.id, plan_id=plan_id)
+    return await study_plan_service.update_plan(user_id=current_user.id, plan_id=plan_id, data=data)
 
 
 @router.delete("/study-plans/{plan_id}", status_code=204)
@@ -1673,9 +1569,7 @@ async def delete_study_plan(plan_id: str, current_user: CurrentUser):
     Cascades, unlike deck deletion: a plan item is a scheduled slot rather than
     independently authored content, and has no meaning without its plan.
     """
-    if not await study_plan_service.delete_plan(
-        user_id=current_user.id, plan_id=plan_id
-    ):
+    if not await study_plan_service.delete_plan(user_id=current_user.id, plan_id=plan_id):
         # 404 for another learner's plan as well as a missing one, so this cannot be
         # used to discover which plan ids exist.
         raise HTTPException(status_code=404, detail="Study plan not found")
@@ -1700,9 +1594,7 @@ async def link_study_plan_courses(
     "/study-plans/{plan_id}/courses/{course_id}",
     response_model=models.StudyPlanResponse,
 )
-async def unlink_study_plan_course(
-    plan_id: str, course_id: str, current_user: CurrentUser
-):
+async def unlink_study_plan_course(plan_id: str, course_id: str, current_user: CurrentUser):
     """Remove a course link. The course itself is untouched."""
     return await study_plan_service.unlink_course(
         user_id=current_user.id, plan_id=plan_id, course_id=course_id
@@ -1739,9 +1631,7 @@ async def add_study_plan_material(
     "/study-plans/{plan_id}/materials/{material_id}",
     response_model=models.StudyPlanResponse,
 )
-async def delete_study_plan_material(
-    plan_id: str, material_id: str, current_user: CurrentUser
-):
+async def delete_study_plan_material(plan_id: str, material_id: str, current_user: CurrentUser):
     """Remove a reference file from a plan, and from storage."""
     return await study_plan_service.delete_material(
         user_id=current_user.id, plan_id=plan_id, material_id=material_id
@@ -1766,9 +1656,7 @@ async def add_study_plan_item(
     )
 
 
-@router.patch(
-    "/study-plans/{plan_id}/items/{item_id}", response_model=models.StudyPlanResponse
-)
+@router.patch("/study-plans/{plan_id}/items/{item_id}", response_model=models.StudyPlanResponse)
 async def update_study_plan_item(
     plan_id: str,
     item_id: str,
@@ -1778,17 +1666,13 @@ async def update_study_plan_item(
     """Reschedule, retitle, resize, regroup, or restatus one item."""
     data = body.model_dump(exclude_unset=True)
     if not data:
-        return await study_plan_service.get_plan(
-            user_id=current_user.id, plan_id=plan_id
-        )
+        return await study_plan_service.get_plan(user_id=current_user.id, plan_id=plan_id)
     return await study_plan_service.update_item(
         user_id=current_user.id, plan_id=plan_id, item_id=item_id, data=data
     )
 
 
-@router.delete(
-    "/study-plans/{plan_id}/items/{item_id}", response_model=models.StudyPlanResponse
-)
+@router.delete("/study-plans/{plan_id}/items/{item_id}", response_model=models.StudyPlanResponse)
 async def delete_study_plan_item(plan_id: str, item_id: str, current_user: CurrentUser):
     """Remove an item from a plan.
 
@@ -1833,9 +1717,7 @@ async def uncomplete_plan_item(plan_id: str, item_id: str, current_user: Current
 
 
 @router.post("/documents", response_model=models.DocumentResponse, status_code=201)
-async def generate_document(
-    body: models.DocumentGenerateRequest, current_user: CurrentUser
-):
+async def generate_document(body: models.DocumentGenerateRequest, current_user: CurrentUser):
     """Generate an academic document from a natural-language prompt (synchronous)."""
     from fastapi import HTTPException
 
@@ -1874,9 +1756,7 @@ def _document_job_owner_key(task_id: str) -> str:
     response_model=models.DocumentJobQueuedResponse,
     status_code=202,
 )
-async def generate_document_async(
-    body: models.DocumentGenerateRequest, current_user: CurrentUser
-):
+async def generate_document_async(body: models.DocumentGenerateRequest, current_user: CurrentUser):
     """
     Queue a document generation job. Returns immediately with a task id.
 
@@ -1975,9 +1855,7 @@ async def generate_document_async(
     return models.DocumentJobQueuedResponse(task_id=task_id, status="queued")
 
 
-@router.get(
-    "/documents/jobs/{task_id}", response_model=models.DocumentJobStatusResponse
-)
+@router.get("/documents/jobs/{task_id}", response_model=models.DocumentJobStatusResponse)
 async def get_document_job(task_id: str, current_user: CurrentUser):
     """
     Poll the status of a queued document generation job.
@@ -2061,9 +1939,7 @@ async def get_document_summary(current_user: CurrentUser):
     return await document_impl.get_summary(user_id=current_user.id)
 
 
-@router.get(
-    "/documents", response_model=models.PaginatedResponse[models.DocumentResponse]
-)
+@router.get("/documents", response_model=models.PaginatedResponse[models.DocumentResponse])
 async def list_documents(
     current_user: CurrentUser,
     page: int = Query(1, ge=1),
@@ -2117,9 +1993,7 @@ async def get_shared_document(share_id: str, current_user: OptionalCurrentUser =
     from .services import document_impl
 
     requester_id = current_user.id if current_user else None
-    doc = await document_impl.get_by_share_id(
-        share_id=share_id, requester_id=requester_id
-    )
+    doc = await document_impl.get_by_share_id(share_id=share_id, requester_id=requester_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc
@@ -2158,9 +2032,7 @@ async def unpublish_document(doc_id: str, current_user: CurrentUser):
     """
     from .services import document_impl
 
-    return await document_impl.unpublish_document(
-        user_id=current_user.id, doc_id=doc_id
-    )
+    return await document_impl.unpublish_document(user_id=current_user.id, doc_id=doc_id)
 
 
 @router.delete("/documents/{doc_id}", status_code=204)
@@ -2191,9 +2063,7 @@ async def create_collection(body: models.CollectionCreate, current_user: Current
     )
 
 
-@router.get(
-    "/collections", response_model=models.PaginatedResponse[models.CollectionResponse]
-)
+@router.get("/collections", response_model=models.PaginatedResponse[models.CollectionResponse])
 async def list_collections(
     current_user: CurrentUser,
     page: int = Query(1, ge=1),
@@ -2215,16 +2085,12 @@ async def list_collections(
     )
 
 
-@router.get(
-    "/collections/{collection_id}", response_model=models.CollectionDetailResponse
-)
+@router.get("/collections/{collection_id}", response_model=models.CollectionDetailResponse)
 async def get_collection(collection_id: str, current_user: CurrentUser):
     """Get a collection with its resolved items."""
     from .services import collection_service
 
-    return await collection_service.get_detail(
-        user_id=current_user.id, collection_id=collection_id
-    )
+    return await collection_service.get_detail(user_id=current_user.id, collection_id=collection_id)
 
 
 @router.patch("/collections/{collection_id}", response_model=models.CollectionResponse)
@@ -2246,9 +2112,7 @@ async def delete_collection(collection_id: str, current_user: CurrentUser):
     """Soft-delete a collection."""
     from .services import collection_service
 
-    await collection_service.delete_collection(
-        user_id=current_user.id, collection_id=collection_id
-    )
+    await collection_service.delete_collection(user_id=current_user.id, collection_id=collection_id)
 
 
 @router.post(
@@ -2271,9 +2135,7 @@ async def add_collection_item(
 
 
 @router.delete("/collections/{collection_id}/items/{item_id}", status_code=204)
-async def remove_collection_item(
-    collection_id: str, item_id: str, current_user: CurrentUser
-):
+async def remove_collection_item(collection_id: str, item_id: str, current_user: CurrentUser):
     """Remove an item from a collection."""
     from .services import collection_service
 
@@ -2380,20 +2242,14 @@ async def list_reflections(
     )
 
 
-@router.post(
-    "/reflections/generate", response_model=models.ReflectionResponse, status_code=201
-)
-async def generate_reflection(
-    body: models.ReflectionGenerateRequest, current_user: CurrentUser
-):
+@router.post("/reflections/generate", response_model=models.ReflectionResponse, status_code=201)
+async def generate_reflection(body: models.ReflectionGenerateRequest, current_user: CurrentUser):
     """Generate a reflection for the current period.
 
     Idempotent: regenerating the same period updates that reflection rather than adding a
     second one, so the library keeps counting periods rather than generation attempts.
     """
-    return await reflection_service.generate_reflection(
-        user_id=current_user.id, type=body.type
-    )
+    return await reflection_service.generate_reflection(user_id=current_user.id, type=body.type)
 
 
 @router.get("/reflections/{reflection_id}", response_model=models.ReflectionResponse)
@@ -2419,14 +2275,10 @@ async def update_reflection(
 @router.delete("/reflections/{reflection_id}", status_code=204)
 async def delete_reflection(reflection_id: str, current_user: CurrentUser):
     """Delete a reflection."""
-    await reflection_service.delete_reflection(
-        user_id=current_user.id, reflection_id=reflection_id
-    )
+    await reflection_service.delete_reflection(user_id=current_user.id, reflection_id=reflection_id)
 
 
-@router.post(
-    "/reflections/{reflection_id}/read", response_model=models.ReflectionResponse
-)
+@router.post("/reflections/{reflection_id}/read", response_model=models.ReflectionResponse)
 async def mark_reflection_read(reflection_id: str, current_user: CurrentUser):
     """Record that the learner opened this reflection.
 
@@ -2447,12 +2299,8 @@ async def mark_reflection_read(reflection_id: str, current_user: CurrentUser):
 # disambiguate. Same reasoning as the `/reflect/` dashboard segment.
 
 
-@router.post(
-    "/reflection-notes", response_model=models.ReflectionNoteResponse, status_code=201
-)
-async def create_reflection_note(
-    body: models.ReflectionNoteCreate, current_user: CurrentUser
-):
+@router.post("/reflection-notes", response_model=models.ReflectionNoteResponse, status_code=201)
+async def create_reflection_note(body: models.ReflectionNoteCreate, current_user: CurrentUser):
     """Store a note the learner wrote.
 
     The quick-note box on `/reflections` posts here. Until this existed its own label read
@@ -2490,14 +2338,10 @@ async def list_reflection_notes(
 @router.get("/reflection-notes/{note_id}", response_model=models.ReflectionNoteResponse)
 async def get_reflection_note(note_id: str, current_user: CurrentUser):
     """One of the learner's notes."""
-    return await reflection_service.get_reflection_note(
-        user_id=current_user.id, note_id=note_id
-    )
+    return await reflection_service.get_reflection_note(user_id=current_user.id, note_id=note_id)
 
 
-@router.patch(
-    "/reflection-notes/{note_id}", response_model=models.ReflectionNoteResponse
-)
+@router.patch("/reflection-notes/{note_id}", response_model=models.ReflectionNoteResponse)
 async def update_reflection_note(
     note_id: str, body: models.ReflectionNoteUpdate, current_user: CurrentUser
 ):
@@ -2510,9 +2354,7 @@ async def update_reflection_note(
 @router.delete("/reflection-notes/{note_id}", status_code=204)
 async def delete_reflection_note(note_id: str, current_user: CurrentUser):
     """Delete a note."""
-    await reflection_service.delete_reflection_note(
-        user_id=current_user.id, note_id=note_id
-    )
+    await reflection_service.delete_reflection_note(user_id=current_user.id, note_id=note_id)
 
 
 # ===========================================================================
@@ -2523,12 +2365,8 @@ async def delete_reflection_note(note_id: str, current_user: CurrentUser):
 @router.get("/activity-feed", response_model=models.ActivityFeedResponse)
 async def get_activity_feed(
     current_user: CurrentUser,
-    type: list[str] | None = Query(
-        None, description="Repeatable; filters by activityType"
-    ),
-    occurredFrom: datetime | None = Query(
-        None, description="Lower bound on occurredAt"
-    ),
+    type: list[str] | None = Query(None, description="Repeatable; filters by activityType"),
+    occurredFrom: datetime | None = Query(None, description="Lower bound on occurredAt"),
     occurredTo: datetime | None = Query(None, description="Upper bound on occurredAt"),
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
@@ -2559,14 +2397,10 @@ async def get_activity_feed(
     )
 
 
-@router.get(
-    "/activity-feed/daily-counts", response_model=models.ActivityDayCountsResponse
-)
+@router.get("/activity-feed/daily-counts", response_model=models.ActivityDayCountsResponse)
 async def get_activity_daily_counts(
     current_user: CurrentUser,
-    type: list[str] | None = Query(
-        None, description="Repeatable; filters by activityType"
-    ),
+    type: list[str] | None = Query(None, description="Repeatable; filters by activityType"),
     occurredFrom: datetime | None = Query(None),
     occurredTo: datetime | None = Query(None),
 ):
@@ -2678,14 +2512,10 @@ async def get_growth_subjects(
     """
     from .services import growth_service
 
-    return await growth_service.get_subjects(
-        user_id=current_user.id, range_=range, limit=limit
-    )
+    return await growth_service.get_subjects(user_id=current_user.id, range_=range, limit=limit)
 
 
-@router.get(
-    "/growth/subjects/{course_id}", response_model=models.GrowthSubjectDetailResponse
-)
+@router.get("/growth/subjects/{course_id}", response_model=models.GrowthSubjectDetailResponse)
 async def get_growth_subject_detail(
     course_id: str,
     current_user: CurrentUser,
@@ -2725,9 +2555,7 @@ async def get_growth_drivers(
     return await growth_service.get_drivers(user_id=current_user.id, range_=range)
 
 
-@router.get(
-    "/growth/subjects/{course_id}/insight", response_model=models.SubjectInsightResponse
-)
+@router.get("/growth/subjects/{course_id}/insight", response_model=models.SubjectInsightResponse)
 async def get_growth_subject_insight(
     course_id: str,
     current_user: CurrentUser,
@@ -2762,9 +2590,7 @@ async def get_capabilities(current_user: CurrentUser):
     """Get the user's feature tier and available/locked capabilities."""
     from .services import feature_tier_service
 
-    summary = await feature_tier_service.get_capabilities_summary(
-        user_id=current_user.id
-    )
+    summary = await feature_tier_service.get_capabilities_summary(user_id=current_user.id)
     return {
         "effectiveTier": summary.effective_tier,
         "isTrial": summary.is_trial,
@@ -2864,9 +2690,7 @@ async def get_trial_summary(current_user: CurrentUser):
 
     trial_status = await trial_service.get_trial_status(user_id=current_user.id)
     if not trial_status or trial_status.is_active:
-        raise HTTPException(
-            status_code=400, detail="Trial summary available only after trial ends"
-        )
+        raise HTTPException(status_code=400, detail="Trial summary available only after trial ends")
 
     summary = await trial_service.generate_trial_summary(user_id=current_user.id)
     return models.TrialSummaryResponse(
@@ -2888,9 +2712,7 @@ async def dismiss_trigger(trigger_id: str, current_user: CurrentUser):
     """Dismiss a conversion trigger."""
     from .services import conversion_engine
 
-    await conversion_engine.record_dismissal(
-        user_id=current_user.id, trigger_id=trigger_id
-    )
+    await conversion_engine.record_dismissal(user_id=current_user.id, trigger_id=trigger_id)
 
 
 # ===========================================================================
@@ -2905,13 +2727,9 @@ async def get_value_summary(current_user: CurrentUser):
 
     tier, _, _ = await feature_tier_service.get_effective_tier(current_user.id)
     if tier != "plus":
-        raise HTTPException(
-            status_code=403, detail="Value summary is for Plus subscribers"
-        )
+        raise HTTPException(status_code=403, detail="Value summary is for Plus subscribers")
 
-    summary = await value_summary_service.generate_monthly_summary(
-        user_id=current_user.id
-    )
+    summary = await value_summary_service.generate_monthly_summary(user_id=current_user.id)
     return {
         "periodStart": summary.period_start.isoformat(),
         "periodEnd": summary.period_end.isoformat(),
@@ -2941,9 +2759,7 @@ async def get_milestones(current_user: CurrentUser):
     """Get achieved milestones."""
     from .services import milestone_service
 
-    milestones = await milestone_service.get_achieved_milestones(
-        user_id=current_user.id
-    )
+    milestones = await milestone_service.get_achieved_milestones(user_id=current_user.id)
     return {
         "milestones": [
             {
@@ -2990,9 +2806,7 @@ async def get_educator_readiness(current_user: CurrentUser):
     """Get educator readiness evaluation."""
     from .services import transition_service
 
-    readiness = await transition_service.evaluate_educator_readiness(
-        user_id=current_user.id
-    )
+    readiness = await transition_service.evaluate_educator_readiness(user_id=current_user.id)
     return {
         "isReady": readiness.is_ready,
         "signalsMet": readiness.signals_met,
@@ -3008,17 +2822,11 @@ async def start_space_trial(current_user: CurrentUser):
     from .services import transition_service
 
     try:
-        trial_status = await transition_service.start_space_trial(
-            user_id=current_user.id
-        )
+        trial_status = await transition_service.start_space_trial(user_id=current_user.id)
         return {
             "isActive": trial_status.is_active,
-            "startedAt": (
-                trial_status.started_at.isoformat() if trial_status.started_at else None
-            ),
-            "endsAt": (
-                trial_status.ends_at.isoformat() if trial_status.ends_at else None
-            ),
+            "startedAt": (trial_status.started_at.isoformat() if trial_status.started_at else None),
+            "endsAt": (trial_status.ends_at.isoformat() if trial_status.ends_at else None),
             "maxLearners": trial_status.max_learners,
         }
     except ValueError as e:

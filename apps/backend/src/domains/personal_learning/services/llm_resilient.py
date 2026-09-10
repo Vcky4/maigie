@@ -42,18 +42,11 @@ logger = logging.getLogger(__name__)
 #:
 #: Matched against the `operation` label a caller passes. An unlabelled call is charged — the
 #: default has to be "charge", or exemption becomes the thing that happens by forgetting.
-#: **Landing preview** is the marketing site's anonymous starter sketch. It is listed here for a
-#: different reason than the two below it: an anonymous call has no `user_id`, so `meter_usage`
-#: already short-circuits and there is nobody to charge either way. Naming it makes the exemption a
-#: decision rather than an accident of there being no account — and it means the day someone adds a
-#: signed-in caller to that path, the exemption is visible in this list instead of appearing silently.
-#: Its spending control is not the meter; it is the fail-closed rate limit on the route.
 UNCHARGED_OPERATIONS = frozenset(
     {
         "onboarding_auto_setup",
         "memory_extraction",
         "memory_summarisation",
-        "landing_preview",
     }
 )
 
@@ -234,8 +227,7 @@ async def _refuse_if_exhausted(*, user_id: str | None, operation: str) -> None:
             operation,
         )
         raise SubscriptionLimitError(
-            message=message
-            or "You've used this session's allowance. It refills automatically.",
+            message=message or "You've used this session's allowance. It refills automatically.",
             detail=f"operation={operation}, limit=window_exhausted",
         )
 
@@ -331,9 +323,7 @@ async def meter_usage(
             units_for_tokens,
         )
 
-        units = units_for_tokens(
-            usage.input_tokens, usage.billable_output_tokens, usage.model
-        )
+        units = units_for_tokens(usage.input_tokens, usage.billable_output_tokens, usage.model)
         await record_units(
             user_id,
             units,
@@ -405,9 +395,7 @@ def _is_circuit_open(provider: str) -> bool:
         elapsed = time.monotonic() - circuit["last_failure_time"]
         if elapsed >= _RECOVERY_TIMEOUT_S:
             circuit["state"] = "HALF_OPEN"
-            logger.info(
-                f"LLM circuit breaker [{provider}]: HALF_OPEN (testing recovery)"
-            )
+            logger.info(f"LLM circuit breaker [{provider}]: HALF_OPEN (testing recovery)")
             return False
         return True
 
@@ -493,9 +481,7 @@ async def _call_gemini(
     return ProviderReply(text=text, usage=usage)
 
 
-async def _call_openai(
-    prompt: str, *, max_tokens: int, temperature: float
-) -> ProviderReply:
+async def _call_openai(prompt: str, *, max_tokens: int, temperature: float) -> ProviderReply:
     """Call OpenAI directly."""
     import openai
 
@@ -530,9 +516,7 @@ async def _call_openai(
     )
 
 
-async def _call_anthropic(
-    prompt: str, *, max_tokens: int, temperature: float
-) -> ProviderReply:
+async def _call_anthropic(prompt: str, *, max_tokens: int, temperature: float) -> ProviderReply:
     """Call Anthropic directly."""
     import anthropic
 
@@ -671,9 +655,7 @@ async def _resolve_provider(user_id: str | None) -> str:
                 default,
             )
         else:
-            logger.warning(
-                f"Unknown LLM provider '{provider}' for user {user_id}, using default"
-            )
+            logger.warning(f"Unknown LLM provider '{provider}' for user {user_id}, using default")
     else:
         logger.debug(f"No LLM preference for user {user_id}, using default: {default}")
 
@@ -805,15 +787,9 @@ async def generate_content(
                 # either, and passing them here rather than widening those signatures keeps both
                 # parameters where they mean something. See `_call_gemini` for what that costs on a
                 # fallback.
-                extra = (
-                    {"thinking": thinking, "model": model}
-                    if provider == "gemini"
-                    else {}
-                )
+                extra = {"thinking": thinking, "model": model} if provider == "gemini" else {}
                 reply = await asyncio.wait_for(
-                    call_fn(
-                        prompt, max_tokens=max_tokens, temperature=temperature, **extra
-                    ),
+                    call_fn(prompt, max_tokens=max_tokens, temperature=temperature, **extra),
                     timeout=timeout_s,
                 )
                 result = reply.text
@@ -845,9 +821,7 @@ async def generate_content(
                 if not (result or "").strip():
                     raise ValueError("provider returned an empty response")
                 _record_success(provider)
-                logger.info(
-                    f"LLM [{provider}] succeeded: response_length={len(result)}"
-                )
+                logger.info(f"LLM [{provider}] succeeded: response_length={len(result)}")
                 return result
 
             except TimeoutError:
@@ -1034,9 +1008,7 @@ async def generate_content_json(
         # what actually happened is that the provider returned nothing at all. Raised rather than returned so
         # the fallback handling below is unchanged; only the diagnosis improves.
         if not cleaned:
-            raise ValueError(
-                "The model returned an empty response, so there was no JSON to parse"
-            )
+            raise ValueError("The model returned an empty response, so there was no JSON to parse")
 
         try:
             return json.loads(cleaned)

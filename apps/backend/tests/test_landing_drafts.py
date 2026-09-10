@@ -1,8 +1,8 @@
 """Landing drafts — the public draft API and the signup claim.
 
 No database. The repository is replaced with an in-memory stand-in, because what these tests are
-about is the *rules* — token authorisation, expiry, single-use claiming, the generation cap, and the
-fail-closed rate limit — and none of those are properties of Postgres. The one place that reasoning
+about is the *rules* — token authorisation, expiry, deterministic persistence, and single-use
+claiming — and none of those are properties of Postgres. The one place that reasoning
 would be wrong is `mark_claimed`, whose whole point is that the database picks a winner between two
 concurrent claims; the fake models that by doing the status check and the write together, and the
 comment there says so.
@@ -45,6 +45,7 @@ class FakeDraftRepo:
         row = SimpleNamespace(
             id=f"draft_{self._seq}",
             token_hash=data["token_hash"],
+            email=None,
             purpose=data.get("purpose"),
             subjects=None,
             goals_text=None,
@@ -72,7 +73,7 @@ class FakeDraftRepo:
 
     async def update_fields(self, draft_id: str, values: dict):
         row = self.rows.get(draft_id)
-        if row is None:
+        if row is None or row.status != "open" or row.expires_at <= datetime.now(UTC):
             return None
         for key, value in values.items():
             setattr(row, key, value)
@@ -104,20 +105,11 @@ def _build_client() -> TestClient:
 
 
 class LandingDraftApiTests(unittest.TestCase):
-    """The public surface: create, read, update, generate."""
+    """The public surface: create, token-authenticated read, and update."""
 
     def setUp(self) -> None:
         self.repo = FakeDraftRepo()
-        self._patches = [
-            patch.object(draft_service, "landing_draft_repo", self.repo),
-            # Generation is rate-limited with the strict limiter, which refuses when the cache is
-            # unavailable — and in tests it always is. Allowing it here keeps these cases about the
-            # endpoint; the refusal itself is asserted in FailClosedTests below.
-            patch.object(
-                draft_routes, "check_rate_limit_strict", self._allow_rate_limit
-            ),
-            patch.object(draft_service, "_generate_items", self._fake_generate),
-        ]
+        self._patches = [patch.object(draft_service, "landing_draft_repo", self.repo)]
         for p in self._patches:
             p.start()
         self.client = _build_client()
@@ -126,28 +118,15 @@ class LandingDraftApiTests(unittest.TestCase):
         for p in self._patches:
             p.stop()
 
-    @staticmethod
-    async def _allow_rate_limit(_key, _max, _window):
-        return True, 5
-
-    @staticmethod
-    async def _fake_generate(draft):
-        from src.domains.landing_drafts.models import DraftPreviewItem
-
-        return [DraftPreviewItem(label="A study plan", detail=f"For {draft.purpose}.")]
-
     # --- create ---
 
     def test_create_returns_token_once(self):
-        res = self.client.post(
-            "/api/v1/public/landing-drafts", json={"purpose": "exam_prep"}
-        )
+        res = self.client.post("/api/v1/public/landing-drafts", json={"purpose": "exam_prep"})
         self.assertEqual(res.status_code, 201, res.text)
         body = res.json()
         self.assertTrue(body["token"])
         self.assertEqual(body["purpose"], "exam_prep")
         self.assertEqual(body["status"], "open")
-        self.assertTrue(body["canGenerate"])
 
         # The token is never served again.
         read = self.client.get(
@@ -178,6 +157,18 @@ class LandingDraftApiTests(unittest.TestCase):
         self.assertEqual(res.status_code, 401)
         self.assertEqual(res.json()["detail"]["code"], "DRAFT_TOKEN_REQUIRED")
 
+    def test_handoff_read_needs_only_the_opaque_token(self):
+        created = self.client.post(
+            "/api/v1/public/landing-drafts", json={"purpose": "exam_prep"}
+        ).json()
+        res = self.client.get(
+            "/api/v1/public/landing-drafts/handoff",
+            headers={"X-Draft-Token": created["token"]},
+        )
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()["id"], created["id"])
+        self.assertNotIn("token", res.json())
+
     def test_unknown_token_is_not_found(self):
         created = self.client.post("/api/v1/public/landing-drafts", json={}).json()
         res = self.client.get(
@@ -197,9 +188,7 @@ class LandingDraftApiTests(unittest.TestCase):
 
     def test_expired_draft_reads_as_not_found(self):
         created = self.client.post("/api/v1/public/landing-drafts", json={}).json()
-        self.repo.rows[created["id"]].expires_at = datetime.now(UTC) - timedelta(
-            seconds=1
-        )
+        self.repo.rows[created["id"]].expires_at = datetime.now(UTC) - timedelta(seconds=1)
         res = self.client.get(
             f"/api/v1/public/landing-drafts/{created['id']}",
             headers={"X-Draft-Token": created["token"]},
@@ -236,6 +225,25 @@ class LandingDraftApiTests(unittest.TestCase):
         self.assertEqual(res.json()["examName"], "A-Level Biology")
         self.assertEqual(res.json()["goalsText"], "Aim for an A")
 
+    def test_update_stores_a_normalised_email(self):
+        created = self.client.post("/api/v1/public/landing-drafts", json={}).json()
+        res = self.client.patch(
+            f"/api/v1/public/landing-drafts/{created['id']}",
+            headers={"X-Draft-Token": created["token"]},
+            json={"email": "  Ada@School.EDU "},
+        )
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()["email"], "ada@school.edu")
+
+    def test_update_rejects_a_malformed_email(self):
+        created = self.client.post("/api/v1/public/landing-drafts", json={}).json()
+        res = self.client.patch(
+            f"/api/v1/public/landing-drafts/{created['id']}",
+            headers={"X-Draft-Token": created["token"]},
+            json={"email": "not-an-address"},
+        )
+        self.assertEqual(res.status_code, 422)
+
     def test_update_deduplicates_and_caps_subjects(self):
         created = self.client.post("/api/v1/public/landing-drafts", json={}).json()
         res = self.client.patch(
@@ -247,6 +255,23 @@ class LandingDraftApiTests(unittest.TestCase):
         self.assertEqual(subjects[:2], ["Maths", "Physics"])
         self.assertLessEqual(len(subjects), draft_service.MAX_SUBJECTS)
 
+    def test_update_fails_if_claim_wins_after_token_resolution(self):
+        created = self.client.post("/api/v1/public/landing-drafts", json={}).json()
+        original_update = self.repo.update_fields
+
+        async def claimed_before_write(draft_id, values):
+            self.repo.rows[draft_id].status = "claimed"
+            return await original_update(draft_id, values)
+
+        with patch.object(self.repo, "update_fields", claimed_before_write):
+            res = self.client.patch(
+                f"/api/v1/public/landing-drafts/{created['id']}",
+                headers={"X-Draft-Token": created["token"]},
+                json={"subjects": ["Biology"]},
+            )
+        self.assertEqual(res.status_code, 409)
+        self.assertEqual(res.json()["code"], "DRAFT_NOT_OPEN")
+
     def test_update_rejects_oversized_goals(self):
         created = self.client.post("/api/v1/public/landing-drafts", json={}).json()
         res = self.client.patch(
@@ -255,89 +280,6 @@ class LandingDraftApiTests(unittest.TestCase):
             json={"goals": "x" * 5000},
         )
         self.assertEqual(res.status_code, 422)
-
-    def test_editing_clears_a_stale_preview(self):
-        created = self.client.post(
-            "/api/v1/public/landing-drafts", json={"purpose": "exam_prep"}
-        ).json()
-        headers = {"X-Draft-Token": created["token"]}
-        self.client.patch(
-            f"/api/v1/public/landing-drafts/{created['id']}",
-            headers=headers,
-            json={"subjects": ["Biology"]},
-        )
-        gen = self.client.post(
-            f"/api/v1/public/landing-drafts/{created['id']}/generate", headers=headers
-        )
-        self.assertTrue(gen.json()["preview"])
-
-        res = self.client.patch(
-            f"/api/v1/public/landing-drafts/{created['id']}",
-            headers=headers,
-            json={"subjects": ["Chemistry"]},
-        )
-        self.assertEqual(res.json()["preview"], [])
-
-    # --- generate ---
-
-    def test_generate_is_capped_per_draft(self):
-        created = self.client.post(
-            "/api/v1/public/landing-drafts", json={"purpose": "exam_prep"}
-        ).json()
-        headers = {"X-Draft-Token": created["token"]}
-        url = f"/api/v1/public/landing-drafts/{created['id']}/generate"
-
-        for _ in range(draft_service.MAX_GENERATES_PER_DRAFT):
-            self.assertEqual(self.client.post(url, headers=headers).status_code, 200)
-
-        blocked = self.client.post(url, headers=headers)
-        self.assertEqual(blocked.status_code, 409)
-        self.assertEqual(blocked.json()["code"], "DRAFT_GENERATE_LIMIT")
-
-    def test_can_generate_flag_reflects_the_cap(self):
-        created = self.client.post("/api/v1/public/landing-drafts", json={}).json()
-        headers = {"X-Draft-Token": created["token"]}
-        url = f"/api/v1/public/landing-drafts/{created['id']}/generate"
-        for _ in range(draft_service.MAX_GENERATES_PER_DRAFT):
-            last = self.client.post(url, headers=headers)
-        self.assertFalse(last.json()["canGenerate"])
-
-
-class FailClosedTests(unittest.TestCase):
-    """The generate limiter must refuse rather than degrade open."""
-
-    def setUp(self) -> None:
-        self.repo = FakeDraftRepo()
-        self._patch = patch.object(draft_service, "landing_draft_repo", self.repo)
-        self._patch.start()
-        self.client = _build_client()
-
-    def tearDown(self) -> None:
-        self._patch.stop()
-
-    def test_generate_refuses_when_cache_is_unavailable(self):
-        """The whole reason `check_rate_limit_strict` exists.
-
-        No cache is connected in tests, so the shared limiter would wave this through — which on an
-        unauthenticated endpoint that spends LLM budget is an open tap. This asserts the opposite.
-        """
-        created = self.client.post("/api/v1/public/landing-drafts", json={}).json()
-        res = self.client.post(
-            f"/api/v1/public/landing-drafts/{created['id']}/generate",
-            headers={"X-Draft-Token": created["token"]},
-        )
-        self.assertEqual(res.status_code, 429)
-        self.assertEqual(res.json()["detail"]["code"], "GENERATE_RATE_LIMITED")
-        self.assertEqual(
-            res.headers.get("Retry-After"), str(draft_routes.GENERATE_LIMIT[1])
-        )
-
-    def test_create_still_works_when_cache_is_unavailable(self):
-        """Creating a draft costs nothing, so it keeps the fail-open limiter."""
-        res = self.client.post(
-            "/api/v1/public/landing-drafts", json={"purpose": "exam_prep"}
-        )
-        self.assertEqual(res.status_code, 201)
 
 
 class StrictLimiterUnitTests(unittest.IsolatedAsyncioTestCase):
@@ -489,14 +431,12 @@ class ClaimTests(unittest.IsolatedAsyncioTestCase):
             p.stop()
 
     async def _open_draft(self, **fields):
-        draft, token = await draft_service.create_draft(
-            purpose=fields.pop("purpose", None)
-        )
+        draft, token = await draft_service.create_draft(purpose=fields.pop("purpose", None))
         for key, value in fields.items():
             setattr(draft, key, value)
         return draft, token
 
-    async def test_exam_draft_runs_the_exam_onboarding_sequence(self):
+    async def test_exam_draft_returns_answers_without_running_onboarding(self):
         _draft, token = await self._open_draft(
             purpose="exam_prep",
             subjects=["Biology"],
@@ -507,65 +447,59 @@ class ClaimTests(unittest.IsolatedAsyncioTestCase):
         result = await draft_service.claim_draft(token=token, user_id="user_1")
 
         self.assertTrue(result["applied"])
-        self.assertEqual(
-            [name for name, _ in self.calls],
-            ["set_purpose", "set_exam_details", "complete_onboarding"],
-        )
-        self.assertTrue(result["onboarding_completed"])
-        details = self.calls[1][1]
-        self.assertEqual(details["exam_name"], "A-Level Biology")
-        self.assertEqual(details["subjects"], ["Biology"])
-        self.assertEqual(details["goals"], "Aim for an A")
+        self.assertEqual(result["purpose"], "exam_prep")
+        self.assertEqual(result["subjects"], ["Biology"])
+        self.assertEqual(result["exam_name"], "A-Level Biology")
+        self.assertEqual(result["exam_date"], date(2027, 6, 1))
+        self.assertEqual(result["goals_text"], "Aim for an A")
+        self.assertEqual(self.calls, [])
 
-    async def test_skill_draft_runs_the_skill_sequence(self):
-        _draft, token = await self._open_draft(
-            purpose="skill_building", subjects=["Python"]
-        )
-        await draft_service.claim_draft(token=token, user_id="user_1")
-        self.assertEqual(
-            [name for name, _ in self.calls],
-            ["set_purpose", "set_skill_details", "complete_onboarding"],
-        )
+    async def test_skill_draft_returns_answers_without_running_onboarding(self):
+        _draft, token = await self._open_draft(purpose="skill_building", subjects=["Python"])
+        result = await draft_service.claim_draft(token=token, user_id="user_1")
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["subjects"], ["Python"])
+        self.assertEqual(self.calls, [])
 
-    async def test_generic_draft_falls_back_to_subjects(self):
-        _draft, token = await self._open_draft(
-            purpose="general_learning", subjects=["Anatomy"]
-        )
-        await draft_service.claim_draft(token=token, user_id="user_1")
-        self.assertEqual(
-            [name for name, _ in self.calls],
-            ["set_purpose", "set_subjects", "complete_onboarding"],
-        )
+    async def test_generic_draft_returns_answers_without_running_onboarding(self):
+        _draft, token = await self._open_draft(purpose="general_learning", subjects=["Anatomy"])
+        result = await draft_service.claim_draft(token=token, user_id="user_1")
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["subjects"], ["Anatomy"])
+        self.assertEqual(self.calls, [])
 
     async def test_exam_name_becomes_the_subject_when_none_was_given(self):
-        """Auto-setup refuses a profile with no subjects, so a name-only draft must supply one."""
+        """A name-only exam still returns the subject required by normal onboarding."""
         _draft, token = await self._open_draft(purpose="exam_prep", exam_name="MCAT")
-        await draft_service.claim_draft(token=token, user_id="user_1")
-        self.assertEqual(self.calls[1][1]["subjects"], ["MCAT"])
+        result = await draft_service.claim_draft(token=token, user_id="user_1")
+        self.assertEqual(result["subjects"], ["MCAT"])
 
-    async def test_purpose_only_draft_applies_without_content(self):
-        """And must *not* finish onboarding: auto-setup skipped, so there is nothing to land on."""
+    async def test_purpose_only_draft_returns_without_applying_profile_fields(self):
         _draft, token = await self._open_draft(purpose="exam_prep")
         result = await draft_service.claim_draft(token=token, user_id="user_1")
         self.assertTrue(result["applied"])
-        self.assertFalse(result["onboarding_completed"])
-        self.assertEqual([name for name, _ in self.calls], ["set_purpose"])
+        self.assertEqual(result["subjects"], [])
+        self.assertEqual(self.calls, [])
 
     async def test_claim_is_single_use(self):
-        _draft, token = await self._open_draft(
-            purpose="exam_prep", subjects=["Biology"]
-        )
+        _draft, token = await self._open_draft(purpose="exam_prep", subjects=["Biology"])
         first = await draft_service.claim_draft(token=token, user_id="user_1")
         second = await draft_service.claim_draft(token=token, user_id="user_2")
 
         self.assertTrue(first["applied"])
         self.assertFalse(second["applied"])
         self.assertEqual(second["reason"], "already_claimed")
-        # And the second attempt ran no onboarding at all.
-        self.assertEqual(
-            [name for name, _ in self.calls],
-            ["set_purpose", "set_exam_details", "complete_onboarding"],
-        )
+        # Claim only establishes ownership; neither caller runs onboarding here.
+        self.assertEqual(self.calls, [])
+
+    async def test_same_user_can_resume_and_receive_the_same_answers(self):
+        _draft, token = await self._open_draft(purpose="exam_prep", subjects=["Biology"])
+        first = await draft_service.claim_draft(token=token, user_id="user_1")
+        resumed = await draft_service.claim_draft(token=token, user_id="user_1")
+
+        self.assertTrue(first["applied"])
+        self.assertEqual(resumed, first)
+        self.assertEqual(self.calls, [])
 
     async def test_unknown_token_is_soft(self):
         result = await draft_service.claim_draft(token="nonsense", user_id="user_1")
@@ -583,30 +517,17 @@ class ClaimTests(unittest.IsolatedAsyncioTestCase):
         result = await draft_service.claim_draft(token=token, user_id="user_1")
         self.assertEqual(result["reason"], "empty")
 
-    async def test_failing_to_complete_onboarding_is_non_fatal(self):
-        """The draft is still applied; the learner just sees the wizard, as they did before."""
-
-        async def boom(*, user_id):
-            raise RuntimeError("profile vanished")
-
-        with patch(
-            "src.domains.personal_learning.services.onboarding_service.complete_onboarding",
-            boom,
-        ):
-            _draft, token = await self._open_draft(
-                purpose="exam_prep", subjects=["Biology"]
-            )
-            result = await draft_service.claim_draft(token=token, user_id="user_1")
+    async def test_claim_never_runs_onboarding_completion(self):
+        _draft, token = await self._open_draft(purpose="exam_prep", subjects=["Biology"])
+        result = await draft_service.claim_draft(token=token, user_id="user_1")
 
         self.assertTrue(result["applied"])
-        self.assertFalse(result["onboarding_completed"])
+        self.assertEqual(self.calls, [])
 
     async def test_existing_profile_is_left_alone(self):
         """A learner who has already onboarded must not have their state rewound."""
         self.profile = SimpleNamespace(purpose="skill_building")
-        _draft, token = await self._open_draft(
-            purpose="exam_prep", subjects=["Biology"]
-        )
+        _draft, token = await self._open_draft(purpose="exam_prep", subjects=["Biology"])
         result = await draft_service.claim_draft(token=token, user_id="user_1")
 
         self.assertFalse(result["applied"])
@@ -614,84 +535,6 @@ class ClaimTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls, [])
         # The draft is still open, so nothing was burned by the refusal.
         self.assertEqual(list(self.repo.rows.values())[0].status, "open")
-
-
-class PreviewCoercionTests(unittest.TestCase):
-    """Whatever the model returns, the visitor gets three usable lines or the static sketch."""
-
-    def setUp(self) -> None:
-        self.fallback = draft_service._static_preview(
-            SimpleNamespace(purpose="exam_prep", exam_date=None), "Biology"
-        )
-
-    def test_well_formed_array(self):
-        items = draft_service._coerce_items(
-            [{"label": "A plan", "detail": "Milestones."}], self.fallback
-        )
-        self.assertEqual(items[0].label, "A plan")
-
-    def test_wrapped_in_an_object(self):
-        items = draft_service._coerce_items(
-            {"items": [{"label": "A plan", "detail": "Milestones."}]}, self.fallback
-        )
-        self.assertEqual(items[0].label, "A plan")
-
-    def test_json_in_a_string(self):
-        items = draft_service._coerce_items(
-            '[{"label": "A plan", "detail": "Milestones."}]', self.fallback
-        )
-        self.assertEqual(items[0].label, "A plan")
-
-    def test_too_many_items_are_trimmed(self):
-        raw = [{"label": f"L{i}", "detail": "D"} for i in range(9)]
-        self.assertEqual(len(draft_service._coerce_items(raw, self.fallback)), 3)
-
-    def test_incomplete_entries_are_dropped(self):
-        items = draft_service._coerce_items(
-            [{"label": "Only a label"}, {"label": "Good", "detail": "Fine."}],
-            self.fallback,
-        )
-        self.assertEqual([i.label for i in items], ["Good"])
-
-    def test_unusable_reply_falls_back(self):
-        for raw in (None, 42, "not json", [], [{"nope": 1}]):
-            items = draft_service._coerce_items(raw, self.fallback)
-            self.assertEqual(items, self.fallback, raw)
-
-    def test_long_strings_are_truncated(self):
-        items = draft_service._coerce_items(
-            [{"label": "x" * 500, "detail": "y" * 900}], self.fallback
-        )
-        self.assertLessEqual(len(items[0].label), 80)
-        self.assertLessEqual(len(items[0].detail), 280)
-
-
-class PromptTests(unittest.TestCase):
-    """The prompt is the only place a visitor's free text reaches a model."""
-
-    def test_goals_text_is_truncated_into_the_prompt(self):
-        draft = SimpleNamespace(
-            purpose="exam_prep",
-            exam_name="MCAT",
-            exam_date=date(2027, 6, 1),
-            goals_text="z" * 2000,
-            subjects=["Biology"],
-        )
-        prompt = draft_service._preview_prompt(draft, ["Biology"], "Biology")
-        self.assertIn("MCAT", prompt)
-        self.assertIn("2027-06-01", prompt)
-        self.assertLess(prompt.count("z"), 400)
-
-    def test_prompt_forbids_outcome_promises(self):
-        draft = SimpleNamespace(
-            purpose="exam_prep",
-            exam_name=None,
-            exam_date=None,
-            goals_text=None,
-            subjects=[],
-        )
-        prompt = draft_service._preview_prompt(draft, [], "Biology")
-        self.assertIn("Do not promise outcomes", prompt)
 
 
 if __name__ == "__main__":
