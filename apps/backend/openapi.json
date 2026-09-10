@@ -1371,6 +1371,108 @@
         "title": "CheckoutResponse",
         "type": "object"
       },
+      "ClaimRequest": {
+        "description": "Hand a temporary draft to an authenticated account.",
+        "properties": {
+          "token": {
+            "maxLength": 256,
+            "minLength": 8,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "ClaimRequest",
+        "type": "object"
+      },
+      "ClaimResponse": {
+        "description": "Ownership outcome plus the saved values the authenticated client must replay.",
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "examDate": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examdate"
+          },
+          "examName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examname"
+          },
+          "goalsText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goalstext"
+          },
+          "purpose": {
+            "anyOf": [
+              {
+                "enum": [
+                  "exam_prep",
+                  "skill_building",
+                  "course_completion",
+                  "professional_certification",
+                  "teaching",
+                  "community",
+                  "general_learning"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purpose"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "subjects": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Subjects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "applied"
+        ],
+        "title": "ClaimResponse",
+        "type": "object"
+      },
       "CollectionCreate": {
         "properties": {
           "description": {
@@ -3971,6 +4073,313 @@
           "formats"
         ],
         "title": "DocumentSummaryResponse",
+        "type": "object"
+      },
+      "DraftCreateRequest": {
+        "description": "Opening a draft; the first goal selection is enough.",
+        "properties": {
+          "purpose": {
+            "anyOf": [
+              {
+                "enum": [
+                  "exam_prep",
+                  "skill_building",
+                  "course_completion",
+                  "professional_certification",
+                  "teaching",
+                  "community",
+                  "general_learning"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purpose"
+          }
+        },
+        "title": "DraftCreateRequest",
+        "type": "object"
+      },
+      "DraftCreatedResponse": {
+        "description": "Create response and the only response containing the raw token.",
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "examDate": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examdate"
+          },
+          "examName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examname"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "title": "Expiresat",
+            "type": "string"
+          },
+          "goalsText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goalstext"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "purpose": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purpose"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "claimed",
+              "expired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subjects": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Subjects",
+            "type": "array"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "expiresAt",
+          "token"
+        ],
+        "title": "DraftCreatedResponse",
+        "type": "object"
+      },
+      "DraftResponse": {
+        "description": "The deterministic values needed to prefill onboarding.\n\nThe token hash and raw token are absent. The raw token is returned only when the draft is\ncreated, then acts as the opaque handoff id for subsequent reads and the final claim.",
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "examDate": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examdate"
+          },
+          "examName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examname"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "title": "Expiresat",
+            "type": "string"
+          },
+          "goalsText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goalstext"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "purpose": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purpose"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "claimed",
+              "expired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subjects": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Subjects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "expiresAt"
+        ],
+        "title": "DraftResponse",
+        "type": "object"
+      },
+      "DraftUpdateRequest": {
+        "description": "Wizard answers. Omitted fields remain unchanged; explicit null clears a field.",
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "format": "email",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "examDate": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examdate"
+          },
+          "examName": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examname"
+          },
+          "goals": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goals"
+          },
+          "purpose": {
+            "anyOf": [
+              {
+                "enum": [
+                  "exam_prep",
+                  "skill_building",
+                  "course_completion",
+                  "professional_certification",
+                  "teaching",
+                  "community",
+                  "general_learning"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purpose"
+          },
+          "subjects": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subjects"
+          }
+        },
+        "title": "DraftUpdateRequest",
         "type": "object"
       },
       "DueReviewResponse": {
@@ -30398,6 +30807,54 @@
         ]
       }
     },
+    "/api/v1/learning/onboarding/claim-landing-draft": {
+      "post": {
+        "description": "Claim a starter setup for this account and return its saved onboarding answers.\n\nThe claim only establishes single-user ownership. The web onboarding flow then sends the returned\nanswers through the normal purpose and details endpoints, preserving their existing auto-setup,\nreadiness, and completion behavior.\n\nEvery expected miss returns ``applied: false`` with a reason and a 200 so a stale marketing token\ncannot block access to a newly created account.",
+        "operationId": "claim_landing_draft_api_v1_learning_onboarding_claim_landing_draft_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Claim Landing Draft",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/onboarding/complete": {
       "post": {
         "description": "Complete onboarding and record the profile completion time.",
@@ -37133,6 +37590,228 @@
         ]
       }
     },
+    "/api/v1/public/landing-drafts": {
+      "post": {
+        "description": "Create a short-lived draft and return its only raw token.",
+        "operationId": "create_draft_api_v1_public_landing_drafts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftCreatedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Open an anonymous starter draft",
+        "tags": [
+          "landing-drafts",
+          "landing-drafts"
+        ]
+      }
+    },
+    "/api/v1/public/landing-drafts/handoff": {
+      "get": {
+        "description": "Resolve a draft using only its opaque handoff token.\n\nThe web app deliberately receives no database identifier. The token is the credential and the\nlookup key; exposing an internal id would add another value without adding authorization.",
+        "operationId": "get_handoff_draft_api_v1_public_landing_drafts_handoff_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Draft-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Draft-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read a handoff draft",
+        "tags": [
+          "landing-drafts",
+          "landing-drafts"
+        ]
+      }
+    },
+    "/api/v1/public/landing-drafts/{draft_id}": {
+      "get": {
+        "description": "Read a draft by id and token for the originating marketing client.",
+        "operationId": "get_draft_api_v1_public_landing_drafts__draft_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "title": "Draft Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Draft-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Draft-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read a draft",
+        "tags": [
+          "landing-drafts",
+          "landing-drafts"
+        ]
+      },
+      "patch": {
+        "description": "Persist the latest deterministic wizard answers.",
+        "operationId": "update_draft_api_v1_public_landing_drafts__draft_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "title": "Draft Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Draft-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Draft-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update a draft",
+        "tags": [
+          "landing-drafts",
+          "landing-drafts"
+        ]
+      }
+    },
     "/api/v1/push-installations": {
       "get": {
         "operationId": "list_push_installations_api_v1_push_installations_get",
@@ -38168,6 +38847,10 @@
     {
       "description": "**Knowledge Domain** — Courses, modules, topics, resources, and the resource bank. Knowledge is reusable and evolves over time.",
       "name": "knowledge"
+    },
+    {
+      "description": "**Landing Drafts Domain** — Unauthenticated. The starter setup a visitor builds on maigie.com before signing up, authorised by a per-draft token and claimed by the account they create.",
+      "name": "landing-drafts"
     },
     {
       "description": "**Personal Learning Domain** — The learner's private environment: notes, exam preparation, document generation, study mode.",
