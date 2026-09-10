@@ -218,9 +218,7 @@ class Settings(BaseSettings):
     # --- Stripe Subscription ---
     STRIPE_SECRET_KEY: str = ""
     STRIPE_PUBLISHABLE_KEY: str = ""
-    STRIPE_WEBHOOK_SECRET: str = (
-        ""  # Webhook signing secret (whsec_...) from webhook destination
-    )
+    STRIPE_WEBHOOK_SECRET: str = ""  # Webhook signing secret (whsec_...) from webhook destination
     STRIPE_WEBHOOK_DESTINATION_ID: str = (
         ""  # Webhook destination ID (required when using destinations)
     )
@@ -342,9 +340,7 @@ class Settings(BaseSettings):
     # --- Google Play Billing ---
     # Service account JSON for verifying purchases via Google Play Developer API.
     # Either provide a file path or the raw JSON string (for containerized environments).
-    GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: str = (
-        ""  # Raw JSON string (preferred in production)
-    )
+    GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: str = ""  # Raw JSON string (preferred in production)
     GOOGLE_PLAY_SERVICE_ACCOUNT_FILE: str = ""  # Path to service account JSON file
     # Package name of the Android app
     GOOGLE_PLAY_PACKAGE_NAME: str = "com.maigie"
@@ -403,9 +399,7 @@ class Settings(BaseSettings):
     # --- Auto Blog Pipeline ---
     BLOG_AUTOPILOT_ENABLED: bool = True
     BLOG_GOOGLE_DRIVE_FOLDER_ID: str = ""  # Folder containing cover images
-    BLOG_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: str = (
-        ""  # Service account JSON for Drive API
-    )
+    BLOG_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: str = ""  # Service account JSON for Drive API
     BLOG_GITHUB_TOKEN: str = ""  # PAT with repo write access to maigie-public
     BLOG_GITHUB_REPO: str = "Maigie-Ltd/maigie-public"
     BLOG_DEFAULT_AUTHOR_NAME: str = "Maigie Team"
@@ -508,9 +502,7 @@ class Settings(BaseSettings):
     # Free carries **two** Flash-Lite models so a provider failure degrades rather than fails. The
     # second is dearer than the first ($0.30/$2.50 against $0.25/$1.50) and still 5× cheaper on input
     # than the Plus model, so the fallback costs a third more than the primary instead of six times.
-    LLM_TIER_ALLOWLIST_FREE: str = (
-        "gemini:gemini-3.1-flash-lite,gemini:gemini-3.5-flash-lite"
-    )
+    LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-3.1-flash-lite,gemini:gemini-3.5-flash-lite"
     LLM_TIER_ALLOWLIST_PLUS: str = (
         "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,"
         "gemini:gemini-3.5-flash-lite,openai:gpt-4o-mini"
@@ -523,9 +515,7 @@ class Settings(BaseSettings):
     # so a provider blip degrades rather than fails). Global Plus keeps `LLM_TIER_ALLOWLIST_PLUS`.
     # `feature_flags.effective_tier_for_request` returns the `plus_ngn` key for an NGN Plus learner,
     # which resolves to this allowlist; it stays a *paid* tier string, so voice still bills as paid.
-    LLM_TIER_ALLOWLIST_PLUS_NGN: str = (
-        "gemini:gemini-3.1-flash-lite,gemini:gemini-3.5-flash-lite"
-    )
+    LLM_TIER_ALLOWLIST_PLUS_NGN: str = "gemini:gemini-3.1-flash-lite,gemini:gemini-3.5-flash-lite"
 
     # --- Gemini Live (voice) — was scattered os.getenv reads; keep in Settings ---
     #

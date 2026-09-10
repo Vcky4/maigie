@@ -96,9 +96,7 @@ async def check_rate_limit_strict(
         current = await cache.increment(full_key, 1)
 
         if current is None:
-            logger.warning(
-                "Strict rate limit refusing %s — increment returned nothing", key
-            )
+            logger.warning("Strict rate limit refusing %s — increment returned nothing", key)
             return False, 0
 
         if current == 1:

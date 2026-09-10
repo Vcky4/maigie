@@ -202,8 +202,7 @@ def _openapi_tags() -> list[dict]:
         {
             "name": "users",
             "description": (
-                "**Identity Domain** — User profile, preferences, "
-                "account deletion lifecycle."
+                "**Identity Domain** — User profile, preferences, " "account deletion lifecycle."
             ),
         },
         {
@@ -318,9 +317,7 @@ def _register_domains(app: FastAPI) -> None:
     # --- Personal Learning (migrated to SQLAlchemy) ---
     from src.domains.personal_learning.routes import router as learning_router
 
-    app.include_router(
-        learning_router, prefix=f"{prefix}/learning", tags=["personal-learning"]
-    )
+    app.include_router(learning_router, prefix=f"{prefix}/learning", tags=["personal-learning"])
 
     # --- Landing drafts (marketing site, unauthenticated) ---
     #
@@ -366,16 +363,12 @@ def _register_domains(app: FastAPI) -> None:
     # --- Knowledge (migrated to SQLAlchemy) ---
     from src.domains.knowledge.routes import router as knowledge_router
 
-    app.include_router(
-        knowledge_router, prefix=f"{prefix}/knowledge", tags=["knowledge"]
-    )
+    app.include_router(knowledge_router, prefix=f"{prefix}/knowledge", tags=["knowledge"])
 
     # --- Learning Spaces ---
     from src.domains.learning_spaces.routes import router as spaces_router
 
-    app.include_router(
-        spaces_router, prefix=f"{prefix}/spaces", tags=["learning-spaces"]
-    )
+    app.include_router(spaces_router, prefix=f"{prefix}/spaces", tags=["learning-spaces"])
 
     # Classrooms will be mounted when their public contract is normalized.
     # from src.domains.classrooms.routes import router as classrooms_router
@@ -396,9 +389,7 @@ def _register_domains(app: FastAPI) -> None:
     from src.domains.intelligence.routes import register_websocket
     from src.domains.intelligence.routes import router as intelligence_router
 
-    app.include_router(
-        intelligence_router, prefix=f"{prefix}/intelligence", tags=["intelligence"]
-    )
+    app.include_router(intelligence_router, prefix=f"{prefix}/intelligence", tags=["intelligence"])
 
     # The streaming chat socket at `{prefix}/intelligence/ws`. Registered directly on the app rather
     # than through the router above because it sets its own prefix; see `register_websocket`'s docstring.
@@ -417,9 +408,7 @@ def _register_domains(app: FastAPI) -> None:
     # rename across three repositories, not something to do while restoring the feature.
     from src.domains.study_voice import router as study_voice_router
 
-    app.include_router(
-        study_voice_router, prefix=f"{prefix}/gemini-live", tags=["study-voice"]
-    )
+    app.include_router(study_voice_router, prefix=f"{prefix}/gemini-live", tags=["study-voice"])
 
     # --- Billing ---
     #
@@ -467,9 +456,7 @@ def _init_sentry(settings) -> None:
 
     placeholders = ["project-id", "your-project-id", "placeholder", "xxx"]
     if any(p in dsn.lower() for p in placeholders):
-        logger.warning(
-            "Sentry DSN appears to be a placeholder — error tracking disabled"
-        )
+        logger.warning("Sentry DSN appears to be a placeholder — error tracking disabled")
         return
 
     try:

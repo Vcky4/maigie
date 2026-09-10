@@ -35,8 +35,9 @@ Revises: 079_user_country
 """
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "080_landing_drafts"
 down_revision = "079_user_country"
@@ -88,13 +89,9 @@ def upgrade() -> None:
         ),
     )
     # Unique rather than a plain index: the token is the identity of the row for every public read.
-    op.create_index(
-        "LandingDraft_tokenHash_key", "LandingDraft", ["tokenHash"], unique=True
-    )
+    op.create_index("LandingDraft_tokenHash_key", "LandingDraft", ["tokenHash"], unique=True)
     op.create_index("LandingDraft_claimedBy_idx", "LandingDraft", ["claimedBy"])
-    op.create_index(
-        "LandingDraft_status_expiresAt_idx", "LandingDraft", ["status", "expiresAt"]
-    )
+    op.create_index("LandingDraft_status_expiresAt_idx", "LandingDraft", ["status", "expiresAt"])
 
 
 def downgrade() -> None:
