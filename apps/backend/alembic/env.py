@@ -29,6 +29,7 @@ load_dotenv()
 import src.domains.landing_drafts.db_models  # noqa: E402, F401
 import src.domains.notifications.db_models  # noqa: E402, F401
 import src.domains.personal_learning.db_models  # noqa: E402, F401
+import src.domains.research.db_models  # noqa: E402, F401
 from src.domains.identity.db_models import (  # noqa: F401
     DeviceToken,
     LimitReachedEmailLog,
