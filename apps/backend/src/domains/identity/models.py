@@ -99,6 +99,13 @@ class NativeGoogleCallbackRequest(BaseModel):
     id_token: str
 
 
+class NativeAppleCallbackRequest(BaseModel):
+    """Apple identity token and first-authorization profile from the native SDK."""
+
+    identity_token: str
+    full_name: str | None = Field(default=None, max_length=255)
+
+
 # ===========================================================================
 # Auth — Responses
 # ===========================================================================

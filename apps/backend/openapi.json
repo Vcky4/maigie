@@ -8915,6 +8915,32 @@
         "title": "ModuleUpdate",
         "type": "object"
       },
+      "NativeAppleCallbackRequest": {
+        "description": "Apple identity token and first-authorization profile from the native SDK.",
+        "properties": {
+          "full_name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "identity_token": {
+            "title": "Identity Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity_token"
+        ],
+        "title": "NativeAppleCallbackRequest",
+        "type": "object"
+      },
       "NativeGoogleCallbackRequest": {
         "description": "Google ID token from native mobile SDK.",
         "properties": {
@@ -22041,6 +22067,49 @@
           }
         ],
         "summary": "Get Me",
+        "tags": [
+          "auth",
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/oauth/apple/native-callback": {
+      "post": {
+        "description": "Verify a native Apple identity token and return Maigie tokens.",
+        "operationId": "apple_native_callback_api_v1_auth_oauth_apple_native_callback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeAppleCallbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apple Native Callback",
         "tags": [
           "auth",
           "auth"
