@@ -10,6 +10,8 @@ import logging
 from datetime import UTC, date, datetime
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
+
 from src.domains.identity.repository import IdentityRepository
 from src.shared.exceptions import NotFoundError
 
@@ -36,14 +38,25 @@ async def set_purpose(*, user_id: str, purpose: str) -> Any:
             user_id, {"purpose": purpose, "onboardingState": "purpose_set"}
         )
 
-    # Create new profile with onboarding state
-    return await repo.create_profile(
-        {
-            "userId": user_id,
-            "purpose": purpose,
-            "onboardingState": "purpose_set",
-        }
-    )
+    # Create new profile with onboarding state. A resumed handoff can submit this request
+    # concurrently (for example, two mounted effects). Both requests may miss the lookup,
+    # but the unique userId index allows only one insert. The loser reuses the winner.
+    try:
+        return await repo.create_profile(
+            {
+                "userId": user_id,
+                "purpose": purpose,
+                "onboardingState": "purpose_set",
+            }
+        )
+    except IntegrityError:
+        raced = await repo.get_profile_by_user(user_id)
+        if raced is None:
+            # The integrity violation was unrelated to userId uniqueness.
+            raise
+        return await repo.update_profile(
+            user_id, {"purpose": purpose, "onboardingState": "purpose_set"}
+        )
 
 
 async def set_exam_details(
