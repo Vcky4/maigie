@@ -687,6 +687,19 @@ class Settings(BaseSettings):
     #: interrupted between batches without leaving a half-done transaction.
     NOTIFICATION_RETENTION_BATCH: int = Field(default=2000, ge=1, le=50000)
 
+    # --- Landing draft retention ---
+    # Deliberately **not** fail-closed, unlike the notification sweep above. A landing draft belongs
+    # to an anonymous visitor, holds the email address they typed, and stops being usable after
+    # `DRAFT_TTL_DAYS`; the published privacy policy tells them it is deleted. A sweep that defaulted
+    # to off would make that copy false, so this defaults on and the flag exists to stop the sweep
+    # during an incident rather than to start it. The email is cleared at expiry — its retention ends
+    # where the setup's does — and the row itself goes once its expiry is this many days old, leaving
+    # the `expired` status countable in between. Claimed drafts are redacted but never deleted: the
+    # row is the record that a conversion happened.
+    LANDING_DRAFT_RETENTION_ENABLED: bool = True
+    LANDING_DRAFT_RETENTION_GRACE_DAYS: int = Field(default=30, ge=0)
+    LANDING_DRAFT_RETENTION_BATCH: int = Field(default=500, ge=1, le=50000)
+
     # --- Expo mobile push (staged rollout) ---
     # The code fallback is fail-closed when no environment is loaded. The deployment
     # template intentionally enables the sender at a 0% cohort, which still makes no

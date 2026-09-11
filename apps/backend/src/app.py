@@ -334,6 +334,26 @@ def _register_domains(app: FastAPI) -> None:
         tags=["landing-drafts"],
     )
 
+    # --- Educator research survey (marketing site, unauthenticated) ---
+    #
+    # Also under `/public/`, and for the same reason. Authorisation is a per-response resume token in
+    # `X-Survey-Token`; there is no account behind a research respondent and there should not be one —
+    # requiring a Maigie account to answer a questionnaire about whether Maigie is worth having would
+    # select for exactly the wrong sample. The staff review half is mounted separately below.
+    from src.domains.research import admin_router as research_admin_router
+    from src.domains.research import router as research_router
+
+    app.include_router(
+        research_router,
+        prefix=f"{prefix}/public/educator-survey",
+        tags=["educator-survey"],
+    )
+    app.include_router(
+        research_admin_router,
+        prefix=f"{prefix}/admin/educator-surveys",
+        tags=["educator-survey-admin"],
+    )
+
     # --- Notifications (canonical in-app platform) ---
     from src.domains.notifications.routes import (
         email_webhooks_router,

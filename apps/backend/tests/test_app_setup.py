@@ -188,18 +188,31 @@ async def test_unmounted_domains_are_absent():
     reachable way to pay it. What is and is not served *inside* that domain is asserted in
     `test_billing_routes_mounted.py`, endpoint by endpoint — several of its endpoints are
     absent for several different reasons, and a prefix check cannot tell them apart.
+
+    **The `/admin` check is about the admin domain, not the URL namespace.** `src/domains/admin` is
+    the thing pending migration; `/api/v1/admin` is where any domain's staff surface belongs, and the
+    research domain now serves one there. So the assertion excludes paths a mounted domain owns
+    deliberately, and still fails if the unmigrated admin domain's own routes (`/health`, `/stats`,
+    `/users`) appear. Widening it to the whole namespace would mean either never adding a staff
+    surface or moving one to a worse URL to satisfy a test.
     """
     from src.app import create_app
 
     paths = create_app().openapi()["paths"]
 
+    #: Staff surfaces owned by domains that *are* mounted, and are expected under `/admin`.
+    mounted_staff_surfaces = (f"{API_PREFIX}/admin/educator-surveys",)
+
     for prefix in (
         f"{API_PREFIX}/admin",
         f"{API_PREFIX}/classrooms",
     ):
-        assert not any(
-            path.startswith(prefix) for path in paths
-        ), f"{prefix} is mounted but src/app.py documents it as pending"
+        offending = [
+            path
+            for path in paths
+            if path.startswith(prefix) and not path.startswith(mounted_staff_surfaces)
+        ]
+        assert not offending, f"{prefix} is mounted but src/app.py documents it as pending"
 
 
 @pytest.mark.asyncio
