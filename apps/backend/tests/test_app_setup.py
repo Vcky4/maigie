@@ -181,37 +181,22 @@ async def test_mounted_domain_routers(client: AsyncClient):
 async def test_unmounted_domains_are_absent():
     """Domains still awaiting migration must not appear mounted.
 
-    ``src/app.py`` intentionally leaves admin and classrooms commented out. Asserting
-    their absence keeps the documented state and the wiring honest.
+    ``src/app.py`` still leaves **classrooms** commented out; asserting its absence keeps the
+    documented state and the wiring honest.
 
-    Billing has left this list: it is mounted, and while it was not the meter ran with no
-    reachable way to pay it. What is and is not served *inside* that domain is asserted in
-    `test_billing_routes_mounted.py`, endpoint by endpoint — several of its endpoints are
-    absent for several different reasons, and a prefix check cannot tell them apart.
-
-    **The `/admin` check is about the admin domain, not the URL namespace.** `src/domains/admin` is
-    the thing pending migration; `/api/v1/admin` is where any domain's staff surface belongs, and the
-    research domain now serves one there. So the assertion excludes paths a mounted domain owns
-    deliberately, and still fails if the unmigrated admin domain's own routes (`/health`, `/stats`,
-    `/users`) appear. Widening it to the whole namespace would mean either never adding a staff
-    surface or moving one to a worse URL to satisfy a test.
+    Two domains have left this list. Billing is mounted (while it was not, the meter ran with no
+    reachable way to pay it); what it serves is asserted endpoint by endpoint in
+    `test_billing_routes_mounted.py`. **Admin is now mounted too** — its API was rebuilt (see
+    `docs/ADMIN_DASHBOARD_PLAN.md`), so `/api/v1/admin` is a live staff namespace shared by several
+    domains (admin, careers, content, finance, educator surveys). A prefix check can no longer say
+    anything true about it, so it is not checked here; the admin surface is covered by its own tests.
     """
     from src.app import create_app
 
     paths = create_app().openapi()["paths"]
 
-    #: Staff surfaces owned by domains that *are* mounted, and are expected under `/admin`.
-    mounted_staff_surfaces = (f"{API_PREFIX}/admin/educator-surveys",)
-
-    for prefix in (
-        f"{API_PREFIX}/admin",
-        f"{API_PREFIX}/classrooms",
-    ):
-        offending = [
-            path
-            for path in paths
-            if path.startswith(prefix) and not path.startswith(mounted_staff_surfaces)
-        ]
+    for prefix in (f"{API_PREFIX}/classrooms",):
+        offending = [path for path in paths if path.startswith(prefix)]
         assert not offending, f"{prefix} is mounted but src/app.py documents it as pending"
 
 

@@ -797,12 +797,16 @@ async def wake_users_bulk(admin_user: SuperAdminUser, limit: int = Query(50, ge=
     at_risk = await analytics_service.users_at_risk(limit)
     sent = 0
     failed = 0
-    for candidate in at_risk.users:
+    for at_risk_user in at_risk.users:
         try:
-            await _wake_user(candidate.userId, None)
+            await _wake_user(at_risk_user.userId, None)
             sent += 1
         except Exception:
-            logger.warning("wake-bulk: failed to enqueue for %s", candidate.userId, exc_info=True)
+            logger.warning(
+                "wake-bulk: failed to enqueue for %s",
+                at_risk_user.userId,
+                exc_info=True,
+            )
             failed += 1
 
     await log_admin_action(
