@@ -257,6 +257,258 @@
         "title": "ActivityTypeCount",
         "type": "object"
       },
+      "AdminStatusUpdateRequest": {
+        "properties": {
+          "adminStatus": {
+            "enum": [
+              "NEW",
+              "REVIEWED",
+              "ARCHIVED"
+            ],
+            "title": "Adminstatus",
+            "type": "string"
+          }
+        },
+        "required": [
+          "adminStatus"
+        ],
+        "title": "AdminStatusUpdateRequest",
+        "type": "object"
+      },
+      "AdminSurveyDetail": {
+        "description": "A full response for review, with the contact detail attached explicitly.\n\nContact arrives as its own field rather than inside `answers` — the same separation the storage\nkeeps, carried through to the API so a detail view is the only surface where the two meet.",
+        "properties": {
+          "adminStatus": {
+            "enum": [
+              "NEW",
+              "REVIEWED",
+              "ARCHIVED"
+            ],
+            "title": "Adminstatus",
+            "type": "string"
+          },
+          "answers": {
+            "additionalProperties": true,
+            "title": "Answers",
+            "type": "object"
+          },
+          "contactDetail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contactdetail"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "instrumentVersion": {
+            "title": "Instrumentversion",
+            "type": "integer"
+          },
+          "lastSection": {
+            "title": "Lastsection",
+            "type": "integer"
+          },
+          "sections": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "partial",
+              "complete"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "submittedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submittedat"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatedat"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "adminStatus",
+          "instrumentVersion",
+          "lastSection",
+          "createdAt"
+        ],
+        "title": "AdminSurveyDetail",
+        "type": "object"
+      },
+      "AdminSurveyListItem": {
+        "description": "One row of the admin list.\n\nThe five research-relevant columns the plan asks for (role, organisation, concept relevance,\nnext-step interest) are projected out of the answers here rather than left for the client to dig\nout of a JSONB blob, so the list can be scanned without opening each response.",
+        "properties": {
+          "adminStatus": {
+            "enum": [
+              "NEW",
+              "REVIEWED",
+              "ARCHIVED"
+            ],
+            "title": "Adminstatus",
+            "type": "string"
+          },
+          "conceptRelevance": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conceptrelevance"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "hasContact": {
+            "default": false,
+            "title": "Hascontact",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "instrumentVersion": {
+            "title": "Instrumentversion",
+            "type": "integer"
+          },
+          "lastSection": {
+            "title": "Lastsection",
+            "type": "integer"
+          },
+          "nextStepInterest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextstepinterest"
+          },
+          "organisation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organisation"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Roles",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "partial",
+              "complete"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "submittedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submittedat"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "adminStatus",
+          "instrumentVersion",
+          "lastSection",
+          "createdAt"
+        ],
+        "title": "AdminSurveyListItem",
+        "type": "object"
+      },
+      "AdminSurveyListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdminSurveyListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "AdminSurveyListResponse",
+        "type": "object"
+      },
       "AgendaAcceptRequest": {
         "description": "Accept a suggested placement, turning it into a scheduled block.\n\n`entryId` is the agenda entry's own namespaced id (`plan_item:…`, `review:…`), which is what tells the\nserver what the block should be linked to. `startAt` and `minutes` are sent rather than assumed, so a\nlearner who nudged the suggestion to a different hour gets the hour they chose.",
         "properties": {
@@ -19708,6 +19960,174 @@
         "title": "SubjectsSetRequest",
         "type": "object"
       },
+      "SurveyResponseState": {
+        "description": "What the wizard needs to resume, and nothing more.\n\nCarries no contact detail even when one is stored: it lives in its own table for the reason in\n`db_models`, and a resume payload has no use for it.",
+        "properties": {
+          "answers": {
+            "additionalProperties": true,
+            "title": "Answers",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "instrumentVersion": {
+            "title": "Instrumentversion",
+            "type": "integer"
+          },
+          "lastSection": {
+            "title": "Lastsection",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "partial",
+              "complete"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "submittedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submittedat"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "instrumentVersion",
+          "lastSection"
+        ],
+        "title": "SurveyResponseState",
+        "type": "object"
+      },
+      "SurveySectionRequest": {
+        "description": "One section's answers, as `{questionId: value}` plus optional `Q13_other` siblings.\n\nAn explicit `null` clears an answer, which is how a respondent unselecting an option reaches the\nserver. Absent keys are left untouched, so a section save never has to resend the whole response.",
+        "properties": {
+          "answers": {
+            "additionalProperties": true,
+            "maxProperties": 40,
+            "title": "Answers",
+            "type": "object"
+          },
+          "section": {
+            "maximum": 11.0,
+            "minimum": 0.0,
+            "title": "Section",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "section"
+        ],
+        "title": "SurveySectionRequest",
+        "type": "object"
+      },
+      "SurveyStartRequest": {
+        "description": "Begin a response. Consent is the only thing that can start one.",
+        "properties": {
+          "consent": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Consent",
+            "type": "string"
+          },
+          "honeypot": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Honeypot"
+          }
+        },
+        "required": [
+          "consent"
+        ],
+        "title": "SurveyStartRequest",
+        "type": "object"
+      },
+      "SurveyStartedResponse": {
+        "description": "The only response carrying the raw resume token.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "instrumentVersion": {
+            "title": "Instrumentversion",
+            "type": "integer"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "token",
+          "instrumentVersion"
+        ],
+        "title": "SurveyStartedResponse",
+        "type": "object"
+      },
+      "SurveySubmitResponse": {
+        "description": "The outcome of a submit attempt.\n\n`missing` and `incomplete` are returned rather than raised as a 422, because a respondent who has\nleft the one required question blank is having a conversation with the form, not making a bad\nrequest.",
+        "properties": {
+          "incomplete": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Incomplete",
+            "type": "array"
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing",
+            "type": "array"
+          },
+          "pruned": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pruned",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "partial",
+              "complete"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "submitted": {
+            "title": "Submitted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "status",
+          "submitted"
+        ],
+        "title": "SurveySubmitResponse",
+        "type": "object"
+      },
       "SyncCheckoutRequest": {
         "description": "Sync subscription from completed checkout.",
         "properties": {
@@ -21799,6 +22219,235 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/admin/educator-surveys": {
+      "get": {
+        "description": "A page of responses, newest first.\n\nPartial responses are listed alongside complete ones and are filterable rather than hidden. A\nrespondent who stopped at Q40 has answered the pain-point sections the research is actually built\non, so excluding them by default would hide most of the evidence.",
+        "operationId": "list_responses_api_v1_admin_educator_surveys_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "partial",
+                    "complete"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "admin_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "NEW",
+                    "REVIEWED",
+                    "ARCHIVED"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Admin Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSurveyListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List survey responses",
+        "tags": [
+          "educator-survey-admin",
+          "educator-survey-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/educator-surveys/{response_id}": {
+      "get": {
+        "description": "One response in full, including its contact detail if the respondent left one.",
+        "operationId": "get_response_api_v1_admin_educator_surveys__response_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "response_id",
+            "required": true,
+            "schema": {
+              "title": "Response Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSurveyDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read one response",
+        "tags": [
+          "educator-survey-admin",
+          "educator-survey-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/educator-surveys/{response_id}/status": {
+      "patch": {
+        "description": "Move a response through NEW → REVIEWED → ARCHIVED.\n\nThe respondent's own `status` is untouched: a reviewer marking something reviewed must not be able\nto change whether the respondent finished it.",
+        "operationId": "set_status_api_v1_admin_educator_surveys__response_id__status_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "response_id",
+            "required": true,
+            "schema": {
+              "title": "Response Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminStatusUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSurveyDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update the review state",
+        "tags": [
+          "educator-survey-admin",
+          "educator-survey-admin"
+        ]
+      }
+    },
     "/api/v1/auth/change-password": {
       "post": {
         "description": "Change password for authenticated user.",
@@ -37656,6 +38305,233 @@
         "tags": [
           "progress",
           "progress"
+        ]
+      }
+    },
+    "/api/v1/public/educator-survey": {
+      "get": {
+        "description": "Read a response by its resume token alone.\n\nNo id in the path: the token is both the credential and the lookup key, and accepting an id as\nwell would add a value without adding authorisation.",
+        "operationId": "get_survey_api_v1_public_educator_survey_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Survey-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Survey-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyResponseState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume a response",
+        "tags": [
+          "educator-survey",
+          "educator-survey"
+        ]
+      },
+      "patch": {
+        "description": "Persist a section's answers. Partial by design — see the service docstring.",
+        "operationId": "save_section_api_v1_public_educator_survey_patch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Survey-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Survey-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveySectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyResponseState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save one section",
+        "tags": [
+          "educator-survey",
+          "educator-survey"
+        ]
+      },
+      "post": {
+        "description": "Open a response and return its only raw resume token.\n\nNothing is stored for a respondent who declines: consent is the precondition for the row existing,\nnot a field on it.",
+        "operationId": "start_survey_api_v1_public_educator_survey_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveyStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyStartedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Begin a response after consent",
+        "tags": [
+          "educator-survey",
+          "educator-survey"
+        ]
+      }
+    },
+    "/api/v1/public/educator-survey/instrument": {
+      "get": {
+        "description": "Version, checksum and question count for the committed question bank.\n\nExists for the cross-repository drift check (`npm run check:instrument` on the public site), which\nis what keeps the two copies of `instrument.json` honest. The questions themselves are not served:\nthe marketing site ships its own copy so the survey renders on a static build with no API call,\nand serving them here would invite a second, divergent rendering path.",
+        "operationId": "get_instrument_meta_api_v1_public_educator_survey_instrument_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Instrument Meta Api V1 Public Educator Survey Instrument Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The instrument version this server validates against",
+        "tags": [
+          "educator-survey",
+          "educator-survey"
+        ]
+      }
+    },
+    "/api/v1/public/educator-survey/submit": {
+      "post": {
+        "description": "Mark a response complete, or report what is still outstanding.",
+        "operationId": "submit_survey_api_v1_public_educator_survey_submit_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Survey-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Survey-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveySubmitResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit a response",
+        "tags": [
+          "educator-survey",
+          "educator-survey"
         ]
       }
     },
