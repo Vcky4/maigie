@@ -1,0 +1,3283 @@
+{
+  "instrumentVersion": 2,
+  "source": "Maigie Educator Market Validation Questionnaires.md",
+  "concept": "Imagine a platform where you can create a digital space for each course, invite your learners, provide course materials, and give learners access to an AI learning companion that answers questions based specifically on the materials you provide. The same environment could also support course communication, learning activities, and selected insights about patterns across learner interactions.",
+  "sections": [
+    {
+      "id": "consent",
+      "number": 0,
+      "title": "Consent"
+    },
+    {
+      "id": "section_1",
+      "number": 1,
+      "title": "Eligibility and educator context"
+    },
+    {
+      "id": "section_2",
+      "number": 2,
+      "title": "Current course and material workflow"
+    },
+    {
+      "id": "section_3",
+      "number": 3,
+      "title": "Student communication and support"
+    },
+    {
+      "id": "section_4",
+      "number": 4,
+      "title": "Assignments, assessments, and live teaching"
+    },
+    {
+      "id": "section_5",
+      "number": 5,
+      "title": "Learner visibility and course improvement"
+    },
+    {
+      "id": "section_6",
+      "number": 6,
+      "title": "Peer learning and learner matching"
+    },
+    {
+      "id": "section_7",
+      "number": 7,
+      "title": "Current use and trust of AI"
+    },
+    {
+      "id": "section_8",
+      "number": 8,
+      "title": "Maigie concept test",
+      "revealsConcept": true
+    },
+    {
+      "id": "section_9",
+      "number": 9,
+      "title": "Feature prioritisation",
+      "revealsFeatureList": true
+    },
+    {
+      "id": "section_10",
+      "number": 10,
+      "title": "Adoption, purchasing, and pricing"
+    },
+    {
+      "id": "section_11",
+      "number": 11,
+      "title": "Open feedback and follow-up"
+    }
+  ],
+  "questions": [
+    {
+      "id": "Q1",
+      "section": "consent",
+      "prompt": "Do you agree to take part in this research?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "yes_i_agree",
+          "label": "Yes, I agree."
+        },
+        {
+          "value": "no_i_do_not_agree",
+          "label": "No, I do not agree.",
+          "endsSurvey": true
+        }
+      ],
+      "required": true,
+      "terminal": true
+    },
+    {
+      "id": "Q2",
+      "section": "section_1",
+      "prompt": "Which best describes your current role?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "university_or_higher_education_lecturer",
+          "label": "University or higher-education lecturer"
+        },
+        {
+          "value": "polytechnic_or_college_lecturer_instructor",
+          "label": "Polytechnic or college lecturer/instructor"
+        },
+        {
+          "value": "school_teacher",
+          "label": "School teacher"
+        },
+        {
+          "value": "private_tutor",
+          "label": "Private tutor"
+        },
+        {
+          "value": "learning_centre_or_academy_instructor",
+          "label": "Learning-centre or academy instructor"
+        },
+        {
+          "value": "online_course_creator_or_educator",
+          "label": "Online course creator or educator"
+        },
+        {
+          "value": "teaching_assistant_facilitator_or_mentor",
+          "label": "Teaching assistant, facilitator, or mentor"
+        },
+        {
+          "value": "course_coordinator_or_programme_coordinator",
+          "label": "Course coordinator or programme coordinator"
+        },
+        {
+          "value": "departmental_or_academic_support_staff",
+          "label": "Departmental or academic-support staff"
+        },
+        {
+          "value": "educational_administrator_who_directly_supports_teaching_and",
+          "label": "Educational administrator who directly supports teaching and learning"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q3",
+      "section": "section_1",
+      "prompt": "What type of organisation do you mainly work with when teaching or supporting learners?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "public_university",
+          "label": "Public university"
+        },
+        {
+          "value": "private_university",
+          "label": "Private university"
+        },
+        {
+          "value": "polytechnic_or_technical_institution",
+          "label": "Polytechnic or technical institution"
+        },
+        {
+          "value": "college_or_further_education_institution",
+          "label": "College or further-education institution"
+        },
+        {
+          "value": "school",
+          "label": "School"
+        },
+        {
+          "value": "private_tutoring_business",
+          "label": "Private tutoring business"
+        },
+        {
+          "value": "learning_centre_or_academy",
+          "label": "Learning centre or academy"
+        },
+        {
+          "value": "independent_or_freelance_practice",
+          "label": "Independent or freelance practice"
+        },
+        {
+          "value": "online_education_business_or_platform",
+          "label": "Online education business or platform"
+        },
+        {
+          "value": "professional_or_corporate_training_organisation",
+          "label": "Professional or corporate training organisation"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q4",
+      "section": "section_1",
+      "prompt": "What subjects or disciplines do you teach or support?",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 3
+      },
+      "options": [
+        {
+          "value": "business_economics_or_finance",
+          "label": "Business, economics, or finance"
+        },
+        {
+          "value": "computing_technology_or_data",
+          "label": "Computing, technology, or data"
+        },
+        {
+          "value": "engineering_or_mathematics",
+          "label": "Engineering or mathematics"
+        },
+        {
+          "value": "medicine_health_or_life_sciences",
+          "label": "Medicine, health, or life sciences"
+        },
+        {
+          "value": "social_sciences",
+          "label": "Social sciences"
+        },
+        {
+          "value": "law_or_public_policy",
+          "label": "Law or public policy"
+        },
+        {
+          "value": "arts_humanities_or_languages",
+          "label": "Arts, humanities, or languages"
+        },
+        {
+          "value": "education",
+          "label": "Education"
+        },
+        {
+          "value": "professional_or_vocational_skills",
+          "label": "Professional or vocational skills"
+        },
+        {
+          "value": "exam_preparation_or_general_academic_skills",
+          "label": "Exam preparation or general academic skills"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q5",
+      "section": "section_1",
+      "prompt": "What learner level do you mainly teach or support?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "pre_university_or_foundation",
+          "label": "Pre-university or foundation"
+        },
+        {
+          "value": "undergraduate",
+          "label": "Undergraduate"
+        },
+        {
+          "value": "postgraduate",
+          "label": "Postgraduate"
+        },
+        {
+          "value": "professional_or_vocational",
+          "label": "Professional or vocational"
+        },
+        {
+          "value": "adult_or_continuing_education",
+          "label": "Adult or continuing education"
+        },
+        {
+          "value": "mixed_levels",
+          "label": "Mixed levels"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q6",
+      "section": "section_1",
+      "prompt": "Approximately how many learners are in the largest class, cohort, or group you currently manage?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "1_10",
+          "label": "1–10"
+        },
+        {
+          "value": "11_25",
+          "label": "11–25"
+        },
+        {
+          "value": "26_50",
+          "label": "26–50"
+        },
+        {
+          "value": "51_100",
+          "label": "51–100"
+        },
+        {
+          "value": "101_250",
+          "label": "101–250"
+        },
+        {
+          "value": "more_than_250",
+          "label": "More than 250"
+        },
+        {
+          "value": "it_varies_substantially",
+          "label": "It varies substantially"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q7",
+      "section": "section_1",
+      "prompt": "How many years have you been teaching or supporting learners?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "less_than_1_year",
+          "label": "Less than 1 year"
+        },
+        {
+          "value": "1_3_years",
+          "label": "1–3 years"
+        },
+        {
+          "value": "4_7_years",
+          "label": "4–7 years"
+        },
+        {
+          "value": "8_15_years",
+          "label": "8–15 years"
+        },
+        {
+          "value": "more_than_15_years",
+          "label": "More than 15 years"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q8",
+      "section": "section_1",
+      "prompt": "How often are you actively teaching or managing a course, class, cohort, or learner group?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "daily",
+          "label": "Daily"
+        },
+        {
+          "value": "several_times_a_week",
+          "label": "Several times a week"
+        },
+        {
+          "value": "weekly",
+          "label": "Weekly"
+        },
+        {
+          "value": "several_times_a_month",
+          "label": "Several times a month"
+        },
+        {
+          "value": "only_during_certain_terms_or_periods",
+          "label": "Only during certain terms or periods"
+        },
+        {
+          "value": "less_often",
+          "label": "Less often"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q9",
+      "section": "section_1",
+      "prompt": "During a typical teaching term, how many separate courses, classes, or learner groups do you manage?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "1",
+          "label": "1"
+        },
+        {
+          "value": "2",
+          "label": "2"
+        },
+        {
+          "value": "3_4",
+          "label": "3–4"
+        },
+        {
+          "value": "5_7",
+          "label": "5–7"
+        },
+        {
+          "value": "8_or_more",
+          "label": "8 or more"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q10",
+      "section": "section_2",
+      "prompt": "How do you currently prepare or organise materials for a course or class?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "institution_provided_learning_management_system",
+          "label": "Institution-provided learning-management system"
+        },
+        {
+          "value": "shared_folders_such_as_google_drive_onedrive_or_dropbox",
+          "label": "Shared folders such as Google Drive, OneDrive, or Dropbox"
+        },
+        {
+          "value": "email_attachments",
+          "label": "Email attachments"
+        },
+        {
+          "value": "messaging_groups_such_as_whatsapp_or_telegram",
+          "label": "Messaging groups such as WhatsApp or Telegram"
+        },
+        {
+          "value": "printed_or_physical_materials",
+          "label": "Printed or physical materials"
+        },
+        {
+          "value": "personal_notes_or_documents_stored_locally",
+          "label": "Personal notes or documents stored locally"
+        },
+        {
+          "value": "a_dedicated_teaching_or_course_platform",
+          "label": "A dedicated teaching or course platform"
+        },
+        {
+          "value": "i_create_or_organise_materials_directly_in_presentation_document",
+          "label": "I create or organise materials directly in presentation, document, or spreadsheet tools"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q11",
+      "section": "section_2",
+      "prompt": "Where do learners usually obtain your course materials?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "learning_management_system",
+          "label": "Learning-management system"
+        },
+        {
+          "value": "shared_cloud_folder_or_document_link",
+          "label": "Shared cloud folder or document link"
+        },
+        {
+          "value": "email",
+          "label": "Email"
+        },
+        {
+          "value": "messaging_group_or_channel",
+          "label": "Messaging group or channel"
+        },
+        {
+          "value": "printed_handouts",
+          "label": "Printed handouts"
+        },
+        {
+          "value": "live_class_or_video_conferencing_platform",
+          "label": "Live-class or video-conferencing platform"
+        },
+        {
+          "value": "dedicated_course_platform",
+          "label": "Dedicated course platform"
+        },
+        {
+          "value": "from_me_directly_during_or_after_class",
+          "label": "From me directly during or after class"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q12",
+      "section": "section_2",
+      "prompt": "How often do you update, replace, or add to your course materials during a teaching term?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "never_or_almost_never",
+          "label": "Never or almost never"
+        },
+        {
+          "value": "once_or_twice_per_term",
+          "label": "Once or twice per term"
+        },
+        {
+          "value": "monthly",
+          "label": "Monthly"
+        },
+        {
+          "value": "weekly",
+          "label": "Weekly"
+        },
+        {
+          "value": "several_times_a_week",
+          "label": "Several times a week"
+        },
+        {
+          "value": "it_depends_on_learner_questions_or_feedback",
+          "label": "It depends on learner questions or feedback"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q13",
+      "section": "section_2",
+      "prompt": "Which parts of managing course materials are most difficult for you?",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 3
+      },
+      "options": [
+        {
+          "value": "keeping_materials_organised_in_one_place",
+          "label": "Keeping materials organised in one place"
+        },
+        {
+          "value": "ensuring_learners_can_find_the_latest_version",
+          "label": "Ensuring learners can find the latest version"
+        },
+        {
+          "value": "updating_materials_across_several_tools_or_channels",
+          "label": "Updating materials across several tools or channels"
+        },
+        {
+          "value": "converting_materials_into_useful_notes_summaries_or_study",
+          "label": "Converting materials into useful notes, summaries, or study resources"
+        },
+        {
+          "value": "providing_enough_examples_or_practice_materials",
+          "label": "Providing enough examples or practice materials"
+        },
+        {
+          "value": "knowing_which_materials_learners_actually_use",
+          "label": "Knowing which materials learners actually use"
+        },
+        {
+          "value": "making_materials_accessible_outside_class_time",
+          "label": "Making materials accessible outside class time"
+        },
+        {
+          "value": "sharing_materials_securely_with_the_correct_learners",
+          "label": "Sharing materials securely with the correct learners"
+        },
+        {
+          "value": "nothing_is_particularly_difficult",
+          "label": "Nothing is particularly difficult"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q14",
+      "section": "section_2",
+      "prompt": "Please describe one recent occasion when managing or sharing course materials was more time-consuming or frustrating than it should have been.",
+      "answer": {
+        "type": "paragraph"
+      },
+      "options": [],
+      "required": false
+    },
+    {
+      "id": "Q15",
+      "section": "section_2",
+      "prompt": "How many different digital tools or platforms do you typically use together to manage one course or class?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "1",
+          "label": "1"
+        },
+        {
+          "value": "2",
+          "label": "2"
+        },
+        {
+          "value": "3",
+          "label": "3"
+        },
+        {
+          "value": "4",
+          "label": "4"
+        },
+        {
+          "value": "5_or_more",
+          "label": "5 or more"
+        },
+        {
+          "value": "it_varies_by_course",
+          "label": "It varies by course"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q16",
+      "section": "section_2",
+      "prompt": "How well does your current combination of tools support your teaching workflow?",
+      "answer": {
+        "type": "scale",
+        "min": 1,
+        "max": 5
+      },
+      "options": [
+        {
+          "value": "1_very_poorly",
+          "label": "1 — Very poorly"
+        },
+        {
+          "value": "2_poorly",
+          "label": "2 — Poorly"
+        },
+        {
+          "value": "3_adequately",
+          "label": "3 — Adequately"
+        },
+        {
+          "value": "4_well",
+          "label": "4 — Well"
+        },
+        {
+          "value": "5_very_well",
+          "label": "5 — Very well"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q17",
+      "section": "section_2",
+      "prompt": "What is the main reason your current workflow is not better than it is?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "tools_do_not_work_well_together",
+          "label": "Tools do not work well together"
+        },
+        {
+          "value": "information_is_scattered_across_too_many_places",
+          "label": "Information is scattered across too many places"
+        },
+        {
+          "value": "learners_do_not_consistently_use_the_designated_platform",
+          "label": "Learners do not consistently use the designated platform"
+        },
+        {
+          "value": "the_institution_limits_which_tools_i_can_use",
+          "label": "The institution limits which tools I can use"
+        },
+        {
+          "value": "setting_up_and_maintaining_a_better_system_takes_too_much_time",
+          "label": "Setting up and maintaining a better system takes too much time"
+        },
+        {
+          "value": "my_class_or_course_needs_are_too_varied_for_one_tool",
+          "label": "My class or course needs are too varied for one tool"
+        },
+        {
+          "value": "i_do_not_have_enough_technical_support_or_training",
+          "label": "I do not have enough technical support or training"
+        },
+        {
+          "value": "cost_or_licensing_limitations",
+          "label": "Cost or licensing limitations"
+        },
+        {
+          "value": "i_am_generally_satisfied_with_my_current_workflow",
+          "label": "I am generally satisfied with my current workflow"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q18",
+      "section": "section_3",
+      "prompt": "How do learners usually ask you questions outside scheduled class time?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "institution_learning_management_system",
+          "label": "Institution learning-management system"
+        },
+        {
+          "value": "email",
+          "label": "Email"
+        },
+        {
+          "value": "whatsapp_or_other_messaging_apps",
+          "label": "WhatsApp or other messaging apps"
+        },
+        {
+          "value": "discussion_board_or_forum",
+          "label": "Discussion board or forum"
+        },
+        {
+          "value": "live_video_or_virtual_class_platform",
+          "label": "Live video or virtual-class platform"
+        },
+        {
+          "value": "in_person_office_hours_or_appointments",
+          "label": "In-person office hours or appointments"
+        },
+        {
+          "value": "informal_conversations_before_or_after_class",
+          "label": "Informal conversations before or after class"
+        },
+        {
+          "value": "they_ask_classmates_or_peers_first",
+          "label": "They ask classmates or peers first"
+        },
+        {
+          "value": "they_rarely_ask_questions_outside_class",
+          "label": "They rarely ask questions outside class"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q19",
+      "section": "section_3",
+      "prompt": "In a typical week, approximately how much time do you spend answering learner questions outside scheduled teaching time?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "less_than_30_minutes",
+          "label": "Less than 30 minutes"
+        },
+        {
+          "value": "30_60_minutes",
+          "label": "30–60 minutes"
+        },
+        {
+          "value": "1_2_hours",
+          "label": "1–2 hours"
+        },
+        {
+          "value": "2_4_hours",
+          "label": "2–4 hours"
+        },
+        {
+          "value": "more_than_4_hours",
+          "label": "More than 4 hours"
+        },
+        {
+          "value": "it_varies_significantly_by_week",
+          "label": "It varies significantly by week"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q20",
+      "section": "section_3",
+      "prompt": "How often do you answer substantially similar questions from multiple learners?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "never_or_almost_never",
+          "label": "Never or almost never"
+        },
+        {
+          "value": "less_than_once_a_month",
+          "label": "Less than once a month"
+        },
+        {
+          "value": "a_few_times_a_month",
+          "label": "A few times a month"
+        },
+        {
+          "value": "a_few_times_a_week",
+          "label": "A few times a week"
+        },
+        {
+          "value": "daily_or_almost_daily",
+          "label": "Daily or almost daily"
+        },
+        {
+          "value": "it_varies_by_course_or_assessment_period",
+          "label": "It varies by course or assessment period"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q21",
+      "section": "section_3",
+      "prompt": "Which communication or learner-support problems do you experience?",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 4
+      },
+      "options": [
+        {
+          "value": "the_same_questions_are_answered_repeatedly",
+          "label": "The same questions are answered repeatedly"
+        },
+        {
+          "value": "questions_arrive_through_too_many_channels",
+          "label": "Questions arrive through too many channels"
+        },
+        {
+          "value": "learners_ask_for_help_when_i_am_unavailable",
+          "label": "Learners ask for help when I am unavailable"
+        },
+        {
+          "value": "important_questions_or_answers_are_difficult_to_find_later",
+          "label": "Important questions or answers are difficult to find later"
+        },
+        {
+          "value": "learners_are_reluctant_to_ask_questions_publicly",
+          "label": "Learners are reluctant to ask questions publicly"
+        },
+        {
+          "value": "learners_do_not_receive_help_quickly_enough",
+          "label": "Learners do not receive help quickly enough"
+        },
+        {
+          "value": "it_is_difficult_to_know_whether_an_answer_was_understood",
+          "label": "It is difficult to know whether an answer was understood"
+        },
+        {
+          "value": "large_classes_make_individual_support_difficult",
+          "label": "Large classes make individual support difficult"
+        },
+        {
+          "value": "learners_depend_on_me_for_questions_they_could_resolve",
+          "label": "Learners depend on me for questions they could resolve independently"
+        },
+        {
+          "value": "i_do_not_experience_meaningful_problems_in_this_area",
+          "label": "I do not experience meaningful problems in this area"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q22",
+      "section": "section_3",
+      "prompt": "Which one communication or learner-support problem would you most like to reduce?",
+      "answer": {
+        "type": "paragraph"
+      },
+      "options": [],
+      "required": false
+    },
+    {
+      "id": "Q23",
+      "section": "section_4",
+      "prompt": "Which activities do you currently manage as part of your teaching or academic-support work?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "quizzes_or_tests",
+          "label": "Quizzes or tests"
+        },
+        {
+          "value": "written_assignments",
+          "label": "Written assignments"
+        },
+        {
+          "value": "projects_or_presentations",
+          "label": "Projects or presentations"
+        },
+        {
+          "value": "practical_or_laboratory_work",
+          "label": "Practical or laboratory work"
+        },
+        {
+          "value": "discussion_activities",
+          "label": "Discussion activities"
+        },
+        {
+          "value": "attendance_or_participation",
+          "label": "Attendance or participation"
+        },
+        {
+          "value": "formative_feedback",
+          "label": "Formative feedback"
+        },
+        {
+          "value": "grading_or_marking",
+          "label": "Grading or marking"
+        },
+        {
+          "value": "exam_preparation_or_revision_sessions",
+          "label": "Exam preparation or revision sessions"
+        },
+        {
+          "value": "live_online_classes",
+          "label": "Live online classes"
+        },
+        {
+          "value": "recorded_lessons_or_replay_materials",
+          "label": "Recorded lessons or replay materials"
+        },
+        {
+          "value": "peer_learning_or_study_groups",
+          "label": "Peer-learning or study groups"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q24",
+      "section": "section_4",
+      "prompt": "Which assessment-related activities consume the most time?",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 3
+      },
+      "options": [
+        {
+          "value": "designing_questions_or_quizzes",
+          "label": "Designing questions or quizzes"
+        },
+        {
+          "value": "aligning_assessments_with_learning_objectives",
+          "label": "Aligning assessments with learning objectives"
+        },
+        {
+          "value": "creating_different_versions_or_difficulty_levels",
+          "label": "Creating different versions or difficulty levels"
+        },
+        {
+          "value": "explaining_assessment_requirements",
+          "label": "Explaining assessment requirements"
+        },
+        {
+          "value": "collecting_submissions",
+          "label": "Collecting submissions"
+        },
+        {
+          "value": "grading_or_marking",
+          "label": "Grading or marking"
+        },
+        {
+          "value": "giving_individual_feedback",
+          "label": "Giving individual feedback"
+        },
+        {
+          "value": "tracking_incomplete_or_late_work",
+          "label": "Tracking incomplete or late work"
+        },
+        {
+          "value": "identifying_common_errors_or_misconceptions",
+          "label": "Identifying common errors or misconceptions"
+        },
+        {
+          "value": "preparing_revision_or_exam_materials",
+          "label": "Preparing revision or exam materials"
+        },
+        {
+          "value": "none_of_these_are_major_time_burdens",
+          "label": "None of these are major time burdens"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q25",
+      "section": "section_4",
+      "prompt": "In a typical teaching term, how often do you revise an explanation, example, quiz, assignment, or other teaching material because learners struggled with it?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "never_or_almost_never",
+          "label": "Never or almost never"
+        },
+        {
+          "value": "once_or_twice_per_term",
+          "label": "Once or twice per term"
+        },
+        {
+          "value": "monthly",
+          "label": "Monthly"
+        },
+        {
+          "value": "weekly",
+          "label": "Weekly"
+        },
+        {
+          "value": "several_times_a_week",
+          "label": "Several times a week"
+        },
+        {
+          "value": "i_often_notice_a_problem_but_do_not_have_time_to_revise_the",
+          "label": "I often notice a problem but do not have time to revise the material"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q26",
+      "section": "section_4",
+      "prompt": "How do you currently conduct live classes or live discussions, if at all?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "i_do_not_conduct_live_online_sessions",
+          "label": "I do not conduct live online sessions"
+        },
+        {
+          "value": "institution_provided_video_conferencing_platform",
+          "label": "Institution-provided video-conferencing platform"
+        },
+        {
+          "value": "zoom",
+          "label": "Zoom"
+        },
+        {
+          "value": "microsoft_teams",
+          "label": "Microsoft Teams"
+        },
+        {
+          "value": "google_meet",
+          "label": "Google Meet"
+        },
+        {
+          "value": "another_video_conferencing_tool",
+          "label": "Another video-conferencing tool"
+        },
+        {
+          "value": "live_sessions_inside_a_learning_management_system",
+          "label": "Live sessions inside a learning-management system"
+        },
+        {
+          "value": "in_person_sessions_only",
+          "label": "In-person sessions only"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q27",
+      "section": "section_4",
+      "prompt": "What are the main difficulties with your current live-learning setup?",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 3
+      },
+      "options": [
+        {
+          "value": "learners_have_difficulty_joining_or_accessing_sessions",
+          "label": "Learners have difficulty joining or accessing sessions"
+        },
+        {
+          "value": "materials_chat_questions_and_recordings_are_scattered_across",
+          "label": "Materials, chat, questions, and recordings are scattered across tools"
+        },
+        {
+          "value": "learners_participate_unevenly",
+          "label": "Learners participate unevenly"
+        },
+        {
+          "value": "it_is_difficult_to_manage_questions_during_the_session",
+          "label": "It is difficult to manage questions during the session"
+        },
+        {
+          "value": "breakout_or_small_group_discussion_is_difficult_to_coordinate",
+          "label": "Breakout or small-group discussion is difficult to coordinate"
+        },
+        {
+          "value": "attendance_or_participation_is_difficult_to_track",
+          "label": "Attendance or participation is difficult to track"
+        },
+        {
+          "value": "recordings_are_not_used_effectively_afterwards",
+          "label": "Recordings are not used effectively afterwards"
+        },
+        {
+          "value": "learners_need_follow_up_explanations_or_resources_after_the",
+          "label": "Learners need follow-up explanations or resources after the session"
+        },
+        {
+          "value": "technical_or_connectivity_problems",
+          "label": "Technical or connectivity problems"
+        },
+        {
+          "value": "i_do_not_experience_meaningful_problems_with_live_learning",
+          "label": "I do not experience meaningful problems with live learning"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false,
+      "displayRuleText": "Display if Q26 is not “I do not conduct live online sessions.”",
+      "displayIf": {
+        "question": "Q26",
+        "notAnyOf": [
+          "i_do_not_conduct_live_online_sessions"
+        ]
+      }
+    },
+    {
+      "id": "Q28",
+      "section": "section_4",
+      "prompt": "Which live-learning capabilities, if any, would materially improve your current workflow?",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 3
+      },
+      "options": [
+        {
+          "value": "live_video_classes_in_the_same_environment_as_course_materials",
+          "label": "Live video classes in the same environment as course materials"
+        },
+        {
+          "value": "live_audio_or_video_discussions",
+          "label": "Live audio or video discussions"
+        },
+        {
+          "value": "screen_sharing_and_presentations",
+          "label": "Screen sharing and presentations"
+        },
+        {
+          "value": "in_session_chat_and_q_a",
+          "label": "In-session chat and Q\\&A"
+        },
+        {
+          "value": "breakout_or_small_group_discussions",
+          "label": "Breakout or small-group discussions"
+        },
+        {
+          "value": "attendance_or_participation_tracking",
+          "label": "Attendance or participation tracking"
+        },
+        {
+          "value": "recording_and_replay",
+          "label": "Recording and replay"
+        },
+        {
+          "value": "session_summaries_or_follow_up_materials",
+          "label": "Session summaries or follow-up materials"
+        },
+        {
+          "value": "none_of_these_would_materially_improve_my_workflow",
+          "label": "None of these would materially improve my workflow"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false,
+      "displayRuleText": "Display if Q26 is not “I do not conduct live online sessions.”",
+      "displayIf": {
+        "question": "Q26",
+        "notAnyOf": [
+          "i_do_not_conduct_live_online_sessions"
+        ]
+      }
+    },
+    {
+      "id": "Q29",
+      "section": "section_5",
+      "prompt": "How do you currently determine whether learners understand a topic?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "questions_asked_during_class",
+          "label": "Questions asked during class"
+        },
+        {
+          "value": "questions_received_outside_class",
+          "label": "Questions received outside class"
+        },
+        {
+          "value": "quiz_or_test_results",
+          "label": "Quiz or test results"
+        },
+        {
+          "value": "assignment_quality_or_common_errors",
+          "label": "Assignment quality or common errors"
+        },
+        {
+          "value": "polls_forms_or_feedback_surveys",
+          "label": "Polls, forms, or feedback surveys"
+        },
+        {
+          "value": "office_hours_or_one_to_one_conversations",
+          "label": "Office hours or one-to-one conversations"
+        },
+        {
+          "value": "learner_self_reports",
+          "label": "Learner self-reports"
+        },
+        {
+          "value": "attendance_or_participation_patterns",
+          "label": "Attendance or participation patterns"
+        },
+        {
+          "value": "i_usually_infer_this_without_reliable_evidence",
+          "label": "I usually infer this without reliable evidence"
+        },
+        {
+          "value": "i_do_not_have_a_consistent_method",
+          "label": "I do not have a consistent method"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q30",
+      "section": "section_5",
+      "prompt": "How confident are you that you can identify the topics most learners are struggling with while a course is still in progress?",
+      "answer": {
+        "type": "scale",
+        "min": 1,
+        "max": 5
+      },
+      "options": [
+        {
+          "value": "1_not_at_all_confident",
+          "label": "1 — Not at all confident"
+        },
+        {
+          "value": "2_slightly_confident",
+          "label": "2 — Slightly confident"
+        },
+        {
+          "value": "3_moderately_confident",
+          "label": "3 — Moderately confident"
+        },
+        {
+          "value": "4_very_confident",
+          "label": "4 — Very confident"
+        },
+        {
+          "value": "5_completely_confident",
+          "label": "5 — Completely confident"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q31",
+      "section": "section_5",
+      "prompt": "How do you currently identify recurring questions, misconceptions, or areas where course materials need clarification?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "i_notice_patterns_from_questions_i_receive",
+          "label": "I notice patterns from questions I receive"
+        },
+        {
+          "value": "i_review_discussion_posts_or_messages_manually",
+          "label": "I review discussion posts or messages manually"
+        },
+        {
+          "value": "i_look_for_patterns_in_assessment_responses",
+          "label": "I look for patterns in assessment responses"
+        },
+        {
+          "value": "i_ask_learners_directly",
+          "label": "I ask learners directly"
+        },
+        {
+          "value": "i_use_surveys_polls_or_feedback_forms",
+          "label": "I use surveys, polls, or feedback forms"
+        },
+        {
+          "value": "i_rely_on_teaching_assistants_or_colleagues",
+          "label": "I rely on teaching assistants or colleagues"
+        },
+        {
+          "value": "i_use_analytics_from_an_existing_platform",
+          "label": "I use analytics from an existing platform"
+        },
+        {
+          "value": "i_usually_do_not_identify_these_patterns_systematically",
+          "label": "I usually do not identify these patterns systematically"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q32",
+      "section": "section_5",
+      "prompt": "How useful would it be to receive a regular summary of the main topics learners are struggling with in a course?",
+      "answer": {
+        "type": "scale",
+        "min": 1,
+        "max": 5
+      },
+      "options": [
+        {
+          "value": "1_not_useful",
+          "label": "1 — Not useful"
+        },
+        {
+          "value": "2_slightly_useful",
+          "label": "2 — Slightly useful"
+        },
+        {
+          "value": "3_moderately_useful",
+          "label": "3 — Moderately useful"
+        },
+        {
+          "value": "4_very_useful",
+          "label": "4 — Very useful"
+        },
+        {
+          "value": "5_extremely_useful",
+          "label": "5 — Extremely useful"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q33",
+      "section": "section_5",
+      "prompt": "Which learner or course insights would be most useful to you? Select up to five.",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 5
+      },
+      "options": [
+        {
+          "value": "topics_learners_are_struggling_with",
+          "label": "Topics learners are struggling with"
+        },
+        {
+          "value": "frequently_repeated_questions",
+          "label": "Frequently repeated questions"
+        },
+        {
+          "value": "common_misconceptions",
+          "label": "Common misconceptions"
+        },
+        {
+          "value": "concepts_requiring_additional_clarification",
+          "label": "Concepts requiring additional clarification"
+        },
+        {
+          "value": "material_sections_associated_with_confusion",
+          "label": "Material sections associated with confusion"
+        },
+        {
+          "value": "requests_for_more_examples_or_practice",
+          "label": "Requests for more examples or practice"
+        },
+        {
+          "value": "learner_suggestions_for_improving_the_course",
+          "label": "Learner suggestions for improving the course"
+        },
+        {
+          "value": "areas_where_engagement_or_participation_drops",
+          "label": "Areas where engagement or participation drops"
+        },
+        {
+          "value": "patterns_in_assessment_errors",
+          "label": "Patterns in assessment errors"
+        },
+        {
+          "value": "learner_progress_or_mastery_patterns",
+          "label": "Learner progress or mastery patterns"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q34",
+      "section": "section_5",
+      "prompt": "If you received one of these insights, what would you most likely do with it?",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 3
+      },
+      "options": [
+        {
+          "value": "clarify_the_topic_in_the_next_class",
+          "label": "Clarify the topic in the next class"
+        },
+        {
+          "value": "add_or_revise_an_example",
+          "label": "Add or revise an example"
+        },
+        {
+          "value": "create_additional_practice_questions",
+          "label": "Create additional practice questions"
+        },
+        {
+          "value": "update_course_materials",
+          "label": "Update course materials"
+        },
+        {
+          "value": "change_an_assessment_or_quiz",
+          "label": "Change an assessment or quiz"
+        },
+        {
+          "value": "offer_a_revision_or_support_session",
+          "label": "Offer a revision or support session"
+        },
+        {
+          "value": "contact_or_support_a_particular_group_of_learners",
+          "label": "Contact or support a particular group of learners"
+        },
+        {
+          "value": "discuss_the_issue_with_colleagues_or_teaching_staff",
+          "label": "Discuss the issue with colleagues or teaching staff"
+        },
+        {
+          "value": "monitor_the_issue_but_take_no_immediate_action",
+          "label": "Monitor the issue but take no immediate action"
+        },
+        {
+          "value": "i_would_not_use_the_insight_in_my_teaching",
+          "label": "I would not use the insight in my teaching"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q35",
+      "section": "section_5",
+      "prompt": "How would you prefer learner insights to be presented?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "raw_learner_questions_and_activity_data",
+          "label": "Raw learner questions and activity data"
+        },
+        {
+          "value": "a_concise_summary_of_key_patterns",
+          "label": "A concise summary of key patterns"
+        },
+        {
+          "value": "a_summary_with_evidence_such_as_representative_questions_or",
+          "label": "A summary with evidence, such as representative questions or examples"
+        },
+        {
+          "value": "a_summary_with_recommended_actions",
+          "label": "A summary with recommended actions"
+        },
+        {
+          "value": "a_dashboard_that_lets_me_explore_the_underlying_data",
+          "label": "A dashboard that lets me explore the underlying data"
+        },
+        {
+          "value": "a_combination_of_summary_evidence_recommendations_and_drill_down",
+          "label": "A combination of summary, evidence, recommendations, and drill-down"
+        },
+        {
+          "value": "i_would_not_use_learner_insights",
+          "label": "I would not use learner insights"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q36",
+      "section": "section_5",
+      "prompt": "What would you need in order to trust aggregated learner insights enough to act on them?",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 4
+      },
+      "options": [
+        {
+          "value": "clear_explanation_of_how_the_insight_was_produced",
+          "label": "Clear explanation of how the insight was produced"
+        },
+        {
+          "value": "representative_learner_questions_or_examples",
+          "label": "Representative learner questions or examples"
+        },
+        {
+          "value": "a_visible_confidence_level_or_indication_of_data_quality",
+          "label": "A visible confidence level or indication of data quality"
+        },
+        {
+          "value": "ability_to_inspect_the_underlying_evidence",
+          "label": "Ability to inspect the underlying evidence"
+        },
+        {
+          "value": "separation_between_aggregated_patterns_and_individual_learner",
+          "label": "Separation between aggregated patterns and individual learner identities"
+        },
+        {
+          "value": "ability_to_correct_dismiss_or_annotate_an_insight",
+          "label": "Ability to correct, dismiss, or annotate an insight"
+        },
+        {
+          "value": "human_review_or_moderation_before_an_insight_is_shown",
+          "label": "Human review or moderation before an insight is shown"
+        },
+        {
+          "value": "reliable_performance_across_different_subjects_and_class_sizes",
+          "label": "Reliable performance across different subjects and class sizes"
+        },
+        {
+          "value": "strong_privacy_and_data_protection_safeguards",
+          "label": "Strong privacy and data-protection safeguards"
+        },
+        {
+          "value": "integration_with_my_existing_teaching_tools",
+          "label": "Integration with my existing teaching tools"
+        },
+        {
+          "value": "nothing_in_particular",
+          "label": "Nothing in particular"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q37",
+      "section": "section_5",
+      "prompt": "What concerns, if any, would you have about a system analysing learner interactions to identify course-level patterns?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "learners_privacy",
+          "label": "Learners’ privacy"
+        },
+        {
+          "value": "incorrect_or_misleading_conclusions",
+          "label": "Incorrect or misleading conclusions"
+        },
+        {
+          "value": "bias_against_particular_learner_groups",
+          "label": "Bias against particular learner groups"
+        },
+        {
+          "value": "learners_changing_how_they_ask_questions_because_they_are_being",
+          "label": "Learners changing how they ask questions because they are being analysed"
+        },
+        {
+          "value": "sensitive_or_confidential_information_being_exposed",
+          "label": "Sensitive or confidential information being exposed"
+        },
+        {
+          "value": "additional_work_required_to_review_or_manage_the_insights",
+          "label": "Additional work required to review or manage the insights"
+        },
+        {
+          "value": "the_system_reducing_complex_learning_problems_to_simple_metrics",
+          "label": "The system reducing complex learning problems to simple metrics"
+        },
+        {
+          "value": "institutional_or_regulatory_requirements",
+          "label": "Institutional or regulatory requirements"
+        },
+        {
+          "value": "no_significant_concerns",
+          "label": "No significant concerns"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q38",
+      "section": "section_6",
+      "prompt": "Do you currently facilitate peer discussions, study groups, peer feedback, or collaborative learning?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "yes_regularly",
+          "label": "Yes, regularly"
+        },
+        {
+          "value": "yes_occasionally",
+          "label": "Yes, occasionally"
+        },
+        {
+          "value": "i_have_tried_it_but_not_recently",
+          "label": "I have tried it, but not recently"
+        },
+        {
+          "value": "no_but_i_would_like_to",
+          "label": "No, but I would like to"
+        },
+        {
+          "value": "no_and_i_do_not_see_a_current_need",
+          "label": "No, and I do not see a current need"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q39",
+      "section": "section_6",
+      "prompt": "How are learners currently placed into peer-learning or discussion groups?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "learners_choose_their_own_groups",
+          "label": "Learners choose their own groups"
+        },
+        {
+          "value": "i_assign_groups_manually",
+          "label": "I assign groups manually"
+        },
+        {
+          "value": "groups_are_assigned_randomly",
+          "label": "Groups are assigned randomly"
+        },
+        {
+          "value": "groups_are_based_on_timetable_or_location",
+          "label": "Groups are based on timetable or location"
+        },
+        {
+          "value": "groups_are_based_on_topic_or_task",
+          "label": "Groups are based on topic or task"
+        },
+        {
+          "value": "groups_are_based_on_ability_or_performance",
+          "label": "Groups are based on ability or performance"
+        },
+        {
+          "value": "groups_are_based_on_learner_preferences_or_goals",
+          "label": "Groups are based on learner preferences or goals"
+        },
+        {
+          "value": "the_platform_creates_groups_automatically",
+          "label": "The platform creates groups automatically"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false,
+      "displayRuleText": "Display if Q38 is not “No, and I do not see a current need.”",
+      "displayIf": {
+        "question": "Q38",
+        "notAnyOf": [
+          "no_and_i_do_not_see_a_current_need"
+        ]
+      }
+    },
+    {
+      "id": "Q40",
+      "section": "section_6",
+      "prompt": "What makes peer-learning groups effective or ineffective in your experience?",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 4
+      },
+      "options": [
+        {
+          "value": "similar_learning_goals",
+          "label": "Similar learning goals"
+        },
+        {
+          "value": "shared_interest_in_the_topic",
+          "label": "Shared interest in the topic"
+        },
+        {
+          "value": "level_of_understanding",
+          "label": "level of understanding"
+        },
+        {
+          "value": "complementary_strengths",
+          "label": "Complementary strengths"
+        },
+        {
+          "value": "similar_availability",
+          "label": "Similar availability"
+        },
+        {
+          "value": "willingness_to_participate",
+          "label": "Willingness to participate"
+        },
+        {
+          "value": "psychological_safety_and_respectful_interaction",
+          "label": "Psychological safety and respectful interaction"
+        },
+        {
+          "value": "clear_discussion_task_or_structure",
+          "label": "Clear discussion task or structure"
+        },
+        {
+          "value": "group_size",
+          "label": "Group size"
+        },
+        {
+          "value": "learners_being_able_to_ask_for_help_without_embarrassment",
+          "label": "Learners being able to ask for help without embarrassment"
+        },
+        {
+          "value": "matching_is_usually_not_a_significant_factor",
+          "label": "Matching is usually not a significant factor"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false,
+      "displayRuleText": "Display if Q38 is not “No, and I do not see a current need.”",
+      "displayIf": {
+        "question": "Q38",
+        "notAnyOf": [
+          "no_and_i_do_not_see_a_current_need"
+        ]
+      }
+    },
+    {
+      "id": "Q41",
+      "section": "section_6",
+      "prompt": "How difficult is it to form useful peer-learning or discussion groups, especially in larger classes?",
+      "answer": {
+        "type": "scale",
+        "min": 1,
+        "max": 5,
+        "naOption": "not_applicable",
+        "naLabel": "Not applicable"
+      },
+      "options": [
+        {
+          "value": "1_not_difficult",
+          "label": "1 — Not difficult"
+        },
+        {
+          "value": "2_slightly_difficult",
+          "label": "2 — Slightly difficult"
+        },
+        {
+          "value": "3_moderately_difficult",
+          "label": "3 — Moderately difficult"
+        },
+        {
+          "value": "4_very_difficult",
+          "label": "4 — Very difficult"
+        },
+        {
+          "value": "5_extremely_difficult",
+          "label": "5 — Extremely difficult"
+        },
+        {
+          "value": "not_applicable",
+          "label": "Not applicable"
+        }
+      ],
+      "required": false,
+      "displayRuleText": "Display if Q38 is not “No, and I do not see a current need.”",
+      "displayIf": {
+        "question": "Q38",
+        "notAnyOf": [
+          "no_and_i_do_not_see_a_current_need"
+        ]
+      }
+    },
+    {
+      "id": "Q42",
+      "section": "section_6",
+      "prompt": "What information, if any, would you be comfortable allowing a system to use when suggesting peer-learning matches?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "topics_or_concepts_a_learner_wants_to_discuss",
+          "label": "Topics or concepts a learner wants to discuss"
+        },
+        {
+          "value": "shared_learning_goals",
+          "label": "Shared learning goals"
+        },
+        {
+          "value": "shared_areas_of_difficulty",
+          "label": "Shared areas of difficulty"
+        },
+        {
+          "value": "complementary_strengths_or_knowledge_areas",
+          "label": "Complementary strengths or knowledge areas"
+        },
+        {
+          "value": "preferred_discussion_format",
+          "label": "Preferred discussion format"
+        },
+        {
+          "value": "availability_or_time_zone",
+          "label": "Availability or time zone"
+        },
+        {
+          "value": "course_or_class_membership",
+          "label": "Course or class membership"
+        },
+        {
+          "value": "broad_progress_level_or_self_reported_confidence",
+          "label": "Broad progress level or self-reported confidence"
+        },
+        {
+          "value": "individual_assessment_results",
+          "label": "Individual assessment results"
+        },
+        {
+          "value": "individual_questions_or_conversations",
+          "label": "Individual questions or conversations"
+        },
+        {
+          "value": "none_of_these",
+          "label": "None of these"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q43",
+      "section": "section_6",
+      "prompt": "Who should control whether peer-learning matches are created?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "learners_should_opt_in_and_control_their_own_matches",
+          "label": "Learners should opt in and control their own matches"
+        },
+        {
+          "value": "educators_should_approve_or_create_matches",
+          "label": "Educators should approve or create matches"
+        },
+        {
+          "value": "the_platform_should_suggest_matches_with_learners_choosing",
+          "label": "The platform should suggest matches, with learners choosing whether to accept"
+        },
+        {
+          "value": "the_platform_should_create_matches_automatically_after_learners",
+          "label": "The platform should create matches automatically after learners opt in"
+        },
+        {
+          "value": "the_institution_should_set_the_rules",
+          "label": "The institution should set the rules"
+        },
+        {
+          "value": "i_would_not_use_peer_matching",
+          "label": "I would not use peer matching"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q44",
+      "section": "section_6",
+      "prompt": "What would make you reject an AI-assisted learner-matching feature?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "learners_being_matched_without_consent",
+          "label": "Learners being matched without consent"
+        },
+        {
+          "value": "use_of_private_questions_or_conversations_without_clear",
+          "label": "Use of private questions or conversations without clear permission"
+        },
+        {
+          "value": "use_of_grades_or_sensitive_performance_data",
+          "label": "Use of grades or sensitive performance data"
+        },
+        {
+          "value": "no_ability_for_learners_to_leave_or_reject_a_group",
+          "label": "No ability for learners to leave or reject a group"
+        },
+        {
+          "value": "no_educator_oversight",
+          "label": "No educator oversight"
+        },
+        {
+          "value": "poor_quality_or_irrelevant_matches",
+          "label": "Poor-quality or irrelevant matches"
+        },
+        {
+          "value": "safeguards_against_harassment_or_inappropriate_conduct_are",
+          "label": "Safeguards against harassment or inappropriate conduct are unclear"
+        },
+        {
+          "value": "it_creates_additional_administrative_work",
+          "label": "It creates additional administrative work"
+        },
+        {
+          "value": "i_do_not_see_a_meaningful_need_for_learner_matching",
+          "label": "I do not see a meaningful need for learner matching"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q45",
+      "section": "section_7",
+      "prompt": "How often do you currently use AI tools in your teaching or academic-support work?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "never",
+          "label": "Never"
+        },
+        {
+          "value": "less_than_once_a_month",
+          "label": "Less than once a month"
+        },
+        {
+          "value": "a_few_times_a_month",
+          "label": "A few times a month"
+        },
+        {
+          "value": "a_few_times_a_week",
+          "label": "A few times a week"
+        },
+        {
+          "value": "daily_or_almost_daily",
+          "label": "Daily or almost daily"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q46",
+      "section": "section_7",
+      "prompt": "What do you currently use AI for?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "drafting_or_improving_explanations",
+          "label": "Drafting or improving explanations"
+        },
+        {
+          "value": "creating_examples_or_analogies",
+          "label": "Creating examples or analogies"
+        },
+        {
+          "value": "creating_quizzes_or_assessment_questions",
+          "label": "Creating quizzes or assessment questions"
+        },
+        {
+          "value": "creating_assignments_or_lesson_plans",
+          "label": "Creating assignments or lesson plans"
+        },
+        {
+          "value": "summarising_source_materials",
+          "label": "Summarising source materials"
+        },
+        {
+          "value": "generating_study_or_revision_materials",
+          "label": "Generating study or revision materials"
+        },
+        {
+          "value": "analysing_learner_questions_or_feedback",
+          "label": "Analysing learner questions or feedback"
+        },
+        {
+          "value": "giving_learners_additional_explanations",
+          "label": "Giving learners additional explanations"
+        },
+        {
+          "value": "administrative_or_communication_tasks",
+          "label": "Administrative or communication tasks"
+        },
+        {
+          "value": "i_do_not_currently_use_ai",
+          "label": "I do not currently use AI"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q47",
+      "section": "section_7",
+      "prompt": "What concerns do you have about using AI in teaching or learning?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "accuracy_or_hallucinated_information",
+          "label": "Accuracy or hallucinated information"
+        },
+        {
+          "value": "lack_of_subject_specific_context",
+          "label": "Lack of subject-specific context"
+        },
+        {
+          "value": "academic_integrity_or_inappropriate_student_use",
+          "label": "Academic integrity or inappropriate student use"
+        },
+        {
+          "value": "privacy_and_data_protection",
+          "label": "Privacy and data protection"
+        },
+        {
+          "value": "bias_or_unfair_treatment",
+          "label": "Bias or unfair treatment"
+        },
+        {
+          "value": "learners_becoming_overdependent_on_ai",
+          "label": "Learners becoming overdependent on AI"
+        },
+        {
+          "value": "difficulty_verifying_ai_generated_content",
+          "label": "Difficulty verifying AI-generated content"
+        },
+        {
+          "value": "lack_of_institutional_approval_or_policy",
+          "label": "Lack of institutional approval or policy"
+        },
+        {
+          "value": "cost",
+          "label": "Cost"
+        },
+        {
+          "value": "i_have_no_major_concerns",
+          "label": "I have no major concerns"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q48",
+      "section": "section_7",
+      "prompt": "What safeguards would you expect before allowing an AI assistant to support learners in one of your courses?",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 5
+      },
+      "options": [
+        {
+          "value": "responses_grounded_in_the_course_materials_i_provide",
+          "label": "Responses grounded in the course materials I provide"
+        },
+        {
+          "value": "citations_or_links_to_the_relevant_course_material",
+          "label": "Citations or links to the relevant course material"
+        },
+        {
+          "value": "ability_to_see_or_review_the_assistant_s_source_context",
+          "label": "Ability to see or review the assistant’s source context"
+        },
+        {
+          "value": "clear_disclosure_that_the_learner_is_interacting_with_ai",
+          "label": "Clear disclosure that the learner is interacting with AI"
+        },
+        {
+          "value": "ability_to_correct_or_remove_inaccurate_content",
+          "label": "Ability to correct or remove inaccurate content"
+        },
+        {
+          "value": "restrictions_on_answering_graded_assessments_directly",
+          "label": "Restrictions on answering graded assessments directly"
+        },
+        {
+          "value": "privacy_controls_and_clear_data_use_policies",
+          "label": "Privacy controls and clear data-use policies"
+        },
+        {
+          "value": "institution_or_educator_administration_controls",
+          "label": "Institution or educator administration controls"
+        },
+        {
+          "value": "human_escalation_when_the_assistant_is_uncertain",
+          "label": "Human escalation when the assistant is uncertain"
+        },
+        {
+          "value": "usage_reporting_at_an_aggregated_level",
+          "label": "Usage reporting at an aggregated level"
+        },
+        {
+          "value": "no_special_safeguards_beyond_normal_platform_security",
+          "label": "No special safeguards beyond normal platform security"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q49",
+      "section": "section_8",
+      "prompt": "Based on this description, how relevant is this concept to your current teaching or academic-support work?",
+      "answer": {
+        "type": "scale",
+        "min": 1,
+        "max": 5
+      },
+      "options": [
+        {
+          "value": "1_not_at_all_relevant",
+          "label": "1 — Not at all relevant"
+        },
+        {
+          "value": "2_slightly_relevant",
+          "label": "2 — Slightly relevant"
+        },
+        {
+          "value": "3_moderately_relevant",
+          "label": "3 — Moderately relevant"
+        },
+        {
+          "value": "4_very_relevant",
+          "label": "4 — Very relevant"
+        },
+        {
+          "value": "5_extremely_relevant",
+          "label": "5 — Extremely relevant"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q50",
+      "section": "section_8",
+      "prompt": "Which part of the concept would be most valuable to you?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "organising_each_course_or_class_in_one_digital_space",
+          "label": "Organising each course or class in one digital space"
+        },
+        {
+          "value": "sharing_course_materials_with_learners",
+          "label": "Sharing course materials with learners"
+        },
+        {
+          "value": "giving_learners_an_ai_companion_grounded_in_my_course_materials",
+          "label": "Giving learners an AI companion grounded in my course materials"
+        },
+        {
+          "value": "supporting_questions_and_explanations_outside_class_time",
+          "label": "Supporting questions and explanations outside class time"
+        },
+        {
+          "value": "supporting_course_communication_and_announcements",
+          "label": "Supporting course communication and announcements"
+        },
+        {
+          "value": "understanding_aggregated_patterns_in_learner_questions_and",
+          "label": "Understanding aggregated patterns in learner questions and struggles"
+        },
+        {
+          "value": "supporting_learner_discussions_or_peer_learning",
+          "label": "Supporting learner discussions or peer learning"
+        },
+        {
+          "value": "supporting_live_classes_and_follow_up_materials",
+          "label": "Supporting live classes and follow-up materials"
+        },
+        {
+          "value": "none_of_these_would_be_especially_valuable",
+          "label": "None of these would be especially valuable"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q51",
+      "section": "section_8",
+      "prompt": "Which part would be least valuable or least relevant to you?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "organising_each_course_or_class_in_one_digital_space",
+          "label": "Organising each course or class in one digital space"
+        },
+        {
+          "value": "sharing_course_materials_with_learners",
+          "label": "Sharing course materials with learners"
+        },
+        {
+          "value": "giving_learners_an_ai_companion_grounded_in_my_course_materials",
+          "label": "Giving learners an AI companion grounded in my course materials"
+        },
+        {
+          "value": "supporting_questions_and_explanations_outside_class_time",
+          "label": "Supporting questions and explanations outside class time"
+        },
+        {
+          "value": "supporting_course_communication_and_announcements",
+          "label": "Supporting course communication and announcements"
+        },
+        {
+          "value": "understanding_aggregated_patterns_in_learner_questions_and",
+          "label": "Understanding aggregated patterns in learner questions and struggles"
+        },
+        {
+          "value": "supporting_learner_discussions_or_peer_learning",
+          "label": "Supporting learner discussions or peer learning"
+        },
+        {
+          "value": "supporting_live_classes_and_follow_up_materials",
+          "label": "Supporting live classes and follow-up materials"
+        },
+        {
+          "value": "none_all_are_potentially_relevant",
+          "label": "None; all are potentially relevant"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q52",
+      "section": "section_8",
+      "prompt": "Does this concept address a problem you currently experience?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "yes_it_addresses_a_major_problem",
+          "label": "Yes, it addresses a major problem"
+        },
+        {
+          "value": "yes_it_addresses_a_moderate_problem",
+          "label": "Yes, it addresses a moderate problem"
+        },
+        {
+          "value": "it_addresses_a_minor_problem",
+          "label": "It addresses a minor problem"
+        },
+        {
+          "value": "it_does_not_address_a_problem_i_currently_have",
+          "label": "It does not address a problem I currently have"
+        },
+        {
+          "value": "i_am_not_sure_yet",
+          "label": "I am not sure yet"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q53",
+      "section": "section_8",
+      "prompt": "What, if anything, would you expect this platform to do that is not described above?",
+      "answer": {
+        "type": "paragraph"
+      },
+      "options": [],
+      "required": false
+    },
+    {
+      "id": "Q54",
+      "section": "section_8",
+      "prompt": "What would be your main concern about adopting a platform like this?",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 3
+      },
+      "options": [
+        {
+          "value": "time_required_to_set_it_up",
+          "label": "Time required to set it up"
+        },
+        {
+          "value": "time_required_to_maintain_course_content",
+          "label": "Time required to maintain course content"
+        },
+        {
+          "value": "learner_adoption_or_participation",
+          "label": "Learner adoption or participation"
+        },
+        {
+          "value": "accuracy_or_reliability_of_the_ai",
+          "label": "Accuracy or reliability of the AI"
+        },
+        {
+          "value": "privacy_or_data_protection",
+          "label": "Privacy or data protection"
+        },
+        {
+          "value": "academic_integrity",
+          "label": "Academic integrity"
+        },
+        {
+          "value": "institutional_approval_or_procurement",
+          "label": "Institutional approval or procurement"
+        },
+        {
+          "value": "integration_with_existing_systems",
+          "label": "Integration with existing systems"
+        },
+        {
+          "value": "cost",
+          "label": "Cost"
+        },
+        {
+          "value": "learners_having_too_many_tools_already",
+          "label": "Learners having too many tools already"
+        },
+        {
+          "value": "lack_of_evidence_that_it_improves_learning",
+          "label": "Lack of evidence that it improves learning"
+        },
+        {
+          "value": "i_do_not_have_a_significant_concern",
+          "label": "I do not have a significant concern"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q55",
+      "section": "section_8",
+      "prompt": "If the platform solved the problems you identified earlier, how likely would you be to use it in one course or learner group?",
+      "answer": {
+        "type": "scale",
+        "min": 1,
+        "max": 5
+      },
+      "options": [
+        {
+          "value": "1_very_unlikely",
+          "label": "1 — Very unlikely"
+        },
+        {
+          "value": "2_unlikely",
+          "label": "2 — Unlikely"
+        },
+        {
+          "value": "3_unsure",
+          "label": "3 — Unsure"
+        },
+        {
+          "value": "4_likely",
+          "label": "4 — Likely"
+        },
+        {
+          "value": "5_very_likely",
+          "label": "5 — Very likely"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q56",
+      "section": "section_8",
+      "prompt": "How likely would you be to introduce it to your learners?",
+      "answer": {
+        "type": "scale",
+        "min": 1,
+        "max": 5
+      },
+      "options": [
+        {
+          "value": "1_very_unlikely",
+          "label": "1 — Very unlikely"
+        },
+        {
+          "value": "2_unlikely",
+          "label": "2 — Unlikely"
+        },
+        {
+          "value": "3_unsure",
+          "label": "3 — Unsure"
+        },
+        {
+          "value": "4_likely",
+          "label": "4 — Likely"
+        },
+        {
+          "value": "5_very_likely",
+          "label": "5 — Very likely"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q57",
+      "section": "section_8",
+      "prompt": "What would need to be true for you to introduce it to a real course or learner group?",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 5
+      },
+      "options": [
+        {
+          "value": "clear_evidence_that_it_improves_learner_outcomes_or_teaching",
+          "label": "Clear evidence that it improves learner outcomes or teaching efficiency"
+        },
+        {
+          "value": "easy_setup_using_materials_i_already_have",
+          "label": "Easy setup using materials I already have"
+        },
+        {
+          "value": "learners_can_use_it_without_extensive_training",
+          "label": "Learners can use it without extensive training"
+        },
+        {
+          "value": "strong_privacy_and_data_protection_safeguards",
+          "label": "Strong privacy and data-protection safeguards"
+        },
+        {
+          "value": "reliable_answers_grounded_in_my_course_content",
+          "label": "Reliable answers grounded in my course content"
+        },
+        {
+          "value": "ability_to_control_or_review_the_ai_s_behaviour",
+          "label": "Ability to control or review the AI’s behaviour"
+        },
+        {
+          "value": "integration_with_my_institution_s_existing_tools",
+          "label": "Integration with my institution’s existing tools"
+        },
+        {
+          "value": "free_pilot_or_trial_with_one_course",
+          "label": "Free pilot or trial with one course"
+        },
+        {
+          "value": "support_from_my_department_or_institution",
+          "label": "Support from my department or institution"
+        },
+        {
+          "value": "affordable_educator_or_learner_pricing",
+          "label": "Affordable educator or learner pricing"
+        },
+        {
+          "value": "live_classes_or_discussions_inside_the_same_environment",
+          "label": "Live classes or discussions inside the same environment"
+        },
+        {
+          "value": "learning_intelligence_insights_i_can_act_on",
+          "label": "Learning-intelligence insights I can act on"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q58",
+      "section": "section_8",
+      "prompt": "Which statement best describes your next-step interest?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "i_would_like_to_try_it_with_a_real_course_as_soon_as_possible",
+          "label": "I would like to try it with a real course as soon as possible"
+        },
+        {
+          "value": "i_would_be_willing_to_join_a_pilot_with_one_course",
+          "label": "I would be willing to join a pilot with one course"
+        },
+        {
+          "value": "i_would_like_to_see_a_demonstration_or_prototype",
+          "label": "I would like to see a demonstration or prototype"
+        },
+        {
+          "value": "i_would_consider_it_after_more_evidence_or_references",
+          "label": "I would consider it after more evidence or references"
+        },
+        {
+          "value": "i_would_not_try_it_at_this_time",
+          "label": "I would not try it at this time"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q59",
+      "section": "section_8",
+      "prompt": "If a pilot were available, what could you realistically contribute?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "test_it_with_one_course_or_learner_group",
+          "label": "Test it with one course or learner group"
+        },
+        {
+          "value": "introduce_it_to_a_small_group_of_learners",
+          "label": "Introduce it to a small group of learners"
+        },
+        {
+          "value": "provide_anonymised_course_materials_for_testing",
+          "label": "Provide anonymised course materials for testing"
+        },
+        {
+          "value": "give_structured_feedback_during_the_pilot",
+          "label": "Give structured feedback during the pilot"
+        },
+        {
+          "value": "connect_the_research_team_with_colleagues_or_a_department",
+          "label": "Connect the research team with colleagues or a department"
+        },
+        {
+          "value": "consider_paying_if_the_pilot_demonstrates_value",
+          "label": "Consider paying if the pilot demonstrates value"
+        },
+        {
+          "value": "nothing_at_this_time",
+          "label": "Nothing at this time"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q60",
+      "section": "section_9",
+      "prompt": "Please select the three capabilities that would create the most value for you.",
+      "answer": {
+        "type": "multi",
+        "minSelections": 3,
+        "maxSelections": 3
+      },
+      "options": [
+        {
+          "value": "course_or_classroom_management",
+          "label": "Course or classroom management"
+        },
+        {
+          "value": "course_material_sharing",
+          "label": "Course-material sharing"
+        },
+        {
+          "value": "ai_course_assistant_grounded_in_educator_provided_materials",
+          "label": "AI course assistant grounded in educator-provided materials"
+        },
+        {
+          "value": "ai_question_answering_for_learners",
+          "label": "AI question answering for learners"
+        },
+        {
+          "value": "automatic_summaries",
+          "label": "Automatic summaries"
+        },
+        {
+          "value": "quiz_generation",
+          "label": "Quiz generation"
+        },
+        {
+          "value": "assignment_creation",
+          "label": "Assignment creation"
+        },
+        {
+          "value": "student_discussions",
+          "label": "Student discussions"
+        },
+        {
+          "value": "announcements",
+          "label": "Announcements"
+        },
+        {
+          "value": "learner_struggle_insights",
+          "label": "Learner-struggle insights"
+        },
+        {
+          "value": "recurring_question_or_misconception_insights",
+          "label": "Recurring-question or misconception insights"
+        },
+        {
+          "value": "course_or_material_improvement_recommendations",
+          "label": "Course or material improvement recommendations"
+        },
+        {
+          "value": "learner_feedback_summaries",
+          "label": "Learner feedback summaries"
+        },
+        {
+          "value": "student_progress_or_engagement_insights",
+          "label": "Student progress or engagement insights"
+        },
+        {
+          "value": "ai_assisted_learner_peer_matching",
+          "label": "AI-assisted learner peer matching"
+        },
+        {
+          "value": "live_classes",
+          "label": "Live classes"
+        },
+        {
+          "value": "attendance_or_participation_tracking",
+          "label": "Attendance or participation tracking"
+        },
+        {
+          "value": "exam_preparation_support",
+          "label": "Exam-preparation support"
+        },
+        {
+          "value": "ai_generated_learning_materials",
+          "label": "AI-generated learning materials"
+        },
+        {
+          "value": "educator_analytics",
+          "label": "Educator analytics"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q61",
+      "section": "section_9",
+      "prompt": "Which single capability would you be most disappointed to lose?",
+      "answer": {
+        "type": "single",
+        "optionsFrom": "Q60"
+      },
+      "options": [],
+      "required": false
+    },
+    {
+      "id": "Q62",
+      "section": "section_9",
+      "prompt": "Which capabilities would you probably never use?",
+      "answer": {
+        "type": "multi",
+        "optionsFrom": "Q60"
+      },
+      "options": [],
+      "required": false
+    },
+    {
+      "id": "Q63",
+      "section": "section_9",
+      "prompt": "Which delivery approach would fit your workflow best?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "a_complete_replacement_for_most_of_my_existing_course_tools",
+          "label": "A complete replacement for most of my existing course tools"
+        },
+        {
+          "value": "one_central_course_environment_that_connects_to_my_existing",
+          "label": "One central course environment that connects to my existing tools"
+        },
+        {
+          "value": "a_focused_tool_for_learner_support_and_course_based_ai",
+          "label": "A focused tool for learner support and course-based AI assistance"
+        },
+        {
+          "value": "a_focused_tool_for_learning_insights_and_course_improvement",
+          "label": "A focused tool for learning insights and course improvement"
+        },
+        {
+          "value": "a_focused_tool_for_live_learning_and_discussions",
+          "label": "A focused tool for live learning and discussions"
+        },
+        {
+          "value": "separate_optional_modules_that_i_can_adopt_as_needed",
+          "label": "Separate optional modules that I can adopt as needed"
+        },
+        {
+          "value": "i_would_not_add_another_tool_to_my_workflow",
+          "label": "I would not add another tool to my workflow"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q64",
+      "section": "section_10",
+      "prompt": "Who would normally influence or approve the purchase of a teaching or learning platform in your context?",
+      "answer": {
+        "type": "multi"
+      },
+      "options": [
+        {
+          "value": "i_would_decide_and_pay_personally",
+          "label": "I would decide and pay personally"
+        },
+        {
+          "value": "course_or_programme_coordinator",
+          "label": "Course or programme coordinator"
+        },
+        {
+          "value": "head_of_department",
+          "label": "Head of department"
+        },
+        {
+          "value": "faculty_or_school_leadership",
+          "label": "Faculty or school leadership"
+        },
+        {
+          "value": "institution_wide_teaching_and_learning_team",
+          "label": "Institution-wide teaching and learning team"
+        },
+        {
+          "value": "procurement_or_purchasing_department",
+          "label": "Procurement or purchasing department"
+        },
+        {
+          "value": "it_or_information_security_team",
+          "label": "IT or information-security team"
+        },
+        {
+          "value": "learners_or_students",
+          "label": "Learners or students"
+        },
+        {
+          "value": "parents_or_sponsors_where_applicable",
+          "label": "Parents or sponsors, where applicable"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q65",
+      "section": "section_10",
+      "prompt": "If a platform like this created clear value, who would most likely pay for it?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "i_would_pay_personally",
+          "label": "I would pay personally"
+        },
+        {
+          "value": "my_department_or_faculty",
+          "label": "My department or faculty"
+        },
+        {
+          "value": "my_institution",
+          "label": "My institution"
+        },
+        {
+          "value": "learners_or_students",
+          "label": "Learners or students"
+        },
+        {
+          "value": "a_combination_of_educator_and_learner_payments",
+          "label": "A combination of educator and learner payments"
+        },
+        {
+          "value": "external_funding_grant_or_sponsor",
+          "label": "External funding, grant, or sponsor"
+        },
+        {
+          "value": "i_do_not_know",
+          "label": "I do not know"
+        },
+        {
+          "value": "nobody_would_pay_in_my_context",
+          "label": "Nobody would pay in my context"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q66",
+      "section": "section_10",
+      "prompt": "How comfortable would you be asking learners to use a paid version of a platform for your course?",
+      "answer": {
+        "type": "scale",
+        "min": 1,
+        "max": 5,
+        "naOption": "not_applicable_because_learners_would_not_pay",
+        "naLabel": "Not applicable because learners would not pay"
+      },
+      "options": [
+        {
+          "value": "1_very_uncomfortable",
+          "label": "1 — Very uncomfortable"
+        },
+        {
+          "value": "2_uncomfortable",
+          "label": "2 — Uncomfortable"
+        },
+        {
+          "value": "3_unsure",
+          "label": "3 — Unsure"
+        },
+        {
+          "value": "4_comfortable",
+          "label": "4 — Comfortable"
+        },
+        {
+          "value": "5_very_comfortable",
+          "label": "5 — Very comfortable"
+        },
+        {
+          "value": "not_applicable_because_learners_would_not_pay",
+          "label": "Not applicable because learners would not pay"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q67",
+      "section": "section_10",
+      "prompt": "Which pricing model would be easiest for your context?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "free_basic_version_with_optional_paid_features",
+          "label": "Free basic version with optional paid features"
+        },
+        {
+          "value": "paid_educator_subscription",
+          "label": "Paid educator subscription"
+        },
+        {
+          "value": "paid_learner_subscription",
+          "label": "Paid learner subscription"
+        },
+        {
+          "value": "institution_wide_licence",
+          "label": "Institution-wide licence"
+        },
+        {
+          "value": "course_based_or_cohort_based_fee",
+          "label": "Course-based or cohort-based fee"
+        },
+        {
+          "value": "usage_based_pricing",
+          "label": "Usage-based pricing"
+        },
+        {
+          "value": "sponsored_or_grant_funded_access",
+          "label": "Sponsored or grant-funded access"
+        },
+        {
+          "value": "i_would_not_pay_for_this_type_of_product",
+          "label": "I would not pay for this type of product"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q68",
+      "section": "section_10",
+      "prompt": "If you were paying personally for an educator account, what monthly price would feel reasonable for the value it provided?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "0_i_would_only_use_a_free_version",
+          "label": "$0; I would only use a free version"
+        },
+        {
+          "value": "up_to_5_per_month",
+          "label": "Up to $5 per month"
+        },
+        {
+          "value": "6_10_per_month",
+          "label": "$6–$10 per month"
+        },
+        {
+          "value": "11_20_per_month",
+          "label": "$11–$20 per month"
+        },
+        {
+          "value": "21_30_per_month",
+          "label": "$21–$30 per month"
+        },
+        {
+          "value": "31_50_per_month",
+          "label": "$31–$50 per month"
+        },
+        {
+          "value": "more_than_50_per_month",
+          "label": "More than $50 per month"
+        },
+        {
+          "value": "i_would_not_be_the_payer",
+          "label": "I would not be the payer"
+        },
+        {
+          "value": "i_cannot_estimate_without_trying_it",
+          "label": "I cannot estimate without trying it"
+        }
+      ],
+      "required": false,
+      "displayIf": {
+        "question": "Q65",
+        "notAnyOf": [
+          "nobody_would_pay_in_my_context"
+        ]
+      }
+    },
+    {
+      "id": "Q69",
+      "section": "section_10",
+      "prompt": "At what monthly price would you start to consider the educator account expensive, but still potentially worth it if the value were clear?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "up_to_5_per_month",
+          "label": "Up to $5 per month"
+        },
+        {
+          "value": "6_10_per_month",
+          "label": "$6–$10 per month"
+        },
+        {
+          "value": "11_20_per_month",
+          "label": "$11–$20 per month"
+        },
+        {
+          "value": "21_30_per_month",
+          "label": "$21–$30 per month"
+        },
+        {
+          "value": "31_50_per_month",
+          "label": "$31–$50 per month"
+        },
+        {
+          "value": "more_than_50_per_month",
+          "label": "More than $50 per month"
+        },
+        {
+          "value": "i_cannot_estimate_without_trying_it",
+          "label": "I cannot estimate without trying it"
+        }
+      ],
+      "required": false,
+      "displayIf": {
+        "question": "Q65",
+        "notAnyOf": [
+          "nobody_would_pay_in_my_context"
+        ]
+      }
+    },
+    {
+      "id": "Q70",
+      "section": "section_10",
+      "prompt": "What would make the product worth paying for?",
+      "answer": {
+        "type": "multi",
+        "maxSelections": 3
+      },
+      "options": [
+        {
+          "value": "saving_substantial_time_each_week",
+          "label": "Saving substantial time each week"
+        },
+        {
+          "value": "reducing_repeated_learner_questions",
+          "label": "Reducing repeated learner questions"
+        },
+        {
+          "value": "improving_learner_understanding_or_outcomes",
+          "label": "Improving learner understanding or outcomes"
+        },
+        {
+          "value": "giving_learners_reliable_course_specific_support_outside_class",
+          "label": "Giving learners reliable course-specific support outside class"
+        },
+        {
+          "value": "revealing_learning_problems_i_cannot_currently_see",
+          "label": "Revealing learning problems I cannot currently see"
+        },
+        {
+          "value": "improving_course_materials_or_assessments",
+          "label": "Improving course materials or assessments"
+        },
+        {
+          "value": "supporting_large_classes_more_effectively",
+          "label": "Supporting large classes more effectively"
+        },
+        {
+          "value": "replacing_several_tools_with_one_workflow",
+          "label": "Replacing several tools with one workflow"
+        },
+        {
+          "value": "increasing_learner_engagement_or_participation",
+          "label": "Increasing learner engagement or participation"
+        },
+        {
+          "value": "supporting_live_classes_and_follow_up",
+          "label": "Supporting live classes and follow-up"
+        },
+        {
+          "value": "helping_learners_study_independently",
+          "label": "Helping learners study independently"
+        },
+        {
+          "value": "other",
+          "label": "Other",
+          "freeText": true
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q71",
+      "section": "section_11",
+      "prompt": "What is the most difficult or costly part of teaching, tutoring, or supporting learners that you wish a better tool could solve?",
+      "answer": {
+        "type": "long_text"
+      },
+      "options": [],
+      "required": true
+    },
+    {
+      "id": "Q72",
+      "section": "section_11",
+      "prompt": "What would you never want an AI or education platform to do in your course or teaching practice?",
+      "answer": {
+        "type": "long_text"
+      },
+      "options": [],
+      "required": false
+    },
+    {
+      "id": "Q73",
+      "section": "section_11",
+      "prompt": "Is there anything else you would like us to understand about your current workflow or needs?",
+      "answer": {
+        "type": "long_text"
+      },
+      "options": [],
+      "required": false
+    },
+    {
+      "id": "Q74",
+      "section": "section_11",
+      "prompt": "Would you be willing to participate in a 20–30 minute follow-up conversation?",
+      "answer": {
+        "type": "single"
+      },
+      "options": [
+        {
+          "value": "yes",
+          "label": "Yes"
+        },
+        {
+          "value": "maybe",
+          "label": "Maybe"
+        },
+        {
+          "value": "no",
+          "label": "No"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "Q75",
+      "section": "section_11",
+      "prompt": "If yes or maybe, please provide an email address or preferred contact method.",
+      "answer": {
+        "type": "short_text"
+      },
+      "options": [],
+      "required": false,
+      "displayIf": {
+        "question": "Q74",
+        "notAnyOf": [
+          "no"
+        ]
+      },
+      "contactDetail": true
+    }
+  ]
+}

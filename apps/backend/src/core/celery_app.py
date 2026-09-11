@@ -129,6 +129,7 @@ try:
     from src.workers import (
         billing_tasks,  # noqa: F401
         intelligence_tasks,  # noqa: F401
+        landing_draft_tasks,  # noqa: F401
         notification_tasks,  # noqa: F401
         personal_learning_tasks,  # noqa: F401
         progress_tasks,  # noqa: F401
@@ -189,6 +190,20 @@ try:
 except Exception as e:
     logger.exception("Failed to load billing beat schedule: %s", e)
     print(f"[celery_app] Failed to load billing beat schedule: {e}")
+
+
+# Landing draft retention. Expiry resolves on read, so this schedule is not what makes a draft stop
+# working — it is what makes the row and the email address on it actually go away, which the public
+# privacy policy commits to.
+try:
+    from src.workers import landing_draft_tasks as _landing_draft_tasks
+
+    if not hasattr(celery_app.conf, "beat_schedule") or celery_app.conf.beat_schedule is None:
+        celery_app.conf.beat_schedule = {}
+    celery_app.conf.beat_schedule.update(_landing_draft_tasks.get_beat_schedule())
+except Exception as e:
+    logger.exception("Failed to load landing draft beat schedule: %s", e)
+    print(f"[celery_app] Failed to load landing draft beat schedule: {e}")
 
 
 # Domain event handlers. Same reason as the task imports above: `@listen` registers on import, so a

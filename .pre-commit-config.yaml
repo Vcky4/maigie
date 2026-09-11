@@ -33,3 +33,23 @@ repos:
       - id: ruff-format
         name: ruff format (backend)
         files: ^apps/backend/.*\.py$
+
+  - repo: local
+    hooks:
+      # `openapi.json` is the committed API contract, consumed by the client repos to generate their
+      # TypeScript types. CI already fails when it drifts, but only after a push — and the schema is
+      # exactly the kind of file nobody remembers, because adding a route is a code change that
+      # happens to alter a generated artifact somewhere else in the tree.
+      #
+      # Scoped to the files that can change the contract: routes and the Pydantic models they
+      # serialise. A commit that touches only tests or a docstring should not pay to build the app.
+      # The pattern is deliberately wider than `routes.py` — a field added to a response model changes
+      # the published schema just as much as a new endpoint does.
+      - id: openapi-schema
+        name: openapi schema (backend)
+        language: system
+        entry: apps/backend/scripts/openapi_hook.sh
+        files: ^apps/backend/(src/.*\.py|scripts/export_openapi\.py)$
+        # One invocation regenerates the whole schema; handing it the staged filenames would imply it
+        # inspects them, which it does not.
+        pass_filenames: false
