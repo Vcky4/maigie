@@ -168,6 +168,8 @@ Legend: ✅ backing exists · partial · ❌ needs a new model/domain.
 
 **"Dashboard" naming.** Keep the word for the staff tool — it *is* a dashboard and the book's "not a dashboard" line is about the *learner* Home, not internal ops. But honour the spirit: bias the landing page toward "what needs a decision today" over a wall of counters.
 
+**Dashboard composite — done (backend), verified against live data.** The landing page was empty because it reads one rich composite from `getDashboardStats()` (nested `retention`/`users`/`courses`/`chat`/`subscriptions`/`feedback`/`content`/`atRiskUsers`/`charts`), while the endpoint returned a flat six-count `/stats` alias — so every panel fell back to `|| 0`. `GET /admin/dashboard` now returns the composite from `admin/services/dashboard_service.overview()`, every field from real rows: retention (DAU/WAU/MAU/stickiness/at-risk) from `User.last_seen_at`, AI economics from the real `ChatMessage.cost_usd`/`revenue_usd`, revenue a genuine ~$0 until payment relationships exist (true, not fabricated), MRR an estimate off real tier counts × the published price (labelled `estimatedMRR`), satisfaction `null` when there are no responses (renders "—"). Also fixed the charts: `GET /admin/dashboard/charts` now emits `dailySignups`/`dailyMessages` with the `signups`/`messages` keys the chart reads (they were `count`, so the charts drew nothing). **Still a follow-up:** the deeper decision-led redesign (lead with what needs action, drop/curb activity-KPI tiles) is a frontend change in `maigie-client`; this makes the existing surface honest and populated rather than empty.
+
 ---
 
 ## 6. Phasing

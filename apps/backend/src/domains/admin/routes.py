@@ -146,18 +146,17 @@ async def admin_stats(admin_user: StaffUser):
     )
 
 
-@router.get("/dashboard", response_model=models.AdminStatsResponse)
+@router.get("/dashboard")
 async def admin_dashboard(admin_user: StaffUser):
-    """The dashboard landing figures.
+    """The dashboard landing overview — a single honest composite (staff only).
 
-    The admin client calls ``/admin/dashboard`` for its overview; ``/stats`` predates it and returns
-    the same shape. This is the canonical name going forward — ``/stats`` is kept as an alias so a
-    stale client keeps working — and it is a read, so staff (not only super admins) may see it.
-
-    The counts are cross-domain by nature. Per Decision 2 they should migrate behind each domain's own
-    read as those are added; for now the aggregate lives here rather than being duplicated per caller.
+    Every figure traces to a persisted row: retention from `User.last_seen_at`, AI economics from the
+    real `ChatMessage` cost/revenue columns, revenue a genuine ~$0 until payment relationships exist.
+    The flat `/stats` counts remain available at that path for any caller that still wants them.
     """
-    return await admin_stats(admin_user)
+    from .services import dashboard_service
+
+    return await dashboard_service.overview()
 
 
 # ===========================================================================
@@ -703,9 +702,13 @@ async def user_analytics(user_id: str, admin_user: StaffUser):
         raise HTTPException(status_code=404, detail="User not found")
 
 
-@router.get("/dashboard/charts", response_model=models.DashboardChartsResponse)
+@router.get("/dashboard/charts")
 async def dashboard_charts(admin_user: StaffUser, days: int = Query(14, ge=1, le=180)):
-    """Daily signups and messages over a window (staff only)."""
+    """Daily signups and messages over a window (staff only).
+
+    Returns the exact shape the charts consume — ``dailySignups``/``dailyMessages`` with
+    ``signups``/``messages`` keys — so the period selector re-queries with no client-side remap.
+    """
     from .services import analytics_service
 
     return await analytics_service.dashboard_charts(days)

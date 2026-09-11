@@ -275,21 +275,6 @@ class UserDetailAnalyticsResponse(BaseModel):
     summary: UserProgressSummary
 
 
-class DailyCount(BaseModel):
-    """A single day's count in a time series."""
-
-    date: str
-    count: int
-
-
-class DashboardChartsResponse(BaseModel):
-    """Signups and messages per day over a window."""
-
-    days: int
-    dailySignups: list[DailyCount]
-    dailyMessages: list[DailyCount]
-
-
 # ===========================================================================
 # Re-engagement (Phase 3 — never-guilt, consent-gated)
 # ===========================================================================

@@ -5020,55 +5020,6 @@
         "title": "CursorPage[ChatMessageResponse]",
         "type": "object"
       },
-      "DailyCount": {
-        "description": "A single day's count in a time series.",
-        "properties": {
-          "count": {
-            "title": "Count",
-            "type": "integer"
-          },
-          "date": {
-            "title": "Date",
-            "type": "string"
-          }
-        },
-        "required": [
-          "date",
-          "count"
-        ],
-        "title": "DailyCount",
-        "type": "object"
-      },
-      "DashboardChartsResponse": {
-        "description": "Signups and messages per day over a window.",
-        "properties": {
-          "dailyMessages": {
-            "items": {
-              "$ref": "#/components/schemas/DailyCount"
-            },
-            "title": "Dailymessages",
-            "type": "array"
-          },
-          "dailySignups": {
-            "items": {
-              "$ref": "#/components/schemas/DailyCount"
-            },
-            "title": "Dailysignups",
-            "type": "array"
-          },
-          "days": {
-            "title": "Days",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "days",
-          "dailySignups",
-          "dailyMessages"
-        ],
-        "title": "DashboardChartsResponse",
-        "type": "object"
-      },
       "DeckCreate": {
         "properties": {
           "accent": {
@@ -26955,15 +26906,13 @@
     },
     "/api/v1/admin/dashboard": {
       "get": {
-        "description": "The dashboard landing figures.\n\nThe admin client calls ``/admin/dashboard`` for its overview; ``/stats`` predates it and returns\nthe same shape. This is the canonical name going forward — ``/stats`` is kept as an alias so a\nstale client keeps working — and it is a read, so staff (not only super admins) may see it.\n\nThe counts are cross-domain by nature. Per Decision 2 they should migrate behind each domain's own\nread as those are added; for now the aggregate lives here rather than being duplicated per caller.",
+        "description": "The dashboard landing overview — a single honest composite (staff only).\n\nEvery figure traces to a persisted row: retention from `User.last_seen_at`, AI economics from the\nreal `ChatMessage` cost/revenue columns, revenue a genuine ~$0 until payment relationships exist.\nThe flat `/stats` counts remain available at that path for any caller that still wants them.",
         "operationId": "admin_dashboard_api_v1_admin_dashboard_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AdminStatsResponse"
-                }
+                "schema": {}
               }
             },
             "description": "Successful Response"
@@ -26983,7 +26932,7 @@
     },
     "/api/v1/admin/dashboard/charts": {
       "get": {
-        "description": "Daily signups and messages over a window (staff only).",
+        "description": "Daily signups and messages over a window (staff only).\n\nReturns the exact shape the charts consume — ``dailySignups``/``dailyMessages`` with\n``signups``/``messages`` keys — so the period selector re-queries with no client-side remap.",
         "operationId": "dashboard_charts_api_v1_admin_dashboard_charts_get",
         "parameters": [
           {
@@ -27003,9 +26952,7 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DashboardChartsResponse"
-                }
+                "schema": {}
               }
             },
             "description": "Successful Response"

@@ -445,10 +445,11 @@ async def users_at_risk(limit: int) -> models.UsersAtRiskResponse:
     return models.UsersAtRiskResponse(users=items[:limit], total=len(items), riskCounts=counts)
 
 
-async def dashboard_charts(days: int) -> models.DashboardChartsResponse:
-    """Daily signups and daily messages over the last ``days`` days, zero-filled.
+async def daily_series(days: int) -> tuple[list[dict], list[dict]]:
+    """(signups, messages) day-series over the last ``days`` days, zero-filled.
 
-    Both series are honest counts of real rows: `User.created_at` and `ChatMessage.created_at`.
+    Honest counts of real rows: `User.created_at` and `ChatMessage.created_at`. The item keys are
+    ``signups`` and ``messages`` — the exact keys the dashboard charts read.
     """
     from src.domains.identity.db_models import User
     from src.domains.intelligence.db_models import ChatMessage
@@ -479,16 +480,22 @@ async def dashboard_charts(days: int) -> models.DashboardChartsResponse:
             )
         ).all()
 
-    def _series(rows) -> list[models.DailyCount]:
+    def _series(rows, key: str) -> list[dict]:
         by_day = {d.date().isoformat(): int(c) for d, c in rows if d is not None}
-        out: list[models.DailyCount] = []
+        out: list[dict] = []
         for i in range(days):
             day = (since + timedelta(days=i)).date().isoformat()
-            out.append(models.DailyCount(date=day, count=by_day.get(day, 0)))
+            out.append({"date": day, key: by_day.get(day, 0)})
         return out
 
-    return models.DashboardChartsResponse(
-        days=days,
-        dailySignups=_series(signup_rows),
-        dailyMessages=_series(message_rows),
-    )
+    return _series(signup_rows, "signups"), _series(message_rows, "messages")
+
+
+async def dashboard_charts(days: int) -> dict:
+    """Daily signups and messages over the last ``days`` days, zero-filled.
+
+    Returns the shape the dashboard charts consume directly (``dailySignups``/``dailyMessages`` with
+    ``signups``/``messages`` keys), so the period selector re-queries without a client-side remap.
+    """
+    signups, messages = await daily_series(days)
+    return {"days": days, "dailySignups": signups, "dailyMessages": messages}
