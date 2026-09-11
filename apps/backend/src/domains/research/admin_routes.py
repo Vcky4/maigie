@@ -20,7 +20,7 @@ from fastapi import APIRouter, Query
 from src.shared.auth import StaffUser
 from src.shared.exceptions import NotFoundError
 
-from . import models
+from . import instrument, models
 from .db_models import EducatorSurveyResponse
 from .repository import educator_survey_repo
 
@@ -114,6 +114,7 @@ async def get_response(response_id: str, admin_user: StaffUser) -> models.AdminS
         submitted_at=row.submitted_at,
         answers=dict(row.answers or {}),
         contact_detail=await educator_survey_repo.get_contact(row.id),
+        sections=instrument.describe_answers(dict(row.answers or {})),
     )
 
 

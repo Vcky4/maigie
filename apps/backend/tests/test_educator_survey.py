@@ -466,3 +466,97 @@ class InstrumentRuleTests(unittest.TestCase):
     def test_only_consent_and_the_open_pain_question_are_required(self):
         required = [q["id"] for q in instrument.load()["questions"] if q.get("required")]
         self.assertEqual(required, ["Q1", "Q71"])
+
+
+class ScaleOptOutTests(unittest.TestCase):
+    """Two scales carry a non-numeric escape, and it has to be answerable.
+
+    Q41 ends with "Not applicable" and Q66 with "Not applicable because learners would not pay". Typed
+    as a bare 1–5 integer, both escapes were unanswerable — and that is not cosmetic: for an educator
+    whose learners would never pay, "not applicable" is the honest answer, and refusing it pushes them
+    into inventing a comfort score. These tests pin the fix and the shape of the bug.
+    """
+
+    def test_every_scale_with_a_non_numeric_option_declares_it(self):
+        # The general guard. A future revision that adds another escape to another scale is caught here
+        # rather than by a respondent who cannot answer.
+        for q in instrument.load()["questions"]:
+            if q["answer"]["type"] != "scale":
+                continue
+            escapes = [o for o in q["options"] if not o["label"][:1].isdigit()]
+            if escapes:
+                self.assertEqual(
+                    q["answer"].get("naOption"),
+                    escapes[0]["value"],
+                    f'{q["id"]} has an escape option the answer shape does not admit',
+                )
+            else:
+                self.assertNotIn("naOption", q["answer"])
+
+    def test_the_two_known_escapes_are_accepted(self):
+        self.assertEqual(instrument.validate_answer("Q41", "not_applicable"), "not_applicable")
+        self.assertEqual(
+            instrument.validate_answer("Q66", "not_applicable_because_learners_would_not_pay"),
+            "not_applicable_because_learners_would_not_pay",
+        )
+
+    def test_a_number_is_still_accepted(self):
+        self.assertEqual(instrument.validate_answer("Q66", 3), 3)
+
+    def test_another_questions_escape_is_not_accepted(self):
+        # Q41's slug on Q66 is not "close enough" — it would record an answer the respondent never
+        # gave, on a question with a differently worded opt-out.
+        with self.assertRaises(instrument.AnswerError):
+            instrument.validate_answer("Q66", "not_applicable")
+
+    def test_a_scale_without_an_escape_still_refuses_text(self):
+        with self.assertRaises(instrument.AnswerError):
+            instrument.validate_answer("Q49", "not_applicable")
+
+
+class AnswerRenderingTests(unittest.TestCase):
+    """`describe_answers` turns stored slugs into the instrument's own wording, for review."""
+
+    def test_scale_answers_carry_their_wording(self):
+        described = instrument.describe_answers({"Q49": 4})
+        item = described[0]["items"][0]
+        # Scale slugs derive from labels (`4_very_relevant`), not from the number, so this is the case
+        # a naive lookup by `str(value)` gets wrong — it would render a bare "4".
+        self.assertEqual(item["values"], ["4 — Very relevant"])
+        self.assertEqual(item["questionId"], "Q49")
+
+    def test_scale_opt_out_renders_as_its_label(self):
+        described = instrument.describe_answers(
+            {"Q66": "not_applicable_because_learners_would_not_pay"}
+        )
+        self.assertEqual(
+            described[0]["items"][0]["values"],
+            ["Not applicable because learners would not pay"],
+        )
+
+    def test_choice_answers_render_labels_and_other_text(self):
+        described = instrument.describe_answers({"Q13": ["other"], "Q13_other": "archiving"})
+        item = described[0]["items"][0]
+        self.assertEqual(item["values"], ["Other"])
+        self.assertEqual(item["otherText"], "archiving")
+
+    def test_free_text_is_returned_whole(self):
+        described = instrument.describe_answers({"Q71": "Marking takes my evenings."})
+        item = described[0]["items"][0]
+        self.assertEqual(item["text"], "Marking takes my evenings.")
+        self.assertEqual(item["values"], [])
+
+    def test_unanswered_questions_are_omitted(self):
+        # A reviewer scanning a partial response wants the answers, not fifty-five blank rows.
+        described = instrument.describe_answers({"Q71": "x"})
+        self.assertEqual(sum(len(s["items"]) for s in described), 1)
+        self.assertEqual([s["number"] for s in described], [11])
+
+    def test_sections_come_back_in_instrument_order(self):
+        described = instrument.describe_answers({"Q71": "x", "Q6": "26_50", "Q49": 3})
+        self.assertEqual([s["number"] for s in described], [1, 8, 11])
+
+    def test_borrowed_option_lists_resolve(self):
+        # Q61 has no options of its own; it reuses Q60's twenty capabilities.
+        described = instrument.describe_answers({"Q61": "quiz_generation"})
+        self.assertEqual(described[0]["items"][0]["values"], ["Quiz generation"])

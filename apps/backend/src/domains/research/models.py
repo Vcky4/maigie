@@ -132,6 +132,13 @@ class AdminSurveyDetail(CamelModel):
     submitted_at: datetime | None = None
     answers: dict[str, Any] = Field(default_factory=dict)
     contact_detail: str | None = None
+    #: The same answers grouped into sections with prompts and option labels.
+    #:
+    #: Served rather than rendered by the admin client, because the question bank lives on the server.
+    #: Shipping a third copy of it into the admin app so it could translate its own slugs would add a
+    #: file that drifts from two others to solve something one response field answers. `answers` stays
+    #: alongside it as the machine-readable form for export.
+    sections: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AdminStatusUpdateRequest(CamelModel):

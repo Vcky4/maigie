@@ -1,5 +1,5 @@
 {
-  "instrumentVersion": 1,
+  "instrumentVersion": 2,
   "source": "Maigie Educator Market Validation Questionnaires.md",
   "concept": "Imagine a platform where you can create a digital space for each course, invite your learners, provide course materials, and give learners access to an AI learning companion that answers questions based specifically on the materials you provide. The same environment could also support course communication, learning activities, and selected insights about patterns across learner interactions.",
   "sections": [
@@ -1865,7 +1865,9 @@
       "answer": {
         "type": "scale",
         "min": 1,
-        "max": 5
+        "max": 5,
+        "naOption": "not_applicable",
+        "naLabel": "Not applicable"
       },
       "options": [
         {
@@ -2968,7 +2970,9 @@
       "answer": {
         "type": "scale",
         "min": 1,
-        "max": 5
+        "max": 5,
+        "naOption": "not_applicable_because_learners_would_not_pay",
+        "naLabel": "Not applicable because learners would not pay"
       },
       "options": [
         {

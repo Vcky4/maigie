@@ -156,6 +156,13 @@ def validate_answer(question_id: str, value: Any) -> Any:
         return seen
 
     if kind == "scale":
+        # Two scales carry a non-numeric escape ("Not applicable"). It is a legitimate answer, not a
+        # refusal to answer: an educator whose learners would never pay cannot honestly place
+        # themselves on a comfort scale, and rejecting the opt-out would push them into inventing a
+        # number. Accepted as the option's own value, so it is distinguishable from both a score and a
+        # skipped question.
+        if answer.get("naOption") and value == answer["naOption"]:
+            return value
         if isinstance(value, bool) or not isinstance(value, int):
             raise AnswerError(question_id, "expected a whole number")
         if not answer["min"] <= value <= answer["max"]:
@@ -225,6 +232,81 @@ def prune_hidden(answers: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                 del kept[key]
                 removed.append(key)
     return kept, removed
+
+
+def describe_answers(answers: dict[str, Any]) -> list[dict[str, Any]]:
+    """Group a response into sections with prompts and option labels, for human review.
+
+    Stored answers are option *slugs* keyed by question id — the right shape for analysis and the
+    wrong one for reading. Rendering happens here rather than in the admin client because the question
+    bank lives here: shipping a third copy of it into the admin app so it could look up its own labels
+    would add a file that can drift from two others, to solve a problem the server can answer in one
+    response.
+
+    Only answered questions appear. A reviewer scanning a partial response wants the twenty things the
+    respondent said, not those twenty buried in fifty-five "not answered" rows.
+    """
+    labels_by_question: dict[str, dict[str, str]] = {}
+    described: list[dict[str, Any]] = []
+
+    for section in load()["sections"]:
+        items: list[dict[str, Any]] = []
+        for question in load()["questions"]:
+            if question["section"] != section["id"]:
+                continue
+            value = answers.get(question["id"])
+            if value is None or (isinstance(value, str | list) and len(value) == 0):
+                continue
+
+            if question["id"] not in labels_by_question:
+                labels_by_question[question["id"]] = {
+                    o["value"]: o["label"] for o in options_for(question)
+                }
+            labels = labels_by_question[question["id"]]
+            kind = question["answer"]["type"]
+
+            if kind == "multi":
+                rendered = [labels.get(v, v) for v in value]
+            elif kind == "single":
+                rendered = [labels.get(value, value)]
+            elif kind == "scale":
+                # The scale's own wording, so a stored `4` reads as "4 — Very relevant" rather than a
+                # bare number a reviewer has to go and look up. Scale option slugs are derived from
+                # their labels (`4_very_relevant`), not from the number, so the lookup is by the label's
+                # leading digit — and an opt-out answer is already a slug and matches directly.
+                if isinstance(value, str):
+                    rendered = [labels.get(value, value)]
+                else:
+                    rendered = [
+                        next(
+                            (label for label in labels.values() if label.startswith(f"{value} ")),
+                            str(value),
+                        )
+                    ]
+            else:
+                rendered = []
+
+            items.append(
+                {
+                    "questionId": question["id"],
+                    "prompt": question["prompt"],
+                    "kind": kind,
+                    "values": rendered,
+                    "text": value if kind in TEXT_LIMITS else None,
+                    "otherText": answers.get(f'{question["id"]}{OTHER_SUFFIX}'),
+                }
+            )
+
+        if items:
+            described.append(
+                {
+                    "id": section["id"],
+                    "number": section["number"],
+                    "title": section["title"],
+                    "items": items,
+                }
+            )
+    return described
 
 
 def missing_required(answers: dict[str, Any]) -> list[str]:
