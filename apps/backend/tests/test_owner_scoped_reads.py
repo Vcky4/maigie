@@ -43,6 +43,12 @@ OWNER_PARAMS = {"user_id", "userId", "owner_id", "current_user", "user"}
 #: that does it. If a caller is added that does not, the entry is wrong and the read becomes a hole — so
 #: read the reason before adding a caller, not after.
 ALLOWED: dict[str, str] = {
+    "domains/feedback/routes.py::get_feedback": (
+        "Staff-only triage endpoint: the dependency is `StaffUser`, so the caller is platform staff "
+        "reviewing submitted feedback, not the learner who filed it — there is no owner to filter to "
+        "and filtering by the staff member's id would be wrong. Feedback is deliberately readable "
+        "across learners by staff; the authorisation is the role gate, not row ownership."
+    ),
     "domains/intelligence/repository.py::find_chat_session": (
         "Two callers, both authorise: `conversation_service.get_conversation` compares "
         "`session.user_id` and raises `NotFoundError`, and the WebSocket handler goes through "

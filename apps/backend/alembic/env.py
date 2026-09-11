@@ -26,6 +26,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import all domain models so Alembic can see them for autogenerate
+import src.domains.careers.db_models  # noqa: E402, F401
+import src.domains.content.db_models  # noqa: E402, F401
+import src.domains.feedback.db_models  # noqa: E402, F401
+import src.domains.finance.db_models  # noqa: E402, F401
 import src.domains.landing_drafts.db_models  # noqa: E402, F401
 import src.domains.notifications.db_models  # noqa: E402, F401
 import src.domains.personal_learning.db_models  # noqa: E402, F401

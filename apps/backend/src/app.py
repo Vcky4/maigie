@@ -365,6 +365,30 @@ def _register_domains(app: FastAPI) -> None:
 
     app.include_router(knowledge_router, prefix=f"{prefix}/knowledge", tags=["knowledge"])
 
+    # --- Feedback (learner submission + staff triage) ---
+    from src.domains.feedback.routes import router as feedback_router
+
+    app.include_router(feedback_router, prefix=f"{prefix}/feedback", tags=["feedback"])
+
+    # --- Careers (public job postings + applications; staff CMS/triage) ---
+    from src.domains.careers.routes import admin_router as careers_admin_router
+    from src.domains.careers.routes import public_router as careers_public_router
+
+    app.include_router(careers_admin_router, prefix=f"{prefix}/admin", tags=["careers"])
+    app.include_router(careers_public_router, prefix=f"{prefix}/careers", tags=["careers"])
+
+    # --- Content (blog CMS; public site reads published posts) ---
+    from src.domains.content.routes import admin_router as content_admin_router
+    from src.domains.content.routes import public_router as content_public_router
+
+    app.include_router(content_admin_router, prefix=f"{prefix}/admin", tags=["content"])
+    app.include_router(content_public_router, prefix=f"{prefix}/blog", tags=["content"])
+
+    # --- Finance (internal income/expense ledger; super admin) ---
+    from src.domains.finance.routes import router as finance_router
+
+    app.include_router(finance_router, prefix=f"{prefix}/admin", tags=["finance"])
+
     # --- Learning Spaces ---
     from src.domains.learning_spaces.routes import router as spaces_router
 
@@ -437,9 +461,16 @@ def _register_domains(app: FastAPI) -> None:
     # paths are unauthenticated and signature-verified rather than user-authenticated.
     app.include_router(webhooks_router, prefix=f"{prefix}/webhooks", tags=["webhooks"])
 
-    # --- Admin (pending SQLAlchemy migration) ---
-    # from src.domains.admin.routes import router as admin_router
-    # app.include_router(admin_router, prefix=f"{prefix}/admin", tags=["admin"])
+    # --- Admin (platform administration; staff-only) ---
+    #
+    # Mounted. The admin frontend (`maigie-client/apps/admin`) has always assumed this router exists;
+    # until now every call it made answered 404. The surface is deliberately narrow at this phase —
+    # health, dashboard, user management, staff roles and the audit-log read — and grows by area per
+    # `docs/ADMIN_DASHBOARD_PLAN.md`. Every mutating endpoint writes an `AuditLog` row (Decision 3),
+    # and the staff/super-admin split it depends on is enforced in `shared.auth.dependencies`.
+    from src.domains.admin.routes import router as admin_router
+
+    app.include_router(admin_router, prefix=f"{prefix}/admin", tags=["admin"])
 
 
 # ---------------------------------------------------------------------------

@@ -177,13 +177,22 @@ OptionalCurrentUser = Annotated[User | None, Depends(get_current_user_optional)]
 
 
 def _get_staff_role(user: User) -> str:
-    """Normalize the admin staff role from a User record."""
+    """Normalize the admin staff role from a User record.
+
+    A null ``adminStaffRole`` defaults to ``CONTENT_MANAGER`` — the *limited* staff role — not
+    ``SUPER_ADMIN``. The previous default granted every ``ADMIN`` full super-admin power whenever the
+    column was unset, so the two-tier split the admin dashboard is built around (`lib/adminRole.ts`,
+    `SuperAdminRoute`, `superOnly` nav) could never actually restrict a content manager: the backend
+    waved everyone through. Least privilege means the elevated role is only ever granted explicitly.
+
+    Reconcile existing rows before relying on this: any admin who should be super must have
+    ``adminStaffRole = 'SUPER_ADMIN'`` set, or they will drop to content-manager access. See
+    `docs/ADMIN_DASHBOARD_PLAN.md` Decision 4 and Open Question 4.
+    """
     raw = user.admin_staff_role
     if raw is not None:
         return str(raw)
-    if user.role == "ADMIN":
-        return "SUPER_ADMIN"
-    return "SUPER_ADMIN"
+    return "CONTENT_MANAGER"
 
 
 _STAFF_ROLES = frozenset({"SUPER_ADMIN", "CONTENT_MANAGER"})
