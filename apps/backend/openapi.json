@@ -257,6 +257,307 @@
         "title": "ActivityTypeCount",
         "type": "object"
       },
+      "AdminAnalyticsResponse": {
+        "description": "Platform analytics landing payload.",
+        "properties": {
+          "platformStats": {
+            "$ref": "#/components/schemas/PlatformStatistics"
+          },
+          "recentCourses": {
+            "items": {
+              "$ref": "#/components/schemas/CourseAnalyticsItem"
+            },
+            "title": "Recentcourses",
+            "type": "array"
+          },
+          "topCourses": {
+            "items": {
+              "$ref": "#/components/schemas/CourseAnalyticsItem"
+            },
+            "title": "Topcourses",
+            "type": "array"
+          },
+          "topUsers": {
+            "items": {
+              "$ref": "#/components/schemas/UserAnalyticsItem"
+            },
+            "title": "Topusers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "platformStats",
+          "topUsers",
+          "topCourses",
+          "recentCourses"
+        ],
+        "title": "AdminAnalyticsResponse",
+        "type": "object"
+      },
+      "AdminEntitlementView": {
+        "description": "A learner's personal entitlement as staff see it — the successor to the credits panel.\n\nEvery field is read from the one authority (`entitlement_service.resolve`) plus the billing\ndomain's own voice and points services, so the tool cannot disagree with what the learner is\nserved (Decision 2, honesty invariant). Usage is shown as raw window figures here because this is\nan operational view, not the learner's percentage-and-reset-time surface.",
+        "properties": {
+          "activePassId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activepassid"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "isTrial": {
+            "default": false,
+            "title": "Istrial",
+            "type": "boolean"
+          },
+          "monthlyBackstop": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthlybackstop"
+          },
+          "monthlyUnitsUsed": {
+            "title": "Monthlyunitsused",
+            "type": "integer"
+          },
+          "passes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AdminPassView"
+            },
+            "title": "Passes",
+            "type": "array"
+          },
+          "pointsBalance": {
+            "title": "Pointsbalance",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "subscriptionTier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subscriptiontier"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          },
+          "trialDaysRemaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trialdaysremaining"
+          },
+          "voiceAvailable": {
+            "title": "Voiceavailable",
+            "type": "boolean"
+          },
+          "voiceMinutesIncluded": {
+            "title": "Voiceminutesincluded",
+            "type": "integer"
+          },
+          "voiceSecondsPurchased": {
+            "title": "Voicesecondspurchased",
+            "type": "integer"
+          },
+          "voiceSecondsRemaining": {
+            "title": "Voicesecondsremaining",
+            "type": "integer"
+          },
+          "windowAllowance": {
+            "title": "Windowallowance",
+            "type": "integer"
+          },
+          "windowStartedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Windowstartedat"
+          },
+          "windowUnitsUsed": {
+            "title": "Windowunitsused",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tier",
+          "source",
+          "windowAllowance",
+          "windowUnitsUsed",
+          "monthlyUnitsUsed",
+          "voiceAvailable",
+          "voiceSecondsRemaining",
+          "voiceSecondsPurchased",
+          "voiceMinutesIncluded",
+          "pointsBalance"
+        ],
+        "title": "AdminEntitlementView",
+        "type": "object"
+      },
+      "AdminPassView": {
+        "description": "One Plus pass held by the learner, in whatever state.",
+        "properties": {
+          "activatedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activatedat"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "durationMinutes": {
+            "title": "Durationminutes",
+            "type": "integer"
+          },
+          "endedReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endedreason"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "productId": {
+            "title": "Productid",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "unitsAllowance": {
+            "title": "Unitsallowance",
+            "type": "integer"
+          },
+          "unitsUsed": {
+            "title": "Unitsused",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "productId",
+          "status",
+          "unitsAllowance",
+          "unitsUsed",
+          "durationMinutes",
+          "source",
+          "createdAt"
+        ],
+        "title": "AdminPassView",
+        "type": "object"
+      },
+      "AdminStatsResponse": {
+        "description": "Platform-level statistics.",
+        "properties": {
+          "activeUsers": {
+            "title": "Activeusers",
+            "type": "integer"
+          },
+          "premiumUsers": {
+            "title": "Premiumusers",
+            "type": "integer"
+          },
+          "totalCourses": {
+            "title": "Totalcourses",
+            "type": "integer"
+          },
+          "totalMessages": {
+            "title": "Totalmessages",
+            "type": "integer"
+          },
+          "totalSpaces": {
+            "title": "Totalspaces",
+            "type": "integer"
+          },
+          "totalUsers": {
+            "title": "Totalusers",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "totalUsers",
+          "activeUsers",
+          "premiumUsers",
+          "totalCourses",
+          "totalSpaces",
+          "totalMessages"
+        ],
+        "title": "AdminStatsResponse",
+        "type": "object"
+      },
       "AdminStatusUpdateRequest": {
         "properties": {
           "adminStatus": {
@@ -679,6 +980,232 @@
         "title": "AgendaResponse",
         "type": "object"
       },
+      "AiActionLogItem": {
+        "properties": {
+          "actionData": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actiondata"
+          },
+          "actionType": {
+            "title": "Actiontype",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "messageId": {
+            "title": "Messageid",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "messageId",
+          "actionType",
+          "status",
+          "createdAt"
+        ],
+        "title": "AiActionLogItem",
+        "type": "object"
+      },
+      "AiActionLogListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AiActionLogItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "totalPages": {
+            "title": "Totalpages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "totalPages"
+        ],
+        "title": "AiActionLogListResponse",
+        "type": "object"
+      },
+      "AiAgentTaskItem": {
+        "properties": {
+          "actionData": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actiondata"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "dismissedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dismissedat"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "integer"
+          },
+          "scheduledAt": {
+            "format": "date-time",
+            "title": "Scheduledat",
+            "type": "string"
+          },
+          "sentAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sentat"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "taskType": {
+            "title": "Tasktype",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "taskType",
+          "status",
+          "priority",
+          "title",
+          "message",
+          "scheduledAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "AiAgentTaskItem",
+        "type": "object"
+      },
+      "AiAgentTaskListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AiAgentTaskItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "totalPages": {
+            "title": "Totalpages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "totalPages"
+        ],
+        "title": "AiAgentTaskListResponse",
+        "type": "object"
+      },
       "AnswerResultResponse": {
         "description": "Result for the one question just submitted, including its key.\n\nThis is the only place an answer key is disclosed before the session\ncompletes, and only for a question the learner has now answered.",
         "properties": {
@@ -1038,6 +1565,182 @@
         "title": "AskSkillBadge",
         "type": "object"
       },
+      "AtRiskUser": {
+        "description": "A learner who has been inactive, described plainly — not judged (`ch16`, `ch14-behaviour`).",
+        "properties": {
+          "currentStreak": {
+            "title": "Currentstreak",
+            "type": "integer"
+          },
+          "daysInactive": {
+            "title": "Daysinactive",
+            "type": "integer"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "lastActivity": {
+            "title": "Lastactivity",
+            "type": "string"
+          },
+          "longestStreak": {
+            "title": "Longeststreak",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "riskLevel": {
+            "title": "Risklevel",
+            "type": "string"
+          },
+          "signupDate": {
+            "title": "Signupdate",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "email",
+          "tier",
+          "daysInactive",
+          "currentStreak",
+          "longestStreak",
+          "lastActivity",
+          "signupDate",
+          "riskLevel"
+        ],
+        "title": "AtRiskUser",
+        "type": "object"
+      },
+      "AuditLogEntry": {
+        "description": "One recorded privileged action, joined to the administrator who performed it.\n\n``adminEmail``/``adminName`` are joined from ``User`` so the log reads without a second lookup per\nrow. Matches the ``AuditLog`` shape the admin client expects (`admin.types.ts`).",
+        "properties": {
+          "actionType": {
+            "title": "Actiontype",
+            "type": "string"
+          },
+          "adminEmail": {
+            "title": "Adminemail",
+            "type": "string"
+          },
+          "adminName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adminname"
+          },
+          "adminUserId": {
+            "title": "Adminuserid",
+            "type": "string"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "resourceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resourceid"
+          },
+          "resourceType": {
+            "title": "Resourcetype",
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "timestamp",
+          "adminUserId",
+          "adminEmail",
+          "actionType",
+          "resourceType"
+        ],
+        "title": "AuditLogEntry",
+        "type": "object"
+      },
+      "AuditLogListResponse": {
+        "description": "Paginated audit log, newest first.",
+        "properties": {
+          "logs": {
+            "items": {
+              "$ref": "#/components/schemas/AuditLogEntry"
+            },
+            "title": "Logs",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "totalPages": {
+            "title": "Totalpages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "logs",
+          "total",
+          "page",
+          "pageSize",
+          "totalPages"
+        ],
+        "title": "AuditLogListResponse",
+        "type": "object"
+      },
       "BehaviourProfileResponse": {
         "properties": {
           "avgSessionMinutes": {
@@ -1099,6 +1802,378 @@
           }
         },
         "title": "BehaviourProfileResponse",
+        "type": "object"
+      },
+      "BlogPostCreateRequest": {
+        "properties": {
+          "authorName": {
+            "title": "Authorname",
+            "type": "string"
+          },
+          "authorRole": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorrole"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "coverImage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverimage"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "featured": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Featured"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published"
+          },
+          "publishedAt": {
+            "format": "date-time",
+            "title": "Publishedat",
+            "type": "string"
+          },
+          "readTime": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readtime"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "description",
+          "content",
+          "authorName",
+          "publishedAt",
+          "category"
+        ],
+        "title": "BlogPostCreateRequest",
+        "type": "object"
+      },
+      "BlogPostResponse": {
+        "properties": {
+          "authorName": {
+            "title": "Authorname",
+            "type": "string"
+          },
+          "authorRole": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorrole"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "coverImage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverimage"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "featured": {
+            "title": "Featured",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "published": {
+            "title": "Published",
+            "type": "boolean"
+          },
+          "publishedAt": {
+            "format": "date-time",
+            "title": "Publishedat",
+            "type": "string"
+          },
+          "readTime": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readtime"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "description",
+          "content",
+          "authorName",
+          "publishedAt",
+          "category",
+          "featured",
+          "published",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "BlogPostResponse",
+        "type": "object"
+      },
+      "BlogPostUpdateRequest": {
+        "properties": {
+          "authorName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorname"
+          },
+          "authorRole": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorrole"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "coverImage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverimage"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "featured": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Featured"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published"
+          },
+          "publishedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publishedat"
+          },
+          "readTime": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readtime"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "BlogPostUpdateRequest",
         "type": "object"
       },
       "Body_add_course_material_api_v1_knowledge_courses__course_id__materials_post": {
@@ -1379,6 +2454,207 @@
           "current_period_end"
         ],
         "title": "CancelSubscriptionResponse",
+        "type": "object"
+      },
+      "CareerApplicationCreateRequest": {
+        "description": "Public application submission.",
+        "properties": {
+          "coverLetter": {
+            "title": "Coverletter",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "firstName": {
+            "title": "Firstname",
+            "type": "string"
+          },
+          "jobId": {
+            "title": "Jobid",
+            "type": "string"
+          },
+          "lastName": {
+            "title": "Lastname",
+            "type": "string"
+          },
+          "linkedinUrl": {
+            "title": "Linkedinurl",
+            "type": "string"
+          },
+          "portfolioUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portfoliourl"
+          }
+        },
+        "required": [
+          "jobId",
+          "firstName",
+          "lastName",
+          "email",
+          "linkedinUrl",
+          "coverLetter"
+        ],
+        "title": "CareerApplicationCreateRequest",
+        "type": "object"
+      },
+      "CareerApplicationListResponse": {
+        "properties": {
+          "applications": {
+            "items": {
+              "$ref": "#/components/schemas/CareerApplicationResponse"
+            },
+            "title": "Applications",
+            "type": "array"
+          },
+          "hasMore": {
+            "title": "Hasmore",
+            "type": "boolean"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "applications",
+          "total",
+          "page",
+          "pageSize",
+          "hasMore"
+        ],
+        "title": "CareerApplicationListResponse",
+        "type": "object"
+      },
+      "CareerApplicationResponse": {
+        "properties": {
+          "adminNotes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adminnotes"
+          },
+          "coverLetter": {
+            "title": "Coverletter",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "firstName": {
+            "title": "Firstname",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "jobId": {
+            "title": "Jobid",
+            "type": "string"
+          },
+          "jobTitle": {
+            "title": "Jobtitle",
+            "type": "string"
+          },
+          "lastName": {
+            "title": "Lastname",
+            "type": "string"
+          },
+          "linkedinUrl": {
+            "title": "Linkedinurl",
+            "type": "string"
+          },
+          "portfolioUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portfoliourl"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "jobId",
+          "jobTitle",
+          "firstName",
+          "lastName",
+          "email",
+          "linkedinUrl",
+          "coverLetter",
+          "status",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "CareerApplicationResponse",
+        "type": "object"
+      },
+      "CareerApplicationUpdateRequest": {
+        "properties": {
+          "adminNotes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adminnotes"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "CareerApplicationUpdateRequest",
         "type": "object"
       },
       "ChangePasswordRequest": {
@@ -2020,6 +3296,267 @@
         "title": "CollectionUpdate",
         "type": "object"
       },
+      "ContentCalendarEntryCreateRequest": {
+        "properties": {
+          "autoPublish": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Autopublish"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "keywords": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Keywords",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "scheduledDate": {
+            "format": "date-time",
+            "title": "Scheduleddate",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "scheduledDate"
+        ],
+        "title": "ContentCalendarEntryCreateRequest",
+        "type": "object"
+      },
+      "ContentCalendarEntryResponse": {
+        "properties": {
+          "autoPublish": {
+            "title": "Autopublish",
+            "type": "boolean"
+          },
+          "blogPostId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blogpostid"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "coverImageUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverimageurl"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "errorMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errormessage"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "keywords": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Keywords",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "scheduledDate": {
+            "format": "date-time",
+            "title": "Scheduleddate",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topic",
+          "category",
+          "scheduledDate",
+          "status",
+          "autoPublish",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "ContentCalendarEntryResponse",
+        "type": "object"
+      },
+      "ContentCalendarEntryUpdateRequest": {
+        "properties": {
+          "autoPublish": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Autopublish"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "coverImageUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverimageurl"
+          },
+          "keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keywords"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "scheduledDate": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduleddate"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          }
+        },
+        "title": "ContentCalendarEntryUpdateRequest",
+        "type": "object"
+      },
       "ConversationCreate": {
         "description": "Start a new conversation.",
         "properties": {
@@ -2366,6 +3903,92 @@
           "completedAt"
         ],
         "title": "CourseActivityEntry",
+        "type": "object"
+      },
+      "CourseAnalyticsItem": {
+        "description": "One course with its module/topic completion, attributed to its owner.",
+        "properties": {
+          "completedModules": {
+            "title": "Completedmodules",
+            "type": "integer"
+          },
+          "completedTopics": {
+            "title": "Completedtopics",
+            "type": "integer"
+          },
+          "courseId": {
+            "title": "Courseid",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "difficulty": {
+            "title": "Difficulty",
+            "type": "string"
+          },
+          "isAIGenerated": {
+            "title": "Isaigenerated",
+            "type": "boolean"
+          },
+          "isArchived": {
+            "title": "Isarchived",
+            "type": "boolean"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "number"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "totalModules": {
+            "title": "Totalmodules",
+            "type": "integer"
+          },
+          "totalTopics": {
+            "title": "Totaltopics",
+            "type": "integer"
+          },
+          "userEmail": {
+            "title": "Useremail",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          },
+          "userName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "courseId",
+          "title",
+          "userId",
+          "userEmail",
+          "progress",
+          "totalTopics",
+          "completedTopics",
+          "totalModules",
+          "completedModules",
+          "difficulty",
+          "isAIGenerated",
+          "isArchived",
+          "createdAt"
+        ],
+        "title": "CourseAnalyticsItem",
         "type": "object"
       },
       "CourseCreate": {
@@ -3395,6 +5018,55 @@
           "hasMore"
         ],
         "title": "CursorPage[ChatMessageResponse]",
+        "type": "object"
+      },
+      "DailyCount": {
+        "description": "A single day's count in a time series.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "count"
+        ],
+        "title": "DailyCount",
+        "type": "object"
+      },
+      "DashboardChartsResponse": {
+        "description": "Signups and messages per day over a window.",
+        "properties": {
+          "dailyMessages": {
+            "items": {
+              "$ref": "#/components/schemas/DailyCount"
+            },
+            "title": "Dailymessages",
+            "type": "array"
+          },
+          "dailySignups": {
+            "items": {
+              "$ref": "#/components/schemas/DailyCount"
+            },
+            "title": "Dailysignups",
+            "type": "array"
+          },
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "days",
+          "dailySignups",
+          "dailyMessages"
+        ],
+        "title": "DashboardChartsResponse",
         "type": "object"
       },
       "DeckCreate": {
@@ -4921,6 +6593,218 @@
         "title": "ExamDetailsRequest",
         "type": "object"
       },
+      "FeedbackCreateRequest": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "pageUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pageurl"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "description"
+        ],
+        "title": "FeedbackCreateRequest",
+        "type": "object"
+      },
+      "FeedbackListResponse": {
+        "properties": {
+          "feedback": {
+            "items": {
+              "$ref": "#/components/schemas/FeedbackResponse"
+            },
+            "title": "Feedback",
+            "type": "array"
+          },
+          "hasMore": {
+            "title": "Hasmore",
+            "type": "boolean"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "feedback",
+          "total",
+          "page",
+          "pageSize",
+          "hasMore"
+        ],
+        "title": "FeedbackListResponse",
+        "type": "object"
+      },
+      "FeedbackResponse": {
+        "properties": {
+          "adminNotes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adminnotes"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "pageUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pageurl"
+          },
+          "resolvedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolvedat"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "userId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Userid"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "title",
+          "description",
+          "status",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "FeedbackResponse",
+        "type": "object"
+      },
+      "FeedbackUpdateRequest": {
+        "properties": {
+          "adminNotes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adminnotes"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "FeedbackUpdateRequest",
+        "type": "object"
+      },
       "FlashcardActivityEntry": {
         "description": "Something the learner did to one deck on one local day.\n\nThree kinds, because the feed shows three kinds of progress and a feed that only\never reported reviews would go silent for a learner who spent the week writing\ncards:\n\n- ``reviewed`` — cards graded. ``recallPercent`` and ``lapseCount`` apply.\n- ``graduated`` — cards that crossed into maturity, detected as a transition\n  between consecutive reviews rather than read from a stored flag.\n- ``created`` — cards added, from ``Flashcard.createdAt``.\n\nDerived at read time, not persisted. A \"session\" has no start or end the server\nobserved, so inventing a session entity would claim more than is known; grouping\nevents by deck and calendar day claims exactly what the rows say. ``kind`` is\ncarried so the client can label an entry without inferring it from which fields\nhappen to be null.",
         "properties": {
@@ -5697,6 +7581,56 @@
           "email"
         ],
         "title": "ForgotPasswordRequest",
+        "type": "object"
+      },
+      "FxPreviewResponse": {
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "string"
+          },
+          "amountGbp": {
+            "title": "Amountgbp",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "fxAsOfDate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fxasofdate"
+          },
+          "fxSource": {
+            "title": "Fxsource",
+            "type": "string"
+          },
+          "gbpPerUnit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gbpperunit"
+          }
+        },
+        "required": [
+          "amount",
+          "currency",
+          "amountGbp",
+          "fxSource"
+        ],
+        "title": "FxPreviewResponse",
         "type": "object"
       },
       "GeneratedOutlineModule": {
@@ -7217,6 +9151,31 @@
         "title": "GooglePlayVerifyResponse",
         "type": "object"
       },
+      "GrantPassRequest": {
+        "description": "Grant a complimentary (inventory) pass to a learner.\n\nGrants into inventory only — it does not activate. The learner starts the clock when they choose\nto, exactly as a purchased pass behaves (`pass_service`). ``reason`` is recorded in the audit trail.",
+        "properties": {
+          "productId": {
+            "title": "Productid",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "productId"
+        ],
+        "title": "GrantPassRequest",
+        "type": "object"
+      },
       "GrowthDelta": {
         "description": "Change across the range for one series: first captured value against last.\n\n`None` when fewer than two days were captured. One point is not a trend, and reporting `0`\nchange from a single observation would claim a flat line that was never measured.",
         "properties": {
@@ -7741,6 +9700,43 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HealthCheckResponse": {
+        "description": "Detailed health check for admin.",
+        "properties": {
+          "cache": {
+            "additionalProperties": true,
+            "title": "Cache",
+            "type": "object"
+          },
+          "database": {
+            "additionalProperties": true,
+            "title": "Database",
+            "type": "object"
+          },
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          },
+          "workers": {
+            "additionalProperties": true,
+            "title": "Workers",
+            "type": "object"
+          }
+        },
+        "required": [
+          "database",
+          "cache",
+          "workers",
+          "version",
+          "environment"
+        ],
+        "title": "HealthCheckResponse",
+        "type": "object"
+      },
       "HomeResponse": {
         "properties": {
           "dueReviews": {
@@ -7893,6 +9889,405 @@
           "isOnboarding"
         ],
         "title": "HomeResponse",
+        "type": "object"
+      },
+      "JobPostingCreateRequest": {
+        "properties": {
+          "compensation": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Compensation",
+            "type": "array"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published"
+          },
+          "requirementsMustHave": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Requirementsmusthave",
+            "type": "array"
+          },
+          "requirementsNiceToHave": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Requirementsnicetohave",
+            "type": "array"
+          },
+          "responsibilities": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Responsibilities",
+            "type": "array"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "sortOrder": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sortorder"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "successMetrics": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Successmetrics",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "whyRoleMatters": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Whyrolematters",
+            "type": "array"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "location",
+          "type",
+          "stage",
+          "description"
+        ],
+        "title": "JobPostingCreateRequest",
+        "type": "object"
+      },
+      "JobPostingResponse": {
+        "properties": {
+          "compensation": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Compensation",
+            "type": "array"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "published": {
+            "title": "Published",
+            "type": "boolean"
+          },
+          "requirementsMustHave": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Requirementsmusthave",
+            "type": "array"
+          },
+          "requirementsNiceToHave": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Requirementsnicetohave",
+            "type": "array"
+          },
+          "responsibilities": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Responsibilities",
+            "type": "array"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "sortOrder": {
+            "title": "Sortorder",
+            "type": "integer"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "successMetrics": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Successmetrics",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "whyRoleMatters": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Whyrolematters",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "location",
+          "type",
+          "stage",
+          "description",
+          "published",
+          "sortOrder",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "JobPostingResponse",
+        "type": "object"
+      },
+      "JobPostingUpdateRequest": {
+        "properties": {
+          "compensation": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compensation"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published"
+          },
+          "requirementsMustHave": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirementsmusthave"
+          },
+          "requirementsNiceToHave": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirementsnicetohave"
+          },
+          "responsibilities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Responsibilities"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
+          "sortOrder": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sortorder"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "successMetrics": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Successmetrics"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "whyRoleMatters": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Whyrolematters"
+          }
+        },
+        "title": "JobPostingUpdateRequest",
         "type": "object"
       },
       "KnowledgeCheck": {
@@ -8713,6 +11108,327 @@
           "updatedAt"
         ],
         "title": "LearningProfileResponse",
+        "type": "object"
+      },
+      "LedgerLineCreateRequest": {
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Amount"
+          },
+          "amountGbp": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amountgbp"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "title": "Occurredat",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "title",
+          "amount",
+          "currency",
+          "occurredAt"
+        ],
+        "title": "LedgerLineCreateRequest",
+        "type": "object"
+      },
+      "LedgerLineListResponse": {
+        "properties": {
+          "avgMonthlyExpenseGbp": {
+            "title": "Avgmonthlyexpensegbp",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerLineResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "netGbp": {
+            "title": "Netgbp",
+            "type": "string"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "sumExpenseGbp": {
+            "title": "Sumexpensegbp",
+            "type": "string"
+          },
+          "sumIncomeGbp": {
+            "title": "Sumincomegbp",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "totalPages": {
+            "title": "Totalpages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "totalPages",
+          "sumIncomeGbp",
+          "sumExpenseGbp",
+          "netGbp",
+          "avgMonthlyExpenseGbp"
+        ],
+        "title": "LedgerLineListResponse",
+        "type": "object"
+      },
+      "LedgerLineResponse": {
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "string"
+          },
+          "amountGbp": {
+            "title": "Amountgbp",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "createdById": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdbyid"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "fxAsOfDate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fxasofdate"
+          },
+          "fxSource": {
+            "title": "Fxsource",
+            "type": "string"
+          },
+          "gbpPerUnit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gbpperunit"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "title": "Occurredat",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "amount",
+          "currency",
+          "amountGbp",
+          "fxSource",
+          "occurredAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "LedgerLineResponse",
+        "type": "object"
+      },
+      "LedgerLineUpdateRequest": {
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "amountGbp": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amountgbp"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "occurredAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurredat"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "LedgerLineUpdateRequest",
         "type": "object"
       },
       "LinkReferralRequest": {
@@ -11439,6 +14155,101 @@
           "phases"
         ],
         "title": "PlanShapeResponse",
+        "type": "object"
+      },
+      "PlatformStatistics": {
+        "description": "Platform-wide counts. Every field traces to a COUNT/SUM/AVG over real rows.",
+        "properties": {
+          "activeCourses": {
+            "title": "Activecourses",
+            "type": "integer"
+          },
+          "activeUsers": {
+            "title": "Activeusers",
+            "type": "integer"
+          },
+          "aiGeneratedCourses": {
+            "title": "Aigeneratedcourses",
+            "type": "integer"
+          },
+          "archivedCourses": {
+            "title": "Archivedcourses",
+            "type": "integer"
+          },
+          "averageCourseProgress": {
+            "title": "Averagecourseprogress",
+            "type": "number"
+          },
+          "averageUserProgress": {
+            "title": "Averageuserprogress",
+            "type": "number"
+          },
+          "completedEstimatedHours": {
+            "title": "Completedestimatedhours",
+            "type": "number"
+          },
+          "completedTopics": {
+            "title": "Completedtopics",
+            "type": "integer"
+          },
+          "coursesByDifficulty": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Coursesbydifficulty",
+            "type": "object"
+          },
+          "manualCourses": {
+            "title": "Manualcourses",
+            "type": "integer"
+          },
+          "totalCourses": {
+            "title": "Totalcourses",
+            "type": "integer"
+          },
+          "totalEstimatedHours": {
+            "title": "Totalestimatedhours",
+            "type": "number"
+          },
+          "totalModules": {
+            "title": "Totalmodules",
+            "type": "integer"
+          },
+          "totalTopics": {
+            "title": "Totaltopics",
+            "type": "integer"
+          },
+          "totalUsers": {
+            "title": "Totalusers",
+            "type": "integer"
+          },
+          "usersByTier": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Usersbytier",
+            "type": "object"
+          }
+        },
+        "required": [
+          "totalUsers",
+          "activeUsers",
+          "totalCourses",
+          "activeCourses",
+          "archivedCourses",
+          "totalModules",
+          "totalTopics",
+          "completedTopics",
+          "totalEstimatedHours",
+          "completedEstimatedHours",
+          "averageCourseProgress",
+          "averageUserProgress",
+          "usersByTier",
+          "coursesByDifficulty",
+          "aiGeneratedCourses",
+          "manualCourses"
+        ],
+        "title": "PlatformStatistics",
         "type": "object"
       },
       "PlusPassItem": {
@@ -17131,6 +19942,29 @@
         "title": "ReviewScheduleResponse",
         "type": "object"
       },
+      "RiskCounts": {
+        "properties": {
+          "high": {
+            "title": "High",
+            "type": "integer"
+          },
+          "low": {
+            "title": "Low",
+            "type": "integer"
+          },
+          "medium": {
+            "title": "Medium",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "high",
+          "medium",
+          "low"
+        ],
+        "title": "RiskCounts",
+        "type": "object"
+      },
       "SavedResourceCreate": {
         "properties": {
           "sourceId": {
@@ -17663,6 +20497,25 @@
           "updatedAt"
         ],
         "title": "SpaceResponse",
+        "type": "object"
+      },
+      "StaffRoleUpdateRequest": {
+        "description": "Update a user's staff role.",
+        "properties": {
+          "staffRole": {
+            "title": "Staffrole",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "staffRole"
+        ],
+        "title": "StaffRoleUpdateRequest",
         "type": "object"
       },
       "StartConversationRequest": {
@@ -21764,6 +24617,387 @@
         "title": "UsageResponse",
         "type": "object"
       },
+      "UserAdminCreateRequest": {
+        "description": "Create a user from the admin tool.",
+        "properties": {
+          "adminStaffRole": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adminstaffrole"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "isActive": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isactive"
+          },
+          "isOnboarded": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isonboarded"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "UserAdminCreateRequest",
+        "type": "object"
+      },
+      "UserAdminListResponse": {
+        "description": "Paginated user list.",
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "totalPages": {
+            "title": "Totalpages",
+            "type": "integer"
+          },
+          "users": {
+            "items": {
+              "$ref": "#/components/schemas/UserAdminResponse"
+            },
+            "title": "Users",
+            "type": "array"
+          }
+        },
+        "required": [
+          "users",
+          "total",
+          "page",
+          "pageSize",
+          "totalPages"
+        ],
+        "title": "UserAdminListResponse",
+        "type": "object"
+      },
+      "UserAdminResponse": {
+        "description": "A user as the admin dashboard sees them.\n\nDeliberately omits the retired credit columns (`creditsUsed`, `creditsHardCap`, …). They are\noptional in the client type and no longer exist on ``User`` — the commercial model replaced credit\ncaps with a usage window and passes (`MAIGIE_PLUS_COMMERCIAL_PLAN.md`), and the entitlement view is\nwhere that state now lives. See Decision 5.",
+        "properties": {
+          "adminStaffRole": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adminstaffrole"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isActive": {
+            "title": "Isactive",
+            "type": "boolean"
+          },
+          "isOnboarded": {
+            "default": false,
+            "title": "Isonboarded",
+            "type": "boolean"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "tier",
+          "role",
+          "isActive",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "UserAdminResponse",
+        "type": "object"
+      },
+      "UserAdminUpdateRequest": {
+        "description": "Update a user's editable fields.",
+        "properties": {
+          "adminStaffRole": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adminstaffrole"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "isActive": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isactive"
+          },
+          "isOnboarded": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isonboarded"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          }
+        },
+        "title": "UserAdminUpdateRequest",
+        "type": "object"
+      },
+      "UserAnalyticsItem": {
+        "description": "A learner's course rollup. Understanding, not a verdict (`ch16`, `ch14-behaviour`).",
+        "properties": {
+          "activeCourses": {
+            "title": "Activecourses",
+            "type": "integer"
+          },
+          "completedCourses": {
+            "title": "Completedcourses",
+            "type": "integer"
+          },
+          "completedTopics": {
+            "title": "Completedtopics",
+            "type": "integer"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "overallProgress": {
+            "title": "Overallprogress",
+            "type": "number"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          },
+          "totalCourses": {
+            "title": "Totalcourses",
+            "type": "integer"
+          },
+          "totalTopics": {
+            "title": "Totaltopics",
+            "type": "integer"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "email",
+          "tier",
+          "totalCourses",
+          "activeCourses",
+          "completedCourses",
+          "totalTopics",
+          "completedTopics",
+          "overallProgress",
+          "createdAt"
+        ],
+        "title": "UserAnalyticsItem",
+        "type": "object"
+      },
+      "UserDetailAnalyticsResponse": {
+        "description": "Per-user analytics for the user-detail page.",
+        "properties": {
+          "courses": {
+            "items": {
+              "$ref": "#/components/schemas/CourseAnalyticsItem"
+            },
+            "title": "Courses",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/UserProgressSummary"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserAnalyticsItem"
+          }
+        },
+        "required": [
+          "user",
+          "courses",
+          "summary"
+        ],
+        "title": "UserDetailAnalyticsResponse",
+        "type": "object"
+      },
       "UserFactResponse": {
         "description": "A learned fact about the user.\n\nBuilt by `memory_service.get_user_facts`, which maps the `UserFact` row's `content` onto `fact`\nand its `confidence` onto `importance`. The names differ from the column names deliberately and\nthe mapping is the service's job, not this model's.",
         "properties": {
@@ -21837,6 +25071,80 @@
           }
         },
         "title": "UserPreferencesResponse",
+        "type": "object"
+      },
+      "UserProgressSummary": {
+        "description": "One learner's aggregate progress across their courses.",
+        "properties": {
+          "activeCourses": {
+            "title": "Activecourses",
+            "type": "integer"
+          },
+          "archivedCourses": {
+            "title": "Archivedcourses",
+            "type": "integer"
+          },
+          "averageCourseProgress": {
+            "title": "Averagecourseprogress",
+            "type": "number"
+          },
+          "completedCourses": {
+            "title": "Completedcourses",
+            "type": "integer"
+          },
+          "completedEstimatedHours": {
+            "title": "Completedestimatedhours",
+            "type": "number"
+          },
+          "completedModules": {
+            "title": "Completedmodules",
+            "type": "integer"
+          },
+          "completedTopics": {
+            "title": "Completedtopics",
+            "type": "integer"
+          },
+          "overallProgress": {
+            "title": "Overallprogress",
+            "type": "number"
+          },
+          "totalCourses": {
+            "title": "Totalcourses",
+            "type": "integer"
+          },
+          "totalEstimatedHours": {
+            "title": "Totalestimatedhours",
+            "type": "number"
+          },
+          "totalModules": {
+            "title": "Totalmodules",
+            "type": "integer"
+          },
+          "totalTopics": {
+            "title": "Totaltopics",
+            "type": "integer"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "totalCourses",
+          "activeCourses",
+          "completedCourses",
+          "archivedCourses",
+          "totalModules",
+          "completedModules",
+          "totalTopics",
+          "completedTopics",
+          "overallProgress",
+          "totalEstimatedHours",
+          "completedEstimatedHours",
+          "averageCourseProgress"
+        ],
+        "title": "UserProgressSummary",
         "type": "object"
       },
       "UserResponse": {
@@ -21955,6 +25263,32 @@
         "title": "UserResponse",
         "type": "object"
       },
+      "UsersAtRiskResponse": {
+        "description": "Inactive learners, most-inactive first. A read; sending anything is a separate, gated action.",
+        "properties": {
+          "riskCounts": {
+            "$ref": "#/components/schemas/RiskCounts"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "users": {
+            "items": {
+              "$ref": "#/components/schemas/AtRiskUser"
+            },
+            "title": "Users",
+            "type": "array"
+          }
+        },
+        "required": [
+          "users",
+          "total",
+          "riskCounts"
+        ],
+        "title": "UsersAtRiskResponse",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -22060,6 +25394,87 @@
           "hasPurchasedMinutes"
         ],
         "title": "VoiceBalanceResponse",
+        "type": "object"
+      },
+      "WakeBulkResponse": {
+        "properties": {
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "sent": {
+            "title": "Sent",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "sent",
+          "failed"
+        ],
+        "title": "WakeBulkResponse",
+        "type": "object"
+      },
+      "WakeRequest": {
+        "description": "Ask to send one learner a gentle return nudge.\n\n``customMessage`` overrides only the body copy; if omitted the guilt-free default is used.\n``regenerateSchedule`` is accepted for client compatibility but not acted on here — schedule\nregeneration is a personal-learning concern, deferred (see `docs/ADMIN_DASHBOARD_PLAN.md`).",
+        "properties": {
+          "customMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custommessage"
+          },
+          "regenerateSchedule": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regenerateschedule"
+          }
+        },
+        "title": "WakeRequest",
+        "type": "object"
+      },
+      "WakeResponse": {
+        "properties": {
+          "notificationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notificationid"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "userId"
+        ],
+        "title": "WakeResponse",
         "type": "object"
       },
       "WebPushCapability": {
@@ -22219,6 +25634,1405 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/admin/ai-action-logs": {
+      "get": {
+        "description": "List AI action-log entries, newest first (staff only).",
+        "operationId": "list_ai_action_logs_api_v1_admin_ai_action_logs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actionType",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Actiontype"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiActionLogListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Ai Action Logs",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/ai-agent-tasks": {
+      "get": {
+        "description": "List AI agent tasks, newest first (staff only).",
+        "operationId": "list_ai_agent_tasks_api_v1_admin_ai_agent_tasks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "taskType",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tasktype"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "userId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Userid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAgentTaskListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Ai Agent Tasks",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/analytics": {
+      "get": {
+        "description": "Platform-wide analytics: stats, top users, top and recent courses (super admin only).",
+        "operationId": "platform_analytics_api_v1_admin_analytics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAnalyticsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Platform Analytics",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/analytics/users-at-risk": {
+      "get": {
+        "description": "Inactive learners, most-inactive first (staff only). Read-only; sends nothing.",
+        "operationId": "users_at_risk_api_v1_admin_analytics_users_at_risk_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsersAtRiskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Users At Risk",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/analytics/users/{user_id}": {
+      "get": {
+        "description": "One learner's course analytics (staff only). Framed as understanding, not judgement.",
+        "operationId": "user_analytics_api_v1_admin_analytics_users__user_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDetailAnalyticsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "User Analytics",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/audit-logs": {
+      "get": {
+        "description": "Read the trail of privileged actions (super admin only).\n\nThe log is append-only and written by `audit_service.log_admin_action` from every mutating admin\nendpoint. Reading it is itself restricted to super admins because it names who did what to whom.\nNewest first; joined to the acting administrator's email/name for readability.",
+        "operationId": "list_audit_logs_api_v1_admin_audit_logs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actionType",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Actiontype"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resourceType",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resourcetype"
+            }
+          },
+          {
+            "in": "query",
+            "name": "adminUserId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Adminuserid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Audit Logs",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/career-applications": {
+      "get": {
+        "description": "List career applications, paginated and filterable (staff only).",
+        "operationId": "list_applications_api_v1_admin_career_applications_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "jobId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Jobid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CareerApplicationListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Applications",
+        "tags": [
+          "careers",
+          "careers"
+        ]
+      }
+    },
+    "/api/v1/admin/career-applications/{application_id}": {
+      "get": {
+        "description": "Read one application (staff only).",
+        "operationId": "get_application_api_v1_admin_career_applications__application_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "application_id",
+            "required": true,
+            "schema": {
+              "title": "Application Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CareerApplicationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Application",
+        "tags": [
+          "careers",
+          "careers"
+        ]
+      },
+      "patch": {
+        "description": "Triage an application — status and/or admin notes (staff only), audited.",
+        "operationId": "update_application_api_v1_admin_career_applications__application_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "application_id",
+            "required": true,
+            "schema": {
+              "title": "Application Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CareerApplicationUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CareerApplicationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Application",
+        "tags": [
+          "careers",
+          "careers"
+        ]
+      }
+    },
+    "/api/v1/admin/content/blog": {
+      "get": {
+        "description": "All blog posts, published or not, newest first (staff only).",
+        "operationId": "list_blog_admin_api_v1_admin_content_blog_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BlogPostResponse"
+                  },
+                  "title": "Response List Blog Admin Api V1 Admin Content Blog Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Blog Admin",
+        "tags": [
+          "content",
+          "content"
+        ]
+      },
+      "post": {
+        "description": "Create a blog post (staff only).",
+        "operationId": "create_blog_post_api_v1_admin_content_blog_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlogPostCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlogPostResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Blog Post",
+        "tags": [
+          "content",
+          "content"
+        ]
+      }
+    },
+    "/api/v1/admin/content/blog/{post_id}": {
+      "delete": {
+        "description": "Delete a blog post (staff only).",
+        "operationId": "delete_blog_post_api_v1_admin_content_blog__post_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "post_id",
+            "required": true,
+            "schema": {
+              "title": "Post Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Blog Post",
+        "tags": [
+          "content",
+          "content"
+        ]
+      },
+      "get": {
+        "description": "Fetch one blog post (staff only).",
+        "operationId": "get_blog_admin_api_v1_admin_content_blog__post_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "post_id",
+            "required": true,
+            "schema": {
+              "title": "Post Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlogPostResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Blog Admin",
+        "tags": [
+          "content",
+          "content"
+        ]
+      },
+      "patch": {
+        "description": "Update a blog post (staff only).",
+        "operationId": "update_blog_post_api_v1_admin_content_blog__post_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "post_id",
+            "required": true,
+            "schema": {
+              "title": "Post Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlogPostUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlogPostResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Blog Post",
+        "tags": [
+          "content",
+          "content"
+        ]
+      }
+    },
+    "/api/v1/admin/content/calendar": {
+      "get": {
+        "description": "All content-calendar entries, soonest scheduled first (staff only).",
+        "operationId": "list_calendar_api_v1_admin_content_calendar_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentCalendarEntryResponse"
+                  },
+                  "title": "Response List Calendar Api V1 Admin Content Calendar Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Calendar",
+        "tags": [
+          "content",
+          "content"
+        ]
+      },
+      "post": {
+        "description": "Plan a content-calendar entry (staff only).",
+        "operationId": "create_calendar_entry_api_v1_admin_content_calendar_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentCalendarEntryCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentCalendarEntryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Calendar Entry",
+        "tags": [
+          "content",
+          "content"
+        ]
+      }
+    },
+    "/api/v1/admin/content/calendar/{entry_id}": {
+      "delete": {
+        "description": "Delete a content-calendar entry (staff only).",
+        "operationId": "delete_calendar_entry_api_v1_admin_content_calendar__entry_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Calendar Entry",
+        "tags": [
+          "content",
+          "content"
+        ]
+      },
+      "patch": {
+        "description": "Update a content-calendar entry (staff only).",
+        "operationId": "update_calendar_entry_api_v1_admin_content_calendar__entry_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentCalendarEntryUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentCalendarEntryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Calendar Entry",
+        "tags": [
+          "content",
+          "content"
+        ]
+      }
+    },
+    "/api/v1/admin/content/jobs": {
+      "get": {
+        "description": "All job postings, published or not, ordered as the careers page would show them (staff only).",
+        "operationId": "list_jobs_admin_api_v1_admin_content_jobs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JobPostingResponse"
+                  },
+                  "title": "Response List Jobs Admin Api V1 Admin Content Jobs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Jobs Admin",
+        "tags": [
+          "careers",
+          "careers"
+        ]
+      },
+      "post": {
+        "description": "Create a job posting (staff only).",
+        "operationId": "create_job_api_v1_admin_content_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobPostingCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobPostingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Job",
+        "tags": [
+          "careers",
+          "careers"
+        ]
+      }
+    },
+    "/api/v1/admin/content/jobs/{job_id}": {
+      "delete": {
+        "description": "Delete a job posting (staff only).",
+        "operationId": "delete_job_api_v1_admin_content_jobs__job_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Job",
+        "tags": [
+          "careers",
+          "careers"
+        ]
+      },
+      "get": {
+        "description": "Fetch one job posting (staff only).",
+        "operationId": "get_job_admin_api_v1_admin_content_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobPostingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Job Admin",
+        "tags": [
+          "careers",
+          "careers"
+        ]
+      },
+      "patch": {
+        "description": "Update a job posting (staff only).",
+        "operationId": "update_job_api_v1_admin_content_jobs__job_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobPostingUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobPostingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Job",
+        "tags": [
+          "careers",
+          "careers"
+        ]
+      }
+    },
+    "/api/v1/admin/dashboard": {
+      "get": {
+        "description": "The dashboard landing figures.\n\nThe admin client calls ``/admin/dashboard`` for its overview; ``/stats`` predates it and returns\nthe same shape. This is the canonical name going forward — ``/stats`` is kept as an alias so a\nstale client keeps working — and it is a read, so staff (not only super admins) may see it.\n\nThe counts are cross-domain by nature. Per Decision 2 they should migrate behind each domain's own\nread as those are added; for now the aggregate lives here rather than being duplicated per caller.",
+        "operationId": "admin_dashboard_api_v1_admin_dashboard_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Dashboard",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/dashboard/charts": {
+      "get": {
+        "description": "Daily signups and messages over a window (staff only).",
+        "operationId": "dashboard_charts_api_v1_admin_dashboard_charts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 14,
+              "maximum": 180,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardChartsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Dashboard Charts",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
     "/api/v1/admin/educator-surveys": {
       "get": {
         "description": "A page of responses, newest first.\n\nPartial responses are listed alongside complete ones and are filterable rather than hidden. A\nrespondent who stopped at Q40 has answered the pain-point sections the research is actually built\non, so excluding them by default would hide most of the evidence.",
@@ -22445,6 +27259,1183 @@
         "tags": [
           "educator-survey-admin",
           "educator-survey-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/currencies": {
+      "get": {
+        "description": "The currencies the ledger accepts (code → name).",
+        "operationId": "list_currencies_api_v1_admin_finance_currencies_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response List Currencies Api V1 Admin Finance Currencies Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Currencies",
+        "tags": [
+          "finance",
+          "finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/fx-preview": {
+      "get": {
+        "description": "Preview the GBP conversion for an amount.\n\nGBP is 1:1. For any other currency there is no configured rate source, so the preview reports\n``manual`` with an empty GBP figure — the operator supplies it on save rather than the server\nguessing one.",
+        "operationId": "fx_preview_api_v1_admin_finance_fx_preview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "amount",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                }
+              ],
+              "title": "Amount"
+            }
+          },
+          {
+            "in": "query",
+            "name": "currency",
+            "required": true,
+            "schema": {
+              "title": "Currency",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FxPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Fx Preview",
+        "tags": [
+          "finance",
+          "finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/ledger": {
+      "get": {
+        "description": "List ledger lines newest first, with GBP totals over the same filters (super admin only).",
+        "operationId": "list_ledger_api_v1_admin_finance_ledger_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fromDate",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fromdate"
+            }
+          },
+          {
+            "in": "query",
+            "name": "toDate",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Todate"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerLineListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Ledger",
+        "tags": [
+          "finance",
+          "finance"
+        ]
+      },
+      "post": {
+        "description": "Record an income or expense line (super admin only), audited.",
+        "operationId": "create_ledger_line_api_v1_admin_finance_ledger_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LedgerLineCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerLineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Ledger Line",
+        "tags": [
+          "finance",
+          "finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/ledger/{line_id}": {
+      "delete": {
+        "description": "Delete a ledger line (super admin only), audited.",
+        "operationId": "delete_ledger_line_api_v1_admin_finance_ledger__line_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "line_id",
+            "required": true,
+            "schema": {
+              "title": "Line Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Ledger Line",
+        "tags": [
+          "finance",
+          "finance"
+        ]
+      },
+      "patch": {
+        "description": "Update a ledger line (super admin only), audited. Recomputes GBP when money fields change.",
+        "operationId": "update_ledger_line_api_v1_admin_finance_ledger__line_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "line_id",
+            "required": true,
+            "schema": {
+              "title": "Line Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LedgerLineUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerLineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Ledger Line",
+        "tags": [
+          "finance",
+          "finance"
+        ]
+      }
+    },
+    "/api/v1/admin/health": {
+      "get": {
+        "description": "Detailed system health (staff only).",
+        "operationId": "admin_health_api_v1_admin_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthCheckResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Health",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/staff/role": {
+      "post": {
+        "description": "Update a user's admin staff role (super admin only).",
+        "operationId": "update_staff_role_api_v1_admin_staff_role_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffRoleUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Staff Role",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/stats": {
+      "get": {
+        "description": "Platform statistics overview.",
+        "operationId": "admin_stats_api_v1_admin_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Stats",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/system-health": {
+      "get": {
+        "description": "Detailed system health (staff only). The canonical name; `/health` is the older alias.",
+        "operationId": "system_health_api_v1_admin_system_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthCheckResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "System Health",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users": {
+      "get": {
+        "description": "List users, paginated and filterable (staff only).\n\nLists everyone by default — unlike the old handler, which was hardcoded to ``role == 'USER'`` and\nso could never show staff accounts. Pass ``role`` to narrow it.",
+        "operationId": "list_users_api_v1_admin_users_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tier",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tier"
+            }
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Role"
+            }
+          },
+          {
+            "in": "query",
+            "name": "isActive",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Isactive"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserAdminListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Users",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      },
+      "post": {
+        "description": "Create a user (super admin only).",
+        "operationId": "create_user_api_v1_admin_users_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserAdminCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create User",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/wake-bulk": {
+      "post": {
+        "description": "Send gentle return nudges to the most-inactive learners (super admin only).\n\nEach nudge is planned through the consent-gated orchestrator, so a learner who has engagement off\nreceives nothing regardless of being on the list. Bounded by ``limit`` and by the type's 14-day\ndedupe.",
+        "operationId": "wake_users_bulk_api_v1_admin_users_wake_bulk_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WakeBulkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Wake Users Bulk",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}": {
+      "delete": {
+        "description": "Delete a user (super admin only).\n\nStarts the standard 90-day account-deletion lifecycle rather than hard-deleting the row. There is\nno hard-delete path anywhere in the codebase — scheduled deletion deactivates and anonymises, and\n`USER_DELETED` has no emitter — and \"deletion is a request to forget\" (`ch23-memory`) is honoured\nthrough that reviewed mechanism, not a raw cascade an admin endpoint invents. Reversible within the\nwindow via the learner's own cancel flow.",
+        "operationId": "delete_user_api_v1_admin_users__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete User",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      },
+      "get": {
+        "description": "Fetch one user (staff only).",
+        "operationId": "get_user_api_v1_admin_users__user_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get User",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      },
+      "put": {
+        "description": "Update a user's editable fields (super admin only).",
+        "operationId": "update_user_api_v1_admin_users__user_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserAdminUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update User",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/activate": {
+      "post": {
+        "description": "Reactivate a user account (super admin only).",
+        "operationId": "activate_user_api_v1_admin_users__user_id__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Activate User",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/deactivate": {
+      "post": {
+        "description": "Deactivate a user account (super admin only).",
+        "operationId": "deactivate_user_api_v1_admin_users__user_id__deactivate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Deactivate User",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/entitlement": {
+      "get": {
+        "description": "A learner's current entitlement, usage window, voice balance, passes and points (staff only).\n\nRead entirely through the billing domain's own services so it cannot drift from what the learner\nis served (Decision 2): `entitlement_service.resolve` is the single authority for tier/source,\n`voice_service.resolve` for the voice meter, `points_service.balance` for points.",
+        "operationId": "get_user_entitlement_api_v1_admin_users__user_id__entitlement_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminEntitlementView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get User Entitlement",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/entitlement/grant-pass": {
+      "post": {
+        "description": "Grant a complimentary pass into a learner's inventory (super admin only).\n\nGrants, does not activate — the learner starts the clock, exactly as with a purchased pass. Routed\nthrough `pass_service.grant` with ``source=\"admin_comp\"`` so there is one code path that knows how\nto mint a pass, and no `PlusPurchase` is fabricated behind it. Audited, with the stated reason.",
+        "operationId": "grant_comp_pass_api_v1_admin_users__user_id__entitlement_grant_pass_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantPassRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminPassView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Grant Comp Pass",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/summary": {
+      "get": {
+        "description": "A compact operational summary for the user-detail page (staff only).\n\nComposes the core account facts with the entitlement view and a little activity context. Framed as\nunderstanding, not judgement (`ch16`, `ch14-behaviour`): it reports what the account *is* and when\nit was last active, not a verdict on the learner. Richer per-user learning analytics\n(`/admin/analytics/users/{id}`) is Phase 2.",
+        "operationId": "get_user_summary_api_v1_admin_users__user_id__summary_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get User Summary",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/wake": {
+      "post": {
+        "description": "Send one learner a gentle return nudge (super admin only), consent-gated at dispatch.",
+        "operationId": "wake_user_api_v1_admin_users__user_id__wake_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WakeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WakeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Wake User",
+        "tags": [
+          "admin",
+          "admin"
         ]
       }
     },
@@ -24047,6 +30038,510 @@
         "tags": [
           "billing",
           "billing"
+        ]
+      }
+    },
+    "/api/v1/blog": {
+      "get": {
+        "description": "Published blog posts for the public site, newest first.",
+        "operationId": "list_published_posts_api_v1_blog_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BlogPostResponse"
+                  },
+                  "title": "Response List Published Posts Api V1 Blog Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Published Posts",
+        "tags": [
+          "content",
+          "content"
+        ]
+      }
+    },
+    "/api/v1/blog/{slug}": {
+      "get": {
+        "description": "One published blog post by slug.",
+        "operationId": "get_published_post_api_v1_blog__slug__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlogPostResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Published Post",
+        "tags": [
+          "content",
+          "content"
+        ]
+      }
+    },
+    "/api/v1/careers/applications": {
+      "post": {
+        "description": "Submit a job application (public). The job must exist and be published.",
+        "operationId": "submit_application_api_v1_careers_applications_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CareerApplicationCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CareerApplicationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Application",
+        "tags": [
+          "careers",
+          "careers"
+        ]
+      }
+    },
+    "/api/v1/careers/jobs": {
+      "get": {
+        "description": "Published job postings for the public careers page, in display order.",
+        "operationId": "list_published_jobs_api_v1_careers_jobs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JobPostingResponse"
+                  },
+                  "title": "Response List Published Jobs Api V1 Careers Jobs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Published Jobs",
+        "tags": [
+          "careers",
+          "careers"
+        ]
+      }
+    },
+    "/api/v1/careers/jobs/{slug}": {
+      "get": {
+        "description": "One published job by slug.",
+        "operationId": "get_published_job_api_v1_careers_jobs__slug__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobPostingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Published Job",
+        "tags": [
+          "careers",
+          "careers"
+        ]
+      }
+    },
+    "/api/v1/feedback": {
+      "get": {
+        "description": "List feedback, paginated and filterable (staff only).",
+        "operationId": "list_feedback_api_v1_feedback_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Feedback",
+        "tags": [
+          "feedback",
+          "feedback"
+        ]
+      },
+      "post": {
+        "description": "Submit feedback (any authenticated learner).",
+        "operationId": "submit_feedback_api_v1_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Submit Feedback",
+        "tags": [
+          "feedback",
+          "feedback"
+        ]
+      }
+    },
+    "/api/v1/feedback/{feedback_id}": {
+      "get": {
+        "description": "Read one feedback item (staff only).",
+        "operationId": "get_feedback_api_v1_feedback__feedback_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "feedback_id",
+            "required": true,
+            "schema": {
+              "title": "Feedback Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Feedback",
+        "tags": [
+          "feedback",
+          "feedback"
+        ]
+      },
+      "patch": {
+        "description": "Triage a feedback item — status and/or admin notes (staff only), audited.",
+        "operationId": "update_feedback_api_v1_feedback__feedback_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "feedback_id",
+            "required": true,
+            "schema": {
+              "title": "Feedback Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Feedback",
+        "tags": [
+          "feedback",
+          "feedback"
         ]
       }
     },
