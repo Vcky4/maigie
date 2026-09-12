@@ -2353,6 +2353,41 @@
         "title": "AuditLogListResponse",
         "type": "object"
       },
+      "BankListResponse": {
+        "properties": {
+          "banks": {
+            "items": {
+              "$ref": "#/components/schemas/BankView"
+            },
+            "title": "Banks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "banks"
+        ],
+        "title": "BankListResponse",
+        "type": "object"
+      },
+      "BankView": {
+        "description": "One bank and the code a transfer needs. Names alone would not be enough to pay anyone.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "name"
+        ],
+        "title": "BankView",
+        "type": "object"
+      },
       "BehaviourProfileResponse": {
         "properties": {
           "avgSessionMinutes": {
@@ -36957,6 +36992,34 @@
           }
         ],
         "summary": "Create Application",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/banks": {
+      "get": {
+        "description": "Nigerian banks and their codes, for the payout-account picker. Cached for a day.\n\nReturns an empty list when the provider is unreachable, and the client falls back to free-text entry: a\ntester who knows their bank name should not be blocked from being paid because a third-party API is\nhaving a minute.",
+        "operationId": "list_banks_api_v1_bug_hunt_banks_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Banks",
         "tags": [
           "bug-hunt",
           "bug-hunt"

@@ -45,6 +45,7 @@ from .exceptions import (
     NoOpenSeasonError,
 )
 from .services import (
+    bank_service,
     eligibility_service,
     ledger_service,
     program_service,
@@ -683,6 +684,20 @@ async def redeem_pass(
         chargeKobo=result["chargeKobo"],
         balanceKobo=result["balanceKobo"],
         entry=_ledger_entry_view(result["entry"], None),
+    )
+
+
+@router.get("/banks", response_model=models.BankListResponse)
+async def list_banks(current_user: CurrentUser) -> models.BankListResponse:
+    """Nigerian banks and their codes, for the payout-account picker. Cached for a day.
+
+    Returns an empty list when the provider is unreachable, and the client falls back to free-text entry: a
+    tester who knows their bank name should not be blocked from being paid because a third-party API is
+    having a minute.
+    """
+    banks = await bank_service.nigerian_banks()
+    return models.BankListResponse(
+        banks=[models.BankView(code=bank["code"], name=bank["name"]) for bank in banks]
     )
 
 

@@ -236,6 +236,17 @@ class RedeemPassResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class BankView(BaseModel):
+    """One bank and the code a transfer needs. Names alone would not be enough to pay anyone."""
+
+    code: str
+    name: str
+
+
+class BankListResponse(BaseModel):
+    banks: list[BankView]
+
+
 class PayoutAccountView(BaseModel):
     """A payout account as everyone except the person making the transfer sees it.
 
