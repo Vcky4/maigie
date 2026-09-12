@@ -314,13 +314,22 @@ async def adjust(
         raise ValidationError("An adjustment of nothing is not an adjustment.")
 
     if amount_kobo > 0:
-        return await ledger_service.credit(
+        if program_id is None:
+            # Unattributed: goodwill for somebody between seasons, counting against no budget and no cap.
+            return await ledger_service.credit(
+                user_id=user_id,
+                kind="adjustment",
+                amount_kobo=amount_kobo,
+                program_id=None,
+                note=cleaned,
+                created_by_user_id=staff_user_id,
+            )
+        return await _attributed_credit(
             user_id=user_id,
-            kind="adjustment",
-            amount_kobo=amount_kobo,
             program_id=program_id,
+            amount_kobo=amount_kobo,
             note=cleaned,
-            created_by_user_id=staff_user_id,
+            staff_user_id=staff_user_id,
         )
 
     # Negative — a clawback. It takes the wallet lock like any other spend, so a correction cannot race a
@@ -360,11 +369,77 @@ async def adjust(
         await session.commit()
         await session.refresh(entry)
 
+        # A clawback attributed to a season returns its budget, for the same reason a credit spends it.
+        # Clamped at zero: `awardedKobo >= 0` is a CHECK, and a clawback of money awarded in a *different*
+        # season must not drive this one negative.
+        if program_id is not None:
+            program = (
+                await session.execute(
+                    select(BugHuntProgram).where(BugHuntProgram.id == program_id).with_for_update()
+                )
+            ).scalar_one()
+            program.awarded_kobo = max(0, program.awarded_kobo + amount_kobo)
+            await session.commit()
+
     logger.info(
         "bug_hunt: adjustment %d kobo for user=%s by %s (%s)",
         amount_kobo,
         user_id,
         staff_user_id,
         cleaned,
+    )
+    return entry
+
+
+async def _attributed_credit(
+    *, user_id: str, program_id: str, amount_kobo: int, note: str, staff_user_id: str
+) -> BugHuntLedgerEntry:
+    """A positive adjustment charged to a season's budget.
+
+    **The budget has to cover an adjustment too.** Without this it covers awards only, and a super admin —
+    who is also the person able to raise the budget — can spend past it silently through the one endpoint
+    that takes a free-typed amount. That makes the ceiling advisory for exactly the wrong person.
+
+    So it takes the same lock and the same check an award does. A refusal here means "raise the budget
+    first", which is one extra deliberate act on the only path in the programme where money does not trace
+    to a published rule.
+    """
+    factory = get_session_factory()
+    async with factory() as session:
+        program = (
+            await session.execute(
+                select(BugHuntProgram).where(BugHuntProgram.id == program_id).with_for_update()
+            )
+        ).scalar_one()
+
+        remaining = program.budget_kobo - program.awarded_kobo
+        if amount_kobo > remaining:
+            raise ValidationError(
+                f"Season {program.season_number} has {remaining // 100:,} naira of budget left and this "
+                f"adjustment is {amount_kobo // 100:,}. Raise the budget first."
+            )
+
+        wallet = await ledger_service.get_or_create_wallet(user_id)
+        entry = BugHuntLedgerEntry(
+            wallet_id=wallet.id,
+            user_id=user_id,
+            program_id=program_id,
+            kind="adjustment",
+            amount_kobo=amount_kobo,
+            note=note,
+            created_by_user_id=staff_user_id,
+        )
+        session.add(entry)
+        program.awarded_kobo = program.awarded_kobo + amount_kobo
+        await session.commit()
+        await session.refresh(entry)
+
+    logger.info(
+        "bug_hunt: adjustment %d kobo for user=%s in season %s by %s (%s)",
+        amount_kobo,
+        user_id,
+        program.season_number,
+        staff_user_id,
+        note,
     )
     return entry

@@ -176,6 +176,61 @@ class LedgerResponse(BaseModel):
     balanceKobo: int
 
 
+class RedemptionOptionView(BaseModel):
+    """One pass a balance can buy, and what it costs this tester right now.
+
+    `priceKobo` is what somebody paying Paystack would be charged; `chargeKobo` is what comes off the
+    balance. Both are shown, because the discount is the offer — "₦1,500 of findings buys a ₦2,000 pass" is
+    the sentence, and it cannot be written from one number.
+
+    `affordable` is computed server-side so the wallet never lists a pass it will then refuse.
+    """
+
+    productId: str
+    label: str
+    priceKobo: int
+    chargeKobo: int
+    upliftPercent: int
+    durationMinutes: int
+    unitsAllowance: int
+    affordable: bool
+
+
+class RedemptionOptionsResponse(BaseModel):
+    options: list[RedemptionOptionView]
+    balanceKobo: int
+
+
+class RedeemPassRequest(BaseModel):
+    productId: str
+
+
+class RedeemedPassView(BaseModel):
+    """The granted pass, as the tester's own app will see it.
+
+    `status` is `inventory`: the pass is theirs and the clock has not started. They activate it when they
+    want it, exactly as with a bought pass — activating here would burn a 5-hour pass at the moment it was
+    redeemed.
+    """
+
+    id: str
+    productId: str
+    status: str
+    durationMinutes: int
+    unitsAllowance: int
+    source: str
+    createdAt: datetime
+
+
+class RedeemPassResponse(BaseModel):
+    pass_: RedeemedPassView = Field(alias="pass")
+    chargeKobo: int
+    balanceKobo: int
+    entry: LedgerEntryView
+
+    model_config = {"populate_by_name": True}
+
+
 class AdjustmentRequest(BaseModel):
     """A super admin's correction — the only free-typed amount in the programme.
 

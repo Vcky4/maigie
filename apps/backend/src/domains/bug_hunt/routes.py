@@ -47,6 +47,7 @@ from .services import (
     eligibility_service,
     ledger_service,
     program_service,
+    redemption_service,
     reward_service,
     submission_service,
     triage_service,
@@ -575,6 +576,63 @@ async def get_wallet_ledger(
         pageSize=pageSize,
         hasMore=(page * pageSize) < total,
         balanceKobo=await ledger_service.balance(current_user.id),
+    )
+
+
+@router.get("/wallet/redemption-options", response_model=models.RedemptionOptionsResponse)
+async def get_redemption_options(
+    current_user: CurrentUser,
+) -> models.RedemptionOptionsResponse:
+    """The passes this balance can buy, cheapest first. **Available with no season open.**
+
+    An earned balance is permanent and the gap between seasons is most of the year, so a rail that closed
+    with the season would strand money for months. Between seasons the uplift falls back to the default.
+    """
+    options = await redemption_service.options(user_id=current_user.id)
+    return models.RedemptionOptionsResponse(
+        options=[
+            models.RedemptionOptionView(
+                productId=option.product_id,
+                label=option.label,
+                priceKobo=option.price_kobo,
+                chargeKobo=option.charge_kobo,
+                upliftPercent=option.uplift_percent,
+                durationMinutes=option.duration_minutes,
+                unitsAllowance=option.units_allowance,
+                affordable=option.affordable,
+            )
+            for option in options
+        ],
+        balanceKobo=await ledger_service.balance(current_user.id),
+    )
+
+
+@router.post("/wallet/redeem-pass", response_model=models.RedeemPassResponse)
+async def redeem_pass(
+    body: models.RedeemPassRequest, current_user: CurrentUser
+) -> models.RedeemPassResponse:
+    """Spend a balance on a Plus pass. It appears in the learner's own app, unactivated.
+
+    Debit, then grant, then annotate — and the debit is reversed if the grant fails. Granting first is the
+    ordering that hands out free passes when the debit is refused, so it is not the ordering used.
+    """
+    result = await redemption_service.redeem(user_id=current_user.id, product_id=body.productId)
+    granted = result["pass"]
+    return models.RedeemPassResponse(
+        **{
+            "pass": models.RedeemedPassView(
+                id=granted.id,
+                productId=granted.product_id,
+                status=granted.status,
+                durationMinutes=granted.duration_minutes,
+                unitsAllowance=granted.units_allowance,
+                source=granted.source,
+                createdAt=granted.created_at,
+            )
+        },
+        chargeKobo=result["chargeKobo"],
+        balanceKobo=result["balanceKobo"],
+        entry=_ledger_entry_view(result["entry"], None),
     )
 
 

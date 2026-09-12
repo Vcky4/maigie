@@ -807,6 +807,75 @@ class TestAdjustments:
             )
         assert await ledger_service.balance(tester.id) == 50_000
 
+    async def test_a_season_attributed_adjustment_spends_the_budget(self):
+        """**The budget has to cover an adjustment too.**
+
+        Found by a redemption test that asserted a season's spend and got zero. Without this, the budget
+        covers awards only — and a super admin, who is also the person able to raise the budget, can spend
+        past it silently through the one endpoint that takes a free-typed amount. That makes the ceiling
+        advisory for exactly the wrong person.
+        """
+        program = await make_season(budget_kobo=500_000)
+        staff = await make_user(staff=True)
+        tester = await make_user()
+
+        await reward_service.adjust(
+            user_id=tester.id,
+            amount_kobo=200_000,
+            note="Owed after a regrade.",
+            staff_user_id=staff.id,
+            program_id=program.id,
+        )
+        assert (await program_service.get(program.id)).awarded_kobo == 200_000
+
+    async def test_an_adjustment_beyond_the_budget_is_refused(self):
+        program = await make_season(budget_kobo=100_000)
+        staff = await make_user(staff=True)
+        tester = await make_user()
+        with pytest.raises(ValidationError, match="Raise the budget"):
+            await reward_service.adjust(
+                user_id=tester.id,
+                amount_kobo=200_000,
+                note="Too generous.",
+                staff_user_id=staff.id,
+                program_id=program.id,
+            )
+        assert await ledger_service.balance(tester.id) == 0
+        assert (await program_service.get(program.id)).awarded_kobo == 0
+
+    async def test_a_clawback_returns_the_budget(self):
+        """For the same reason a credit spends it. Otherwise correcting an over-award leaves the season
+        permanently poorer by an amount nobody received."""
+        program = await make_season(budget_kobo=1_000_000)
+        staff = await make_user(staff=True)
+        tester, _ = await accepted_finding(program, staff, severity="critical")
+        assert (await program_service.get(program.id)).awarded_kobo == 200_000
+
+        await reward_service.adjust(
+            user_id=tester.id,
+            amount_kobo=-50_000,
+            note="Over-awarded.",
+            staff_user_id=staff.id,
+            program_id=program.id,
+        )
+        assert (await program_service.get(program.id)).awarded_kobo == 150_000
+
+    async def test_an_unattributed_adjustment_touches_no_budget(self):
+        """Goodwill for somebody between seasons counts against no budget and no cap, because there is no
+        season for it to belong to."""
+        program = await make_season(budget_kobo=1_000_000)
+        staff = await make_user(staff=True)
+        tester = await make_user()
+        await reward_service.adjust(
+            user_id=tester.id,
+            amount_kobo=200_000,
+            note="Goodwill between seasons.",
+            staff_user_id=staff.id,
+            program_id=None,
+        )
+        assert await ledger_service.balance(tester.id) == 200_000
+        assert (await program_service.get(program.id)).awarded_kobo == 0
+
     async def test_an_adjustment_needs_a_reason(self):
         """The tester can read this ledger. An unexplained line on it is worse than no line."""
         staff = await make_user(staff=True)

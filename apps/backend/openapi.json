@@ -19639,6 +19639,45 @@
         "title": "RecommendationResponse",
         "type": "object"
       },
+      "RedeemPassRequest": {
+        "properties": {
+          "productId": {
+            "title": "Productid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "productId"
+        ],
+        "title": "RedeemPassRequest",
+        "type": "object"
+      },
+      "RedeemPassResponse": {
+        "properties": {
+          "balanceKobo": {
+            "title": "Balancekobo",
+            "type": "integer"
+          },
+          "chargeKobo": {
+            "title": "Chargekobo",
+            "type": "integer"
+          },
+          "entry": {
+            "$ref": "#/components/schemas/LedgerEntryView"
+          },
+          "pass": {
+            "$ref": "#/components/schemas/RedeemedPassView"
+          }
+        },
+        "required": [
+          "pass",
+          "chargeKobo",
+          "balanceKobo",
+          "entry"
+        ],
+        "title": "RedeemPassResponse",
+        "type": "object"
+      },
       "RedeemPointsRequest": {
         "description": "Spend points on a pass.\n\n`productId` is one of the pass ids in `POINTS_COST`. The subscription is not redeemable and there\nis no code path that could grant it from points — the construction §6.9 relies on. An id that is\nnot a pass is refused 422; enough points not held is 409 `INSUFFICIENT_POINTS`.",
         "properties": {
@@ -19655,6 +19694,121 @@
           "productId"
         ],
         "title": "RedeemPointsRequest",
+        "type": "object"
+      },
+      "RedeemedPassView": {
+        "description": "The granted pass, as the tester's own app will see it.\n\n`status` is `inventory`: the pass is theirs and the clock has not started. They activate it when they\nwant it, exactly as with a bought pass — activating here would burn a 5-hour pass at the moment it was\nredeemed.",
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "durationMinutes": {
+            "title": "Durationminutes",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "productId": {
+            "title": "Productid",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "unitsAllowance": {
+            "title": "Unitsallowance",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "productId",
+          "status",
+          "durationMinutes",
+          "unitsAllowance",
+          "source",
+          "createdAt"
+        ],
+        "title": "RedeemedPassView",
+        "type": "object"
+      },
+      "RedemptionOptionView": {
+        "description": "One pass a balance can buy, and what it costs this tester right now.\n\n`priceKobo` is what somebody paying Paystack would be charged; `chargeKobo` is what comes off the\nbalance. Both are shown, because the discount is the offer — \"₦1,500 of findings buys a ₦2,000 pass\" is\nthe sentence, and it cannot be written from one number.\n\n`affordable` is computed server-side so the wallet never lists a pass it will then refuse.",
+        "properties": {
+          "affordable": {
+            "title": "Affordable",
+            "type": "boolean"
+          },
+          "chargeKobo": {
+            "title": "Chargekobo",
+            "type": "integer"
+          },
+          "durationMinutes": {
+            "title": "Durationminutes",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "priceKobo": {
+            "title": "Pricekobo",
+            "type": "integer"
+          },
+          "productId": {
+            "title": "Productid",
+            "type": "string"
+          },
+          "unitsAllowance": {
+            "title": "Unitsallowance",
+            "type": "integer"
+          },
+          "upliftPercent": {
+            "title": "Upliftpercent",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "productId",
+          "label",
+          "priceKobo",
+          "chargeKobo",
+          "upliftPercent",
+          "durationMinutes",
+          "unitsAllowance",
+          "affordable"
+        ],
+        "title": "RedemptionOptionView",
+        "type": "object"
+      },
+      "RedemptionOptionsResponse": {
+        "properties": {
+          "balanceKobo": {
+            "title": "Balancekobo",
+            "type": "integer"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/RedemptionOptionView"
+            },
+            "title": "Options",
+            "type": "array"
+          }
+        },
+        "required": [
+          "options",
+          "balanceKobo"
+        ],
+        "title": "RedemptionOptionsResponse",
         "type": "object"
       },
       "ReferralItem": {
@@ -36419,6 +36573,82 @@
           }
         ],
         "summary": "Get Wallet Ledger",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/wallet/redeem-pass": {
+      "post": {
+        "description": "Spend a balance on a Plus pass. It appears in the learner's own app, unactivated.\n\nDebit, then grant, then annotate — and the debit is reversed if the grant fails. Granting first is the\nordering that hands out free passes when the debit is refused, so it is not the ordering used.",
+        "operationId": "redeem_pass_api_v1_bug_hunt_wallet_redeem_pass_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedeemPassRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedeemPassResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Redeem Pass",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/wallet/redemption-options": {
+      "get": {
+        "description": "The passes this balance can buy, cheapest first. **Available with no season open.**\n\nAn earned balance is permanent and the gap between seasons is most of the year, so a rail that closed\nwith the season would strand money for months. Between seasons the uplift falls back to the default.",
+        "operationId": "get_redemption_options_api_v1_bug_hunt_wallet_redemption_options_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedemptionOptionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Redemption Options",
         "tags": [
           "bug-hunt",
           "bug-hunt"
