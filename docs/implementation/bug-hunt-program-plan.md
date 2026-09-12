@@ -3,7 +3,7 @@
 A paid testing programme that runs in seasons: testers exercise the Maigie web, Android and iOS apps, submit bugs and feedback against their own Maigie account, and are paid per accepted submission — either as a Plus pass that appears in the Maigie app, or as cash to a Nigerian bank account. Season 1 is Nigeria-only and runs 14 days.
 
 > **Status:** In progress · **Phases 1–3 complete** (backend foundation, seasons, intake, triage, and the admin dashboard) · Phases 4–10 open · **M1 and M2 shipped** · updated 2026-09-12
-> **Migration state:** `083_bug_hunt` is written and verified against a scratch Postgres. **Not applied to any real database**, so no row exists yet
+> **Migration state:** `083_bug_hunt` **applied to staging 2026-09-12** — 8 tables, 3 partial unique indexes, 34 CHECK constraints, 22 foreign keys; 1 212 existing `User` rows untouched, since the migration is additive only (8 `CREATE TABLE`, 24 `CREATE INDEX`, no `DROP`, `ALTER` or `EXECUTE`). Read-only smoke test against the real schema returns `{"state":"between"}` from `GET /bug-hunt/program`. **Not applied to production**
 > **Owner:** Product / engineering
 > **Scope:** `maigie/apps/backend` (new `bug_hunt` domain) · `maigie-client/apps/bughunt` (new participant app) · `maigie-client/apps/admin` (triage + payouts) · `maigie-public` (one inbound link)
 > **Testable surfaces:** web app (`maigie-client/apps/web`), Android and iOS (`maigie-mobile`)
