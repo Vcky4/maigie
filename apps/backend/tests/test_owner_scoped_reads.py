@@ -43,6 +43,12 @@ OWNER_PARAMS = {"user_id", "userId", "owner_id", "current_user", "user"}
 #: that does it. If a caller is added that does not, the entry is wrong and the read becomes a hole — so
 #: read the reason before adding a caller, not after.
 ALLOWED: dict[str, str] = {
+    "domains/admin/services/courses_service.py::delete_course": (
+        "Its only caller is the `DELETE /admin/courses/{id}` route, gated by `SuperAdminUser` and "
+        "audited. Admin course deletion is deliberately cross-learner — a super admin removes any "
+        "course by id — so the authorisation is the role gate, not row ownership, and there is no "
+        "owner to filter to. The read fetches the row only to delete it; nothing reaches a learner."
+    ),
     "domains/feedback/routes.py::get_feedback": (
         "Staff-only triage endpoint: the dependency is `StaffUser`, so the caller is platform staff "
         "reviewing submitted feedback, not the learner who filed it — there is no owner to filter to "

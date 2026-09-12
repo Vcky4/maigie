@@ -445,10 +445,11 @@ async def users_at_risk(limit: int) -> models.UsersAtRiskResponse:
     return models.UsersAtRiskResponse(users=items[:limit], total=len(items), riskCounts=counts)
 
 
-async def dashboard_charts(days: int) -> models.DashboardChartsResponse:
-    """Daily signups and daily messages over the last ``days`` days, zero-filled.
+async def daily_series(days: int) -> tuple[list[dict], list[dict]]:
+    """(signups, messages) day-series over the last ``days`` days, zero-filled.
 
-    Both series are honest counts of real rows: `User.created_at` and `ChatMessage.created_at`.
+    Honest counts of real rows: `User.created_at` and `ChatMessage.created_at`. The item keys are
+    ``signups`` and ``messages`` — the exact keys the dashboard charts read.
     """
     from src.domains.identity.db_models import User
     from src.domains.intelligence.db_models import ChatMessage
@@ -479,16 +480,207 @@ async def dashboard_charts(days: int) -> models.DashboardChartsResponse:
             )
         ).all()
 
-    def _series(rows) -> list[models.DailyCount]:
+    def _series(rows, key: str) -> list[dict]:
         by_day = {d.date().isoformat(): int(c) for d, c in rows if d is not None}
-        out: list[models.DailyCount] = []
+        out: list[dict] = []
         for i in range(days):
             day = (since + timedelta(days=i)).date().isoformat()
-            out.append(models.DailyCount(date=day, count=by_day.get(day, 0)))
+            out.append({"date": day, key: by_day.get(day, 0)})
         return out
 
-    return models.DashboardChartsResponse(
-        days=days,
-        dailySignups=_series(signup_rows),
-        dailyMessages=_series(message_rows),
+    return _series(signup_rows, "signups"), _series(message_rows, "messages")
+
+
+async def dashboard_charts(days: int) -> dict:
+    """Daily signups and messages over the last ``days`` days, zero-filled.
+
+    Returns the shape the dashboard charts consume directly (``dailySignups``/``dailyMessages`` with
+    ``signups``/``messages`` keys), so the period selector re-queries without a client-side remap.
+    """
+    signups, messages = await daily_series(days)
+    return {"days": days, "dailySignups": signups, "dailyMessages": messages}
+
+
+# ===========================================================================
+# Revenue / retention / growth (honest subsets)
+#
+# Structurally unbacked figures are NOT fabricated: there is no historical daily-activity log, so
+# retention *cohorts* (day-1/7/30) cannot be computed and are returned empty; there is no subscription
+# history, so *churn* and *conversions* are 0; MRR is an estimate off real tier counts × the published
+# price, labelled as such. Everything that IS backed (DAU/WAU/MAU from last_seen_at, signups, tier
+# counts, referral grants) is real. This keeps the pages from crashing while honouring the honesty
+# invariant — see `docs/ADMIN_DASHBOARD_PLAN.md`.
+# ===========================================================================
+
+_PLUS_MONTHLY_USD = 9.99
+
+
+async def _retention_summary(session) -> dict:
+    from src.domains.identity.db_models import User
+
+    now = datetime.now(UTC)
+    learner = User.role == "USER"
+
+    async def seen_since(days_back: int) -> int:
+        since = now - timedelta(days=days_back)
+        return int(
+            (
+                await session.execute(
+                    select(func.count())
+                    .select_from(User)
+                    .where(learner, User.last_seen_at >= since)
+                )
+            ).scalar()
+            or 0
+        )
+
+    dau = await seen_since(1)
+    wau = await seen_since(7)
+    mau = await seen_since(30)
+    prev_wau = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(User)
+                .where(
+                    learner,
+                    User.last_seen_at >= now - timedelta(days=14),
+                    User.last_seen_at < now - timedelta(days=7),
+                )
+            )
+        ).scalar()
+        or 0
     )
+    at_risk = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(User)
+                .where(
+                    learner,
+                    User.last_seen_at >= now - timedelta(days=14),
+                    User.last_seen_at < now - timedelta(days=3),
+                )
+            )
+        ).scalar()
+        or 0
+    )
+    return {
+        "dau": dau,
+        "wau": wau,
+        "mau": mau,
+        "wauChange": round((wau - prev_wau) / prev_wau * 100, 1) if prev_wau else 0,
+        "dauMauRatio": round(dau / mau * 100) if mau else 0,
+        "atRiskCount": at_risk,
+    }
+
+
+async def retention_analytics() -> dict:
+    """DAU/WAU/MAU are real (last_seen_at). Cohorts/feature-adoption/TTFV/nudges have no backing yet
+    and are returned empty rather than invented."""
+    factory = get_session_factory()
+    async with factory() as session:
+        summary = await _retention_summary(session)
+    return {
+        "summary": summary,
+        "cohorts": {},  # no historical daily-activity log → cohort retention is not computable
+        "featureAdoption": {"totalActiveUsers": summary["mau"], "features": {}},
+        "timeToFirstValue": {"averageHours": 0.0, "medianHours": 0.0, "sampleSize": 0},
+        "nudgeEffectiveness": {
+            "totalNudges": 0,
+            "actedOn": 0,
+            "effectivenessRate": 0,
+            "byType": {},
+        },
+    }
+
+
+async def revenue_analytics() -> dict:
+    """Subscription counts are real; MRR/ARR are estimates off them × the published price. Churn and
+    new-subscription counts have no history and are 0."""
+    from src.domains.identity.db_models import User
+
+    factory = get_session_factory()
+    async with factory() as session:
+        monthly = int(
+            (
+                await session.execute(
+                    select(func.count()).select_from(User).where(User.tier == "PREMIUM_MONTHLY")
+                )
+            ).scalar()
+            or 0
+        )
+        yearly = int(
+            (
+                await session.execute(
+                    select(func.count()).select_from(User).where(User.tier == "PREMIUM_YEARLY")
+                )
+            ).scalar()
+            or 0
+        )
+
+    mrr = round(monthly * _PLUS_MONTHLY_USD, 2)
+    return {
+        "mrr": mrr,
+        "arr": round(mrr * 12, 2),
+        "monthlySubscriptions": monthly,
+        "yearlySubscriptions": yearly,
+        "totalActiveSubscriptions": monthly + yearly,
+        "churnRate": 0,  # no subscription history to derive churn from
+        "newSubscriptionsLast30Days": 0,  # no subscription-change log
+    }
+
+
+async def growth_analytics(days: int) -> dict:
+    """Signups per day are real; conversions have no tracking and are 0; referrals count qualified
+    points grants in the window."""
+    from src.domains.identity.db_models import User
+
+    now = datetime.now(UTC)
+    since = now - timedelta(days=days)
+    signups, _messages = await daily_series(days)
+    total_signups = sum(item["signups"] for item in signups)
+    daily_stats = {item["date"]: {"signups": item["signups"], "conversions": 0} for item in signups}
+
+    factory = get_session_factory()
+    async with factory() as session:
+        total_signups_window = int(
+            (
+                await session.execute(
+                    select(func.count())
+                    .select_from(User)
+                    .where(User.role == "USER", User.created_at >= since)
+                )
+            ).scalar()
+            or 0
+        )
+        total_referrals = 0
+        try:
+            from src.domains.billing.db_models import PointsLedgerEntry
+
+            total_referrals = int(
+                (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(PointsLedgerEntry)
+                        .where(
+                            PointsLedgerEntry.kind == "referral_qualified",
+                            PointsLedgerEntry.created_at >= since,
+                        )
+                    )
+                ).scalar()
+                or 0
+            )
+        except Exception:
+            pass
+
+    return {
+        "periodDays": days,
+        # `total_signups` is the zero-filled series sum (bounded to the charted window); the windowed
+        # count is the authoritative total and matches it.
+        "totalSignups": total_signups_window or total_signups,
+        "totalConversions": 0,  # no free→paid conversion event is recorded
+        "conversionRate": 0,
+        "totalReferrals": total_referrals,
+        "dailyStats": daily_stats,
+    }

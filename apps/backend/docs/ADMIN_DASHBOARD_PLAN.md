@@ -160,13 +160,15 @@ Legend: ✅ backing exists · partial · ❌ needs a new model/domain.
 
 **Chat monitoring.** Reframe from "monitoring" to a **narrow, audited safety/support lookup**. Default view is aggregate statistics (volume, model mix, error rates) — no message content. Reading an individual learner's conversation is a distinct, super-admin-only, per-access-audited action with a stated reason, because `ch23` makes memory conditional on trust and `ch16` forbids the feeling of surveillance. Never a browsable feed of everyone's chats.
 
-**Impersonation.** Keep it (support needs it) but make it honest: time-boxed token, unmistakably logged (who, whom, when, why), ideally signalled, and revocable. It is the sharpest trust instrument in the tool.
+**Impersonation. Removed (product decision).** It was never built on the backend and has been removed from the admin client entirely (the button, the API method, the type). Impersonation is the sharpest trust instrument in the tool, and the decision is not to carry it rather than ship it behind a policy. If it ever returns it must be time-boxed, unmistakably logged (who, whom, when, why), signalled to the learner, and revocable — but there is no plan to reintroduce it.
 
 **Re-engagement / "wake".** The learner product's re-engagement is governed by a "never guilt" rule (`PERSONAL_LEARNING_USER_FLOW.md`, `home_service._check_re_engagement`). Admin-triggered wakes and bulk emails must route through the same copy discipline and consent/notification-preference checks — the tool must not become a back door around the product's own restraint. "Momentum over motivation," not nagging.
 
 **Analytics.** Lead with progress and outcome signals (returning learners, learners achieving goals, mastery movement) over raw activity (messages, time). Every figure labelled and traceable (honesty invariant). No single headline metric to optimise (`ch24`). Revenue/retention/growth read from `UsageEvent` and `PlusPurchase`, not estimates.
 
 **"Dashboard" naming.** Keep the word for the staff tool — it *is* a dashboard and the book's "not a dashboard" line is about the *learner* Home, not internal ops. But honour the spirit: bias the landing page toward "what needs a decision today" over a wall of counters.
+
+**Dashboard composite — done (backend), verified against live data.** The landing page was empty because it reads one rich composite from `getDashboardStats()` (nested `retention`/`users`/`courses`/`chat`/`subscriptions`/`feedback`/`content`/`atRiskUsers`/`charts`), while the endpoint returned a flat six-count `/stats` alias — so every panel fell back to `|| 0`. `GET /admin/dashboard` now returns the composite from `admin/services/dashboard_service.overview()`, every field from real rows: retention (DAU/WAU/MAU/stickiness/at-risk) from `User.last_seen_at`, AI economics from the real `ChatMessage.cost_usd`/`revenue_usd`, revenue a genuine ~$0 until payment relationships exist (true, not fabricated), MRR an estimate off real tier counts × the published price (labelled `estimatedMRR`), satisfaction `null` when there are no responses (renders "—"). Also fixed the charts: `GET /admin/dashboard/charts` now emits `dailySignups`/`dailyMessages` with the `signups`/`messages` keys the chart reads (they were `count`, so the charts drew nothing). **Still a follow-up:** the deeper decision-led redesign (lead with what needs action, drop/curb activity-KPI tiles) is a frontend change in `maigie-client`; this makes the existing surface honest and populated rather than empty.
 
 ---
 
@@ -199,13 +201,13 @@ Ordered so each phase is useful alone and nothing is built on a lever the model 
 - **System reads — done (verified against 48 live `AIActionLog` rows).** Read-only, staff-gated, in the admin domain: `GET /admin/system-health` (the canonical name; reshape of the existing `/health` — db/cache/worker health), `GET /admin/ai-agent-tasks` and `GET /admin/ai-action-logs` (paginated, filterable, over the intelligence `AIAgentTask`/`AIActionLog` models).
 - **System/LLM config — deferred.** `GET/PUT /admin/config` and `/admin/llm-config` are held back: the client's `SystemConfig` shape references the retired `creditLimits` model, the real `SystemConfig` table is a generic key/value store (`key`/`value`/`category`/`label`) that needs a reshaped contract, and config *writes* touch runtime settings and must be scoped to exclude secrets. A reshape pass, not a mirror.
 
-**Phase 5 — Sensitive surfaces.** Chat lookup and impersonation, per Dec 6 and the resolution of Open Question 1 — deliberately last, because they need a policy decision, not just code.
+**Phase 5 — Sensitive surfaces.** Chat monitoring shipped as the aggregate/metadata view only (Dec 6) — no message content. **Impersonation was removed** (see §5). The one remaining sensitive capability that is still gated on Open Question 1 is reading an *individual* learner's conversation content, which is deliberately not built.
 
 ---
 
 ## 7. Open questions
 
-1. **Privacy policy for learner-private surfaces.** What operational justifications permit reading an individual's conversations or impersonating them, who may, and what is logged and surfaced to the learner? This is a policy decision the book constrains but does not settle. Blocks Phase 5.
+1. **Privacy policy for reading learner conversation content.** What operational justifications permit reading an individual learner's messages, who may, and what is logged and surfaced to the learner? This is a policy decision the book constrains but does not settle; it gates only the individual-conversation reader (aggregate chat monitoring already shipped without it). Impersonation, the other surface this once covered, has been removed rather than gated.
 2. ~~**CMS ownership.**~~ **Resolved (Dec 7): the backend admin CMS owns marketing content.** Follow-up during Phase 3: confirm how the public site consumes published content and what, if anything, Keystatic retains.
 3. **Analytics scope.** Which progress/outcome metrics are worth deriving now versus after there is enough traffic (the commercial plan makes the same "a month of traffic, not a change" point about usage distribution)?
 4. **Existing admin rows.** How many `role=="ADMIN"` users exist, and who should be `SUPER_ADMIN` vs `CONTENT_MANAGER` before Dec 4 flips the default? Needs a count against production, like `count_legacy_commercial_state.py` did for billing.

@@ -14,8 +14,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import func, select
 
 from src.shared.auth import StaffUser, SuperAdminUser
-from src.shared.database import check_db_health, get_session_factory, ilike_any
-from src.shared.infrastructure import cache
+from src.shared.database import get_session_factory, ilike_any
 
 from . import models
 from .services.audit_service import log_admin_action
@@ -70,31 +69,17 @@ def _user_response(user) -> "models.UserAdminResponse":
 # ===========================================================================
 
 
-@router.get("/health", response_model=models.HealthCheckResponse)
+@router.get("/health")
 async def admin_health(admin_user: StaffUser):
-    """Detailed system health (staff only)."""
-    from src.config import get_settings
+    """Detailed system health (staff only).
 
-    settings = get_settings()
-    db_health = await check_db_health()
-    cache_health = await cache.health_check()
+    Returns the composite the admin System Health page reads: an ``overall`` status, per-service
+    cards (``services``) from real probes, and observed LLM circuit-breaker state (``llm_models``).
+    ``/system-health`` is the canonical alias of this handler.
+    """
+    from .services import system_health_service
 
-    # Worker health
-    worker_health = {"status": "unknown"}
-    try:
-        from src.workers.manager import check_worker_health
-
-        worker_health = await check_worker_health()
-    except Exception:
-        worker_health = {"status": "unavailable"}
-
-    return models.HealthCheckResponse(
-        database=db_health,
-        cache=cache_health,
-        workers=worker_health,
-        version=settings.APP_VERSION,
-        environment=settings.ENVIRONMENT,
-    )
+    return await system_health_service.snapshot()
 
 
 @router.get("/stats", response_model=models.AdminStatsResponse)
@@ -146,18 +131,17 @@ async def admin_stats(admin_user: StaffUser):
     )
 
 
-@router.get("/dashboard", response_model=models.AdminStatsResponse)
+@router.get("/dashboard")
 async def admin_dashboard(admin_user: StaffUser):
-    """The dashboard landing figures.
+    """The dashboard landing overview — a single honest composite (staff only).
 
-    The admin client calls ``/admin/dashboard`` for its overview; ``/stats`` predates it and returns
-    the same shape. This is the canonical name going forward — ``/stats`` is kept as an alias so a
-    stale client keeps working — and it is a read, so staff (not only super admins) may see it.
-
-    The counts are cross-domain by nature. Per Decision 2 they should migrate behind each domain's own
-    read as those are added; for now the aggregate lives here rather than being duplicated per caller.
+    Every figure traces to a persisted row: retention from `User.last_seen_at`, AI economics from the
+    real `ChatMessage` cost/revenue columns, revenue a genuine ~$0 until payment relationships exist.
+    The flat `/stats` counts remain available at that path for any caller that still wants them.
     """
-    return await admin_stats(admin_user)
+    from .services import dashboard_service
+
+    return await dashboard_service.overview()
 
 
 # ===========================================================================
@@ -628,48 +612,117 @@ async def grant_comp_pass(user_id: str, body: models.GrantPassRequest, admin_use
 
 @router.get("/users/{user_id}/summary")
 async def get_user_summary(user_id: str, admin_user: StaffUser):
-    """A compact operational summary for the user-detail page (staff only).
+    """A flat operational summary for the user-summary sheet (staff only).
 
-    Composes the core account facts with the entitlement view and a little activity context. Framed as
-    understanding, not judgement (`ch16`, `ch14-behaviour`): it reports what the account *is* and when
-    it was last active, not a verdict on the learner. Richer per-user learning analytics
-    (`/admin/analytics/users/{id}`) is Phase 2.
+    Every figure is a real row for this learner: subscription state off the `User` columns, the
+    "credits" block reframed onto the live usage window (Decision 5 — credit caps are retired), and
+    per-user chat/course/referral counts. Framed as understanding, not judgement (`ch16`,
+    `ch14-behaviour`): it reports what the account *is*, not a verdict on the learner.
     """
-    from sqlalchemy import func
-
+    from src.domains.billing.services import entitlement_service
+    from src.domains.identity.db_models import User as UserModel
     from src.domains.identity.repository import IdentityRepository
+    from src.domains.intelligence.db_models import ChatMessage
+    from src.domains.knowledge.db_models import Course
 
     user = await IdentityRepository().find_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Best-effort cross-domain count. Kept in a guard so a summary never fails on an optional figure;
-    # migrates behind a knowledge-domain read per Decision 2 when one exists.
-    course_count: int | None = None
-    try:
-        from src.domains.knowledge.db_models import Course
+    entitlement = await entitlement_service.resolve(user_id)
 
-        factory = get_session_factory()
-        async with factory() as session:
-            course_count = (
+    factory = get_session_factory()
+    async with factory() as session:
+
+        async def _scalar(stmt) -> int:
+            return int((await session.execute(stmt)).scalar() or 0)
+
+        total_messages = await _scalar(
+            select(func.count()).select_from(ChatMessage).where(ChatMessage.user_id == user_id)
+        )
+        total_tokens = await _scalar(
+            select(func.coalesce(func.sum(ChatMessage.token_count), 0)).where(
+                ChatMessage.user_id == user_id
+            )
+        )
+        total_cost = float(
+            (
                 await session.execute(
-                    select(func.count()).select_from(Course).where(Course.user_id == user_id)
+                    select(func.coalesce(func.sum(ChatMessage.cost_usd), 0.0)).where(
+                        ChatMessage.user_id == user_id
+                    )
                 )
-            ).scalar() or 0
-    except Exception:
-        logger.debug("user summary: course count unavailable for %s", user_id, exc_info=True)
+            ).scalar()
+            or 0.0
+        )
+        total_revenue = float(
+            (
+                await session.execute(
+                    select(func.coalesce(func.sum(ChatMessage.revenue_usd), 0.0)).where(
+                        ChatMessage.user_id == user_id
+                    )
+                )
+            ).scalar()
+            or 0.0
+        )
+        total_courses = await _scalar(
+            select(func.count()).select_from(Course).where(Course.user_id == user_id)
+        )
+        # Referrals: how many learners this user brought in, and how many qualified (the points
+        # model's `referral_qualified`). The retired token/claim tables are empty.
+        total_referrals = 0
+        claimed_referrals = 0
+        if user.referral_code:
+            total_referrals = await _scalar(
+                select(func.count())
+                .select_from(UserModel)
+                .where(UserModel.referred_by_code == user.referral_code)
+            )
+            try:
+                from src.domains.billing.db_models import PointsLedgerEntry
 
-    entitlement = await get_user_entitlement(user_id, admin_user)
+                claimed_referrals = await _scalar(
+                    select(func.count())
+                    .select_from(PointsLedgerEntry)
+                    .where(
+                        PointsLedgerEntry.user_id == user_id,
+                        PointsLedgerEntry.kind == "referral_qualified",
+                    )
+                )
+            except Exception:
+                logger.debug("user summary: referral points unavailable", exc_info=True)
+
+    subscription_status = user.stripe_subscription_status or (
+        user.tier if user.tier in ("PREMIUM_MONTHLY", "PREMIUM_YEARLY") else None
+    )
 
     return {
-        "user": _user_response(user).model_dump(),
-        "activity": {
-            "createdAt": user.created_at,
-            "lastSeenAt": user.last_seen_at,
-            "lastSeenPlatform": user.last_seen_platform,
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "tier": user.tier,
+        "isActive": user.is_active,
+        "subscription": {
+            "status": subscription_status,
+            "customerId": user.stripe_customer_id,
+            "periodStart": user.subscription_current_period_start,
+            "periodEnd": user.subscription_current_period_end,
         },
-        "counts": {"courses": course_count},
-        "entitlement": entitlement.model_dump(),
+        # "Credits" reframed onto the live usage window (credit caps are retired, Decision 5): "used"
+        # is the current window's consumed units, "hardCap" the window allowance from the one resolver.
+        "credits": {
+            "used": user.usage_window_units_used,
+            "hardCap": entitlement.window_allowance,
+        },
+        "statistics": {
+            "totalMessages": total_messages,
+            "totalTokens": total_tokens,
+            "totalCostUsd": round(total_cost, 4),
+            "totalRevenueUsd": round(total_revenue, 4),
+            "totalCourses": total_courses,
+            "totalReferrals": total_referrals,
+            "claimedReferrals": claimed_referrals,
+        },
     }
 
 
@@ -703,9 +756,91 @@ async def user_analytics(user_id: str, admin_user: StaffUser):
         raise HTTPException(status_code=404, detail="User not found")
 
 
-@router.get("/dashboard/charts", response_model=models.DashboardChartsResponse)
+@router.get("/analytics/reengagement")
+async def reengagement_analytics(admin_user: StaffUser, days: int = Query(30, ge=1, le=365)):
+    """Nudge/wake analytics from real notification rows (staff). 'Came back' is 0 (not attributed)."""
+    from .services import reengagement_service
+
+    return await reengagement_service.reengagement_analytics(days)
+
+
+@router.get("/retention/deep-wake-config")
+async def get_deep_wake_config(admin_user: StaffUser):
+    """The deep-wake inactivity threshold (staff)."""
+    from .services import reengagement_service
+
+    return await reengagement_service.deep_wake_config()
+
+
+@router.put("/retention/deep-wake-config")
+async def update_deep_wake_config(
+    body: models.DeepWakeConfigUpdateRequest, admin_user: SuperAdminUser
+):
+    """Set the deep-wake inactivity threshold (super admin), audited."""
+    from .services import reengagement_service
+
+    if body.max_inactive_days < 1 or body.max_inactive_days > 365:
+        raise HTTPException(status_code=400, detail="max_inactive_days must be between 1 and 365")
+    result = await reengagement_service.set_deep_wake_config(body.max_inactive_days)
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="update_deep_wake_config",
+        resource_type="config",
+        resource_id="deepWake.maxInactiveDays",
+        details={"maxInactiveDays": body.max_inactive_days},
+    )
+    return result
+
+
+@router.post("/users/regenerate-schedules")
+async def regenerate_schedules(body: models.RegenerateSchedulesRequest, admin_user: SuperAdminUser):
+    """Repack drifted study plans so returning learners see fresh ones (super admin), audited."""
+    from .services import reengagement_service
+
+    result = await reengagement_service.bulk_regenerate_schedules(
+        body.max_users, body.only_inactive_days
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bulk_regenerate_schedules",
+        resource_type="study_plan",
+        resource_id=None,
+        details=result,
+    )
+    return result
+
+
+@router.get("/analytics/revenue")
+async def revenue_analytics(admin_user: SuperAdminUser):
+    """Revenue analytics (super admin). Subscription counts real; MRR estimated; churn 0 (no history)."""
+    from .services import analytics_service
+
+    return await analytics_service.revenue_analytics()
+
+
+@router.get("/analytics/retention")
+async def retention_analytics(admin_user: StaffUser):
+    """Retention analytics (staff). DAU/WAU/MAU real; cohorts/adoption empty (no historical log)."""
+    from .services import analytics_service
+
+    return await analytics_service.retention_analytics()
+
+
+@router.get("/analytics/growth")
+async def growth_analytics(admin_user: StaffUser, days: int = Query(30, ge=1, le=365)):
+    """Growth analytics (staff). Signups real; conversions 0 (untracked); referrals real."""
+    from .services import analytics_service
+
+    return await analytics_service.growth_analytics(days)
+
+
+@router.get("/dashboard/charts")
 async def dashboard_charts(admin_user: StaffUser, days: int = Query(14, ge=1, le=180)):
-    """Daily signups and messages over a window (staff only)."""
+    """Daily signups and messages over a window (staff only).
+
+    Returns the exact shape the charts consume — ``dailySignups``/``dailyMessages`` with
+    ``signups``/``messages`` keys — so the period selector re-queries with no client-side remap.
+    """
     from .services import analytics_service
 
     return await analytics_service.dashboard_charts(days)
@@ -829,7 +964,7 @@ async def wake_users_bulk(admin_user: SuperAdminUser, limit: int = Query(50, ge=
 # ===========================================================================
 
 
-@router.get("/system-health", response_model=models.HealthCheckResponse)
+@router.get("/system-health")
 async def system_health(admin_user: StaffUser):
     """Detailed system health (staff only). The canonical name; `/health` is the older alias."""
     return await admin_health(admin_user)
@@ -954,3 +1089,250 @@ async def list_ai_action_logs(
         pageSize=pageSize,
         totalPages=math.ceil(total / pageSize) if total else 0,
     )
+
+
+# ===========================================================================
+# Courses (admin view over the knowledge domain)
+# ===========================================================================
+
+
+@router.get("/courses", response_model=models.AdminCourseListResponse)
+async def list_all_courses(
+    admin_user: StaffUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(50, ge=1, le=200),
+    userId: str | None = Query(None),
+    difficulty: str | None = Query(None),
+    isAIGenerated: bool | None = Query(None),
+    archived: bool | None = Query(None),
+    search: str | None = Query(None),
+):
+    """List courses across learners, paginated and filterable (staff only)."""
+    from .services import courses_service
+
+    return await courses_service.list_courses(
+        page=page,
+        page_size=pageSize,
+        user_id=userId,
+        difficulty=difficulty,
+        is_ai_generated=isAIGenerated,
+        archived=archived,
+        search=search,
+    )
+
+
+@router.get("/courses/{course_id}", response_model=models.AdminCourseDetail)
+async def get_course_details(course_id: str, admin_user: StaffUser):
+    """A course with its modules and topics (staff only)."""
+    from src.shared.exceptions import NotFoundError
+
+    from .services import courses_service
+
+    try:
+        return await courses_service.course_detail(course_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+
+@router.delete("/courses/{course_id}")
+async def delete_course(course_id: str, admin_user: SuperAdminUser):
+    """Delete a course and its modules/topics (super admin only), audited.
+
+    A hard delete — a course is a learner's own artifact, and removing it is a request to forget it;
+    `Module`/`Topic` cascade from `Course`.
+    """
+    from src.shared.exceptions import NotFoundError
+
+    from .services import courses_service
+
+    try:
+        await courses_service.delete_course(course_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="delete_course",
+        resource_type="course",
+        resource_id=course_id,
+        details=None,
+    )
+    return {"message": "Course deleted", "courseId": course_id}
+
+
+# ===========================================================================
+# Chat monitoring (aggregate + metadata only — no message content; Decision 6)
+# ===========================================================================
+
+
+@router.get("/chat/sessions", response_model=models.ChatSessionListResponse)
+async def list_chat_sessions(
+    admin_user: SuperAdminUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(50, ge=1, le=200),
+    userId: str | None = Query(None),
+    search: str | None = Query(None),
+):
+    """Chat sessions with counts/cost (super admin). Metadata only — no message content is returned."""
+    from .services import chat_monitoring_service
+
+    return await chat_monitoring_service.list_chat_sessions(
+        page=page, page_size=pageSize, user_id=userId, search=search
+    )
+
+
+@router.get("/chat/stats", response_model=models.ChatStatisticsResponse)
+async def chat_statistics(admin_user: SuperAdminUser):
+    """Aggregate chat/AI statistics (super admin). No message content."""
+    from .services import chat_monitoring_service
+
+    return await chat_monitoring_service.chat_statistics()
+
+
+# ===========================================================================
+# Staff
+# ===========================================================================
+
+
+def _staff_member(user) -> "models.StaffMember":
+    return models.StaffMember(
+        id=user.id,
+        email=user.email,
+        name=user.name,
+        role=user.role,
+        adminStaffRole=user.admin_staff_role,
+        isActive=user.is_active,
+    )
+
+
+@router.get("/staff", response_model=list[models.StaffMember])
+async def list_staff(admin_user: SuperAdminUser):
+    """List platform staff (role == ADMIN), super admin only."""
+    from src.domains.identity.db_models import User as UserModel
+
+    factory = get_session_factory()
+    async with factory() as session:
+        users = list(
+            (
+                await session.execute(
+                    select(UserModel).where(UserModel.role == "ADMIN").order_by(UserModel.email)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return [_staff_member(u) for u in users]
+
+
+@router.patch("/staff/{user_id}", response_model=models.StaffMember)
+async def update_staff_member(
+    user_id: str, body: models.StaffRoleUpdateBody, admin_user: SuperAdminUser
+):
+    """Set a staff member's admin role (super admin only), audited."""
+    from src.domains.identity.repository import IdentityRepository
+
+    if body.adminStaffRole not in ("SUPER_ADMIN", "CONTENT_MANAGER"):
+        raise HTTPException(status_code=400, detail="Invalid staff role")
+
+    repo = IdentityRepository()
+    user = await repo.find_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role != "ADMIN":
+        raise HTTPException(status_code=400, detail="User is not an admin")
+
+    previous = user.admin_staff_role
+    updated = await repo.update(user_id, {"adminStaffRole": body.adminStaffRole})
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="update_staff_role",
+        resource_type="user",
+        resource_id=user_id,
+        details={"adminStaffRole": {"before": previous, "after": body.adminStaffRole}},
+    )
+    return _staff_member(updated)
+
+
+# ===========================================================================
+# Referrals (reshaped onto the points model)
+# ===========================================================================
+
+
+@router.get("/referrals", response_model=models.ReferralListResponse)
+async def list_referrals(
+    admin_user: StaffUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(50, ge=1, le=200),
+    referrerId: str | None = Query(None),
+    isClaimed: bool | None = Query(None),
+):
+    """Referral rewards, read from the points ledger (staff)."""
+    from .services import referrals_service
+
+    return await referrals_service.list_referrals(
+        page=page, page_size=pageSize, referrer_id=referrerId, is_claimed=isClaimed
+    )
+
+
+@router.get("/referrals/stats", response_model=models.ReferralStatistics)
+async def referral_statistics(admin_user: StaffUser):
+    """Referral statistics from the points ledger (staff)."""
+    from .services import referrals_service
+
+    return await referrals_service.referral_statistics()
+
+
+# ===========================================================================
+# System / LLM configuration (SystemConfig key/value; no secrets)
+# ===========================================================================
+
+
+@router.get("/config", response_model=models.SystemConfigResponse)
+async def get_system_config(admin_user: SuperAdminUser):
+    """Operational config: maintenance mode + feature flags (super admin). creditLimits is retired."""
+    from .services import config_service
+
+    return await config_service.get_system_config()
+
+
+@router.put("/config", response_model=models.SystemConfigResponse)
+async def update_system_config(body: models.SystemConfigUpdateRequest, admin_user: SuperAdminUser):
+    """Update maintenance mode / feature flags (super admin), audited."""
+    from .services import config_service
+
+    result = await config_service.update_system_config(body)
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="update_system_config",
+        resource_type="config",
+        resource_id="system",
+        details={
+            "maintenanceMode": body.maintenanceMode,
+            "featureFlags": body.featureFlags,
+        },
+    )
+    return result
+
+
+@router.get("/llm-config")
+async def get_llm_config(admin_user: SuperAdminUser) -> dict[str, str]:
+    """Stored LLM routing preferences (super admin). Non-secret key/values only."""
+    from .services import config_service
+
+    return await config_service.get_llm_config()
+
+
+@router.put("/llm-config")
+async def update_llm_config(body: dict[str, str], admin_user: SuperAdminUser) -> dict[str, str]:
+    """Set LLM routing preferences (super admin), audited. Never stores secrets."""
+    from .services import config_service
+
+    result = await config_service.update_llm_config(body)
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="update_llm_config",
+        resource_type="config",
+        resource_id="llm",
+        details={"keys": sorted(body.keys())},
+    )
+    return result

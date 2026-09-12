@@ -169,16 +169,6 @@ class StaffRoleUpdateRequest(BaseModel):
     staffRole: str  # SUPER_ADMIN | CONTENT_MANAGER
 
 
-class HealthCheckResponse(BaseModel):
-    """Detailed health check for admin."""
-
-    database: dict
-    cache: dict
-    workers: dict
-    version: str
-    environment: str
-
-
 # ===========================================================================
 # Analytics (Phase 2 — honest, real-row metrics only)
 # ===========================================================================
@@ -275,21 +265,6 @@ class UserDetailAnalyticsResponse(BaseModel):
     summary: UserProgressSummary
 
 
-class DailyCount(BaseModel):
-    """A single day's count in a time series."""
-
-    date: str
-    count: int
-
-
-class DashboardChartsResponse(BaseModel):
-    """Signups and messages per day over a window."""
-
-    days: int
-    dailySignups: list[DailyCount]
-    dailyMessages: list[DailyCount]
-
-
 # ===========================================================================
 # Re-engagement (Phase 3 — never-guilt, consent-gated)
 # ===========================================================================
@@ -348,6 +323,15 @@ class WakeBulkResponse(BaseModel):
     failed: int
 
 
+class DeepWakeConfigUpdateRequest(BaseModel):
+    max_inactive_days: int
+
+
+class RegenerateSchedulesRequest(BaseModel):
+    max_users: int = 100
+    only_inactive_days: int | None = None
+
+
 # ===========================================================================
 # System — AI task / action-log reads (Phase 4)
 # ===========================================================================
@@ -393,6 +377,201 @@ class AiActionLogListResponse(BaseModel):
     page: int
     pageSize: int
     totalPages: int
+
+
+# ===========================================================================
+# Courses (admin view over the knowledge domain)
+# ===========================================================================
+
+
+class AdminCourseItem(BaseModel):
+    id: str
+    userId: str
+    userEmail: str
+    userName: str | None = None
+    title: str
+    description: str | None = None
+    difficulty: str
+    isAIGenerated: bool
+    archived: bool
+    progress: float
+    totalTopics: int
+    completedTopics: int
+    moduleCount: int
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class AdminCourseListResponse(BaseModel):
+    courses: list[AdminCourseItem]
+    total: int
+    page: int
+    pageSize: int
+    totalPages: int
+
+
+class AdminTopicItem(BaseModel):
+    id: str
+    title: str
+    content: str | None = None
+    order: float
+    completed: bool
+    estimatedHours: float | None = None
+    createdAt: datetime
+
+
+class AdminModuleItem(BaseModel):
+    id: str
+    title: str
+    description: str | None = None
+    order: float
+    completed: bool
+    progress: float
+    totalTopics: int
+    completedTopics: int
+    topics: list[AdminTopicItem]
+
+
+class AdminCourseDetail(BaseModel):
+    id: str
+    userId: str
+    userEmail: str
+    userName: str | None = None
+    title: str
+    description: str | None = None
+    difficulty: str
+    targetDate: datetime | None = None
+    isAIGenerated: bool
+    archived: bool
+    progress: float
+    totalTopics: int
+    completedTopics: int
+    modules: list[AdminModuleItem]
+    createdAt: datetime
+    updatedAt: datetime
+
+
+# ===========================================================================
+# Staff
+# ===========================================================================
+
+
+class StaffMember(BaseModel):
+    id: str
+    email: str
+    name: str | None = None
+    role: str
+    adminStaffRole: str | None = None
+    isActive: bool
+
+
+class StaffRoleUpdateBody(BaseModel):
+    adminStaffRole: str
+
+
+# ===========================================================================
+# Referrals (reshaped onto the points model — Decision 5)
+# ===========================================================================
+
+
+class ReferralItem(BaseModel):
+    id: str
+    referrerId: str
+    referrerEmail: str | None = None
+    referrerName: str | None = None
+    referredUserId: str | None = None
+    referredUserEmail: str | None = None
+    referredUserName: str | None = None
+    rewardType: str
+    tokens: int
+    isClaimed: bool
+    claimedAt: datetime | None = None
+    createdAt: datetime
+
+
+class ReferralListResponse(BaseModel):
+    rewards: list[ReferralItem]
+    total: int
+    page: int
+    pageSize: int
+    totalPages: int
+
+
+class TopReferrer(BaseModel):
+    email: str | None = None
+    name: str | None = None
+    totalReferrals: int
+    totalTokens: int
+
+
+class ReferralStatistics(BaseModel):
+    totalRewards: int
+    claimedRewards: int
+    unclaimedRewards: int
+    totalTokensAwarded: int
+    totalTokensClaimed: int
+    topReferrers: list[TopReferrer]
+    signupRewards: int
+    subscriptionRewards: int
+
+
+# ===========================================================================
+# Chat monitoring (aggregate + metadata only — no message content)
+# ===========================================================================
+
+
+class ChatSessionItem(BaseModel):
+    id: str
+    userId: str
+    userEmail: str | None = None
+    userName: str | None = None
+    title: str | None = None
+    isActive: bool
+    messageCount: int
+    totalTokens: int
+    totalCostUsd: float
+    totalRevenueUsd: float
+    profitUsd: float
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class ChatSessionListResponse(BaseModel):
+    sessions: list[ChatSessionItem]
+    total: int
+    page: int
+    pageSize: int
+    totalPages: int
+
+
+class ChatStatisticsResponse(BaseModel):
+    totalSessions: int
+    totalMessages: int
+    totalTokens: int
+    averageTokensPerMessage: float
+    uniqueUsers: int
+    totalCostUsd: float
+    totalRevenueUsd: float
+    totalProfitUsd: float
+    profitMargin: float
+    dailyStats: dict[str, dict]
+
+
+# ===========================================================================
+# System configuration
+# ===========================================================================
+
+
+class SystemConfigResponse(BaseModel):
+    creditLimits: dict[str, dict[str, int]] = {}
+    maintenanceMode: bool = False
+    featureFlags: dict[str, bool] = {}
+
+
+class SystemConfigUpdateRequest(BaseModel):
+    creditLimits: dict[str, dict[str, int]] | None = None
+    maintenanceMode: bool | None = None
+    featureFlags: dict[str, bool] | None = None
 
 
 class AuditLogEntry(BaseModel):

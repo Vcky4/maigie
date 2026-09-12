@@ -221,6 +221,43 @@ class CircuitBreaker:
         self._last_failure_time.pop(key, None)
         self._half_open_probe_sent.pop(key, None)
 
+    def snapshot(self) -> dict[str, dict]:
+        """Return observed state for every provider-model pair with recorded activity.
+
+        Only pairs the breaker has actually seen (a failure, a trip, or a recorded last-failure)
+        appear here — a pair that has only ever succeeded is never keyed, so an empty snapshot is the
+        healthy normal case, not "no models configured". This is process-local: it reflects what *this*
+        process's router has observed, nothing more. `failure_threshold` is the configured limit;
+        `failures_in_window` is the live count within the rolling window; `last_failure` is an ISO-8601
+        UTC timestamp or None.
+        """
+        from datetime import UTC, datetime
+
+        keys = set(self._states) | set(self._failure_timestamps) | set(self._last_failure_time)
+        out: dict[str, dict] = {}
+        for key in keys:
+            provider, _, model = key.partition(":")
+            state = self.get_state(provider, model)
+            last_ts = self._last_failure_time.get(key)
+            if state == CircuitState.CLOSED:
+                status = "healthy"
+            elif state == CircuitState.HALF_OPEN:
+                status = "degraded"
+            else:
+                status = "unhealthy"
+            out[key] = {
+                "provider": provider,
+                "model": model,
+                "circuit_state": state.value,
+                "failures_in_window": self._failures_in_window(key),
+                "failure_threshold": self._failure_threshold,
+                "last_failure": (
+                    datetime.fromtimestamp(last_ts, tz=UTC).isoformat() if last_ts else None
+                ),
+                "status": status,
+            }
+        return out
+
 
 def create_circuit_breaker() -> CircuitBreaker:
     """Create a CircuitBreaker instance configured from application settings.
