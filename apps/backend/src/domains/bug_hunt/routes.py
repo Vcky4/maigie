@@ -42,7 +42,12 @@ from .exceptions import (
     CountryNotSetError,
     NoOpenSeasonError,
 )
-from .services import eligibility_service, program_service, submission_service
+from .services import (
+    eligibility_service,
+    program_service,
+    submission_service,
+    triage_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +160,75 @@ def _submission_view(
         attachments=[_attachment_view(a) for a in submission.attachments],
         createdAt=submission.created_at,
         triagedAt=submission.triaged_at,
+    )
+
+
+def _submission_admin_view(
+    submission: BugHuntSubmission,
+    *,
+    season_number: int,
+    email: str | None,
+    name: str | None,
+    award_kobo: int | None,
+) -> models.SubmissionAdminView:
+    """The staff view: everything the reporter sees, plus `adminNotes` and who they are.
+
+    A separate function from `_submission_view` rather than a flag on it, because the difference between the
+    two is a private note reaching the person it is about. A boolean parameter is one inverted condition away
+    from leaking it; two functions are not.
+    """
+    return models.SubmissionAdminView(
+        id=submission.id,
+        programId=submission.program_id,
+        seasonNumber=season_number,
+        participantId=submission.participant_id,
+        userId=submission.user_id,
+        email=email,
+        name=name,
+        platform=submission.platform,
+        appVersion=submission.app_version,
+        buildNumber=submission.build_number,
+        deviceModel=submission.device_model,
+        osVersion=submission.os_version,
+        route=submission.route,
+        title=submission.title,
+        stepsToReproduce=submission.steps_to_reproduce,
+        expectedResult=submission.expected_result,
+        actualResult=submission.actual_result,
+        reportedSeverity=submission.reported_severity,
+        category=submission.category,
+        type=submission.type,
+        severity=submission.severity,
+        status=submission.status,
+        isApplication=submission.is_application,
+        duplicateOfId=submission.duplicate_of_id,
+        publicResponse=submission.public_response,
+        adminNotes=submission.admin_notes,
+        awardKobo=award_kobo,
+        attachments=[_attachment_view(a) for a in submission.attachments],
+        createdAt=submission.created_at,
+        triagedAt=submission.triaged_at,
+        triagedByUserId=submission.triaged_by_user_id,
+    )
+
+
+def _participant_admin_view(
+    participant: BugHuntParticipant, email: str, name: str | None, season_number: int
+) -> models.ParticipantAdminView:
+    return models.ParticipantAdminView(
+        id=participant.id,
+        programId=participant.program_id,
+        seasonNumber=season_number,
+        userId=participant.user_id,
+        email=email,
+        name=name,
+        status=participant.status,
+        attemptCount=participant.attempt_count,
+        carriedForward=participant.carried_from_program_id is not None,
+        acceptedRulesVersion=participant.accepted_rules_version,
+        rejectionReason=participant.rejection_reason,
+        createdAt=participant.created_at,
+        decidedAt=participant.decided_at,
     )
 
 
@@ -652,7 +726,311 @@ async def admin_carry_forward(
     )
 
 
-# Re-exported so Phase 2's routes can raise them without importing from two places, and so a reader of
+# ===========================================================================
+# Admin — triage
+#
+# Staff, not super admin. The amount is not theirs to choose (Decision 6): a triager sets category and
+# severity, the season's matrix decides the kobo. That is what makes it safe to let a content manager work
+# the queue, and it is why a two-click money flow was not worth the friction across a 14-day season.
+# ===========================================================================
+
+
+@admin_router.get("/stats", response_model=models.TriageStatsResponse)
+async def admin_stats(
+    admin_user: StaffUser, programId: str | None = None
+) -> models.TriageStatsResponse:
+    """Queue depths, spend against budget, and turnaround. Defaults to the open season.
+
+    Every figure is a live query rather than a cached number: the queue depths are the thing being managed,
+    and a dashboard that says the queue is empty when it is not is worse than no dashboard.
+    """
+    data = await triage_service.stats(programId)
+    season = data.pop("season")
+    return models.TriageStatsResponse(
+        seasonId=season.id if season else None,
+        seasonNumber=season.season_number if season else None,
+        seasonStatus=season.status if season else None,
+        **data,
+    )
+
+
+@admin_router.get("/participants", response_model=models.ParticipantAdminListResponse)
+async def admin_list_participants(
+    admin_user: StaffUser,
+    programId: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
+    search: str | None = None,
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=25, ge=1, le=100),
+) -> models.ParticipantAdminListResponse:
+    """The application queue, **oldest first**.
+
+    Oldest first because a review queue is worked front to back. Newest-first ordering is how the applicant
+    who has waited longest keeps getting pushed down the page, which is the opposite of a 48-hour promise.
+    """
+    rows, total = await triage_service.list_participants(
+        program_id=programId,
+        status=status_filter,
+        search=search,
+        page=page,
+        page_size=pageSize,
+    )
+    seasons = {s.id: s for s in await program_service.list_all(include_draft=True)}
+    return models.ParticipantAdminListResponse(
+        participants=[
+            _participant_admin_view(
+                participant, email, name, seasons[participant.program_id].season_number
+            )
+            for participant, email, name in rows
+            if participant.program_id in seasons
+        ],
+        total=total,
+        page=page,
+        pageSize=pageSize,
+        hasMore=(page * pageSize) < total,
+    )
+
+
+@admin_router.get("/participants/{participant_id}", response_model=models.ParticipantAdminDetail)
+async def admin_get_participant(
+    participant_id: str, admin_user: StaffUser
+) -> models.ParticipantAdminDetail:
+    """One participant, with every season they have taken part in.
+
+    The cross-season history is the point. "Is this a good reporter" is not answerable from the season they
+    are applying to, and a returning applicant's previous record is the most useful thing on this screen.
+    """
+    data = await triage_service.participant_detail(participant_id)
+    participant = data["participant"]
+    program = await program_service.get(participant.program_id)
+    history: list[models.ParticipationView] = []
+    for row in data["history"]:
+        history.append(_participation_view(row, await program_service.get(row.program_id)))
+    return models.ParticipantAdminDetail(
+        participant=_participant_admin_view(
+            participant, data["email"], data["name"], program.season_number
+        ),
+        country=data["country"],
+        submissionCounts=data["submissionCounts"],
+        earnedThisSeasonKobo=data["earnedThisSeasonKobo"],
+        earnedLifetimeKobo=data["earnedLifetimeKobo"],
+        history=history,
+    )
+
+
+@admin_router.post(
+    "/participants/{participant_id}/decision", response_model=models.ParticipantAdminView
+)
+async def admin_decide_participant(
+    participant_id: str, body: models.ParticipantDecisionRequest, admin_user: StaffUser
+) -> models.ParticipantAdminView:
+    """Approve or reject an applicant.
+
+    Separate from triaging their application's finding, deliberately: a report can be good enough to pay for
+    while the applicant is wrong for the programme, and the reverse. Collapsing the two would make one
+    judgement stand in for the other.
+    """
+    participant = await triage_service.decide_application(
+        participant_id=participant_id,
+        decision=body.decision,
+        reason=body.reason,
+        staff_user_id=admin_user.id,
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_decide_application",
+        resource_type="bug_hunt_participant",
+        resource_id=participant_id,
+        details={"decision": body.decision, "reason": body.reason},
+    )
+    detail = await triage_service.participant_detail(participant_id)
+    program = await program_service.get(participant.program_id)
+    return _participant_admin_view(
+        participant, detail["email"], detail["name"], program.season_number
+    )
+
+
+@admin_router.post(
+    "/participants/{participant_id}/suspend", response_model=models.ParticipantAdminView
+)
+async def admin_suspend_participant(
+    participant_id: str, body: models.ParticipantSuspendRequest, admin_user: SuperAdminUser
+) -> models.ParticipantAdminView:
+    """Suspend a participation. Stops submitting, blocks carry-forward, **does not touch the balance.**
+
+    Super admin rather than staff, because it is the one participation decision that cannot be undone by a
+    later approval — and because confiscation is the obvious next thing somebody would ask for. Whatever
+    they earned before the suspension, they earned; the ledger is append-only so that no single act can
+    quietly reverse a payment.
+    """
+    participant = await triage_service.suspend_participant(
+        participant_id=participant_id, reason=body.reason, staff_user_id=admin_user.id
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_suspend_participant",
+        resource_type="bug_hunt_participant",
+        resource_id=participant_id,
+        details={"reason": body.reason},
+    )
+    detail = await triage_service.participant_detail(participant_id)
+    program = await program_service.get(participant.program_id)
+    return _participant_admin_view(
+        participant, detail["email"], detail["name"], program.season_number
+    )
+
+
+@admin_router.get("/submissions", response_model=models.SubmissionAdminListResponse)
+async def admin_list_submissions(
+    admin_user: StaffUser,
+    programId: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
+    platform: str | None = None,
+    severity: str | None = None,
+    category: str | None = None,
+    participantId: str | None = None,
+    isApplication: bool | None = None,
+    search: str | None = None,
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=25, ge=1, le=100),
+) -> models.SubmissionAdminListResponse:
+    """The triage queue, oldest first, filterable by season, status, platform, severity and reporter."""
+    rows, total = await triage_service.list_submissions(
+        program_id=programId,
+        status=status_filter,
+        platform=platform,
+        severity=severity,
+        category=category,
+        participant_id=participantId,
+        is_application=isApplication,
+        search=search,
+        page=page,
+        page_size=pageSize,
+    )
+    seasons = {s.id: s for s in await program_service.list_all(include_draft=True)}
+    awards = await submission_service.awards_for([row[0].id for row in rows])
+    return models.SubmissionAdminListResponse(
+        submissions=[
+            _submission_admin_view(
+                submission,
+                season_number=seasons[submission.program_id].season_number,
+                email=email,
+                name=name,
+                award_kobo=awards.get(submission.id),
+            )
+            for submission, email, name in rows
+            if submission.program_id in seasons
+        ],
+        total=total,
+        page=page,
+        pageSize=pageSize,
+        hasMore=(page * pageSize) < total,
+    )
+
+
+@admin_router.get("/submissions/{submission_id}", response_model=models.SubmissionAdminDetail)
+async def admin_get_submission(
+    submission_id: str, admin_user: StaffUser
+) -> models.SubmissionAdminDetail:
+    """One finding, with the reward table of **its own** season beside it.
+
+    Not the current season's table. A triager grading a late Season 1 finding needs to see the amounts it
+    was reported under, because those are the amounts it will be paid.
+    """
+    data = await triage_service.submission_detail(submission_id)
+    return models.SubmissionAdminDetail(
+        submission=_submission_admin_view(
+            data["submission"],
+            season_number=data["seasonNumber"],
+            email=data["email"],
+            name=data["name"],
+            award_kobo=data["awardKobo"],
+        ),
+        reporterSubmissionCount=data["reporterSubmissionCount"],
+        duplicateOfTitle=data["duplicateOfTitle"],
+        rewardMatrix=data["rewardMatrix"],
+    )
+
+
+@admin_router.post("/submissions/{submission_id}/triage", response_model=models.TriageResponse)
+async def admin_triage_submission(
+    submission_id: str, body: models.TriageRequest, admin_user: StaffUser
+) -> models.TriageResponse:
+    """Grade a finding. The season's matrix decides what the grading is worth.
+
+    **No amount crosses this boundary.** Accepting a grading the season does not price is refused rather
+    than paid as zero, because "accepted, ₦0" is the one outcome that is both wrong and hard to notice.
+    """
+    result = await triage_service.triage(
+        submission_id=submission_id,
+        status=body.status,
+        category=body.category,
+        type_=body.type,
+        severity=body.severity,
+        duplicate_of_id=body.duplicateOfId,
+        public_response=body.publicResponse,
+        admin_notes=body.adminNotes,
+        staff_user_id=admin_user.id,
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_triage_submission",
+        resource_type="bug_hunt_submission",
+        resource_id=submission_id,
+        details={
+            "status": body.status,
+            "category": body.category,
+            "severity": body.severity,
+            "awardKobo": result["awardKobo"],
+        },
+    )
+    detail = await triage_service.submission_detail(submission_id)
+    return models.TriageResponse(
+        submission=_submission_admin_view(
+            result["submission"],
+            season_number=result["seasonNumber"],
+            email=detail["email"],
+            name=detail["name"],
+            award_kobo=detail["awardKobo"],
+        ),
+        awardKobo=result["awardKobo"],
+        awardPending=result["awardPending"],
+    )
+
+
+@admin_router.get("/known-issues", response_model=models.KnownIssueListResponse)
+async def admin_known_issues(
+    admin_user: StaffUser,
+    platform: str | None = None,
+    excludeProgramId: str | None = None,
+    limit: int = Query(default=100, ge=1, le=300),
+) -> models.KnownIssueListResponse:
+    """Accepted findings from other seasons, for marking a repeat as `known_issue`.
+
+    This endpoint is what keeps that fairness rule practical rather than aspirational. Without it, deciding
+    whether a Season 2 report repeats an unfixed Season 1 one is a memory test — and the reliable outcome of
+    a memory test under queue pressure is `duplicate`, which blames the reporter for our backlog.
+    """
+    rows = await triage_service.known_issues(
+        platform=platform, exclude_program_id=excludeProgramId, limit=limit
+    )
+    return models.KnownIssueListResponse(
+        knownIssues=[
+            models.KnownIssueView(
+                id=submission.id,
+                seasonNumber=season_number,
+                platform=submission.platform,
+                title=submission.title,
+                severity=submission.severity,
+                category=submission.category,
+                createdAt=submission.created_at,
+            )
+            for submission, season_number in rows
+        ]
+    )
+
+
+# Re-exported so later phases' routes can raise them without importing from two places, and so a reader of
 # this module can see which refusals the participant surface speaks.
 __all__ = [
     "router",

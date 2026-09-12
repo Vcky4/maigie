@@ -43,6 +43,24 @@ OWNER_PARAMS = {"user_id", "userId", "owner_id", "current_user", "user"}
 #: that does it. If a caller is added that does not, the entry is wrong and the read becomes a hole — so
 #: read the reason before adding a caller, not after.
 ALLOWED: dict[str, str] = {
+    "domains/bug_hunt/services/triage_service.py::_resolve_duplicate_target": (
+        "Private to `triage_service.triage`, whose only caller is "
+        "`POST /admin/bug-hunt/submissions/{id}/triage`, gated by `StaffUser` and audited. It reads the "
+        "submission a triager is pointing a duplicate *at*, which is by definition somebody else's "
+        "finding — filtering to an owner would make it impossible to mark a duplicate at all, and "
+        "filtering to the staff member's id would be nonsense. Nothing it reads reaches a learner: the "
+        "row is fetched to validate that the target exists and is not itself a duplicate, and only the "
+        "id is stored. The participant-facing reads of the same table are in `submission_service`, "
+        "where `get_own` and `list_own` are scoped in the query."
+    ),
+    "domains/bug_hunt/services/triage_service.py::known_issues": (
+        "Its only caller is `GET /admin/bug-hunt/known-issues`, gated by `StaffUser`. Cross-learner by "
+        "design: it lists accepted findings from earlier seasons so a triager can mark a repeat as "
+        "`known_issue` rather than blaming the reporter for our backlog, and every one of those "
+        "findings belongs to a different tester. The authorisation is the role gate, not row "
+        "ownership. It reads no participant identity — title, platform, severity, season — and the "
+        "endpoint is not reachable from the participant app, which has no admin surface."
+    ),
     "domains/admin/services/courses_service.py::delete_course": (
         "Its only caller is the `DELETE /admin/courses/{id}` route, gated by `SuperAdminUser` and "
         "audited. Admin course deletion is deliberately cross-learner — a super admin removes any "

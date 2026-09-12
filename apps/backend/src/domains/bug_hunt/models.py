@@ -248,6 +248,204 @@ class CarryForwardResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Triage — admin
+# ---------------------------------------------------------------------------
+
+
+class ParticipantAdminView(BaseModel):
+    """A participant in the review queue.
+
+    Carries the applicant's email and name from the identity join, because a queue of opaque ids is not a
+    queue anybody can work.
+    """
+
+    id: str
+    programId: str
+    seasonNumber: int
+    userId: str
+    email: str
+    name: str | None = None
+    status: str
+    attemptCount: int
+    carriedForward: bool
+    acceptedRulesVersion: int | None = None
+    rejectionReason: str | None = None
+    createdAt: datetime
+    decidedAt: datetime | None = None
+
+
+class ParticipantAdminListResponse(BaseModel):
+    participants: list[ParticipantAdminView]
+    total: int
+    page: int
+    pageSize: int
+    hasMore: bool
+
+
+class ParticipantAdminDetail(BaseModel):
+    """One participant, with the cross-season record that answers "is this a good reporter".
+
+    `earnedLifetimeKobo` spans every season and `earnedThisSeasonKobo` does not — the difference is the whole
+    point of a per-user wallet, and a returning applicant's history is the most useful thing on this screen.
+    """
+
+    participant: ParticipantAdminView
+    country: str | None = None
+    submissionCounts: dict[str, int] = {}
+    earnedThisSeasonKobo: int
+    earnedLifetimeKobo: int
+    history: list[ParticipationView] = []
+
+
+class ParticipantDecisionRequest(BaseModel):
+    """Approve or reject. A rejection needs a reason, and the applicant reads it verbatim."""
+
+    decision: str = Field(description="approve | reject")
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class ParticipantSuspendRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class SubmissionAdminView(BaseModel):
+    """A finding as staff see it: the reporter's view plus the private half and the identity join."""
+
+    id: str
+    programId: str
+    seasonNumber: int
+    participantId: str | None = None
+    userId: str | None = None
+    email: str | None = None
+    name: str | None = None
+    platform: str
+    appVersion: str | None = None
+    buildNumber: str | None = None
+    deviceModel: str | None = None
+    osVersion: str | None = None
+    route: str | None = None
+    title: str
+    stepsToReproduce: str
+    expectedResult: str
+    actualResult: str
+    reportedSeverity: str | None = None
+    category: str | None = None
+    type: str | None = None
+    severity: str | None = None
+    status: str
+    isApplication: bool
+    duplicateOfId: str | None = None
+    publicResponse: str | None = None
+    #: Staff-only, and the reason this model exists separately from `SubmissionView`.
+    adminNotes: str | None = None
+    awardKobo: int | None = None
+    attachments: list[AttachmentView] = []
+    createdAt: datetime
+    triagedAt: datetime | None = None
+    triagedByUserId: str | None = None
+
+
+class SubmissionAdminListResponse(BaseModel):
+    submissions: list[SubmissionAdminView]
+    total: int
+    page: int
+    pageSize: int
+    hasMore: bool
+
+
+class SubmissionAdminDetail(BaseModel):
+    """Everything needed to grade one finding on one screen.
+
+    `rewardMatrix` is the **submission's own season's** table, not the current one, so a triager grading a
+    late Season 1 finding sees Season 1's amounts. `reporterSubmissionCount` and `duplicateOfTitle` answer
+    the two questions that would otherwise be two more page loads each.
+    """
+
+    submission: SubmissionAdminView
+    reporterSubmissionCount: int
+    duplicateOfTitle: str | None = None
+    rewardMatrix: dict[str, dict[str, int]] = {}
+
+
+class TriageRequest(BaseModel):
+    """Grade a finding.
+
+    **There is no amount field, and that is the design.** A triager sets category and severity; the season's
+    matrix decides the kobo. Off-matrix money is an `adjustment` and needs a super admin, so that every
+    figure on the reward path traces to a published rule rather than to a keystroke.
+    """
+
+    status: str = Field(description="in_review | accepted | rejected | duplicate | known_issue")
+    category: str | None = Field(default=None, description="bug | feedback")
+    type: str | None = None
+    severity: str | None = Field(
+        default=None, description="bug: critical|high|medium|low · feedback: high_value|standard"
+    )
+    #: Required for `duplicate` and `known_issue`. Not constrained to the same season — a Season 2 report of
+    #: an unfixed Season 1 bug points back across the boundary, which is what `known_issue` is for.
+    duplicateOfId: str | None = None
+    #: Shown to the reporter verbatim.
+    publicResponse: str | None = Field(default=None, max_length=4000)
+    #: Never shown to the reporter.
+    adminNotes: str | None = Field(default=None, max_length=4000)
+
+
+class TriageResponse(BaseModel):
+    """The graded finding and what the grading is worth.
+
+    `awardPending` distinguishes "graded, worth money, not yet written to the ledger" from "graded, pays
+    nothing" — which a bare `awardKobo` of `0` cannot. Phase 4 turns the first into a ledger entry.
+    """
+
+    submission: SubmissionAdminView
+    awardKobo: int
+    awardPending: bool
+
+
+class KnownIssueView(BaseModel):
+    """An accepted finding from an earlier season, for marking a repeat.
+
+    `seasonNumber` is on the row because "reported in Season 1 and still open" is the sentence a triager
+    needs, and it is the sentence that keeps the blame for our backlog off the reporter.
+    """
+
+    id: str
+    seasonNumber: int
+    platform: str
+    title: str
+    severity: str | None = None
+    category: str | None = None
+    createdAt: datetime
+
+
+class KnownIssueListResponse(BaseModel):
+    knownIssues: list[KnownIssueView]
+
+
+class TriageStatsResponse(BaseModel):
+    """The morning read for whoever owns the queue.
+
+    `acceptanceRate` and `medianTriageHours` are `null` rather than `0` before anything has been decided. A
+    displayed acceptance rate of zero reads as "we reject everything", which on day one is both false and
+    the worst possible thing to show.
+    """
+
+    seasonId: str | None = None
+    seasonNumber: int | None = None
+    seasonStatus: str | None = None
+    queues: dict[str, int] = {}
+    submissionsByStatus: dict[str, int] = {}
+    submissionsByPlatform: dict[str, int] = {}
+    submissionsBySeverity: dict[str, int] = {}
+    participantCounts: dict[str, int] = {}
+    budgetKobo: int
+    awardedKobo: int
+    remainingBudgetKobo: int
+    acceptanceRate: float | None = None
+    medianTriageHours: float | None = None
+
+
+# ---------------------------------------------------------------------------
 # Submissions
 # ---------------------------------------------------------------------------
 
