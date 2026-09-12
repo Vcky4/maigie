@@ -12619,6 +12619,22 @@
         "title": "MarkAllReadResponse",
         "type": "object"
       },
+      "MarkPaidRequest": {
+        "description": "Record a transfer that **has already been made.**\n\n`providerReference` is required, because a payout that cannot be matched to a statement line is\nindistinguishable from one that never happened. This endpoint moves no money and writes no ledger entry —\nthe debit was recorded when the request was made.",
+        "properties": {
+          "providerReference": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Providerreference",
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerReference"
+        ],
+        "title": "MarkPaidRequest",
+        "type": "object"
+      },
       "MeResponse": {
         "description": "The single call the participant app boots on.\n\nDeliberately one round trip covering the season, the caller's standing in it, their history and\ntheir wallet summary — because the app's first decision is *which screen to show*, and four requests\nto answer that is four chances to render a flash of the wrong one.",
         "properties": {
@@ -15208,6 +15224,101 @@
           "product_id"
         ],
         "title": "PassCheckoutRequest",
+        "type": "object"
+      },
+      "PayoutAccountRequest": {
+        "description": "Bank details. Ten digits, normalised and shape-checked before they are encrypted.",
+        "properties": {
+          "accountName": {
+            "maxLength": 120,
+            "minLength": 2,
+            "title": "Accountname",
+            "type": "string"
+          },
+          "accountNumber": {
+            "maxLength": 20,
+            "minLength": 10,
+            "title": "Accountnumber",
+            "type": "string"
+          },
+          "bankCode": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Bankcode",
+            "type": "string"
+          },
+          "bankName": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Bankname",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bankCode",
+          "bankName",
+          "accountNumber",
+          "accountName"
+        ],
+        "title": "PayoutAccountRequest",
+        "type": "object"
+      },
+      "PayoutAccountView": {
+        "description": "A payout account as everyone except the person making the transfer sees it.\n\n**No field here can be used to send money anywhere.** `accountNumberLast4` identifies the account without\ndisclosing it, which is what lets a tester confirm they typed the right one. The full number exists in one\nsuper-admin view and nowhere else.\n\n`heldUntil` is set when the details changed recently: cash requests pause for a day, because an account\ntakeover that can redirect a payout instantly is worth far more to an attacker than one that cannot.",
+        "properties": {
+          "accountName": {
+            "title": "Accountname",
+            "type": "string"
+          },
+          "accountNumberLast4": {
+            "title": "Accountnumberlast4",
+            "type": "string"
+          },
+          "bankCode": {
+            "title": "Bankcode",
+            "type": "string"
+          },
+          "bankName": {
+            "title": "Bankname",
+            "type": "string"
+          },
+          "heldUntil": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Helduntil"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "verifiedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verifiedat"
+          }
+        },
+        "required": [
+          "id",
+          "bankCode",
+          "bankName",
+          "accountName",
+          "accountNumberLast4"
+        ],
+        "title": "PayoutAccountView",
         "type": "object"
       },
       "PaystackInitializeRequest": {
@@ -21680,6 +21791,21 @@
         ],
         "title": "ResourceType",
         "type": "string"
+      },
+      "RevertPaidRequest": {
+        "properties": {
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RevertPaidRequest",
+        "type": "object"
       },
       "ReviewQualityRequest": {
         "description": "Submit review quality (SM-2 algorithm, 0-5 scale).",
@@ -29287,6 +29413,421 @@
         "title": "WebPushSubscriptionUpsert",
         "type": "object"
       },
+      "WithdrawalAdminDetail": {
+        "description": "The payout console: everything needed to make one transfer, on one screen.\n\n**`accountNumber` is the only place a full account number leaves the database.** Super admin, and audited\non read. `accountNumberUnreadable` is set instead when the ciphertext cannot be opened — the tester is\nstill identifiable from the snapshot, and the remedy is to ask them to re-enter their details rather than\nto show a 500.\n\n`payoutCount` and `paidBeforeKobo` exist so a first-time payee is visibly a first-time payee.",
+        "properties": {
+          "accountNumber": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accountnumber"
+          },
+          "accountNumberUnreadable": {
+            "default": false,
+            "title": "Accountnumberunreadable",
+            "type": "boolean"
+          },
+          "paidBeforeKobo": {
+            "title": "Paidbeforekobo",
+            "type": "integer"
+          },
+          "payoutCount": {
+            "title": "Payoutcount",
+            "type": "integer"
+          },
+          "withdrawal": {
+            "$ref": "#/components/schemas/WithdrawalAdminView"
+          }
+        },
+        "required": [
+          "withdrawal",
+          "payoutCount",
+          "paidBeforeKobo"
+        ],
+        "title": "WithdrawalAdminDetail",
+        "type": "object"
+      },
+      "WithdrawalAdminListResponse": {
+        "properties": {
+          "hasMore": {
+            "title": "Hasmore",
+            "type": "boolean"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "withdrawals": {
+            "items": {
+              "$ref": "#/components/schemas/WithdrawalAdminView"
+            },
+            "title": "Withdrawals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "withdrawals",
+          "total",
+          "page",
+          "pageSize",
+          "hasMore"
+        ],
+        "title": "WithdrawalAdminListResponse",
+        "type": "object"
+      },
+      "WithdrawalAdminView": {
+        "description": "The staff view. Adds who the payee is, and nothing that could send money.",
+        "properties": {
+          "accountLast4": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accountlast4"
+          },
+          "accountName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accountname"
+          },
+          "amountKobo": {
+            "title": "Amountkobo",
+            "type": "integer"
+          },
+          "bankName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bankname"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "decidedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decidedat"
+          },
+          "decidedByUserId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decidedbyuserid"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "financeEntryId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Financeentryid"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "paidAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paidat"
+          },
+          "providerReference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Providerreference"
+          },
+          "rejectionReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejectionreason"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "userId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Userid"
+          }
+        },
+        "required": [
+          "id",
+          "amountKobo",
+          "status",
+          "createdAt"
+        ],
+        "title": "WithdrawalAdminView",
+        "type": "object"
+      },
+      "WithdrawalDecisionRequest": {
+        "description": "Approve, or refuse and give the money back. A refusal needs a reason; the tester reads it.",
+        "properties": {
+          "decision": {
+            "description": "approve | reject",
+            "title": "Decision",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "WithdrawalDecisionRequest",
+        "type": "object"
+      },
+      "WithdrawalListResponse": {
+        "properties": {
+          "balanceKobo": {
+            "title": "Balancekobo",
+            "type": "integer"
+          },
+          "minimumKobo": {
+            "title": "Minimumkobo",
+            "type": "integer"
+          },
+          "withdrawals": {
+            "items": {
+              "$ref": "#/components/schemas/WithdrawalView"
+            },
+            "title": "Withdrawals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "withdrawals",
+          "minimumKobo",
+          "balanceKobo"
+        ],
+        "title": "WithdrawalListResponse",
+        "type": "object"
+      },
+      "WithdrawalRequest": {
+        "properties": {
+          "amountKobo": {
+            "exclusiveMinimum": 0.0,
+            "title": "Amountkobo",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "amountKobo"
+        ],
+        "title": "WithdrawalRequest",
+        "type": "object"
+      },
+      "WithdrawalView": {
+        "description": "A cash request as its owner sees it.\n\nCarries `status`, `paidAt` and `providerReference`, which is what turns the dashboard row into\n**Requested → Approved → Paid** with something the tester can check against their own bank alert. Never\nthe account number — only the last four, and only from the snapshot taken at request time.",
+        "properties": {
+          "accountLast4": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accountlast4"
+          },
+          "accountName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accountname"
+          },
+          "amountKobo": {
+            "title": "Amountkobo",
+            "type": "integer"
+          },
+          "bankName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bankname"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "decidedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decidedat"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "paidAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paidat"
+          },
+          "providerReference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Providerreference"
+          },
+          "rejectionReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejectionreason"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "amountKobo",
+          "status",
+          "createdAt"
+        ],
+        "title": "WithdrawalView",
+        "type": "object"
+      },
       "src__domains__identity__models__MessageResponse": {
         "description": "Generic success message.",
         "properties": {
@@ -31133,6 +31674,327 @@
           }
         ],
         "summary": "Admin Triage Submission",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/withdrawals": {
+      "get": {
+        "description": "The payout queue, **oldest first**.\n\nOldest first because this is a queue of people waiting for money — the one queue where being pushed down\nthe page has a direct cost to somebody.",
+        "operationId": "admin_list_withdrawals_api_v1_admin_bug_hunt_withdrawals_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawalAdminListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin List Withdrawals",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/withdrawals/{withdrawal_id}": {
+      "get": {
+        "description": "The payout console. **The only endpoint that returns a full account number.**\n\nAudited on *read*, not just on write, because the disclosure is the sensitive act here — the transfer\nhappens in somebody's banking app where we cannot see it, so a record of who looked at the number is the\nonly trace this system can offer.",
+        "operationId": "admin_get_withdrawal_api_v1_admin_bug_hunt_withdrawals__withdrawal_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "withdrawal_id",
+            "required": true,
+            "schema": {
+              "title": "Withdrawal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawalAdminDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Get Withdrawal",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/withdrawals/{withdrawal_id}/decision": {
+      "post": {
+        "description": "Approve a request, or refuse it and give the money back.\n\nApproval moves nothing: the debit was written when the request was made, so this is a statement that\nsomebody is going to make the transfer. A refusal writes a compensating credit rather than deleting the\ndebit, so the tester's history shows the request and its refund.",
+        "operationId": "admin_decide_withdrawal_api_v1_admin_bug_hunt_withdrawals__withdrawal_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "withdrawal_id",
+            "required": true,
+            "schema": {
+              "title": "Withdrawal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WithdrawalDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawalAdminView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Decide Withdrawal",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/withdrawals/{withdrawal_id}/mark-paid": {
+      "post": {
+        "description": "Record a transfer **that has already been made.** This moves no money.\n\nIt is the operator writing down what they just did in their banking app. The reference is required,\nbecause a payout that cannot be matched to a statement line is indistinguishable from one that never\nhappened — and no ledger entry is written here, because the debit was recorded at request time. Writing\none now would pay the same request twice: once out of the wallet and once out of the bank.",
+        "operationId": "admin_mark_withdrawal_paid_api_v1_admin_bug_hunt_withdrawals__withdrawal_id__mark_paid_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "withdrawal_id",
+            "required": true,
+            "schema": {
+              "title": "Withdrawal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkPaidRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawalAdminView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Mark Withdrawal Paid",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/withdrawals/{withdrawal_id}/revert-to-approved": {
+      "post": {
+        "description": "For a transfer the bank refused after we had written it down, or a recording mistake.\n\nMoves no money and touches no ledger entry — nothing left the wallet at this stage, so nothing needs\nputting back. It only says the payout is not settled after all.",
+        "operationId": "admin_revert_withdrawal_api_v1_admin_bug_hunt_withdrawals__withdrawal_id__revert_to_approved_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "withdrawal_id",
+            "required": true,
+            "schema": {
+              "title": "Withdrawal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevertPaidRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawalAdminView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Revert Withdrawal",
         "tags": [
           "bug-hunt-admin",
           "bug-hunt-admin"
@@ -36129,6 +36991,88 @@
         ]
       }
     },
+    "/api/v1/bug-hunt/payout-account": {
+      "get": {
+        "description": "The caller's bank details, masked. `null` if they have not added any.",
+        "operationId": "get_payout_account_api_v1_bug_hunt_payout_account_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/PayoutAccountView"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Payout Account Api V1 Bug Hunt Payout Account Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Payout Account",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      },
+      "put": {
+        "description": "Store or replace bank details. Encrypted at rest; only the last four are ever read back.\n\nChanging the bank or the number starts a 24-hour hold on new cash requests. Correcting a spelling in the\naccount name does not — that is not a redirection, and holding somebody's payout for a typo fix would be\nfriction with nothing behind it.",
+        "operationId": "set_payout_account_api_v1_bug_hunt_payout_account_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayoutAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutAccountView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Payout Account",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
     "/api/v1/bug-hunt/program": {
       "get": {
         "description": "The current state of the programme. **Unauthenticated.**\n\nAnswers all three states the landing page has to render, and says which one it is in `state` rather\nthan leaving the client to infer a page from a null season. The between-seasons case is not an edge\ncase: it is the state the programme spends most of the year in, and it goes live the day a season\ncloses.",
@@ -36649,6 +37593,80 @@
           }
         ],
         "summary": "Get Redemption Options",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/withdrawals": {
+      "get": {
+        "description": "The caller's cash requests, newest first, with this season's minimum and their balance.\n\nOne call, because the withdrawal form needs all three: what they have, what the floor is, and whether a\nrequest is already open.",
+        "operationId": "list_withdrawals_api_v1_bug_hunt_withdrawals_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawalListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Withdrawals",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      },
+      "post": {
+        "description": "Ask for cash. **Debits immediately**, so a pending request cannot be spent twice over.\n\nRefused when the balance will not cover it, when there is no payout account, while the 24-hour hold after\na details change is running, and when a request is already open — that last one by a partial unique index\nrather than by a check the caller could race.",
+        "operationId": "request_withdrawal_api_v1_bug_hunt_withdrawals_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WithdrawalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawalView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Request Withdrawal",
         "tags": [
           "bug-hunt",
           "bug-hunt"

@@ -37,6 +37,7 @@ from .db_models import (
     BugHuntParticipant,
     BugHuntProgram,
     BugHuntSubmission,
+    BugHuntWithdrawal,
 )
 from .exceptions import (
     CountryNotEligibleError,
@@ -51,6 +52,7 @@ from .services import (
     reward_service,
     submission_service,
     triage_service,
+    withdrawal_service,
 )
 
 logger = logging.getLogger(__name__)
@@ -278,6 +280,54 @@ def _ledger_entry_view(
         passId=entry.pass_id,
         note=entry.note,
         createdAt=entry.created_at,
+    )
+
+
+def _payout_account_view(
+    account: withdrawal_service.PayoutAccountView,
+) -> models.PayoutAccountView:
+    return models.PayoutAccountView(
+        id=account.id,
+        bankCode=account.bank_code,
+        bankName=account.bank_name,
+        accountName=account.account_name,
+        accountNumberLast4=account.account_number_last4,
+        verifiedAt=account.verified_at,
+        heldUntil=account.held_until,
+    )
+
+
+def _withdrawal_view(row: BugHuntWithdrawal) -> models.WithdrawalView:
+    """The owner's view. Reads only the snapshot fields, never the payout account.
+
+    That is what makes it impossible for this shape to leak an account number: it has no path to the
+    ciphertext, so no future edit here can accidentally decrypt one.
+    """
+    return models.WithdrawalView(
+        id=row.id,
+        amountKobo=row.amount_kobo,
+        status=row.status,
+        bankName=row.bank_name_snapshot,
+        accountName=row.account_name_snapshot,
+        accountLast4=row.account_last4_snapshot,
+        providerReference=row.provider_reference,
+        rejectionReason=row.rejection_reason,
+        createdAt=row.created_at,
+        decidedAt=row.decided_at,
+        paidAt=row.paid_at,
+    )
+
+
+def _withdrawal_admin_view(
+    row: BugHuntWithdrawal, *, email: str | None, name: str | None
+) -> models.WithdrawalAdminView:
+    return models.WithdrawalAdminView(
+        **_withdrawal_view(row).model_dump(),
+        userId=row.user_id,
+        email=email,
+        name=name,
+        decidedByUserId=row.decided_by_user_id,
+        financeEntryId=row.finance_entry_id,
     )
 
 
@@ -634,6 +684,65 @@ async def redeem_pass(
         balanceKobo=result["balanceKobo"],
         entry=_ledger_entry_view(result["entry"], None),
     )
+
+
+@router.get("/payout-account", response_model=models.PayoutAccountView | None)
+async def get_payout_account(current_user: CurrentUser) -> models.PayoutAccountView | None:
+    """The caller's bank details, masked. `null` if they have not added any."""
+    account = await withdrawal_service.get_account(current_user.id)
+    return _payout_account_view(account) if account is not None else None
+
+
+@router.put("/payout-account", response_model=models.PayoutAccountView)
+async def set_payout_account(
+    body: models.PayoutAccountRequest, current_user: CurrentUser
+) -> models.PayoutAccountView:
+    """Store or replace bank details. Encrypted at rest; only the last four are ever read back.
+
+    Changing the bank or the number starts a 24-hour hold on new cash requests. Correcting a spelling in the
+    account name does not — that is not a redirection, and holding somebody's payout for a typo fix would be
+    friction with nothing behind it.
+    """
+    account = await withdrawal_service.set_account(
+        user_id=current_user.id,
+        bank_code=body.bankCode,
+        bank_name=body.bankName,
+        account_number=body.accountNumber,
+        account_name=body.accountName,
+    )
+    return _payout_account_view(account)
+
+
+@router.get("/withdrawals", response_model=models.WithdrawalListResponse)
+async def list_withdrawals(current_user: CurrentUser) -> models.WithdrawalListResponse:
+    """The caller's cash requests, newest first, with this season's minimum and their balance.
+
+    One call, because the withdrawal form needs all three: what they have, what the floor is, and whether a
+    request is already open.
+    """
+    rows = await withdrawal_service.list_own(user_id=current_user.id)
+    program = await program_service.current()
+    return models.WithdrawalListResponse(
+        withdrawals=[_withdrawal_view(row) for row in rows],
+        minimumKobo=withdrawal_service.minimum_kobo(program),
+        balanceKobo=await ledger_service.balance(current_user.id),
+    )
+
+
+@router.post(
+    "/withdrawals", response_model=models.WithdrawalView, status_code=status.HTTP_201_CREATED
+)
+async def request_withdrawal(
+    body: models.WithdrawalRequest, current_user: CurrentUser
+) -> models.WithdrawalView:
+    """Ask for cash. **Debits immediately**, so a pending request cannot be spent twice over.
+
+    Refused when the balance will not cover it, when there is no payout account, while the 24-hour hold after
+    a details change is running, and when a request is already open — that last one by a partial unique index
+    rather than by a check the caller could race.
+    """
+    row = await withdrawal_service.request(user_id=current_user.id, amount_kobo=body.amountKobo)
+    return _withdrawal_view(row)
 
 
 @router.post(
@@ -1171,6 +1280,154 @@ async def admin_adjust_balance(
         entry=_ledger_entry_view(entry, program.season_number),
         balanceKobo=await ledger_service.balance(participant.user_id),
     )
+
+
+# ===========================================================================
+# Admin — the payout queue
+#
+# Super admin throughout, unlike triage. Triage is safe for a content manager because the amount is not
+# theirs to choose; this is the surface where real money leaves a real bank account, and one of these
+# endpoints is the only place a full account number is disclosed.
+# ===========================================================================
+
+
+@admin_router.get("/withdrawals", response_model=models.WithdrawalAdminListResponse)
+async def admin_list_withdrawals(
+    admin_user: SuperAdminUser,
+    status_filter: str | None = Query(default=None, alias="status"),
+    search: str | None = None,
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=25, ge=1, le=100),
+) -> models.WithdrawalAdminListResponse:
+    """The payout queue, **oldest first**.
+
+    Oldest first because this is a queue of people waiting for money — the one queue where being pushed down
+    the page has a direct cost to somebody.
+    """
+    rows, total = await withdrawal_service.list_all(
+        status=status_filter, search=search, page=page, page_size=pageSize
+    )
+    return models.WithdrawalAdminListResponse(
+        withdrawals=[
+            _withdrawal_admin_view(row, email=email, name=name) for row, email, name in rows
+        ],
+        total=total,
+        page=page,
+        pageSize=pageSize,
+        hasMore=(page * pageSize) < total,
+    )
+
+
+@admin_router.get("/withdrawals/{withdrawal_id}", response_model=models.WithdrawalAdminDetail)
+async def admin_get_withdrawal(
+    withdrawal_id: str, admin_user: SuperAdminUser
+) -> models.WithdrawalAdminDetail:
+    """The payout console. **The only endpoint that returns a full account number.**
+
+    Audited on *read*, not just on write, because the disclosure is the sensitive act here — the transfer
+    happens in somebody's banking app where we cannot see it, so a record of who looked at the number is the
+    only trace this system can offer.
+    """
+    data = await withdrawal_service.detail(withdrawal_id)
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_view_payout_details",
+        resource_type="bug_hunt_withdrawal",
+        resource_id=withdrawal_id,
+        details={"disclosedAccountNumber": data["accountNumber"] is not None},
+    )
+    return models.WithdrawalAdminDetail(
+        withdrawal=_withdrawal_admin_view(
+            data["withdrawal"], email=data["email"], name=data["name"]
+        ),
+        accountNumber=data["accountNumber"],
+        accountNumberUnreadable=data["accountNumberUnreadable"],
+        payoutCount=data["payoutCount"],
+        paidBeforeKobo=data["paidBeforeKobo"],
+    )
+
+
+@admin_router.post(
+    "/withdrawals/{withdrawal_id}/decision", response_model=models.WithdrawalAdminView
+)
+async def admin_decide_withdrawal(
+    withdrawal_id: str, body: models.WithdrawalDecisionRequest, admin_user: SuperAdminUser
+) -> models.WithdrawalAdminView:
+    """Approve a request, or refuse it and give the money back.
+
+    Approval moves nothing: the debit was written when the request was made, so this is a statement that
+    somebody is going to make the transfer. A refusal writes a compensating credit rather than deleting the
+    debit, so the tester's history shows the request and its refund.
+    """
+    row = await withdrawal_service.decide(
+        withdrawal_id=withdrawal_id,
+        decision=body.decision,
+        reason=body.reason,
+        staff_user_id=admin_user.id,
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_decide_withdrawal",
+        resource_type="bug_hunt_withdrawal",
+        resource_id=withdrawal_id,
+        details={"decision": body.decision, "reason": body.reason, "amountKobo": row.amount_kobo},
+    )
+    data = await withdrawal_service.detail(withdrawal_id)
+    return _withdrawal_admin_view(row, email=data["email"], name=data["name"])
+
+
+@admin_router.post(
+    "/withdrawals/{withdrawal_id}/mark-paid", response_model=models.WithdrawalAdminView
+)
+async def admin_mark_withdrawal_paid(
+    withdrawal_id: str, body: models.MarkPaidRequest, admin_user: SuperAdminUser
+) -> models.WithdrawalAdminView:
+    """Record a transfer **that has already been made.** This moves no money.
+
+    It is the operator writing down what they just did in their banking app. The reference is required,
+    because a payout that cannot be matched to a statement line is indistinguishable from one that never
+    happened — and no ledger entry is written here, because the debit was recorded at request time. Writing
+    one now would pay the same request twice: once out of the wallet and once out of the bank.
+    """
+    row = await withdrawal_service.mark_paid(
+        withdrawal_id=withdrawal_id,
+        provider_reference=body.providerReference,
+        staff_user_id=admin_user.id,
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_record_payout",
+        resource_type="bug_hunt_withdrawal",
+        resource_id=withdrawal_id,
+        details={"providerReference": body.providerReference, "amountKobo": row.amount_kobo},
+    )
+    data = await withdrawal_service.detail(withdrawal_id)
+    return _withdrawal_admin_view(row, email=data["email"], name=data["name"])
+
+
+@admin_router.post(
+    "/withdrawals/{withdrawal_id}/revert-to-approved", response_model=models.WithdrawalAdminView
+)
+async def admin_revert_withdrawal(
+    withdrawal_id: str, body: models.RevertPaidRequest, admin_user: SuperAdminUser
+) -> models.WithdrawalAdminView:
+    """For a transfer the bank refused after we had written it down, or a recording mistake.
+
+    Moves no money and touches no ledger entry — nothing left the wallet at this stage, so nothing needs
+    putting back. It only says the payout is not settled after all.
+    """
+    row = await withdrawal_service.revert_to_approved(
+        withdrawal_id=withdrawal_id, reason=body.reason, staff_user_id=admin_user.id
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_revert_payout",
+        resource_type="bug_hunt_withdrawal",
+        resource_id=withdrawal_id,
+        details={"reason": body.reason},
+    )
+    data = await withdrawal_service.detail(withdrawal_id)
+    return _withdrawal_admin_view(row, email=data["email"], name=data["name"])
 
 
 @admin_router.get("/known-issues", response_model=models.KnownIssueListResponse)

@@ -231,6 +231,130 @@ class RedeemPassResponse(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+# ---------------------------------------------------------------------------
+# Cash: payout accounts and withdrawals
+# ---------------------------------------------------------------------------
+
+
+class PayoutAccountView(BaseModel):
+    """A payout account as everyone except the person making the transfer sees it.
+
+    **No field here can be used to send money anywhere.** `accountNumberLast4` identifies the account without
+    disclosing it, which is what lets a tester confirm they typed the right one. The full number exists in one
+    super-admin view and nowhere else.
+
+    `heldUntil` is set when the details changed recently: cash requests pause for a day, because an account
+    takeover that can redirect a payout instantly is worth far more to an attacker than one that cannot.
+    """
+
+    id: str
+    bankCode: str
+    bankName: str
+    accountName: str
+    accountNumberLast4: str
+    verifiedAt: datetime | None = None
+    heldUntil: datetime | None = None
+
+
+class PayoutAccountRequest(BaseModel):
+    """Bank details. Ten digits, normalised and shape-checked before they are encrypted."""
+
+    bankCode: str = Field(min_length=1, max_length=20)
+    bankName: str = Field(min_length=1, max_length=120)
+    accountNumber: str = Field(min_length=10, max_length=20)
+    accountName: str = Field(min_length=2, max_length=120)
+
+
+class WithdrawalView(BaseModel):
+    """A cash request as its owner sees it.
+
+    Carries `status`, `paidAt` and `providerReference`, which is what turns the dashboard row into
+    **Requested → Approved → Paid** with something the tester can check against their own bank alert. Never
+    the account number — only the last four, and only from the snapshot taken at request time.
+    """
+
+    id: str
+    amountKobo: int
+    status: str
+    bankName: str | None = None
+    accountName: str | None = None
+    accountLast4: str | None = None
+    providerReference: str | None = None
+    rejectionReason: str | None = None
+    createdAt: datetime
+    decidedAt: datetime | None = None
+    paidAt: datetime | None = None
+
+
+class WithdrawalListResponse(BaseModel):
+    withdrawals: list[WithdrawalView]
+    #: This season's floor, or the default between seasons — so the form can say it without a second call.
+    minimumKobo: int
+    balanceKobo: int
+
+
+class WithdrawalRequest(BaseModel):
+    amountKobo: int = Field(gt=0)
+
+
+class WithdrawalAdminView(WithdrawalView):
+    """The staff view. Adds who the payee is, and nothing that could send money."""
+
+    userId: str | None = None
+    email: str | None = None
+    name: str | None = None
+    decidedByUserId: str | None = None
+    financeEntryId: str | None = None
+
+
+class WithdrawalAdminListResponse(BaseModel):
+    withdrawals: list[WithdrawalAdminView]
+    total: int
+    page: int
+    pageSize: int
+    hasMore: bool
+
+
+class WithdrawalAdminDetail(BaseModel):
+    """The payout console: everything needed to make one transfer, on one screen.
+
+    **`accountNumber` is the only place a full account number leaves the database.** Super admin, and audited
+    on read. `accountNumberUnreadable` is set instead when the ciphertext cannot be opened — the tester is
+    still identifiable from the snapshot, and the remedy is to ask them to re-enter their details rather than
+    to show a 500.
+
+    `payoutCount` and `paidBeforeKobo` exist so a first-time payee is visibly a first-time payee.
+    """
+
+    withdrawal: WithdrawalAdminView
+    accountNumber: str | None = None
+    accountNumberUnreadable: bool = False
+    payoutCount: int
+    paidBeforeKobo: int
+
+
+class WithdrawalDecisionRequest(BaseModel):
+    """Approve, or refuse and give the money back. A refusal needs a reason; the tester reads it."""
+
+    decision: str = Field(description="approve | reject")
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class MarkPaidRequest(BaseModel):
+    """Record a transfer that **has already been made.**
+
+    `providerReference` is required, because a payout that cannot be matched to a statement line is
+    indistinguishable from one that never happened. This endpoint moves no money and writes no ledger entry —
+    the debit was recorded when the request was made.
+    """
+
+    providerReference: str = Field(min_length=1, max_length=200)
+
+
+class RevertPaidRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=2000)
+
+
 class AdjustmentRequest(BaseModel):
     """A super admin's correction — the only free-typed amount in the programme.
 
