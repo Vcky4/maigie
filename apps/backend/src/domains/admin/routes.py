@@ -14,8 +14,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import func, select
 
 from src.shared.auth import StaffUser, SuperAdminUser
-from src.shared.database import check_db_health, get_session_factory, ilike_any
-from src.shared.infrastructure import cache
+from src.shared.database import get_session_factory, ilike_any
 
 from . import models
 from .services.audit_service import log_admin_action
@@ -70,31 +69,17 @@ def _user_response(user) -> "models.UserAdminResponse":
 # ===========================================================================
 
 
-@router.get("/health", response_model=models.HealthCheckResponse)
+@router.get("/health")
 async def admin_health(admin_user: StaffUser):
-    """Detailed system health (staff only)."""
-    from src.config import get_settings
+    """Detailed system health (staff only).
 
-    settings = get_settings()
-    db_health = await check_db_health()
-    cache_health = await cache.health_check()
+    Returns the composite the admin System Health page reads: an ``overall`` status, per-service
+    cards (``services``) from real probes, and observed LLM circuit-breaker state (``llm_models``).
+    ``/system-health`` is the canonical alias of this handler.
+    """
+    from .services import system_health_service
 
-    # Worker health
-    worker_health = {"status": "unknown"}
-    try:
-        from src.workers.manager import check_worker_health
-
-        worker_health = await check_worker_health()
-    except Exception:
-        worker_health = {"status": "unavailable"}
-
-    return models.HealthCheckResponse(
-        database=db_health,
-        cache=cache_health,
-        workers=worker_health,
-        version=settings.APP_VERSION,
-        environment=settings.ENVIRONMENT,
-    )
+    return await system_health_service.snapshot()
 
 
 @router.get("/stats", response_model=models.AdminStatsResponse)
@@ -979,7 +964,7 @@ async def wake_users_bulk(admin_user: SuperAdminUser, limit: int = Query(50, ge=
 # ===========================================================================
 
 
-@router.get("/system-health", response_model=models.HealthCheckResponse)
+@router.get("/system-health")
 async def system_health(admin_user: StaffUser):
     """Detailed system health (staff only). The canonical name; `/health` is the older alias."""
     return await admin_health(admin_user)

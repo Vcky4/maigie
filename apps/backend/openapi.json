@@ -10218,43 +10218,6 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
-      "HealthCheckResponse": {
-        "description": "Detailed health check for admin.",
-        "properties": {
-          "cache": {
-            "additionalProperties": true,
-            "title": "Cache",
-            "type": "object"
-          },
-          "database": {
-            "additionalProperties": true,
-            "title": "Database",
-            "type": "object"
-          },
-          "environment": {
-            "title": "Environment",
-            "type": "string"
-          },
-          "version": {
-            "title": "Version",
-            "type": "string"
-          },
-          "workers": {
-            "additionalProperties": true,
-            "title": "Workers",
-            "type": "object"
-          }
-        },
-        "required": [
-          "database",
-          "cache",
-          "workers",
-          "version",
-          "environment"
-        ],
-        "title": "HealthCheckResponse",
-        "type": "object"
-      },
       "HomeResponse": {
         "properties": {
           "dueReviews": {
@@ -29119,15 +29082,13 @@
     },
     "/api/v1/admin/health": {
       "get": {
-        "description": "Detailed system health (staff only).",
+        "description": "Detailed system health (staff only).\n\nReturns the composite the admin System Health page reads: an ``overall`` status, per-service\ncards (``services``) from real probes, and observed LLM circuit-breaker state (``llm_models``).\n``/system-health`` is the canonical alias of this handler.",
         "operationId": "admin_health_api_v1_admin_health_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthCheckResponse"
-                }
+                "schema": {}
               }
             },
             "description": "Successful Response"
@@ -29597,9 +29558,7 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthCheckResponse"
-                }
+                "schema": {}
               }
             },
             "description": "Successful Response"

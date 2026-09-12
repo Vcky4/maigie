@@ -169,16 +169,6 @@ class StaffRoleUpdateRequest(BaseModel):
     staffRole: str  # SUPER_ADMIN | CONTENT_MANAGER
 
 
-class HealthCheckResponse(BaseModel):
-    """Detailed health check for admin."""
-
-    database: dict
-    cache: dict
-    workers: dict
-    version: str
-    environment: str
-
-
 # ===========================================================================
 # Analytics (Phase 2 — honest, real-row metrics only)
 # ===========================================================================
