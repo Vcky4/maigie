@@ -113,6 +113,9 @@ class Settings(BaseSettings):
         "https://admin.maigie.com",
         "https://dev-admin.maigie.com",
         "http://localhost:4201",
+        # The Bug Hunt participant app, dev and deployed.
+        "http://localhost:4203",
+        "https://issues.maigie.com",
     ]
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: ListStr = ["*"]
@@ -758,6 +761,10 @@ def get_settings() -> Settings:
         "https://maigie.com",
         "https://www.maigie.com",
         "https://app.maigie.com",
+        # The Bug Hunt participant app. Merged unconditionally like the others above, so a deploy that
+        # sets CORS_ORIGINS to a shorter list cannot silently take the programme offline — a CORS failure
+        # there reads to a tester as "the site is broken", not as a configuration mistake.
+        "https://issues.maigie.com",
     ]
 
     # Local dev frontends often call staging/prod API (e.g. VITE_API_BASE_URL=staging-api).
@@ -776,6 +783,9 @@ def get_settings() -> Settings:
         # like a broken API rather than a missing origin.
         "http://localhost:4321",
         "http://127.0.0.1:4321",
+        # The Bug Hunt participant app's dev server (apps/bughunt, vite port 4203).
+        "http://localhost:4203",
+        "http://127.0.0.1:4203",
     ]
 
     # Merge environment-provided origins with required production origins
