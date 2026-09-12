@@ -18520,6 +18520,199 @@
         "title": "RedeemPointsRequest",
         "type": "object"
       },
+      "ReferralItem": {
+        "properties": {
+          "claimedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimedat"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isClaimed": {
+            "title": "Isclaimed",
+            "type": "boolean"
+          },
+          "referredUserEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referreduseremail"
+          },
+          "referredUserId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referreduserid"
+          },
+          "referredUserName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referredusername"
+          },
+          "referrerEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referreremail"
+          },
+          "referrerId": {
+            "title": "Referrerid",
+            "type": "string"
+          },
+          "referrerName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referrername"
+          },
+          "rewardType": {
+            "title": "Rewardtype",
+            "type": "string"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "referrerId",
+          "rewardType",
+          "tokens",
+          "isClaimed",
+          "createdAt"
+        ],
+        "title": "ReferralItem",
+        "type": "object"
+      },
+      "ReferralListResponse": {
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "rewards": {
+            "items": {
+              "$ref": "#/components/schemas/ReferralItem"
+            },
+            "title": "Rewards",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "totalPages": {
+            "title": "Totalpages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rewards",
+          "total",
+          "page",
+          "pageSize",
+          "totalPages"
+        ],
+        "title": "ReferralListResponse",
+        "type": "object"
+      },
+      "ReferralStatistics": {
+        "properties": {
+          "claimedRewards": {
+            "title": "Claimedrewards",
+            "type": "integer"
+          },
+          "signupRewards": {
+            "title": "Signuprewards",
+            "type": "integer"
+          },
+          "subscriptionRewards": {
+            "title": "Subscriptionrewards",
+            "type": "integer"
+          },
+          "topReferrers": {
+            "items": {
+              "$ref": "#/components/schemas/TopReferrer"
+            },
+            "title": "Topreferrers",
+            "type": "array"
+          },
+          "totalRewards": {
+            "title": "Totalrewards",
+            "type": "integer"
+          },
+          "totalTokensAwarded": {
+            "title": "Totaltokensawarded",
+            "type": "integer"
+          },
+          "totalTokensClaimed": {
+            "title": "Totaltokensclaimed",
+            "type": "integer"
+          },
+          "unclaimedRewards": {
+            "title": "Unclaimedrewards",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "totalRewards",
+          "claimedRewards",
+          "unclaimedRewards",
+          "totalTokensAwarded",
+          "totalTokensClaimed",
+          "topReferrers",
+          "signupRewards",
+          "subscriptionRewards"
+        ],
+        "title": "ReferralStatistics",
+        "type": "object"
+      },
       "ReferralsResponse": {
         "description": "A learner's referral standing.\n\n`totalTokens*`, `claimedRewards` and `unclaimedRewards` are gone with the token currency they\nsummed (§6.9). What is left is the code to share and how many learners it brought — the reward\nitself is now points, read from `GET /billing/points`, not a token total reported here. Keeping the\ntwo questions on separate endpoints is deliberate: \"who did I bring\" and \"what can I spend\" are\ndifferent, and conflating them is what produced the retired token fields.",
         "properties": {
@@ -20846,6 +21039,69 @@
           "updatedAt"
         ],
         "title": "SpaceResponse",
+        "type": "object"
+      },
+      "StaffMember": {
+        "properties": {
+          "adminStaffRole": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adminstaffrole"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isActive": {
+            "title": "Isactive",
+            "type": "boolean"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role",
+          "isActive"
+        ],
+        "title": "StaffMember",
+        "type": "object"
+      },
+      "StaffRoleUpdateBody": {
+        "properties": {
+          "adminStaffRole": {
+            "title": "Adminstaffrole",
+            "type": "string"
+          }
+        },
+        "required": [
+          "adminStaffRole"
+        ],
+        "title": "StaffRoleUpdateBody",
         "type": "object"
       },
       "StaffRoleUpdateRequest": {
@@ -23345,6 +23601,84 @@
         "title": "SyncCheckoutRequest",
         "type": "object"
       },
+      "SystemConfigResponse": {
+        "properties": {
+          "creditLimits": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "default": {},
+            "title": "Creditlimits",
+            "type": "object"
+          },
+          "featureFlags": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "default": {},
+            "title": "Featureflags",
+            "type": "object"
+          },
+          "maintenanceMode": {
+            "default": false,
+            "title": "Maintenancemode",
+            "type": "boolean"
+          }
+        },
+        "title": "SystemConfigResponse",
+        "type": "object"
+      },
+      "SystemConfigUpdateRequest": {
+        "properties": {
+          "creditLimits": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creditlimits"
+          },
+          "featureFlags": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "boolean"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Featureflags"
+          },
+          "maintenanceMode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maintenancemode"
+          }
+        },
+        "title": "SystemConfigUpdateRequest",
+        "type": "object"
+      },
       "TimezoneResponse": {
         "description": "The learner's timezone and where it came from.\n\n`source` is `null` when the timezone has never been captured, in which case\n`timezone` is a default rather than an observation and nothing should claim a\nlocal time from it.",
         "properties": {
@@ -23495,6 +23829,46 @@
           "access_token"
         ],
         "title": "TokenResponse",
+        "type": "object"
+      },
+      "TopReferrer": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "totalReferrals": {
+            "title": "Totalreferrals",
+            "type": "integer"
+          },
+          "totalTokens": {
+            "title": "Totaltokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "totalReferrals",
+          "totalTokens"
+        ],
+        "title": "TopReferrer",
         "type": "object"
       },
       "TopicBulkCreate": {
@@ -26814,6 +27188,80 @@
         ]
       }
     },
+    "/api/v1/admin/config": {
+      "get": {
+        "description": "Operational config: maintenance mode + feature flags (super admin). creditLimits is retired.",
+        "operationId": "get_system_config_api_v1_admin_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get System Config",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      },
+      "put": {
+        "description": "Update maintenance mode / feature flags (super admin), audited.",
+        "operationId": "update_system_config_api_v1_admin_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SystemConfigUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update System Config",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
     "/api/v1/admin/content/blog": {
       "get": {
         "description": "All blog posts, published or not, newest first (staff only).",
@@ -28383,6 +28831,215 @@
         ]
       }
     },
+    "/api/v1/admin/llm-config": {
+      "get": {
+        "description": "Stored LLM routing preferences (super admin). Non-secret key/values only.",
+        "operationId": "get_llm_config_api_v1_admin_llm_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Get Llm Config Api V1 Admin Llm Config Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Llm Config",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      },
+      "put": {
+        "description": "Set LLM routing preferences (super admin), audited. Never stores secrets.",
+        "operationId": "update_llm_config_api_v1_admin_llm_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Update Llm Config Api V1 Admin Llm Config Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Llm Config",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/referrals": {
+      "get": {
+        "description": "Referral rewards, read from the points ledger (staff).",
+        "operationId": "list_referrals_api_v1_admin_referrals_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "referrerId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Referrerid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "isClaimed",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Isclaimed"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferralListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Referrals",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/referrals/stats": {
+      "get": {
+        "description": "Referral statistics from the points ledger (staff).",
+        "operationId": "referral_statistics_api_v1_admin_referrals_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferralStatistics"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Referral Statistics",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
     "/api/v1/admin/retention/deep-wake-config": {
       "get": {
         "description": "The deep-wake inactivity threshold (staff).",
@@ -28453,6 +29110,38 @@
         ]
       }
     },
+    "/api/v1/admin/staff": {
+      "get": {
+        "description": "List platform staff (role == ADMIN), super admin only.",
+        "operationId": "list_staff_api_v1_admin_staff_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StaffMember"
+                  },
+                  "title": "Response List Staff Api V1 Admin Staff Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Staff",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
     "/api/v1/admin/staff/role": {
       "post": {
         "description": "Update a user's admin staff role (super admin only).",
@@ -28493,6 +29182,65 @@
           }
         ],
         "summary": "Update Staff Role",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/staff/{user_id}": {
+      "patch": {
+        "description": "Set a staff member's admin role (super admin only), audited.",
+        "operationId": "update_staff_member_api_v1_admin_staff__user_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffRoleUpdateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMember"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Staff Member",
         "tags": [
           "admin",
           "admin"

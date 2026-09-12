@@ -1173,3 +1173,152 @@ async def delete_course(course_id: str, admin_user: SuperAdminUser):
         details=None,
     )
     return {"message": "Course deleted", "courseId": course_id}
+
+
+# ===========================================================================
+# Staff
+# ===========================================================================
+
+
+def _staff_member(user) -> "models.StaffMember":
+    return models.StaffMember(
+        id=user.id,
+        email=user.email,
+        name=user.name,
+        role=user.role,
+        adminStaffRole=user.admin_staff_role,
+        isActive=user.is_active,
+    )
+
+
+@router.get("/staff", response_model=list[models.StaffMember])
+async def list_staff(admin_user: SuperAdminUser):
+    """List platform staff (role == ADMIN), super admin only."""
+    from src.domains.identity.db_models import User as UserModel
+
+    factory = get_session_factory()
+    async with factory() as session:
+        users = list(
+            (
+                await session.execute(
+                    select(UserModel).where(UserModel.role == "ADMIN").order_by(UserModel.email)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return [_staff_member(u) for u in users]
+
+
+@router.patch("/staff/{user_id}", response_model=models.StaffMember)
+async def update_staff_member(
+    user_id: str, body: models.StaffRoleUpdateBody, admin_user: SuperAdminUser
+):
+    """Set a staff member's admin role (super admin only), audited."""
+    from src.domains.identity.repository import IdentityRepository
+
+    if body.adminStaffRole not in ("SUPER_ADMIN", "CONTENT_MANAGER"):
+        raise HTTPException(status_code=400, detail="Invalid staff role")
+
+    repo = IdentityRepository()
+    user = await repo.find_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role != "ADMIN":
+        raise HTTPException(status_code=400, detail="User is not an admin")
+
+    previous = user.admin_staff_role
+    updated = await repo.update(user_id, {"adminStaffRole": body.adminStaffRole})
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="update_staff_role",
+        resource_type="user",
+        resource_id=user_id,
+        details={"adminStaffRole": {"before": previous, "after": body.adminStaffRole}},
+    )
+    return _staff_member(updated)
+
+
+# ===========================================================================
+# Referrals (reshaped onto the points model)
+# ===========================================================================
+
+
+@router.get("/referrals", response_model=models.ReferralListResponse)
+async def list_referrals(
+    admin_user: StaffUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(50, ge=1, le=200),
+    referrerId: str | None = Query(None),
+    isClaimed: bool | None = Query(None),
+):
+    """Referral rewards, read from the points ledger (staff)."""
+    from .services import referrals_service
+
+    return await referrals_service.list_referrals(
+        page=page, page_size=pageSize, referrer_id=referrerId, is_claimed=isClaimed
+    )
+
+
+@router.get("/referrals/stats", response_model=models.ReferralStatistics)
+async def referral_statistics(admin_user: StaffUser):
+    """Referral statistics from the points ledger (staff)."""
+    from .services import referrals_service
+
+    return await referrals_service.referral_statistics()
+
+
+# ===========================================================================
+# System / LLM configuration (SystemConfig key/value; no secrets)
+# ===========================================================================
+
+
+@router.get("/config", response_model=models.SystemConfigResponse)
+async def get_system_config(admin_user: SuperAdminUser):
+    """Operational config: maintenance mode + feature flags (super admin). creditLimits is retired."""
+    from .services import config_service
+
+    return await config_service.get_system_config()
+
+
+@router.put("/config", response_model=models.SystemConfigResponse)
+async def update_system_config(body: models.SystemConfigUpdateRequest, admin_user: SuperAdminUser):
+    """Update maintenance mode / feature flags (super admin), audited."""
+    from .services import config_service
+
+    result = await config_service.update_system_config(body)
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="update_system_config",
+        resource_type="config",
+        resource_id="system",
+        details={
+            "maintenanceMode": body.maintenanceMode,
+            "featureFlags": body.featureFlags,
+        },
+    )
+    return result
+
+
+@router.get("/llm-config")
+async def get_llm_config(admin_user: SuperAdminUser) -> dict[str, str]:
+    """Stored LLM routing preferences (super admin). Non-secret key/values only."""
+    from .services import config_service
+
+    return await config_service.get_llm_config()
+
+
+@router.put("/llm-config")
+async def update_llm_config(body: dict[str, str], admin_user: SuperAdminUser) -> dict[str, str]:
+    """Set LLM routing preferences (super admin), audited. Never stores secrets."""
+    from .services import config_service
+
+    result = await config_service.update_llm_config(body)
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="update_llm_config",
+        resource_type="config",
+        resource_id="llm",
+        details={"keys": sorted(body.keys())},
+    )
+    return result

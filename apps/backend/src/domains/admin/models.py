@@ -461,6 +461,87 @@ class AdminCourseDetail(BaseModel):
     updatedAt: datetime
 
 
+# ===========================================================================
+# Staff
+# ===========================================================================
+
+
+class StaffMember(BaseModel):
+    id: str
+    email: str
+    name: str | None = None
+    role: str
+    adminStaffRole: str | None = None
+    isActive: bool
+
+
+class StaffRoleUpdateBody(BaseModel):
+    adminStaffRole: str
+
+
+# ===========================================================================
+# Referrals (reshaped onto the points model — Decision 5)
+# ===========================================================================
+
+
+class ReferralItem(BaseModel):
+    id: str
+    referrerId: str
+    referrerEmail: str | None = None
+    referrerName: str | None = None
+    referredUserId: str | None = None
+    referredUserEmail: str | None = None
+    referredUserName: str | None = None
+    rewardType: str
+    tokens: int
+    isClaimed: bool
+    claimedAt: datetime | None = None
+    createdAt: datetime
+
+
+class ReferralListResponse(BaseModel):
+    rewards: list[ReferralItem]
+    total: int
+    page: int
+    pageSize: int
+    totalPages: int
+
+
+class TopReferrer(BaseModel):
+    email: str | None = None
+    name: str | None = None
+    totalReferrals: int
+    totalTokens: int
+
+
+class ReferralStatistics(BaseModel):
+    totalRewards: int
+    claimedRewards: int
+    unclaimedRewards: int
+    totalTokensAwarded: int
+    totalTokensClaimed: int
+    topReferrers: list[TopReferrer]
+    signupRewards: int
+    subscriptionRewards: int
+
+
+# ===========================================================================
+# System configuration
+# ===========================================================================
+
+
+class SystemConfigResponse(BaseModel):
+    creditLimits: dict[str, dict[str, int]] = {}
+    maintenanceMode: bool = False
+    featureFlags: dict[str, bool] = {}
+
+
+class SystemConfigUpdateRequest(BaseModel):
+    creditLimits: dict[str, dict[str, int]] | None = None
+    maintenanceMode: bool | None = None
+    featureFlags: dict[str, bool] | None = None
+
+
 class AuditLogEntry(BaseModel):
     """One recorded privileged action, joined to the administrator who performed it.
 
