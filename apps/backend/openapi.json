@@ -1330,6 +1330,150 @@
         "title": "AppleVerifyResponse",
         "type": "object"
       },
+      "ApplicationCreateRequest": {
+        "description": "Register by submitting a first finding.\n\n`acceptedRulesVersion` is the version the applicant actually read, echoed back so the server can\nrefuse consent to terms it has since replaced. Sending the current version blind would record an\nagreement to amounts they were never shown.",
+        "properties": {
+          "acceptTerms": {
+            "description": "Must be true. Covers 18+, eligibility, tax and IP.",
+            "title": "Acceptterms",
+            "type": "boolean"
+          },
+          "acceptedRulesVersion": {
+            "minimum": 1.0,
+            "title": "Acceptedrulesversion",
+            "type": "integer"
+          },
+          "actualResult": {
+            "maxLength": 2000,
+            "minLength": 3,
+            "title": "Actualresult",
+            "type": "string"
+          },
+          "appVersion": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Appversion"
+          },
+          "buildNumber": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buildnumber"
+          },
+          "deviceModel": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Devicemodel"
+          },
+          "expectedResult": {
+            "maxLength": 2000,
+            "minLength": 3,
+            "title": "Expectedresult",
+            "type": "string"
+          },
+          "osVersion": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Osversion"
+          },
+          "platform": {
+            "description": "web | android | ios",
+            "title": "Platform",
+            "type": "string"
+          },
+          "reportedSeverity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "critical | high | medium | low — the tester's own estimate",
+            "title": "Reportedseverity"
+          },
+          "route": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Route"
+          },
+          "stepsToReproduce": {
+            "maxLength": 5000,
+            "minLength": 10,
+            "title": "Stepstoreproduce",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 4,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform",
+          "title",
+          "stepsToReproduce",
+          "expectedResult",
+          "actualResult",
+          "acceptTerms",
+          "acceptedRulesVersion"
+        ],
+        "title": "ApplicationCreateRequest",
+        "type": "object"
+      },
+      "ApplicationResponse": {
+        "description": "The result of applying: where you stand, and the finding that got you there.",
+        "properties": {
+          "participation": {
+            "$ref": "#/components/schemas/ParticipationView"
+          },
+          "submission": {
+            "$ref": "#/components/schemas/SubmissionView"
+          }
+        },
+        "required": [
+          "participation",
+          "submission"
+        ],
+        "title": "ApplicationResponse",
+        "type": "object"
+      },
       "AskAction": {
         "description": "Something Maigie actually did on this turn.\n\n**Only from the model's own tool output** (Decision I). The surface previously published a\n`suggestedAction` produced by keyword-matching the learner's own words and presented as the model's\nrecommendation — which §1's second clause forbids outright, because it is a claim that is false. These\nare the executed actions, so a client offering a follow-up is offering one tied to something real.\n\n`status` is carried rather than filtered so a failed action is visible. The event frames and the\ncomponents are both success-shaped, so a turn whose tool failed otherwise looks like a turn that used\nno tools.",
         "properties": {
@@ -1628,6 +1772,40 @@
           "riskLevel"
         ],
         "title": "AtRiskUser",
+        "type": "object"
+      },
+      "AttachmentView": {
+        "properties": {
+          "contentType": {
+            "title": "Contenttype",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "sizeBytes": {
+            "title": "Sizebytes",
+            "type": "integer"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "contentType",
+          "sizeBytes",
+          "createdAt"
+        ],
+        "title": "AttachmentView",
         "type": "object"
       },
       "AuditLogEntry": {
@@ -2277,6 +2455,20 @@
         "title": "Body_upload_ask_attachment_api_v1_intelligence_ask_attachments_post",
         "type": "object"
       },
+      "Body_upload_attachment_api_v1_bug_hunt_submissions__submission_id__attachments_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_attachment_api_v1_bug_hunt_submissions__submission_id__attachments_post",
+        "type": "object"
+      },
       "Body_upload_attachment_api_v1_learning_notes__note_id__attachments_upload_post": {
         "properties": {
           "file": {
@@ -2655,6 +2847,67 @@
           }
         },
         "title": "CareerApplicationUpdateRequest",
+        "type": "object"
+      },
+      "CarryForwardPreviewResponse": {
+        "description": "How many would be added. Shown before the button commits anything.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "fromProgramId": {
+            "title": "Fromprogramid",
+            "type": "string"
+          },
+          "intoProgramId": {
+            "title": "Intoprogramid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fromProgramId",
+          "intoProgramId",
+          "count"
+        ],
+        "title": "CarryForwardPreviewResponse",
+        "type": "object"
+      },
+      "CarryForwardRequest": {
+        "description": "Seed a previous season's approved participants into this one.\n\n`fromProgramId` is explicit rather than \"the previous season\" so that a gap year, a cancelled season\nor a re-run cannot silently pull the wrong cohort.",
+        "properties": {
+          "fromProgramId": {
+            "title": "Fromprogramid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fromProgramId"
+        ],
+        "title": "CarryForwardRequest",
+        "type": "object"
+      },
+      "CarryForwardResponse": {
+        "properties": {
+          "added": {
+            "title": "Added",
+            "type": "integer"
+          },
+          "fromProgramId": {
+            "title": "Fromprogramid",
+            "type": "string"
+          },
+          "intoProgramId": {
+            "title": "Intoprogramid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fromProgramId",
+          "intoProgramId",
+          "added"
+        ],
+        "title": "CarryForwardResponse",
         "type": "object"
       },
       "ChangePasswordRequest": {
@@ -6382,6 +6635,42 @@
           "urgency"
         ],
         "title": "DueReviewResponse",
+        "type": "object"
+      },
+      "EligibilityView": {
+        "description": "Why the caller can or cannot take part right now.\n\n`reasonCode` mirrors the exception codes in `exceptions.py`, so the app renders the same copy whether\nit learned about the refusal by asking up front or by being refused on submit. Two sources of truth\nfor that message is how they drift.",
+        "properties": {
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
+          "eligible": {
+            "title": "Eligible",
+            "type": "boolean"
+          },
+          "reasonCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoncode"
+          }
+        },
+        "required": [
+          "eligible"
+        ],
+        "title": "EligibilityView",
         "type": "object"
       },
       "EntitlementResponse": {
@@ -11579,6 +11868,67 @@
         "title": "MarkAllReadResponse",
         "type": "object"
       },
+      "MeResponse": {
+        "description": "The single call the participant app boots on.\n\nDeliberately one round trip covering the season, the caller's standing in it, their history and\ntheir wallet summary — because the app's first decision is *which screen to show*, and four requests\nto answer that is four chances to render a flash of the wrong one.",
+        "properties": {
+          "eligibility": {
+            "$ref": "#/components/schemas/EligibilityView"
+          },
+          "history": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ParticipationView"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "needsTermsAcceptance": {
+            "default": false,
+            "title": "Needstermsacceptance",
+            "type": "boolean"
+          },
+          "participation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParticipationView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "season": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SeasonSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "wallet": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WalletSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "eligibility"
+        ],
+        "title": "MeResponse",
+        "type": "object"
+      },
       "MemoryContextResponse": {
         "description": "What Intelligence remembers about a learner, for transparency and debugging.\n\nPreviously declared `learningGoals`, `strengths` and `weaknesses` alongside these two, all\ndefaulting to `[]`. Nothing in the repository produces them, so the endpoint would have published\nthree empty lists as though the learner had no goals and no weaknesses rather than as though\nnothing had been measured. That is the absent-as-zero mistake, so the fields are gone rather than\ndefaulted. They return when something computes them.",
         "properties": {
@@ -13761,6 +14111,95 @@
           "pages"
         ],
         "title": "PaginatedResponse[StudyPlanSummaryResponse]",
+        "type": "object"
+      },
+      "ParticipationView": {
+        "description": "One person's participation in one season.",
+        "properties": {
+          "acceptedRulesVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acceptedrulesversion"
+          },
+          "attemptCount": {
+            "title": "Attemptcount",
+            "type": "integer"
+          },
+          "carriedForward": {
+            "title": "Carriedforward",
+            "type": "boolean"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "decidedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decidedat"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "programId": {
+            "title": "Programid",
+            "type": "string"
+          },
+          "rejectionReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejectionreason"
+          },
+          "seasonName": {
+            "title": "Seasonname",
+            "type": "string"
+          },
+          "seasonNumber": {
+            "title": "Seasonnumber",
+            "type": "integer"
+          },
+          "seasonStatus": {
+            "title": "Seasonstatus",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "programId",
+          "seasonNumber",
+          "seasonName",
+          "seasonStatus",
+          "status",
+          "attemptCount",
+          "carriedForward",
+          "createdAt"
+        ],
+        "title": "ParticipationView",
         "type": "object"
       },
       "PassCheckoutRequest": {
@@ -17201,6 +17640,52 @@
         "title": "PrepareSummaryStats",
         "type": "object"
       },
+      "ProgramStateResponse": {
+        "description": "What `GET /program` answers, in all three of the states the landing page has to render.\n\n`state` is the discriminator the app switches on, and it exists so the client never has to infer a\npage from a null: `open` shows the season, `scheduled` shows a date, `between` shows the programme\nand a wallet link for anyone still holding a balance. Getting this wrong is how a returning tester\nwho followed a link from a friend lands on a dead page the day after a season ends.",
+        "properties": {
+          "latestSeasonNumber": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latestseasonnumber"
+          },
+          "nextSeason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SeasonSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "season": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SeasonSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "description": "open | scheduled | between",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ProgramStateResponse",
+        "type": "object"
+      },
       "ProgressSummaryResponse": {
         "properties": {
           "activeDaysThisWeek": {
@@ -19942,6 +20427,30 @@
         "title": "ReviewScheduleResponse",
         "type": "object"
       },
+      "RewardTier": {
+        "description": "One row of the published reward table.",
+        "properties": {
+          "amountKobo": {
+            "title": "Amountkobo",
+            "type": "integer"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "severity",
+          "amountKobo"
+        ],
+        "title": "RewardTier",
+        "type": "object"
+      },
       "RiskCounts": {
         "properties": {
           "high": {
@@ -20178,6 +20687,634 @@
           "type"
         ],
         "title": "ScheduleBlockResponse",
+        "type": "object"
+      },
+      "SeasonAdminListResponse": {
+        "properties": {
+          "seasons": {
+            "items": {
+              "$ref": "#/components/schemas/SeasonAdminView"
+            },
+            "title": "Seasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "seasons"
+        ],
+        "title": "SeasonAdminListResponse",
+        "type": "object"
+      },
+      "SeasonAdminView": {
+        "description": "A season as staff see it: the public shape plus the money and the cohort.",
+        "properties": {
+          "awardedKobo": {
+            "title": "Awardedkobo",
+            "type": "integer"
+          },
+          "budgetKobo": {
+            "title": "Budgetkobo",
+            "type": "integer"
+          },
+          "countryAllowlist": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Countryallowlist",
+            "type": "array"
+          },
+          "endsAt": {
+            "format": "date-time",
+            "title": "Endsat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "minWithdrawalKobo": {
+            "title": "Minwithdrawalkobo",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "participantCounts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "default": {},
+            "title": "Participantcounts",
+            "type": "object"
+          },
+          "passUpliftPercent": {
+            "title": "Passupliftpercent",
+            "type": "integer"
+          },
+          "perParticipantCapKobo": {
+            "title": "Perparticipantcapkobo",
+            "type": "integer"
+          },
+          "remainingBudgetKobo": {
+            "title": "Remainingbudgetkobo",
+            "type": "integer"
+          },
+          "rewardMatrix": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "default": {},
+            "title": "Rewardmatrix",
+            "type": "object"
+          },
+          "rewards": {
+            "items": {
+              "$ref": "#/components/schemas/RewardTier"
+            },
+            "title": "Rewards",
+            "type": "array"
+          },
+          "rulesVersion": {
+            "title": "Rulesversion",
+            "type": "integer"
+          },
+          "seasonNumber": {
+            "title": "Seasonnumber",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "startsAt": {
+            "format": "date-time",
+            "title": "Startsat",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "submissionDailyLimit": {
+            "title": "Submissiondailylimit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "seasonNumber",
+          "slug",
+          "name",
+          "status",
+          "startsAt",
+          "endsAt",
+          "rewards",
+          "countryAllowlist",
+          "perParticipantCapKobo",
+          "minWithdrawalKobo",
+          "passUpliftPercent",
+          "rulesVersion",
+          "submissionDailyLimit",
+          "budgetKobo",
+          "awardedKobo",
+          "remainingBudgetKobo"
+        ],
+        "title": "SeasonAdminView",
+        "type": "object"
+      },
+      "SeasonCreateRequest": {
+        "description": "Create a season. Everything optional is defaulted from the previous season.\n\nThe four required fields are the four a human must decide: what it is called, how it is addressed,\nand when it runs.",
+        "properties": {
+          "budgetKobo": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budgetkobo"
+          },
+          "countryAllowlist": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Countryallowlist"
+          },
+          "endsAt": {
+            "format": "date-time",
+            "title": "Endsat",
+            "type": "string"
+          },
+          "minWithdrawalKobo": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minwithdrawalkobo"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "passUpliftPercent": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passupliftpercent"
+          },
+          "perParticipantCapKobo": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Perparticipantcapkobo"
+          },
+          "rewardMatrix": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rewardmatrix"
+          },
+          "rulesVersion": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rulesversion"
+          },
+          "seasonNumber": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seasonnumber"
+          },
+          "slug": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9-]*$",
+            "title": "Slug",
+            "type": "string"
+          },
+          "startsAt": {
+            "format": "date-time",
+            "title": "Startsat",
+            "type": "string"
+          },
+          "submissionDailyLimit": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submissiondailylimit"
+          }
+        },
+        "required": [
+          "name",
+          "slug",
+          "startsAt",
+          "endsAt"
+        ],
+        "title": "SeasonCreateRequest",
+        "type": "object"
+      },
+      "SeasonDefaultsResponse": {
+        "description": "The season editor's initial values, copied from the previous season.\n\nServed rather than computed in the browser so that \"Season 2 starts from Season 1's numbers\" is one\nrule in one place, and the admin app cannot drift into inventing its own defaults.",
+        "properties": {
+          "budgetKobo": {
+            "title": "Budgetkobo",
+            "type": "integer"
+          },
+          "countryAllowlist": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Countryallowlist",
+            "type": "array"
+          },
+          "minWithdrawalKobo": {
+            "title": "Minwithdrawalkobo",
+            "type": "integer"
+          },
+          "passUpliftPercent": {
+            "title": "Passupliftpercent",
+            "type": "integer"
+          },
+          "perParticipantCapKobo": {
+            "title": "Perparticipantcapkobo",
+            "type": "integer"
+          },
+          "previousSeasonNumber": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previousseasonnumber"
+          },
+          "rewardMatrix": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "title": "Rewardmatrix",
+            "type": "object"
+          },
+          "rulesVersion": {
+            "title": "Rulesversion",
+            "type": "integer"
+          },
+          "seasonNumber": {
+            "title": "Seasonnumber",
+            "type": "integer"
+          },
+          "submissionDailyLimit": {
+            "title": "Submissiondailylimit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seasonNumber",
+          "budgetKobo",
+          "perParticipantCapKobo",
+          "minWithdrawalKobo",
+          "passUpliftPercent",
+          "submissionDailyLimit",
+          "countryAllowlist",
+          "rewardMatrix",
+          "rulesVersion"
+        ],
+        "title": "SeasonDefaultsResponse",
+        "type": "object"
+      },
+      "SeasonListResponse": {
+        "properties": {
+          "seasons": {
+            "items": {
+              "$ref": "#/components/schemas/SeasonSummary"
+            },
+            "title": "Seasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "seasons"
+        ],
+        "title": "SeasonListResponse",
+        "type": "object"
+      },
+      "SeasonSummary": {
+        "description": "A season as the public site sees it.\n\nCarries its **own** reward table rather than referring to a global one, so a closed season keeps\nshowing what it actually paid after a later season changes the amounts.",
+        "properties": {
+          "countryAllowlist": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Countryallowlist",
+            "type": "array"
+          },
+          "endsAt": {
+            "format": "date-time",
+            "title": "Endsat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "minWithdrawalKobo": {
+            "title": "Minwithdrawalkobo",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "passUpliftPercent": {
+            "title": "Passupliftpercent",
+            "type": "integer"
+          },
+          "perParticipantCapKobo": {
+            "title": "Perparticipantcapkobo",
+            "type": "integer"
+          },
+          "rewards": {
+            "items": {
+              "$ref": "#/components/schemas/RewardTier"
+            },
+            "title": "Rewards",
+            "type": "array"
+          },
+          "rulesVersion": {
+            "title": "Rulesversion",
+            "type": "integer"
+          },
+          "seasonNumber": {
+            "title": "Seasonnumber",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "startsAt": {
+            "format": "date-time",
+            "title": "Startsat",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "submissionDailyLimit": {
+            "title": "Submissiondailylimit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "seasonNumber",
+          "slug",
+          "name",
+          "status",
+          "startsAt",
+          "endsAt",
+          "rewards",
+          "countryAllowlist",
+          "perParticipantCapKobo",
+          "minWithdrawalKobo",
+          "passUpliftPercent",
+          "rulesVersion",
+          "submissionDailyLimit"
+        ],
+        "title": "SeasonSummary",
+        "type": "object"
+      },
+      "SeasonUpdateRequest": {
+        "description": "Patch a season's configuration. `status` is absent by design — see `SeasonTransition`.",
+        "properties": {
+          "budgetKobo": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budgetkobo"
+          },
+          "countryAllowlist": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Countryallowlist"
+          },
+          "endsAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endsat"
+          },
+          "minWithdrawalKobo": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minwithdrawalkobo"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "passUpliftPercent": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passupliftpercent"
+          },
+          "perParticipantCapKobo": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Perparticipantcapkobo"
+          },
+          "rewardMatrix": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rewardmatrix"
+          },
+          "rulesVersion": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rulesversion"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "pattern": "^[a-z0-9][a-z0-9-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
+          "startsAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startsat"
+          },
+          "submissionDailyLimit": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submissiondailylimit"
+          }
+        },
+        "title": "SeasonUpdateRequest",
         "type": "object"
       },
       "SessionResponse": {
@@ -22813,6 +23950,373 @@
         "title": "SubjectsSetRequest",
         "type": "object"
       },
+      "SubmissionCreateRequest": {
+        "properties": {
+          "actualResult": {
+            "maxLength": 2000,
+            "minLength": 3,
+            "title": "Actualresult",
+            "type": "string"
+          },
+          "appVersion": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Appversion"
+          },
+          "buildNumber": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buildnumber"
+          },
+          "deviceModel": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Devicemodel"
+          },
+          "expectedResult": {
+            "maxLength": 2000,
+            "minLength": 3,
+            "title": "Expectedresult",
+            "type": "string"
+          },
+          "osVersion": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Osversion"
+          },
+          "platform": {
+            "description": "web | android | ios",
+            "title": "Platform",
+            "type": "string"
+          },
+          "reportedSeverity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "critical | high | medium | low — the tester's own estimate",
+            "title": "Reportedseverity"
+          },
+          "route": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Route"
+          },
+          "stepsToReproduce": {
+            "maxLength": 5000,
+            "minLength": 10,
+            "title": "Stepstoreproduce",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 4,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform",
+          "title",
+          "stepsToReproduce",
+          "expectedResult",
+          "actualResult"
+        ],
+        "title": "SubmissionCreateRequest",
+        "type": "object"
+      },
+      "SubmissionListResponse": {
+        "properties": {
+          "hasMore": {
+            "title": "Hasmore",
+            "type": "boolean"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "submissions": {
+            "items": {
+              "$ref": "#/components/schemas/SubmissionView"
+            },
+            "title": "Submissions",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "submissions",
+          "total",
+          "page",
+          "pageSize",
+          "hasMore"
+        ],
+        "title": "SubmissionListResponse",
+        "type": "object"
+      },
+      "SubmissionView": {
+        "description": "A finding as its reporter sees it.\n\n`awardKobo` is **joined from the ledger**, not stored here. `null` means not yet awarded, which the\ndashboard shows differently from an award of `0` — the first is \"still being reviewed\", the second is\n\"reviewed, and this one does not pay\". Collapsing them would tell a tester their accepted finding was\nworthless while it was still in the queue.\n\n`adminNotes` is absent by construction. `publicResponse` is the half a tester reads.",
+        "properties": {
+          "actualResult": {
+            "title": "Actualresult",
+            "type": "string"
+          },
+          "appVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Appversion"
+          },
+          "attachments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AttachmentView"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
+          "awardKobo": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Awardkobo"
+          },
+          "buildNumber": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buildnumber"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "deviceModel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Devicemodel"
+          },
+          "duplicateOfId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duplicateofid"
+          },
+          "expectedResult": {
+            "title": "Expectedresult",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isApplication": {
+            "title": "Isapplication",
+            "type": "boolean"
+          },
+          "osVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Osversion"
+          },
+          "platform": {
+            "title": "Platform",
+            "type": "string"
+          },
+          "programId": {
+            "title": "Programid",
+            "type": "string"
+          },
+          "publicResponse": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publicresponse"
+          },
+          "reportedSeverity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reportedseverity"
+          },
+          "route": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Route"
+          },
+          "seasonNumber": {
+            "title": "Seasonnumber",
+            "type": "integer"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "stepsToReproduce": {
+            "title": "Stepstoreproduce",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "triagedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Triagedat"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "id",
+          "programId",
+          "seasonNumber",
+          "platform",
+          "title",
+          "stepsToReproduce",
+          "expectedResult",
+          "actualResult",
+          "status",
+          "isApplication",
+          "createdAt"
+        ],
+        "title": "SubmissionView",
+        "type": "object"
+      },
       "SurveyResponseState": {
         "description": "What the wizard needs to resume, and nothing more.\n\nCarries no contact detail even when one is stored: it lives in its own table for the reason in\n`db_models`, and a resume payload has no use for it.",
         "properties": {
@@ -22994,6 +24498,26 @@
           "session_id"
         ],
         "title": "SyncCheckoutRequest",
+        "type": "object"
+      },
+      "TermsAcceptanceRequest": {
+        "description": "A returning participant's acknowledgement of this season's terms.",
+        "properties": {
+          "accept": {
+            "title": "Accept",
+            "type": "boolean"
+          },
+          "rulesVersion": {
+            "minimum": 1.0,
+            "title": "Rulesversion",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accept",
+          "rulesVersion"
+        ],
+        "title": "TermsAcceptanceRequest",
         "type": "object"
       },
       "TimezoneResponse": {
@@ -25477,6 +27001,40 @@
         "title": "WakeResponse",
         "type": "object"
       },
+      "WalletSummary": {
+        "description": "Lifetime, not per season — the wallet belongs to the person (§6.1).",
+        "properties": {
+          "balanceKobo": {
+            "title": "Balancekobo",
+            "type": "integer"
+          },
+          "capRemainingKobo": {
+            "title": "Capremainingkobo",
+            "type": "integer"
+          },
+          "earnedThisSeasonKobo": {
+            "title": "Earnedthisseasonkobo",
+            "type": "integer"
+          },
+          "lifetimeAwardedKobo": {
+            "title": "Lifetimeawardedkobo",
+            "type": "integer"
+          },
+          "openWithdrawalKobo": {
+            "title": "Openwithdrawalkobo",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "balanceKobo",
+          "lifetimeAwardedKobo",
+          "openWithdrawalKobo",
+          "earnedThisSeasonKobo",
+          "capRemainingKobo"
+        ],
+        "title": "WalletSummary",
+        "type": "object"
+      },
       "WebPushCapability": {
         "description": "What the client needs in order to decide whether to offer web push at all.",
         "properties": {
@@ -26093,6 +27651,426 @@
         "tags": [
           "admin",
           "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/seasons": {
+      "get": {
+        "description": "Every season including drafts, newest first, with money and cohort counts.",
+        "operationId": "admin_list_seasons_api_v1_admin_bug_hunt_seasons_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonAdminListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin List Seasons",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      },
+      "post": {
+        "description": "Create a season, in `draft`.\n\nDraft rather than open, because a season needs its matrix reviewed and its copy checked before\ntesters can see it — and because `POST` plus an automatic open is how a half-configured season goes\nlive at the moment somebody hits Save.",
+        "operationId": "admin_create_season_api_v1_admin_bug_hunt_seasons_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeasonCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonAdminView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Create Season",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/seasons/defaults": {
+      "get": {
+        "description": "The next season's suggested configuration, copied from the last one.\n\nServed rather than assembled in the browser so there is one rule for what Season *n+1* starts from.\nA blank form is how a season opens with a budget of zero or with a matrix retyped from a document.",
+        "operationId": "admin_season_defaults_api_v1_admin_bug_hunt_seasons_defaults_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonDefaultsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Season Defaults",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/seasons/{program_id}": {
+      "get": {
+        "operationId": "admin_get_season_api_v1_admin_bug_hunt_seasons__program_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonAdminView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Get Season",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      },
+      "patch": {
+        "description": "Edit a `draft` or `open` season. A closed one is immutable — it is a record of what it paid.",
+        "operationId": "admin_update_season_api_v1_admin_bug_hunt_seasons__program_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeasonUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonAdminView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Update Season",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/seasons/{program_id}/carry-forward": {
+      "get": {
+        "description": "How many participants would be seeded. A count before a bulk approval, not after.",
+        "operationId": "admin_carry_forward_preview_api_v1_admin_bug_hunt_seasons__program_id__carry_forward_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fromProgramId",
+            "required": true,
+            "schema": {
+              "title": "Fromprogramid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CarryForwardPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Carry Forward Preview",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      },
+      "post": {
+        "description": "Seed a previous season's approved participants into this one as approved.\n\nIdempotent, so a double-click adds nobody twice. They arrive with no accepted terms, which is what\nthe app's acknowledgement screen exists for — this season's amounts and dates are not the ones they\nagreed to last time.",
+        "operationId": "admin_carry_forward_api_v1_admin_bug_hunt_seasons__program_id__carry_forward_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CarryForwardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CarryForwardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Carry Forward",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/seasons/{program_id}/close": {
+      "post": {
+        "description": "Close a season to new submissions.\n\nStops intake and nothing else: triage continues and pays this season's rates, and redemption and\nwithdrawal stay open indefinitely because the wallet belongs to the tester, not to the season.",
+        "operationId": "admin_close_season_api_v1_admin_bug_hunt_seasons__program_id__close_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonAdminView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Close Season",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/seasons/{program_id}/open": {
+      "post": {
+        "description": "Open a season for intake.\n\nIts own endpoint rather than a field on `PATCH`, so opening a season is one deliberate act with one\naudit entry, and the preconditions (a budget, a complete matrix, no other open season) are checked\nat exactly the moment they matter.",
+        "operationId": "admin_open_season_api_v1_admin_bug_hunt_seasons__program_id__open_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonAdminView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Open Season",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
         ]
       }
     },
@@ -30165,6 +32143,441 @@
         "tags": [
           "content",
           "content"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/applications": {
+      "post": {
+        "description": "Register for the open season by submitting a first finding.\n\n**The application is the submission.** One transaction writes the participation and the finding, and\nnothing downstream treats that finding specially — it is triaged and paid like any other. An\napplication form whose content is read and discarded would ask a tester to do the work of finding a\nbug and then decline to pay for it, which is a poor first impression for a programme whose whole\nproposition is that findings are worth money.\n\nRefused for anyone already `approved`, including a carried-forward participant: their route is\nstraight to `POST /submissions`, and showing them a form they passed last season would read as though\nwe had lost their record.",
+        "operationId": "create_application_api_v1_bug_hunt_applications_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicationCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Application",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/me": {
+      "get": {
+        "description": "Everything the participant app needs to choose a screen, in one request.\n\nReports rather than refuses (see `_eligibility`). The wallet is `null` until Phase 4; the field is in\nthe contract from the start so adding it later is not a shape change for the client.",
+        "operationId": "get_me_api_v1_bug_hunt_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Me",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/program": {
+      "get": {
+        "description": "The current state of the programme. **Unauthenticated.**\n\nAnswers all three states the landing page has to render, and says which one it is in `state` rather\nthan leaving the client to infer a page from a null season. The between-seasons case is not an edge\ncase: it is the state the programme spends most of the year in, and it goes live the day a season\ncloses.",
+        "operationId": "get_program_state_api_v1_bug_hunt_program_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Program State",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/seasons": {
+      "get": {
+        "description": "Seasons that have run or are running, newest first. **Unauthenticated.**\n\nDrafts are excluded: a draft's amounts are still being decided, and publishing a reward table we\nmight revise is worse than publishing nothing. A *scheduled* season is still announced — by\n`GET /program`, which carries its dates without implying its numbers are final.",
+        "operationId": "list_seasons_api_v1_bug_hunt_seasons_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Seasons",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/submissions": {
+      "get": {
+        "description": "The caller's own submissions, newest first.\n\nNo `programId` means **every season**, not the current one. The dashboard passes the open season when\nthere is one; a tester reading their history between seasons would otherwise be shown an empty page\nbecause the filter defaulted to a season that does not exist.",
+        "operationId": "list_submissions_api_v1_bug_hunt_submissions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "programId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Programid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Platform"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Submissions",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      },
+      "post": {
+        "description": "File a finding. Approved participants, open season, within the season's daily limit.",
+        "operationId": "create_submission_api_v1_bug_hunt_submissions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmissionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Submission",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/submissions/{submission_id}": {
+      "get": {
+        "description": "One of the caller's own submissions, from any season.\n\nSomeone else's id answers 404, not 403 — scoped in the query rather than checked after the fact, so a\nforeign id is indistinguishable from one that does not exist. In a programme where findings describe\nunfixed security bugs, a 403 that confirms a row exists is not a small oracle.",
+        "operationId": "get_submission_api_v1_bug_hunt_submissions__submission_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "title": "Submission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Submission",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/submissions/{submission_id}/attachments": {
+      "post": {
+        "description": "Attach a screenshot or a short screen recording to one of the caller's own submissions.\n\nAuthorised by **ownership rather than approval**, because the application's own finding belongs to a\n`pending` applicant who is not yet an approved participant, and they must still be able to attach the\nscreenshot that supports it.\n\nValidated before it is stored, then stored, then recorded. Storage is the slow external step, so it\nhappens outside any transaction: the cost is that a refused fourth file can leave an object in the\nbucket with no row. That is a small orphan at an identifiable path rather than a fourth attachment on\nthe finding, which is the right way round.",
+        "operationId": "upload_attachment_api_v1_bug_hunt_submissions__submission_id__attachments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "title": "Submission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_attachment_api_v1_bug_hunt_submissions__submission_id__attachments_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Upload Attachment",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/terms-acceptance": {
+      "post": {
+        "description": "Accept this season's terms as an already-approved participant.\n\nThe one screen a returning tester sees before submitting. Carry-forward seeds them `approved` with no\naccepted version on purpose — this season's amounts, dates and possibly country scope differ, and\nconsent to the last season is not consent to this one.",
+        "operationId": "accept_terms_api_v1_bug_hunt_terms_acceptance_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TermsAcceptanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParticipationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Accept Terms",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
         ]
       }
     },
@@ -46327,6 +48740,14 @@
     {
       "description": "**Admin Domain** — Platform administration, content management, staff operations. Requires staff role.",
       "name": "admin"
+    },
+    {
+      "description": "**Bug Hunt Domain** — The paid testing programme, as participants see it. Runs in seasons; `GET /program` and `GET /seasons` take no token so the programme site can render the reward table it will actually be paid against.",
+      "name": "bug-hunt"
+    },
+    {
+      "description": "**Bug Hunt Domain** — Season configuration, application review, submission triage and payouts. Staff for reads and triage; super admin for anything that changes a season or moves money.",
+      "name": "bug-hunt-admin"
     },
     {
       "description": "Health checks and infrastructure status.",

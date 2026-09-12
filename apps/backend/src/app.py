@@ -286,6 +286,22 @@ def _openapi_tags() -> list[dict]:
             ),
         },
         {
+            "name": "bug-hunt",
+            "description": (
+                "**Bug Hunt Domain** — The paid testing programme, as participants see it. "
+                "Runs in seasons; `GET /program` and `GET /seasons` take no token so the "
+                "programme site can render the reward table it will actually be paid against."
+            ),
+        },
+        {
+            "name": "bug-hunt-admin",
+            "description": (
+                "**Bug Hunt Domain** — Season configuration, application review, submission "
+                "triage and payouts. Staff for reads and triage; super admin for anything that "
+                "changes a season or moves money."
+            ),
+        },
+        {
             "name": "system",
             "description": "Health checks and infrastructure status.",
         },
@@ -389,6 +405,21 @@ def _register_domains(app: FastAPI) -> None:
     from src.domains.feedback.routes import router as feedback_router
 
     app.include_router(feedback_router, prefix=f"{prefix}/feedback", tags=["feedback"])
+
+    # --- Bug Hunt (paid testing programme; participant surface + staff triage) ---
+    #
+    # Two prefixes for the same domain, following `careers`/`content`/`research`. The participant half
+    # lives at its own origin (`issues.maigie.com`) rather than inside the learner app, so a season can
+    # be opened and closed without shipping a client release — and `GET /bug-hunt/program` is
+    # deliberately unauthenticated, because the landing page renders the reward table from it and a
+    # marketing page behind a token is a marketing page nobody reads.
+    from src.domains.bug_hunt.routes import admin_router as bug_hunt_admin_router
+    from src.domains.bug_hunt.routes import router as bug_hunt_router
+
+    app.include_router(bug_hunt_router, prefix=f"{prefix}/bug-hunt", tags=["bug-hunt"])
+    app.include_router(
+        bug_hunt_admin_router, prefix=f"{prefix}/admin/bug-hunt", tags=["bug-hunt-admin"]
+    )
 
     # --- Careers (public job postings + applications; staff CMS/triage) ---
     from src.domains.careers.routes import admin_router as careers_admin_router
