@@ -627,48 +627,117 @@ async def grant_comp_pass(user_id: str, body: models.GrantPassRequest, admin_use
 
 @router.get("/users/{user_id}/summary")
 async def get_user_summary(user_id: str, admin_user: StaffUser):
-    """A compact operational summary for the user-detail page (staff only).
+    """A flat operational summary for the user-summary sheet (staff only).
 
-    Composes the core account facts with the entitlement view and a little activity context. Framed as
-    understanding, not judgement (`ch16`, `ch14-behaviour`): it reports what the account *is* and when
-    it was last active, not a verdict on the learner. Richer per-user learning analytics
-    (`/admin/analytics/users/{id}`) is Phase 2.
+    Every figure is a real row for this learner: subscription state off the `User` columns, the
+    "credits" block reframed onto the live usage window (Decision 5 — credit caps are retired), and
+    per-user chat/course/referral counts. Framed as understanding, not judgement (`ch16`,
+    `ch14-behaviour`): it reports what the account *is*, not a verdict on the learner.
     """
-    from sqlalchemy import func
-
+    from src.domains.billing.services import entitlement_service
+    from src.domains.identity.db_models import User as UserModel
     from src.domains.identity.repository import IdentityRepository
+    from src.domains.intelligence.db_models import ChatMessage
+    from src.domains.knowledge.db_models import Course
 
     user = await IdentityRepository().find_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Best-effort cross-domain count. Kept in a guard so a summary never fails on an optional figure;
-    # migrates behind a knowledge-domain read per Decision 2 when one exists.
-    course_count: int | None = None
-    try:
-        from src.domains.knowledge.db_models import Course
+    entitlement = await entitlement_service.resolve(user_id)
 
-        factory = get_session_factory()
-        async with factory() as session:
-            course_count = (
+    factory = get_session_factory()
+    async with factory() as session:
+
+        async def _scalar(stmt) -> int:
+            return int((await session.execute(stmt)).scalar() or 0)
+
+        total_messages = await _scalar(
+            select(func.count()).select_from(ChatMessage).where(ChatMessage.user_id == user_id)
+        )
+        total_tokens = await _scalar(
+            select(func.coalesce(func.sum(ChatMessage.token_count), 0)).where(
+                ChatMessage.user_id == user_id
+            )
+        )
+        total_cost = float(
+            (
                 await session.execute(
-                    select(func.count()).select_from(Course).where(Course.user_id == user_id)
+                    select(func.coalesce(func.sum(ChatMessage.cost_usd), 0.0)).where(
+                        ChatMessage.user_id == user_id
+                    )
                 )
-            ).scalar() or 0
-    except Exception:
-        logger.debug("user summary: course count unavailable for %s", user_id, exc_info=True)
+            ).scalar()
+            or 0.0
+        )
+        total_revenue = float(
+            (
+                await session.execute(
+                    select(func.coalesce(func.sum(ChatMessage.revenue_usd), 0.0)).where(
+                        ChatMessage.user_id == user_id
+                    )
+                )
+            ).scalar()
+            or 0.0
+        )
+        total_courses = await _scalar(
+            select(func.count()).select_from(Course).where(Course.user_id == user_id)
+        )
+        # Referrals: how many learners this user brought in, and how many qualified (the points
+        # model's `referral_qualified`). The retired token/claim tables are empty.
+        total_referrals = 0
+        claimed_referrals = 0
+        if user.referral_code:
+            total_referrals = await _scalar(
+                select(func.count())
+                .select_from(UserModel)
+                .where(UserModel.referred_by_code == user.referral_code)
+            )
+            try:
+                from src.domains.billing.db_models import PointsLedgerEntry
 
-    entitlement = await get_user_entitlement(user_id, admin_user)
+                claimed_referrals = await _scalar(
+                    select(func.count())
+                    .select_from(PointsLedgerEntry)
+                    .where(
+                        PointsLedgerEntry.user_id == user_id,
+                        PointsLedgerEntry.kind == "referral_qualified",
+                    )
+                )
+            except Exception:
+                logger.debug("user summary: referral points unavailable", exc_info=True)
+
+    subscription_status = user.stripe_subscription_status or (
+        user.tier if user.tier in ("PREMIUM_MONTHLY", "PREMIUM_YEARLY") else None
+    )
 
     return {
-        "user": _user_response(user).model_dump(),
-        "activity": {
-            "createdAt": user.created_at,
-            "lastSeenAt": user.last_seen_at,
-            "lastSeenPlatform": user.last_seen_platform,
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "tier": user.tier,
+        "isActive": user.is_active,
+        "subscription": {
+            "status": subscription_status,
+            "customerId": user.stripe_customer_id,
+            "periodStart": user.subscription_current_period_start,
+            "periodEnd": user.subscription_current_period_end,
         },
-        "counts": {"courses": course_count},
-        "entitlement": entitlement.model_dump(),
+        # "Credits" reframed onto the live usage window (credit caps are retired, Decision 5): "used"
+        # is the current window's consumed units, "hardCap" the window allowance from the one resolver.
+        "credits": {
+            "used": user.usage_window_units_used,
+            "hardCap": entitlement.window_allowance,
+        },
+        "statistics": {
+            "totalMessages": total_messages,
+            "totalTokens": total_tokens,
+            "totalCostUsd": round(total_cost, 4),
+            "totalRevenueUsd": round(total_revenue, 4),
+            "totalCourses": total_courses,
+            "totalReferrals": total_referrals,
+            "claimedReferrals": claimed_referrals,
+        },
     }
 
 

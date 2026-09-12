@@ -28282,7 +28282,7 @@
     },
     "/api/v1/admin/users/{user_id}/summary": {
       "get": {
-        "description": "A compact operational summary for the user-detail page (staff only).\n\nComposes the core account facts with the entitlement view and a little activity context. Framed as\nunderstanding, not judgement (`ch16`, `ch14-behaviour`): it reports what the account *is* and when\nit was last active, not a verdict on the learner. Richer per-user learning analytics\n(`/admin/analytics/users/{id}`) is Phase 2.",
+        "description": "A flat operational summary for the user-summary sheet (staff only).\n\nEvery figure is a real row for this learner: subscription state off the `User` columns, the\n\"credits\" block reframed onto the live usage window (Decision 5 — credit caps are retired), and\nper-user chat/course/referral counts. Framed as understanding, not judgement (`ch16`,\n`ch14-behaviour`): it reports what the account *is*, not a verdict on the learner.",
         "operationId": "get_user_summary_api_v1_admin_users__user_id__summary_get",
         "parameters": [
           {
