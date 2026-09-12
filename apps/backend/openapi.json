@@ -5802,6 +5802,19 @@
         "title": "DeckUpdate",
         "type": "object"
       },
+      "DeepWakeConfigUpdateRequest": {
+        "properties": {
+          "max_inactive_days": {
+            "title": "Max Inactive Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_inactive_days"
+        ],
+        "title": "DeepWakeConfigUpdateRequest",
+        "type": "object"
+      },
       "DerivableGoalResponse": {
         "description": "A goal the learner's stated intent implies, before anything is written.\n\nReturned by the preview endpoint so a client can ask before creating. `basis` is a TOKEN\n(`course` | `preparation`) naming what the goal was read from; the client writes the sentence.",
         "properties": {
@@ -19710,6 +19723,28 @@
         "title": "RefreshTokenRequest",
         "type": "object"
       },
+      "RegenerateSchedulesRequest": {
+        "properties": {
+          "max_users": {
+            "default": 100,
+            "title": "Max Users",
+            "type": "integer"
+          },
+          "only_inactive_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Only Inactive Days"
+          }
+        },
+        "title": "RegenerateSchedulesRequest",
+        "type": "object"
+      },
       "ReorderRequest": {
         "description": "The new order, as ids from first to last.\n\nIds rather than `{id, order}` pairs, because the caller knows the sequence it wants and not the\nfloat values that encode it. Letting a client send the numbers means two clients can disagree about\nthe spacing, and a dragged item can be given an order that collides with another.",
         "properties": {
@@ -26232,6 +26267,56 @@
         ]
       }
     },
+    "/api/v1/admin/analytics/reengagement": {
+      "get": {
+        "description": "Nudge/wake analytics from real notification rows (staff). 'Came back' is 0 (not attributed).",
+        "operationId": "reengagement_analytics_api_v1_admin_analytics_reengagement_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reengagement Analytics",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
     "/api/v1/admin/analytics/retention": {
       "get": {
         "description": "Retention analytics (staff). DAU/WAU/MAU real; cohorts/adoption empty (no historical log).",
@@ -28298,6 +28383,76 @@
         ]
       }
     },
+    "/api/v1/admin/retention/deep-wake-config": {
+      "get": {
+        "description": "The deep-wake inactivity threshold (staff).",
+        "operationId": "get_deep_wake_config_api_v1_admin_retention_deep_wake_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Deep Wake Config",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      },
+      "put": {
+        "description": "Set the deep-wake inactivity threshold (super admin), audited.",
+        "operationId": "update_deep_wake_config_api_v1_admin_retention_deep_wake_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeepWakeConfigUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Deep Wake Config",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
     "/api/v1/admin/staff/role": {
       "post": {
         "description": "Update a user's admin staff role (super admin only).",
@@ -28567,6 +28722,52 @@
           }
         ],
         "summary": "Create User",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/regenerate-schedules": {
+      "post": {
+        "description": "Repack drifted study plans so returning learners see fresh ones (super admin), audited.",
+        "operationId": "regenerate_schedules_api_v1_admin_users_regenerate_schedules_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegenerateSchedulesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Regenerate Schedules",
         "tags": [
           "admin",
           "admin"

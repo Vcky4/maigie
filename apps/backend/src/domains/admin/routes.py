@@ -771,6 +771,60 @@ async def user_analytics(user_id: str, admin_user: StaffUser):
         raise HTTPException(status_code=404, detail="User not found")
 
 
+@router.get("/analytics/reengagement")
+async def reengagement_analytics(admin_user: StaffUser, days: int = Query(30, ge=1, le=365)):
+    """Nudge/wake analytics from real notification rows (staff). 'Came back' is 0 (not attributed)."""
+    from .services import reengagement_service
+
+    return await reengagement_service.reengagement_analytics(days)
+
+
+@router.get("/retention/deep-wake-config")
+async def get_deep_wake_config(admin_user: StaffUser):
+    """The deep-wake inactivity threshold (staff)."""
+    from .services import reengagement_service
+
+    return await reengagement_service.deep_wake_config()
+
+
+@router.put("/retention/deep-wake-config")
+async def update_deep_wake_config(
+    body: models.DeepWakeConfigUpdateRequest, admin_user: SuperAdminUser
+):
+    """Set the deep-wake inactivity threshold (super admin), audited."""
+    from .services import reengagement_service
+
+    if body.max_inactive_days < 1 or body.max_inactive_days > 365:
+        raise HTTPException(status_code=400, detail="max_inactive_days must be between 1 and 365")
+    result = await reengagement_service.set_deep_wake_config(body.max_inactive_days)
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="update_deep_wake_config",
+        resource_type="config",
+        resource_id="deepWake.maxInactiveDays",
+        details={"maxInactiveDays": body.max_inactive_days},
+    )
+    return result
+
+
+@router.post("/users/regenerate-schedules")
+async def regenerate_schedules(body: models.RegenerateSchedulesRequest, admin_user: SuperAdminUser):
+    """Repack drifted study plans so returning learners see fresh ones (super admin), audited."""
+    from .services import reengagement_service
+
+    result = await reengagement_service.bulk_regenerate_schedules(
+        body.max_users, body.only_inactive_days
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bulk_regenerate_schedules",
+        resource_type="study_plan",
+        resource_id=None,
+        details=result,
+    )
+    return result
+
+
 @router.get("/analytics/revenue")
 async def revenue_analytics(admin_user: SuperAdminUser):
     """Revenue analytics (super admin). Subscription counts real; MRR estimated; churn 0 (no history)."""

@@ -333,6 +333,15 @@ class WakeBulkResponse(BaseModel):
     failed: int
 
 
+class DeepWakeConfigUpdateRequest(BaseModel):
+    max_inactive_days: int
+
+
+class RegenerateSchedulesRequest(BaseModel):
+    max_users: int = 100
+    only_inactive_days: int | None = None
+
+
 # ===========================================================================
 # System — AI task / action-log reads (Phase 4)
 # ===========================================================================
