@@ -771,6 +771,30 @@ async def user_analytics(user_id: str, admin_user: StaffUser):
         raise HTTPException(status_code=404, detail="User not found")
 
 
+@router.get("/analytics/revenue")
+async def revenue_analytics(admin_user: SuperAdminUser):
+    """Revenue analytics (super admin). Subscription counts real; MRR estimated; churn 0 (no history)."""
+    from .services import analytics_service
+
+    return await analytics_service.revenue_analytics()
+
+
+@router.get("/analytics/retention")
+async def retention_analytics(admin_user: StaffUser):
+    """Retention analytics (staff). DAU/WAU/MAU real; cohorts/adoption empty (no historical log)."""
+    from .services import analytics_service
+
+    return await analytics_service.retention_analytics()
+
+
+@router.get("/analytics/growth")
+async def growth_analytics(admin_user: StaffUser, days: int = Query(30, ge=1, le=365)):
+    """Growth analytics (staff). Signups real; conversions 0 (untracked); referrals real."""
+    from .services import analytics_service
+
+    return await analytics_service.growth_analytics(days)
+
+
 @router.get("/dashboard/charts")
 async def dashboard_charts(admin_user: StaffUser, days: int = Query(14, ge=1, le=180)):
     """Daily signups and messages over a window (staff only).

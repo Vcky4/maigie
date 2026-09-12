@@ -26182,6 +26182,108 @@
         ]
       }
     },
+    "/api/v1/admin/analytics/growth": {
+      "get": {
+        "description": "Growth analytics (staff). Signups real; conversions 0 (untracked); referrals real.",
+        "operationId": "growth_analytics_api_v1_admin_analytics_growth_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Growth Analytics",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/analytics/retention": {
+      "get": {
+        "description": "Retention analytics (staff). DAU/WAU/MAU real; cohorts/adoption empty (no historical log).",
+        "operationId": "retention_analytics_api_v1_admin_analytics_retention_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Retention Analytics",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/analytics/revenue": {
+      "get": {
+        "description": "Revenue analytics (super admin). Subscription counts real; MRR estimated; churn 0 (no history).",
+        "operationId": "revenue_analytics_api_v1_admin_analytics_revenue_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revenue Analytics",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
     "/api/v1/admin/analytics/users-at-risk": {
       "get": {
         "description": "Inactive learners, most-inactive first (staff only). Read-only; sends nothing.",
