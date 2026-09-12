@@ -1388,6 +1388,39 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "userEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Useremail"
+          },
+          "userId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Userid"
+          },
+          "userName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
           }
         },
         "required": [
@@ -1402,11 +1435,11 @@
       },
       "AiActionLogListResponse": {
         "properties": {
-          "items": {
+          "logs": {
             "items": {
               "$ref": "#/components/schemas/AiActionLogItem"
             },
-            "title": "Items",
+            "title": "Logs",
             "type": "array"
           },
           "page": {
@@ -1427,7 +1460,7 @@
           }
         },
         "required": [
-          "items",
+          "logs",
           "total",
           "page",
           "pageSize",
@@ -26513,7 +26546,7 @@
   "paths": {
     "/api/v1/admin/ai-action-logs": {
       "get": {
-        "description": "List AI action-log entries, newest first (staff only).",
+        "description": "List AI action-log entries, newest first (staff only).\n\nEach action is attributed to the learner whose chat produced it, joined through\n``ChatMessage`` (which carries ``userId``) to ``User``. The join is a LEFT OUTER so an action\nwhose message or user was since deleted still lists (with null attribution) rather than vanishing.",
         "operationId": "list_ai_action_logs_api_v1_admin_ai_action_logs_get",
         "parameters": [
           {
