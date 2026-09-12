@@ -294,6 +294,251 @@
         "title": "AdminAnalyticsResponse",
         "type": "object"
       },
+      "AdminCourseDetail": {
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "completedTopics": {
+            "title": "Completedtopics",
+            "type": "integer"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "difficulty": {
+            "title": "Difficulty",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isAIGenerated": {
+            "title": "Isaigenerated",
+            "type": "boolean"
+          },
+          "modules": {
+            "items": {
+              "$ref": "#/components/schemas/AdminModuleItem"
+            },
+            "title": "Modules",
+            "type": "array"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "number"
+          },
+          "targetDate": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetdate"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "totalTopics": {
+            "title": "Totaltopics",
+            "type": "integer"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "userEmail": {
+            "title": "Useremail",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          },
+          "userName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "userEmail",
+          "title",
+          "difficulty",
+          "isAIGenerated",
+          "archived",
+          "progress",
+          "totalTopics",
+          "completedTopics",
+          "modules",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "AdminCourseDetail",
+        "type": "object"
+      },
+      "AdminCourseItem": {
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "completedTopics": {
+            "title": "Completedtopics",
+            "type": "integer"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "difficulty": {
+            "title": "Difficulty",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isAIGenerated": {
+            "title": "Isaigenerated",
+            "type": "boolean"
+          },
+          "moduleCount": {
+            "title": "Modulecount",
+            "type": "integer"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "number"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "totalTopics": {
+            "title": "Totaltopics",
+            "type": "integer"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "userEmail": {
+            "title": "Useremail",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          },
+          "userName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "userEmail",
+          "title",
+          "difficulty",
+          "isAIGenerated",
+          "archived",
+          "progress",
+          "totalTopics",
+          "completedTopics",
+          "moduleCount",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "AdminCourseItem",
+        "type": "object"
+      },
+      "AdminCourseListResponse": {
+        "properties": {
+          "courses": {
+            "items": {
+              "$ref": "#/components/schemas/AdminCourseItem"
+            },
+            "title": "Courses",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "totalPages": {
+            "title": "Totalpages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "courses",
+          "total",
+          "page",
+          "pageSize",
+          "totalPages"
+        ],
+        "title": "AdminCourseListResponse",
+        "type": "object"
+      },
       "AdminEntitlementView": {
         "description": "A learner's personal entitlement as staff see it — the successor to the credits panel.\n\nEvery field is read from the one authority (`entitlement_service.resolve`) plus the billing\ndomain's own voice and points services, so the tool cannot disagree with what the learner is\nserved (Decision 2, honesty invariant). Usage is shown as raw window figures here because this is\nan operational view, not the learner's percentage-and-reset-time surface.",
         "properties": {
@@ -432,6 +677,68 @@
           "pointsBalance"
         ],
         "title": "AdminEntitlementView",
+        "type": "object"
+      },
+      "AdminModuleItem": {
+        "properties": {
+          "completed": {
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "completedTopics": {
+            "title": "Completedtopics",
+            "type": "integer"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "order": {
+            "title": "Order",
+            "type": "number"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "number"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/AdminTopicItem"
+            },
+            "title": "Topics",
+            "type": "array"
+          },
+          "totalTopics": {
+            "title": "Totaltopics",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "order",
+          "completed",
+          "progress",
+          "totalTopics",
+          "completedTopics",
+          "topics"
+        ],
+        "title": "AdminModuleItem",
         "type": "object"
       },
       "AdminPassView": {
@@ -808,6 +1115,62 @@
           "offset"
         ],
         "title": "AdminSurveyListResponse",
+        "type": "object"
+      },
+      "AdminTopicItem": {
+        "properties": {
+          "completed": {
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "estimatedHours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimatedhours"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "order": {
+            "title": "Order",
+            "type": "number"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "order",
+          "completed",
+          "createdAt"
+        ],
+        "title": "AdminTopicItem",
         "type": "object"
       },
       "AgendaAcceptRequest": {
@@ -26901,6 +27264,243 @@
         "tags": [
           "careers",
           "careers"
+        ]
+      }
+    },
+    "/api/v1/admin/courses": {
+      "get": {
+        "description": "List courses across learners, paginated and filterable (staff only).",
+        "operationId": "list_all_courses_api_v1_admin_courses_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "userId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Userid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "difficulty",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Difficulty"
+            }
+          },
+          {
+            "in": "query",
+            "name": "isAIGenerated",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Isaigenerated"
+            }
+          },
+          {
+            "in": "query",
+            "name": "archived",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Archived"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCourseListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List All Courses",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/courses/{course_id}": {
+      "delete": {
+        "description": "Delete a course and its modules/topics (super admin only), audited.\n\nA hard delete — a course is a learner's own artifact, and removing it is a request to forget it;\n`Module`/`Topic` cascade from `Course`.",
+        "operationId": "delete_course_api_v1_admin_courses__course_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Course",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      },
+      "get": {
+        "description": "A course with its modules and topics (staff only).",
+        "operationId": "get_course_details_api_v1_admin_courses__course_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCourseDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Course Details",
+        "tags": [
+          "admin",
+          "admin"
         ]
       }
     },

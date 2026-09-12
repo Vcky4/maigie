@@ -1026,3 +1026,72 @@ async def list_ai_action_logs(
         pageSize=pageSize,
         totalPages=math.ceil(total / pageSize) if total else 0,
     )
+
+
+# ===========================================================================
+# Courses (admin view over the knowledge domain)
+# ===========================================================================
+
+
+@router.get("/courses", response_model=models.AdminCourseListResponse)
+async def list_all_courses(
+    admin_user: StaffUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(50, ge=1, le=200),
+    userId: str | None = Query(None),
+    difficulty: str | None = Query(None),
+    isAIGenerated: bool | None = Query(None),
+    archived: bool | None = Query(None),
+    search: str | None = Query(None),
+):
+    """List courses across learners, paginated and filterable (staff only)."""
+    from .services import courses_service
+
+    return await courses_service.list_courses(
+        page=page,
+        page_size=pageSize,
+        user_id=userId,
+        difficulty=difficulty,
+        is_ai_generated=isAIGenerated,
+        archived=archived,
+        search=search,
+    )
+
+
+@router.get("/courses/{course_id}", response_model=models.AdminCourseDetail)
+async def get_course_details(course_id: str, admin_user: StaffUser):
+    """A course with its modules and topics (staff only)."""
+    from src.shared.exceptions import NotFoundError
+
+    from .services import courses_service
+
+    try:
+        return await courses_service.course_detail(course_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+
+@router.delete("/courses/{course_id}")
+async def delete_course(course_id: str, admin_user: SuperAdminUser):
+    """Delete a course and its modules/topics (super admin only), audited.
+
+    A hard delete — a course is a learner's own artifact, and removing it is a request to forget it;
+    `Module`/`Topic` cascade from `Course`.
+    """
+    from src.shared.exceptions import NotFoundError
+
+    from .services import courses_service
+
+    try:
+        await courses_service.delete_course(course_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="delete_course",
+        resource_type="course",
+        resource_id=course_id,
+        details=None,
+    )
+    return {"message": "Course deleted", "courseId": course_id}

@@ -380,6 +380,78 @@ class AiActionLogListResponse(BaseModel):
     totalPages: int
 
 
+# ===========================================================================
+# Courses (admin view over the knowledge domain)
+# ===========================================================================
+
+
+class AdminCourseItem(BaseModel):
+    id: str
+    userId: str
+    userEmail: str
+    userName: str | None = None
+    title: str
+    description: str | None = None
+    difficulty: str
+    isAIGenerated: bool
+    archived: bool
+    progress: float
+    totalTopics: int
+    completedTopics: int
+    moduleCount: int
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class AdminCourseListResponse(BaseModel):
+    courses: list[AdminCourseItem]
+    total: int
+    page: int
+    pageSize: int
+    totalPages: int
+
+
+class AdminTopicItem(BaseModel):
+    id: str
+    title: str
+    content: str | None = None
+    order: float
+    completed: bool
+    estimatedHours: float | None = None
+    createdAt: datetime
+
+
+class AdminModuleItem(BaseModel):
+    id: str
+    title: str
+    description: str | None = None
+    order: float
+    completed: bool
+    progress: float
+    totalTopics: int
+    completedTopics: int
+    topics: list[AdminTopicItem]
+
+
+class AdminCourseDetail(BaseModel):
+    id: str
+    userId: str
+    userEmail: str
+    userName: str | None = None
+    title: str
+    description: str | None = None
+    difficulty: str
+    targetDate: datetime | None = None
+    isAIGenerated: bool
+    archived: bool
+    progress: float
+    totalTopics: int
+    completedTopics: int
+    modules: list[AdminModuleItem]
+    createdAt: datetime
+    updatedAt: datetime
+
+
 class AuditLogEntry(BaseModel):
     """One recorded privileged action, joined to the administrator who performed it.
 
