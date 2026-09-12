@@ -526,6 +526,48 @@ class ReferralStatistics(BaseModel):
 
 
 # ===========================================================================
+# Chat monitoring (aggregate + metadata only — no message content)
+# ===========================================================================
+
+
+class ChatSessionItem(BaseModel):
+    id: str
+    userId: str
+    userEmail: str | None = None
+    userName: str | None = None
+    title: str | None = None
+    isActive: bool
+    messageCount: int
+    totalTokens: int
+    totalCostUsd: float
+    totalRevenueUsd: float
+    profitUsd: float
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class ChatSessionListResponse(BaseModel):
+    sessions: list[ChatSessionItem]
+    total: int
+    page: int
+    pageSize: int
+    totalPages: int
+
+
+class ChatStatisticsResponse(BaseModel):
+    totalSessions: int
+    totalMessages: int
+    totalTokens: int
+    averageTokensPerMessage: float
+    uniqueUsers: int
+    totalCostUsd: float
+    totalRevenueUsd: float
+    totalProfitUsd: float
+    profitMargin: float
+    dailyStats: dict[str, dict]
+
+
+# ===========================================================================
 # System configuration
 # ===========================================================================
 

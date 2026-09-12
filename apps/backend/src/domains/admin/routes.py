@@ -1176,6 +1176,35 @@ async def delete_course(course_id: str, admin_user: SuperAdminUser):
 
 
 # ===========================================================================
+# Chat monitoring (aggregate + metadata only — no message content; Decision 6)
+# ===========================================================================
+
+
+@router.get("/chat/sessions", response_model=models.ChatSessionListResponse)
+async def list_chat_sessions(
+    admin_user: SuperAdminUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(50, ge=1, le=200),
+    userId: str | None = Query(None),
+    search: str | None = Query(None),
+):
+    """Chat sessions with counts/cost (super admin). Metadata only — no message content is returned."""
+    from .services import chat_monitoring_service
+
+    return await chat_monitoring_service.list_chat_sessions(
+        page=page, page_size=pageSize, user_id=userId, search=search
+    )
+
+
+@router.get("/chat/stats", response_model=models.ChatStatisticsResponse)
+async def chat_statistics(admin_user: SuperAdminUser):
+    """Aggregate chat/AI statistics (super admin). No message content."""
+    from .services import chat_monitoring_service
+
+    return await chat_monitoring_service.chat_statistics()
+
+
+# ===========================================================================
 # Staff
 # ===========================================================================
 

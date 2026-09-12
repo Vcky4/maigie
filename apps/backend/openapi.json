@@ -3182,6 +3182,197 @@
         "title": "ChatMessageResponse",
         "type": "object"
       },
+      "ChatSessionItem": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isActive": {
+            "title": "Isactive",
+            "type": "boolean"
+          },
+          "messageCount": {
+            "title": "Messagecount",
+            "type": "integer"
+          },
+          "profitUsd": {
+            "title": "Profitusd",
+            "type": "number"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "totalCostUsd": {
+            "title": "Totalcostusd",
+            "type": "number"
+          },
+          "totalRevenueUsd": {
+            "title": "Totalrevenueusd",
+            "type": "number"
+          },
+          "totalTokens": {
+            "title": "Totaltokens",
+            "type": "integer"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "userEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Useremail"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          },
+          "userName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "isActive",
+          "messageCount",
+          "totalTokens",
+          "totalCostUsd",
+          "totalRevenueUsd",
+          "profitUsd",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "ChatSessionItem",
+        "type": "object"
+      },
+      "ChatSessionListResponse": {
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/ChatSessionItem"
+            },
+            "title": "Sessions",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "totalPages": {
+            "title": "Totalpages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sessions",
+          "total",
+          "page",
+          "pageSize",
+          "totalPages"
+        ],
+        "title": "ChatSessionListResponse",
+        "type": "object"
+      },
+      "ChatStatisticsResponse": {
+        "properties": {
+          "averageTokensPerMessage": {
+            "title": "Averagetokenspermessage",
+            "type": "number"
+          },
+          "dailyStats": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Dailystats",
+            "type": "object"
+          },
+          "profitMargin": {
+            "title": "Profitmargin",
+            "type": "number"
+          },
+          "totalCostUsd": {
+            "title": "Totalcostusd",
+            "type": "number"
+          },
+          "totalMessages": {
+            "title": "Totalmessages",
+            "type": "integer"
+          },
+          "totalProfitUsd": {
+            "title": "Totalprofitusd",
+            "type": "number"
+          },
+          "totalRevenueUsd": {
+            "title": "Totalrevenueusd",
+            "type": "number"
+          },
+          "totalSessions": {
+            "title": "Totalsessions",
+            "type": "integer"
+          },
+          "totalTokens": {
+            "title": "Totaltokens",
+            "type": "integer"
+          },
+          "uniqueUsers": {
+            "title": "Uniqueusers",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "totalSessions",
+          "totalMessages",
+          "totalTokens",
+          "averageTokensPerMessage",
+          "uniqueUsers",
+          "totalCostUsd",
+          "totalRevenueUsd",
+          "totalProfitUsd",
+          "profitMargin",
+          "dailyStats"
+        ],
+        "title": "ChatStatisticsResponse",
+        "type": "object"
+      },
       "CheckoutRequest": {
         "description": "Create Stripe checkout session.",
         "properties": {
@@ -27185,6 +27376,129 @@
         "tags": [
           "careers",
           "careers"
+        ]
+      }
+    },
+    "/api/v1/admin/chat/sessions": {
+      "get": {
+        "description": "Chat sessions with counts/cost (super admin). Metadata only — no message content is returned.",
+        "operationId": "list_chat_sessions_api_v1_admin_chat_sessions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "userId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Userid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatSessionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Chat Sessions",
+        "tags": [
+          "admin",
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/chat/stats": {
+      "get": {
+        "description": "Aggregate chat/AI statistics (super admin). No message content.",
+        "operationId": "chat_statistics_api_v1_admin_chat_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatStatisticsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Chat Statistics",
+        "tags": [
+          "admin",
+          "admin"
         ]
       }
     },
