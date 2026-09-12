@@ -33,6 +33,7 @@ from . import attachments as attachment_rules
 from . import models
 from .db_models import (
     BugHuntAttachment,
+    BugHuntLedgerEntry,
     BugHuntParticipant,
     BugHuntProgram,
     BugHuntSubmission,
@@ -44,7 +45,9 @@ from .exceptions import (
 )
 from .services import (
     eligibility_service,
+    ledger_service,
     program_service,
+    reward_service,
     submission_service,
     triage_service,
 )
@@ -251,6 +254,32 @@ def _participation_view(
     )
 
 
+def _wallet_summary(summary: ledger_service.WalletSummary) -> models.WalletSummary:
+    return models.WalletSummary(
+        balanceKobo=summary.balance_kobo,
+        lifetimeAwardedKobo=summary.lifetime_awarded_kobo,
+        openWithdrawalKobo=summary.open_withdrawal_kobo,
+        earnedThisSeasonKobo=summary.earned_this_season_kobo,
+        capRemainingKobo=summary.cap_remaining_kobo,
+    )
+
+
+def _ledger_entry_view(
+    entry: BugHuntLedgerEntry, season_number: int | None
+) -> models.LedgerEntryView:
+    return models.LedgerEntryView(
+        id=entry.id,
+        kind=entry.kind,
+        amountKobo=entry.amount_kobo,
+        seasonNumber=season_number,
+        submissionId=entry.submission_id,
+        withdrawalId=entry.withdrawal_id,
+        passId=entry.pass_id,
+        note=entry.note,
+        createdAt=entry.created_at,
+    )
+
+
 def _eligibility(program: BugHuntProgram | None, user: User) -> models.EligibilityView:
     """The caller's standing, as a value rather than an exception.
 
@@ -355,13 +384,21 @@ async def get_me(current_user: CurrentUser) -> models.MeResponse:
                     or row.accepted_rules_version < open_season.rules_version
                 )
 
+    # Only for people who have actually taken part. A learner who wandered onto the programme site gets no
+    # wallet read at all rather than a row created for a zero balance they will never use.
+    wallet = None
+    if history:
+        wallet = _wallet_summary(
+            await ledger_service.summary(user_id=current_user.id, program=open_season)
+        )
+
     return models.MeResponse(
         state=state,
         season=_season_summary(open_season) if open_season is not None else None,
         eligibility=_eligibility(open_season, current_user),
         participation=current_participation,
         history=history,
-        wallet=None,
+        wallet=wallet,
         needsTermsAcceptance=needs_terms,
     )
 
@@ -499,6 +536,45 @@ async def get_submission(submission_id: str, current_user: CurrentUser) -> model
         submission,
         season_number=program.season_number,
         award_kobo=awards.get(submission.id),
+    )
+
+
+@router.get("/wallet", response_model=models.WalletSummary)
+async def get_wallet(current_user: CurrentUser) -> models.WalletSummary:
+    """The caller's balance. **Lifetime, spanning every season.**
+
+    Reachable with no season open, which is the point of a per-user wallet: money earned in Season 1 is
+    still theirs in the gap before Season 2, and a wallet that four-oh-fours between seasons would be a
+    wallet that appears to have eaten their balance.
+    """
+    return _wallet_summary(
+        await ledger_service.summary(
+            user_id=current_user.id, program=await program_service.current()
+        )
+    )
+
+
+@router.get("/wallet/ledger", response_model=models.LedgerResponse)
+async def get_wallet_ledger(
+    current_user: CurrentUser,
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=50, ge=1, le=100),
+) -> models.LedgerResponse:
+    """Every entry, newest first, across every season.
+
+    The whole ledger rather than a filtered view: the wallet explains its own number, and a balance a tester
+    cannot account for line by line is a support conversation waiting to happen.
+    """
+    rows, total = await ledger_service.history(
+        user_id=current_user.id, page=page, page_size=pageSize
+    )
+    return models.LedgerResponse(
+        entries=[_ledger_entry_view(entry, season_number) for entry, season_number in rows],
+        total=total,
+        page=page,
+        pageSize=pageSize,
+        hasMore=(page * pageSize) < total,
+        balanceKobo=await ledger_service.balance(current_user.id),
     )
 
 
@@ -994,7 +1070,48 @@ async def admin_triage_submission(
             award_kobo=detail["awardKobo"],
         ),
         awardKobo=result["awardKobo"],
-        awardPending=result["awardPending"],
+        matrixKobo=result["matrixKobo"],
+        awardBlocked=result["awardBlocked"],
+        awardMessage=result["awardMessage"],
+    )
+
+
+@admin_router.post(
+    "/participants/{participant_id}/adjustment", response_model=models.AdjustmentResponse
+)
+async def admin_adjust_balance(
+    participant_id: str, body: models.AdjustmentRequest, admin_user: SuperAdminUser
+) -> models.AdjustmentResponse:
+    """Credit or claw back kobo by hand. **Super admin, and the only typed amount in the programme.**
+
+    Everything else on the reward path traces to a season's published table. This does not, which is exactly
+    why it needs the higher guard, a mandatory reason, and an audit row: it is the one lever that can put
+    money on a ledger without a rule behind it.
+
+    Attributed to the participation's season, so it counts against that tester's cap. A clawback cannot take
+    a balance below zero — it takes the wallet lock like any other spend.
+    """
+    detail = await triage_service.participant_detail(participant_id)
+    participant = detail["participant"]
+
+    entry = await reward_service.adjust(
+        user_id=participant.user_id,
+        amount_kobo=body.amountKobo,
+        note=body.note,
+        staff_user_id=admin_user.id,
+        program_id=participant.program_id,
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_adjust_balance",
+        resource_type="bug_hunt_participant",
+        resource_id=participant_id,
+        details={"amountKobo": body.amountKobo, "note": body.note, "entryId": entry.id},
+    )
+    program = await program_service.get(participant.program_id)
+    return models.AdjustmentResponse(
+        entry=_ledger_entry_view(entry, program.season_number),
+        balanceKobo=await ledger_service.balance(participant.user_id),
     )
 
 

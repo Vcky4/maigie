@@ -51,7 +51,7 @@ from ..db_models import (
     BugHuntProgram,
     BugHuntSubmission,
 )
-from . import program_service
+from . import program_service, reward_service
 
 logger = logging.getLogger(__name__)
 
@@ -364,34 +364,44 @@ async def triage(
         await session.refresh(submission)
         await session.refresh(submission, attribute_names=["attachments"])
 
-        already_awarded = (
-            await session.execute(
-                select(func.count())
-                .select_from(BugHuntLedgerEntry)
-                .where(
-                    BugHuntLedgerEntry.submission_id == submission.id,
-                    BugHuntLedgerEntry.kind == "award",
-                )
-            )
-        ).scalar() or 0
+        season_number = program.season_number
+
+    # **The award is a second transaction, deliberately.**
+    #
+    # The grading is a fact about the finding and the award is a consequence of it, and the two can fail
+    # independently: a season can be out of budget while a finding is still genuinely critical. Doing both
+    # in one transaction would mean an exhausted budget silently un-accepts a real bug, and the tester
+    # would see their report reopen for no reason they could discover.
+    #
+    # So the grading commits first and stands on its own. If the award cannot be written, the finding stays
+    # accepted, the money stays owed, and `awardBlocked` says why — which the triage console shows and an
+    # operator can act on.
+    award: reward_service.AwardResult | None = None
+    if status == "accepted":
+        award = await reward_service.award_submission(
+            submission_id=submission_id, staff_user_id=staff_user_id
+        )
 
     logger.info(
-        "bug_hunt: triaged %s as %s (%s/%s) worth %d kobo under season %s by %s",
+        "bug_hunt: triaged %s as %s (%s/%s) worth %d kobo under season %s by %s%s",
         submission_id,
         status,
         category,
         severity,
         award_kobo,
-        program.season_number,
+        season_number,
         staff_user_id,
+        f" — award blocked: {award.blocked}" if award and award.blocked else "",
     )
     return {
         "submission": submission,
-        "seasonNumber": program.season_number,
-        "awardKobo": award_kobo,
-        # True when this grading is worth money that has not been written to the ledger. Distinguishes
-        # "graded, not yet paid" from "graded, pays nothing" — which a bare `awardKobo` cannot.
-        "awardPending": award_kobo > 0 and not already_awarded,
+        "seasonNumber": season_number,
+        "awardKobo": award.credited_kobo if award else 0,
+        # What the grading is worth under this season's table, whether or not it was paid. Shown next to
+        # `awardKobo` so a blocked award reads as "owed ₦2,000, not yet credited" rather than as "₦0".
+        "matrixKobo": award.matrix_kobo if award else 0,
+        "awardBlocked": award.blocked if award else None,
+        "awardMessage": award.message if award else None,
     }
 
 

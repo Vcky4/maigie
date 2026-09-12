@@ -88,13 +88,21 @@ class TestNoAmountCrossesTheTriageBoundary:
     def test_the_response_reports_the_amount_the_matrix_decided(self, schema):
         properties = schema["components"]["schemas"]["TriageResponse"]["properties"]
         assert "awardKobo" in properties
-        assert "awardPending" in properties
+        assert "matrixKobo" in properties
 
-    def test_award_pending_distinguishes_unpaid_from_unpayable(self, schema):
-        """ "Graded, worth money, not yet written to the ledger" and "graded, pays nothing" are different
-        facts, and a bare `awardKobo` of 0 cannot tell them apart."""
-        spec = schema["components"]["schemas"]["TriageResponse"]["properties"]["awardPending"]
-        assert spec.get("type") == "boolean"
+    def test_the_response_can_express_owed_but_unpaid(self, schema):
+        """Two amounts, because they can differ and the difference matters.
+
+        `matrixKobo` is what the grading is worth; `awardKobo` is what reached the ledger. A single number
+        could not express "accepted, owed 2,000, paid nothing because the season is out of budget", and that
+        is exactly the state an operator has to see and act on.
+        """
+        properties = schema["components"]["schemas"]["TriageResponse"]["properties"]
+        assert "awardBlocked" in properties
+        assert "awardMessage" in properties
+        for nullable in ("awardBlocked", "awardMessage"):
+            variants = {v.get("type") for v in properties[nullable].get("anyOf", [])}
+            assert "null" in variants, nullable
 
 
 class TestThePermissionSplit:

@@ -257,6 +257,44 @@
         "title": "ActivityTypeCount",
         "type": "object"
       },
+      "AdjustmentRequest": {
+        "description": "A super admin's correction — the only free-typed amount in the programme.\n\nEither sign. The note is mandatory because the tester can read this ledger, and an unexplained line on\nit is worse than no line. Attributed to the current season, so it counts against that tester's cap —\nan adjustment that sidestepped the cap would make the cap advisory for anyone holding this permission.",
+        "properties": {
+          "amountKobo": {
+            "title": "Amountkobo",
+            "type": "integer"
+          },
+          "note": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "amountKobo",
+          "note"
+        ],
+        "title": "AdjustmentRequest",
+        "type": "object"
+      },
+      "AdjustmentResponse": {
+        "properties": {
+          "balanceKobo": {
+            "title": "Balancekobo",
+            "type": "integer"
+          },
+          "entry": {
+            "$ref": "#/components/schemas/LedgerEntryView"
+          }
+        },
+        "required": [
+          "entry",
+          "balanceKobo"
+        ],
+        "title": "AdjustmentResponse",
+        "type": "object"
+      },
       "AdminAnalyticsResponse": {
         "description": "Platform analytics landing payload.",
         "properties": {
@@ -11986,6 +12024,91 @@
         "title": "LearningProfileResponse",
         "type": "object"
       },
+      "LedgerEntryView": {
+        "description": "One line of the wallet's own explanation of its number.\n\n`seasonNumber` is present on credits and `null` on spends, which is not a gap: an award belongs to the\nseason that earned it, and a redemption or withdrawal belongs to no season. The client groups on it.",
+        "properties": {
+          "amountKobo": {
+            "title": "Amountkobo",
+            "type": "integer"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "passId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passid"
+          },
+          "seasonNumber": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seasonnumber"
+          },
+          "submissionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submissionid"
+          },
+          "withdrawalId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Withdrawalid"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "amountKobo",
+          "createdAt"
+        ],
+        "title": "LedgerEntryView",
+        "type": "object"
+      },
       "LedgerLineCreateRequest": {
         "properties": {
           "amount": {
@@ -12305,6 +12428,47 @@
           }
         },
         "title": "LedgerLineUpdateRequest",
+        "type": "object"
+      },
+      "LedgerResponse": {
+        "properties": {
+          "balanceKobo": {
+            "title": "Balancekobo",
+            "type": "integer"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerEntryView"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "hasMore": {
+            "title": "Hasmore",
+            "type": "boolean"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entries",
+          "total",
+          "page",
+          "pageSize",
+          "hasMore",
+          "balanceKobo"
+        ],
+        "title": "LedgerResponse",
         "type": "object"
       },
       "LinkReferralRequest": {
@@ -27516,15 +27680,37 @@
         "type": "object"
       },
       "TriageResponse": {
-        "description": "The graded finding and what the grading is worth.\n\n`awardPending` distinguishes \"graded, worth money, not yet written to the ledger\" from \"graded, pays\nnothing\" — which a bare `awardKobo` of `0` cannot. Phase 4 turns the first into a ledger entry.",
+        "description": "The graded finding, what it was worth, and what was actually paid.\n\nTwo amounts, because they can differ and the difference matters. `matrixKobo` is what the season's table\nsays the grading is worth; `awardKobo` is what reached the ledger. When they differ, `awardBlocked`\nnames why — `cap_reached`, `budget_exhausted`, `already_awarded` or `not_priced` — and `awardMessage`\nsays it in words a triager can act on.\n\nA single amount could not express \"accepted, owed ₦2,000, paid nothing because the season is out of\nbudget\", and that is precisely the state an operator must be able to see.",
         "properties": {
+          "awardBlocked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Awardblocked"
+          },
           "awardKobo": {
             "title": "Awardkobo",
             "type": "integer"
           },
-          "awardPending": {
-            "title": "Awardpending",
-            "type": "boolean"
+          "awardMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Awardmessage"
+          },
+          "matrixKobo": {
+            "title": "Matrixkobo",
+            "type": "integer"
           },
           "submission": {
             "$ref": "#/components/schemas/SubmissionAdminView"
@@ -27533,7 +27719,7 @@
         "required": [
           "submission",
           "awardKobo",
-          "awardPending"
+          "matrixKobo"
         ],
         "title": "TriageResponse",
         "type": "object"
@@ -28799,7 +28985,7 @@
         "type": "object"
       },
       "WalletSummary": {
-        "description": "Lifetime, not per season — the wallet belongs to the person (§6.1).",
+        "description": "Lifetime, not per season — the wallet belongs to the person (§6.1).\n\n`openWithdrawalKobo` is reported alongside the balance rather than folded into it, even though the debit\nwas written when the request was made. A tester waiting on a ₦1,500 transfer should see a balance of ₦0\n*and* ₦1,500 on its way, not one number that could mean either.",
         "properties": {
           "balanceKobo": {
             "title": "Balancekobo",
@@ -29841,6 +30027,65 @@
           }
         ],
         "summary": "Admin Get Participant",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/participants/{participant_id}/adjustment": {
+      "post": {
+        "description": "Credit or claw back kobo by hand. **Super admin, and the only typed amount in the programme.**\n\nEverything else on the reward path traces to a season's published table. This does not, which is exactly\nwhy it needs the higher guard, a mandatory reason, and an audit row: it is the one lever that can put\nmoney on a ledger without a rule behind it.\n\nAttributed to the participation's season, so it counts against that tester's cap. A clawback cannot take\na balance below zero — it takes the wallet lock like any other spend.",
+        "operationId": "admin_adjust_balance_api_v1_admin_bug_hunt_participants__participant_id__adjustment_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "participant_id",
+            "required": true,
+            "schema": {
+              "title": "Participant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdjustmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdjustmentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Adjust Balance",
         "tags": [
           "bug-hunt-admin",
           "bug-hunt-admin"
@@ -36083,6 +36328,97 @@
           }
         ],
         "summary": "Accept Terms",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/wallet": {
+      "get": {
+        "description": "The caller's balance. **Lifetime, spanning every season.**\n\nReachable with no season open, which is the point of a per-user wallet: money earned in Season 1 is\nstill theirs in the gap before Season 2, and a wallet that four-oh-fours between seasons would be a\nwallet that appears to have eaten their balance.",
+        "operationId": "get_wallet_api_v1_bug_hunt_wallet_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Wallet",
+        "tags": [
+          "bug-hunt",
+          "bug-hunt"
+        ]
+      }
+    },
+    "/api/v1/bug-hunt/wallet/ledger": {
+      "get": {
+        "description": "Every entry, newest first, across every season.\n\nThe whole ledger rather than a filtered view: the wallet explains its own number, and a balance a tester\ncannot account for line by line is a support conversation waiting to happen.",
+        "operationId": "get_wallet_ledger_api_v1_bug_hunt_wallet_ledger_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Wallet Ledger",
         "tags": [
           "bug-hunt",
           "bug-hunt"

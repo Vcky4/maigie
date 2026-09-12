@@ -362,9 +362,14 @@ class TestGrading:
             staff_user_id=staff.id,
         )
         assert result["awardKobo"] == 200_000
-        assert result["awardPending"] is True
+        assert result["matrixKobo"] == 200_000
+        assert result["awardBlocked"] is None
         assert result["submission"].status == "accepted"
         assert result["submission"].triaged_by_user_id == staff.id
+        # And the money is real, not pending: the ledger carries it.
+        from src.domains.bug_hunt.services import ledger_service
+
+        assert await ledger_service.award_for_submission(submission.id) == 200_000
 
     @pytest.mark.parametrize(
         ("severity", "expected"),
@@ -559,7 +564,13 @@ class TestGrading:
             staff_user_id=staff.id,
         )
         assert result["awardKobo"] == 0
-        assert result["awardPending"] is False
+        assert result["matrixKobo"] == 0
+        assert result["awardBlocked"] is None
+        # Nothing was written. A rejection is not a ₦0 ledger entry — the ledger has no rows that mean
+        # "nothing happened".
+        from src.domains.bug_hunt.services import ledger_service
+
+        assert await ledger_service.award_for_submission(submission.id) is None
 
     async def test_the_private_note_and_the_public_response_are_separate(self):
         program = await make_season()
@@ -586,7 +597,17 @@ class TestGrading:
             "adminNotes" not in models.SubmissionView.model_fields
         )  # …and absent from their contract
 
-    async def test_regrading_recomputes_the_amount(self):
+    async def test_an_award_is_written_once_and_a_regrade_says_so(self):
+        """**The property worth having, and the cost of having it, in one test.**
+
+        Paying once is non-negotiable: a double-clicked form, a retried request and two staff working the
+        same queue all have to collapse to one payment, and the partial unique index on
+        `(submissionId) WHERE kind = 'award'` is what makes that a guarantee rather than a hope.
+
+        The cost is that correcting a mis-grade *upward* cannot pay the difference. The honest response is to
+        say so — the message names the shortfall and points at the adjustment lever — rather than let a
+        console display an amount no ledger entry backs.
+        """
         program = await make_season()
         staff = await make_user(staff=True)
         _, _, submission = await applicant(program)
@@ -612,8 +633,19 @@ class TestGrading:
             admin_notes=None,
             staff_user_id=staff.id,
         )
+        from src.domains.bug_hunt.services import ledger_service
+
         assert first["awardKobo"] == 50_000
-        assert second["awardKobo"] == 200_000
+        assert first["awardBlocked"] is None
+
+        # The grading changed; the payment did not.
+        assert second["submission"].severity == "critical"
+        assert second["matrixKobo"] == 200_000
+        assert second["awardKobo"] == 50_000
+        assert second["awardBlocked"] == "already_awarded"
+        assert "owed" in (second["awardMessage"] or ""), "the shortfall must be stated, not hidden"
+        assert await ledger_service.award_for_submission(submission.id) == 50_000
+        assert await ledger_service.balance(submission.user_id) == 50_000
 
 
 class TestDuplicatesAndKnownIssues:
@@ -1033,8 +1065,18 @@ class TestOverTheWire:
         )
         assert graded.status_code == 200, graded.text
         assert graded.json()["awardKobo"] == 200_000
-        assert graded.json()["awardPending"] is True
+        assert graded.json()["matrixKobo"] == 200_000
+        assert graded.json()["awardBlocked"] is None
         assert graded.json()["submission"]["adminNotes"] == "Reproduced on a Tecno Spark 8."
+
+        # The tester's own wallet now carries it, over the wire, from their own token.
+        wallet = await client.get("/api/v1/bug-hunt/wallet", headers=bearer(user))
+        assert wallet.status_code == 200
+        assert wallet.json()["balanceKobo"] == 200_000
+        assert wallet.json()["earnedThisSeasonKobo"] == 200_000
+        ledger = await client.get("/api/v1/bug-hunt/wallet/ledger", headers=bearer(user))
+        assert [e["kind"] for e in ledger.json()["entries"]] == ["award"]
+        assert ledger.json()["entries"][0]["seasonNumber"] == 1
 
         # The reporter sees the response and not the note.
         theirs = await client.get(

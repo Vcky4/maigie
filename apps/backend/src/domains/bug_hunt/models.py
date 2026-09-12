@@ -135,13 +135,62 @@ class MeResponse(BaseModel):
 
 
 class WalletSummary(BaseModel):
-    """Lifetime, not per season — the wallet belongs to the person (§6.1)."""
+    """Lifetime, not per season — the wallet belongs to the person (§6.1).
+
+    `openWithdrawalKobo` is reported alongside the balance rather than folded into it, even though the debit
+    was written when the request was made. A tester waiting on a ₦1,500 transfer should see a balance of ₦0
+    *and* ₦1,500 on its way, not one number that could mean either.
+    """
 
     balanceKobo: int
     lifetimeAwardedKobo: int
     openWithdrawalKobo: int
     earnedThisSeasonKobo: int
     capRemainingKobo: int
+
+
+class LedgerEntryView(BaseModel):
+    """One line of the wallet's own explanation of its number.
+
+    `seasonNumber` is present on credits and `null` on spends, which is not a gap: an award belongs to the
+    season that earned it, and a redemption or withdrawal belongs to no season. The client groups on it.
+    """
+
+    id: str
+    kind: str
+    amountKobo: int
+    seasonNumber: int | None = None
+    submissionId: str | None = None
+    withdrawalId: str | None = None
+    passId: str | None = None
+    note: str | None = None
+    createdAt: datetime
+
+
+class LedgerResponse(BaseModel):
+    entries: list[LedgerEntryView]
+    total: int
+    page: int
+    pageSize: int
+    hasMore: bool
+    balanceKobo: int
+
+
+class AdjustmentRequest(BaseModel):
+    """A super admin's correction — the only free-typed amount in the programme.
+
+    Either sign. The note is mandatory because the tester can read this ledger, and an unexplained line on
+    it is worse than no line. Attributed to the current season, so it counts against that tester's cap —
+    an adjustment that sidestepped the cap would make the cap advisory for anyone holding this permission.
+    """
+
+    amountKobo: int
+    note: str = Field(min_length=1, max_length=500)
+
+
+class AdjustmentResponse(BaseModel):
+    entry: LedgerEntryView
+    balanceKobo: int
 
 
 # ---------------------------------------------------------------------------
@@ -391,15 +440,22 @@ class TriageRequest(BaseModel):
 
 
 class TriageResponse(BaseModel):
-    """The graded finding and what the grading is worth.
+    """The graded finding, what it was worth, and what was actually paid.
 
-    `awardPending` distinguishes "graded, worth money, not yet written to the ledger" from "graded, pays
-    nothing" — which a bare `awardKobo` of `0` cannot. Phase 4 turns the first into a ledger entry.
+    Two amounts, because they can differ and the difference matters. `matrixKobo` is what the season's table
+    says the grading is worth; `awardKobo` is what reached the ledger. When they differ, `awardBlocked`
+    names why — `cap_reached`, `budget_exhausted`, `already_awarded` or `not_priced` — and `awardMessage`
+    says it in words a triager can act on.
+
+    A single amount could not express "accepted, owed ₦2,000, paid nothing because the season is out of
+    budget", and that is precisely the state an operator must be able to see.
     """
 
     submission: SubmissionAdminView
     awardKobo: int
-    awardPending: bool
+    matrixKobo: int
+    awardBlocked: str | None = None
+    awardMessage: str | None = None
 
 
 class KnownIssueView(BaseModel):
