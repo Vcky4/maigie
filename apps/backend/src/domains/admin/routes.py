@@ -1043,8 +1043,14 @@ async def list_ai_action_logs(
     actionType: str | None = Query(None),
     status: str | None = Query(None),
 ):
-    """List AI action-log entries, newest first (staff only)."""
-    from src.domains.intelligence.db_models import AIActionLog
+    """List AI action-log entries, newest first (staff only).
+
+    Each action is attributed to the learner whose chat produced it, joined through
+    ``ChatMessage`` (which carries ``userId``) to ``User``. The join is a LEFT OUTER so an action
+    whose message or user was since deleted still lists (with null attribution) rather than vanishing.
+    """
+    from src.domains.identity.db_models import User as UserModel
+    from src.domains.intelligence.db_models import AIActionLog, ChatMessage
 
     conditions = []
     if actionType:
@@ -1060,29 +1066,32 @@ async def list_ai_action_logs(
         rows = list(
             (
                 await session.execute(
-                    select(AIActionLog)
+                    select(AIActionLog, UserModel.name, UserModel.email, UserModel.id)
+                    .outerjoin(ChatMessage, ChatMessage.id == AIActionLog.message_id)
+                    .outerjoin(UserModel, UserModel.id == ChatMessage.user_id)
                     .where(*conditions)
                     .order_by(AIActionLog.created_at.desc())
                     .offset((page - 1) * pageSize)
                     .limit(pageSize)
                 )
-            )
-            .scalars()
-            .all()
+            ).all()
         )
 
     return models.AiActionLogListResponse(
-        items=[
+        logs=[
             models.AiActionLogItem(
                 id=r.id,
                 messageId=r.message_id,
+                userId=user_id,
+                userName=user_name,
+                userEmail=user_email,
                 actionType=r.action_type,
                 actionData=r.action_data,
                 status=r.status,
                 error=r.error,
                 createdAt=r.created_at,
             )
-            for r in rows
+            for r, user_name, user_email, user_id in rows
         ],
         total=total,
         page=page,

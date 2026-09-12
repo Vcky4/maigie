@@ -364,6 +364,9 @@ class AiAgentTaskListResponse(BaseModel):
 class AiActionLogItem(BaseModel):
     id: str
     messageId: str
+    userId: str | None = None
+    userName: str | None = None
+    userEmail: str | None = None
     actionType: str
     actionData: dict | None = None
     status: str
@@ -372,7 +375,7 @@ class AiActionLogItem(BaseModel):
 
 
 class AiActionLogListResponse(BaseModel):
-    items: list[AiActionLogItem]
+    logs: list[AiActionLogItem]
     total: int
     page: int
     pageSize: int
