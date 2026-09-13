@@ -119,8 +119,12 @@ class Settings(BaseSettings):
         "https://admin.maigie.com",
         "https://dev-admin.maigie.com",
         "http://localhost:4201",
-        # The Bug Hunt participant app, dev and deployed.
+        # The Bug Hunt participant app: local dev server, the deployed dev site, and production.
+        # `bughunt.maigie.com` is the dev host and `issues.maigie.com` is production, which is the right
+        # way round: the dev name can date itself against a recurring programme because nobody outside
+        # the team ever types it, and the durable name is the one testers are given.
         "http://localhost:4203",
+        "https://bughunt.maigie.com",
         "https://issues.maigie.com",
     ]
     CORS_ALLOW_CREDENTIALS: bool = True
