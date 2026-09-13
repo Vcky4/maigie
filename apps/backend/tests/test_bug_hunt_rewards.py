@@ -85,8 +85,11 @@ class TestTheSignedOffAmounts:
         """
         assert rewards.DEFAULT_MIN_WITHDRAWAL_KOBO <= rewards.DEFAULT_REWARD_MATRIX["bug"]["medium"]
 
-    def test_the_pass_uplift_cannot_make_a_pass_free(self):
-        assert 0 <= rewards.DEFAULT_PASS_UPLIFT_PERCENT <= 90
+    def test_the_pass_bonus_is_a_sane_multiple(self):
+        """At most a doubled pass. Beyond that the allowance stops resembling the product being tested,
+        and since `084` the bonus adds duration rather than removing price, so 100 is coherent where it
+        would once have meant a free pass."""
+        assert 0 <= rewards.DEFAULT_PASS_BONUS_PERCENT <= 100
 
 
 class TestValidateMatrix:

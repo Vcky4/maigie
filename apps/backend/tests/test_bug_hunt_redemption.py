@@ -166,58 +166,102 @@ class TestPricing:
     @pytest.mark.parametrize(
         ("product_id", "expected"),
         [
-            ("plus_pass_5h", 52_500),  # ₦700 → ₦525
-            ("plus_pass_7d", 112_500),  # ₦1,500 → ₦1,125
-            ("plus_pass_term", 540_000),  # ₦7,200 → ₦5,400
+            ("plus_pass_5h", 70_000),  # ₦700
+            ("plus_pass_7d", 150_000),  # ₦1,500
+            ("plus_pass_term", 720_000),  # ₦7,200
         ],
     )
-    async def test_the_default_uplift_is_25_percent_off(self, product_id, expected):
+    async def test_a_pass_costs_the_full_catalogue_price(self, product_id, expected):
+        """**The change made by `084`.** The premium is in what is granted, not in what is charged.
+
+        Discounting the price handed over the pass *and* left cash liability on the books: ₦1,500 buying a
+        ₦1,125 pass still owed the tester ₦375, converting a compute cost into a naira one and stranding a
+        stub below the ₦1,000 withdrawal minimum.
+        """
         program = await make_season()
         assert redemption_service.charge_for(product_id=product_id, program=program) == expected
 
     async def test_one_good_finding_buys_a_seven_day_pass(self):
         """The offer the landing page leads with, checked against the signed-off amounts.
 
-        A high-severity bug pays ₦1,500 and a 7-day pass costs ₦1,125 of balance. If a reward or a price
-        moves so that this stops being true, the marketing claim needs rewriting and this test is the
-        reminder.
+        A high-severity bug pays ₦1,500 and a 7-day pass costs exactly ₦1,500 of balance, which buys 9 days
+        of it. If a reward or a price moves so that this stops being affordable, the marketing claim needs
+        rewriting and this test is the reminder.
         """
         program = await make_season()
         high_severity_award = rewards.DEFAULT_REWARD_MATRIX["bug"]["high"]
         charge = redemption_service.charge_for(product_id="plus_pass_7d", program=program)
         assert charge <= high_severity_award
+        # And the finding covers it exactly, leaving nothing stranded below the withdrawal minimum.
+        assert charge == high_severity_award
 
-    async def test_the_seasons_uplift_is_used(self):
-        program = await make_season(pass_uplift_percent=50)
-        assert redemption_service.uplift_percent(program) == 50
-        assert redemption_service.charge_for(product_id="plus_pass_7d", program=program) == 75_000
+    async def test_the_default_bonus_grants_a_quarter_more(self):
+        """7 days becomes 9, 5 hours becomes 7, and four months becomes five."""
+        program = await make_season()
+        percent = redemption_service.bonus_percent(program)
+        assert percent == 25
+        day = 24 * 60
+        assert redemption_service.granted_duration_minutes(7 * day, percent) == 9 * day
+        # 6.25 hours rounded up to the sold unit. A larger effective bonus on the cheapest pass, and
+        # the alternative is a 6-hour-15-minute pass.
+        assert redemption_service.granted_duration_minutes(5 * 60, percent) == 7 * 60
+        assert redemption_service.granted_duration_minutes(120 * day, percent) == 150 * day
 
-    async def test_a_zero_uplift_charges_the_full_price(self):
-        program = await make_season(pass_uplift_percent=0)
+    async def test_the_bonus_scales_the_allowance_too(self):
+        """A 9-day pass carrying 7 days of units stops working on day seven.
+
+        That would make the duration bonus a promise about the calendar the product does not keep.
+        """
+        assert redemption_service.granted_units(4_500, 25) == 5_625
+        assert redemption_service.granted_units(1_800, 25) == 2_250
+
+    async def test_the_seasons_bonus_is_used(self):
+        program = await make_season(pass_bonus_percent=50)
+        assert redemption_service.bonus_percent(program) == 50
+        # Still full price. A bigger bonus makes the pass bigger, never cheaper.
         assert redemption_service.charge_for(product_id="plus_pass_7d", program=program) == PRICE_7D
+        assert redemption_service.granted_duration_minutes(7 * 24 * 60, 50) == 11 * 24 * 60
 
-    async def test_between_seasons_the_uplift_falls_back_to_the_default(self):
+    async def test_a_zero_bonus_grants_exactly_the_catalogue_pass(self):
+        program = await make_season(pass_bonus_percent=0)
+        assert redemption_service.charge_for(product_id="plus_pass_7d", program=program) == PRICE_7D
+        assert redemption_service.granted_duration_minutes(7 * 24 * 60, 0) == 7 * 24 * 60
+        assert redemption_service.granted_units(4_500, 0) == 4_500
+
+    async def test_between_seasons_the_bonus_falls_back_to_the_default(self):
         """The rail stays open with no season, so a redemption then still needs a number."""
-        assert redemption_service.uplift_percent(None) == rewards.DEFAULT_PASS_UPLIFT_PERCENT
+        assert redemption_service.bonus_percent(None) == rewards.DEFAULT_PASS_BONUS_PERCENT
 
-    def test_the_uplift_is_clamped_so_a_pass_can_never_be_free(self):
-        """A CHECK constraint caps the column at 90; this is the belt to that braces, because a redemption
-        rail that can be configured to charge nothing is a rail with no balance check."""
+    def test_the_bonus_is_clamped_at_a_doubled_pass(self):
+        """A CHECK constraint caps the column at 100; this is the belt to those braces.
+
+        Beyond a doubled pass the allowance stops resembling the product being tested.
+        """
 
         class Fake:
-            pass_uplift_percent = 100
+            pass_bonus_percent = 400
 
-        assert redemption_service.uplift_percent(Fake()) == 90  # type: ignore[arg-type]
+        assert redemption_service.bonus_percent(Fake()) == 100  # type: ignore[arg-type]
 
-    async def test_rounding_favours_the_tester(self):
-        """A percentage that does not divide cleanly floors. Charging a kobo more than the arithmetic implies
-        is a rounding rule nobody would defend out loud."""
-        program = await make_season(pass_uplift_percent=33)
-        # 70 000 × 67 / 100 = 46 900 exactly; use a price that does not divide to check the floor.
-        assert redemption_service.charge_for(product_id="plus_pass_5h", program=program) == 46_900
-        assert (
-            redemption_service.charge_for(product_id="plus_pass_term", program=program) == 482_400
-        )
+    async def test_duration_rounds_up_to_a_whole_hour(self):
+        """Rounding up, and to an hour, so the offer is a number somebody can repeat.
+
+        7 days at 25% is 8.75 days. Granting 8 days 18 hours is arithmetically honest and useless as copy;
+        the minutes of compute this costs buy a sentence that says "9 days" and means it.
+        """
+        day = 24 * 60
+        # 33% of 7 days is 9.31 days, which must be granted as 10 whole days rather than 9 days 7 hours.
+        granted = redemption_service.granted_duration_minutes(7 * day, 33)
+        assert granted % day == 0, "a day-length pass is granted in whole days"
+        assert granted == 10 * day
+        # A pass sold in hours is granted in whole hours, not rounded up to a day.
+        five_hours = redemption_service.granted_duration_minutes(5 * 60, 33)
+        assert five_hours % 60 == 0
+        assert five_hours == 7 * 60
+
+    async def test_units_floor_because_half_a_unit_is_not_spendable(self):
+        assert redemption_service.granted_units(4_500, 33) == 5_985  # 5 985.0
+        assert redemption_service.granted_units(1_801, 33) == 2_395  # 2 395.33 floored
 
 
 class TestOptions:
@@ -236,15 +280,14 @@ class TestOptions:
     async def test_affordability_is_decided_server_side(self):
         """So the wallet never offers a pass it will then refuse."""
         program = await make_season()
-        tester = await funded(program, 60_000)  # enough for the 5-hour (₦525) and nothing else
+        tester = await funded(program, 80_000)  # enough for the 5-hour (₦700) and nothing else
         options = {o.product_id: o for o in await redemption_service.options(user_id=tester.id)}
         assert options["plus_pass_5h"].affordable is True
         assert options["plus_pass_7d"].affordable is False
         assert options["plus_pass_term"].affordable is False
 
-    async def test_options_show_both_the_price_and_the_charge(self):
-        """The discount *is* the offer — "₦1,125 of findings buys a ₦1,500 pass" cannot be written from one
-        number."""
+    async def test_options_show_the_base_and_the_bonused_pass(self):
+        """The bonus *is* the offer, and "9 days instead of 7" cannot be written from one number."""
         program = await make_season()
         tester = await funded(program, 1_000_000)
         seven_day = next(
@@ -253,8 +296,12 @@ class TestOptions:
             if o.product_id == "plus_pass_7d"
         )
         assert seven_day.price_kobo == PRICE_7D
-        assert seven_day.charge_kobo == 112_500
-        assert seven_day.upliftPercent if hasattr(seven_day, "upliftPercent") else True
+        assert seven_day.charge_kobo == PRICE_7D, "full price since 084"
+        assert seven_day.bonus_percent == 25
+        assert seven_day.base_duration_minutes == 7 * 24 * 60
+        assert seven_day.duration_minutes == 9 * 24 * 60
+        assert seven_day.base_units_allowance == 4_500
+        assert seven_day.units_allowance == 5_625
 
     async def test_options_carry_the_ngn_allowance_not_the_global_one(self):
         """Passes are sized by market and every participant here is Nigerian. Inheriting the more generous
@@ -262,10 +309,13 @@ class TestOptions:
         program = await make_season()
         tester = await funded(program, 1_000_000)
         options = {o.product_id: o for o in await redemption_service.options(user_id=tester.id)}
+        # The *base* is the NGN figure. The bonus is applied on top of it, not on top of the global one:
+        # 10 000 × 1.25 would hand over an allowance the product does not sell in this market at all.
         assert (
-            options["plus_pass_7d"].units_allowance == 4_500
+            options["plus_pass_7d"].base_units_allowance == 4_500
         ), "the NGN figure, not the global 10 000"
-        assert options["plus_pass_5h"].units_allowance == 1_800
+        assert options["plus_pass_5h"].base_units_allowance == 1_800
+        assert options["plus_pass_7d"].units_allowance == 5_625
 
     async def test_the_voice_pack_is_not_redeemable(self):
         """A voice pack is a balance on `User`, not a pass. Granting one through this rail would give
@@ -293,9 +343,9 @@ class TestRedeeming:
 
         result = await redemption_service.redeem(user_id=tester.id, product_id="plus_pass_7d")
 
-        assert result["chargeKobo"] == 112_500
-        assert result["balanceKobo"] == 200_000 - 112_500
-        assert await ledger_service.balance(tester.id) == 87_500
+        assert result["chargeKobo"] == PRICE_7D
+        assert result["balanceKobo"] == 200_000 - PRICE_7D
+        assert await ledger_service.balance(tester.id) == 200_000 - PRICE_7D
 
         held = await passes_of(tester.id)
         assert len(held) == 1
@@ -322,11 +372,19 @@ class TestRedeeming:
         assert result["pass"].source == "bug_hunt"
         assert result["pass"].purchase_id is None, "no purchase is fabricated behind it"
 
-    async def test_the_pass_carries_the_ngn_allowance(self):
+    async def test_the_granted_pass_carries_the_bonused_duration_and_allowance(self):
+        """Snapshotted on the `PlusPass` row, which is what makes the bonus durable.
+
+        Recomputing it later from the season would let a season that has since changed its mind rewrite a
+        pass somebody already holds.
+        """
         program = await make_season()
         tester = await funded(program, 200_000)
         result = await redemption_service.redeem(user_id=tester.id, product_id="plus_pass_7d")
-        assert result["pass"].units_allowance == 4_500
+        granted = result["pass"]
+        assert granted.duration_minutes == 9 * 24 * 60, "7 days plus the 25% bonus"
+        # The bonus is applied to the NGN base of 4 500, never to the global 10 000.
+        assert granted.units_allowance == 5_625
 
     async def test_the_ledger_entry_names_the_pass_it_bought(self):
         """A line that says "pass redemption" without saying which pass is a line a tester cannot check."""
@@ -336,13 +394,14 @@ class TestRedeeming:
 
         entry = result["entry"]
         assert entry.kind == "pass_redemption"
-        assert entry.amount_kobo == -112_500
+        assert entry.amount_kobo == -PRICE_7D, "full price, with the premium paid in duration"
+        assert "bonus" in (entry.note or ""), "the note records a premium given, not a discount"
         assert entry.pass_id == result["pass"].id
         assert entry.program_id is None, "a spend belongs to no season"
 
     async def test_an_unaffordable_pass_is_refused_and_nothing_is_granted(self):
         program = await make_season()
-        tester = await funded(program, 50_000)  # ₦500, and the cheapest pass costs ₦525
+        tester = await funded(program, 50_000)  # ₦500, and the cheapest pass costs ₦700
 
         with pytest.raises(ConflictError) as e:
             await redemption_service.redeem(user_id=tester.id, product_id="plus_pass_5h")
@@ -365,7 +424,7 @@ class TestRedeeming:
         await program_service.close_season(program.id)
 
         result = await redemption_service.redeem(user_id=tester.id, product_id="plus_pass_7d")
-        assert result["chargeKobo"] == 112_500, "the default uplift applies with no season open"
+        assert result["chargeKobo"] == PRICE_7D, "the default bonus applies with no season open"
         assert len(await passes_of(tester.id)) == 1
 
     async def test_several_redemptions_accumulate_passes(self):
@@ -374,7 +433,7 @@ class TestRedeeming:
         await redemption_service.redeem(user_id=tester.id, product_id="plus_pass_5h")
         await redemption_service.redeem(user_id=tester.id, product_id="plus_pass_5h")
         assert len(await passes_of(tester.id)) == 2
-        assert await ledger_service.balance(tester.id) == 500_000 - 2 * 52_500
+        assert await ledger_service.balance(tester.id) == 500_000 - 2 * PRICE_5H
 
     async def test_concurrent_redemptions_cannot_outspend_the_balance(self):
         """Four attempts at a ₦1,125 pass on a ₦2,000 balance. One fits.
@@ -395,7 +454,7 @@ class TestRedeeming:
         succeeded = [r for r in results if not isinstance(r, Exception)]
         assert len(succeeded) == 1, results
         assert len(await passes_of(tester.id)) == 1, "one pass, not four"
-        assert await ledger_service.balance(tester.id) == 87_500
+        assert await ledger_service.balance(tester.id) == 200_000 - PRICE_7D
 
 
 class TestAFailedGrantRefunds:
@@ -479,8 +538,12 @@ class TestOverTheWire:
         assert body["balanceKobo"] == 200_000
         seven_day = next(o for o in body["options"] if o["productId"] == "plus_pass_7d")
         assert seven_day["priceKobo"] == PRICE_7D
-        assert seven_day["chargeKobo"] == 112_500
-        assert seven_day["upliftPercent"] == 25
+        assert seven_day["chargeKobo"] == PRICE_7D
+        assert seven_day["bonusPercent"] == 25
+        assert seven_day["baseDurationMinutes"] == 7 * 24 * 60
+        assert seven_day["durationMinutes"] == 9 * 24 * 60
+        assert seven_day["baseUnitsAllowance"] == 4_500
+        assert seven_day["unitsAllowance"] == 5_625
         assert seven_day["affordable"] is True
 
         redeemed = await client.post(
@@ -492,8 +555,8 @@ class TestOverTheWire:
         result = redeemed.json()
         assert result["pass"]["status"] == "inventory"
         assert result["pass"]["source"] == "bug_hunt"
-        assert result["chargeKobo"] == 112_500
-        assert result["balanceKobo"] == 87_500
+        assert result["chargeKobo"] == PRICE_7D
+        assert result["balanceKobo"] == 200_000 - PRICE_7D
         assert result["entry"]["passId"] == result["pass"]["id"]
 
     async def test_the_pass_shows_up_in_the_learners_own_billing_surface(self, client):
@@ -552,6 +615,6 @@ class TestOverTheWire:
         spend = next(e for e in ledger["entries"] if e["kind"] == "pass_redemption")
         assert spend["seasonNumber"] is None
         assert spend["passId"]
-        assert spend["amountKobo"] == -52_500
+        assert spend["amountKobo"] == -PRICE_5H
         # And the season's own spend figure is untouched by it.
         assert (await program_service.get(program.id)).awarded_kobo == 200_000

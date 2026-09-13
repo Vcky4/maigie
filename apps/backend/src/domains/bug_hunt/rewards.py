@@ -48,7 +48,7 @@ DEFAULT_PER_PARTICIPANT_CAP_KOBO = 1_500_000  # ₦15,000
 DEFAULT_MIN_WITHDRAWAL_KOBO = 100_000  # ₦1,000
 #: Percent off a pass's catalogue price when paid for from a Bug Hunt balance. 25 means ₦1,500 of
 #: balance buys a ₦2,000 pass — it costs us COGS rather than cash, and it seeds Plus usage.
-DEFAULT_PASS_UPLIFT_PERCENT = 25
+DEFAULT_PASS_BONUS_PERCENT = 25
 DEFAULT_SUBMISSION_DAILY_LIMIT = 10
 
 #: Which severities are valid for which category. Mirrors the pairing CHECK constraint on

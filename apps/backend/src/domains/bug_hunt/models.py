@@ -52,7 +52,7 @@ class SeasonSummary(BaseModel):
     countryAllowlist: list[str]
     perParticipantCapKobo: int
     minWithdrawalKobo: int
-    passUpliftPercent: int
+    passBonusPercent: int
     rulesVersion: int
     submissionDailyLimit: int
 
@@ -188,10 +188,18 @@ class RedemptionOptionView(BaseModel):
 
     productId: str
     label: str
+    #: The catalogue price, and what comes off the balance. **Equal since `084`**: the premium is in what
+    #: is granted rather than in what is charged. Both are sent because the client renders both, and
+    #: because a season could reintroduce a discount without changing this shape.
     priceKobo: int
     chargeKobo: int
-    upliftPercent: int
+    #: How much *more* pass this balance buys. 25 means a 7-day pass is granted as 9 days.
+    bonusPercent: int
+    #: What the catalogue gives, and what a Bug Hunt balance gets. Both, because "9 days instead of 7" is
+    #: the offer and a lone "9 days" is just a number.
+    baseDurationMinutes: int
     durationMinutes: int
+    baseUnitsAllowance: int
     unitsAllowance: int
     affordable: bool
 
@@ -413,7 +421,7 @@ class SeasonDefaultsResponse(BaseModel):
     budgetKobo: int
     perParticipantCapKobo: int
     minWithdrawalKobo: int
-    passUpliftPercent: int
+    passBonusPercent: int
     submissionDailyLimit: int
     countryAllowlist: list[str]
     rewardMatrix: dict[str, dict[str, int]]
@@ -436,7 +444,7 @@ class SeasonCreateRequest(BaseModel):
     budgetKobo: int | None = Field(default=None, ge=0)
     perParticipantCapKobo: int | None = Field(default=None, gt=0)
     minWithdrawalKobo: int | None = Field(default=None, gt=0)
-    passUpliftPercent: int | None = Field(default=None, ge=0, le=90)
+    passBonusPercent: int | None = Field(default=None, ge=0, le=100)
     submissionDailyLimit: int | None = Field(default=None, gt=0)
     countryAllowlist: list[str] | None = None
     rewardMatrix: dict[str, dict[str, int]] | None = None
@@ -455,7 +463,7 @@ class SeasonUpdateRequest(BaseModel):
     budgetKobo: int | None = Field(default=None, ge=0)
     perParticipantCapKobo: int | None = Field(default=None, gt=0)
     minWithdrawalKobo: int | None = Field(default=None, gt=0)
-    passUpliftPercent: int | None = Field(default=None, ge=0, le=90)
+    passBonusPercent: int | None = Field(default=None, ge=0, le=100)
     submissionDailyLimit: int | None = Field(default=None, gt=0)
     countryAllowlist: list[str] | None = None
     rewardMatrix: dict[str, dict[str, int]] | None = None

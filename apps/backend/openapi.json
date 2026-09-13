@@ -19927,6 +19927,18 @@
             "title": "Affordable",
             "type": "boolean"
           },
+          "baseDurationMinutes": {
+            "title": "Basedurationminutes",
+            "type": "integer"
+          },
+          "baseUnitsAllowance": {
+            "title": "Baseunitsallowance",
+            "type": "integer"
+          },
+          "bonusPercent": {
+            "title": "Bonuspercent",
+            "type": "integer"
+          },
           "chargeKobo": {
             "title": "Chargekobo",
             "type": "integer"
@@ -19950,10 +19962,6 @@
           "unitsAllowance": {
             "title": "Unitsallowance",
             "type": "integer"
-          },
-          "upliftPercent": {
-            "title": "Upliftpercent",
-            "type": "integer"
           }
         },
         "required": [
@@ -19961,8 +19969,10 @@
           "label",
           "priceKobo",
           "chargeKobo",
-          "upliftPercent",
+          "bonusPercent",
+          "baseDurationMinutes",
           "durationMinutes",
+          "baseUnitsAllowance",
           "unitsAllowance",
           "affordable"
         ],
@@ -22371,8 +22381,8 @@
             "title": "Participantcounts",
             "type": "object"
           },
-          "passUpliftPercent": {
-            "title": "Passupliftpercent",
+          "passBonusPercent": {
+            "title": "Passbonuspercent",
             "type": "integer"
           },
           "perParticipantCapKobo": {
@@ -22439,7 +22449,7 @@
           "countryAllowlist",
           "perParticipantCapKobo",
           "minWithdrawalKobo",
-          "passUpliftPercent",
+          "passBonusPercent",
           "rulesVersion",
           "submissionDailyLimit",
           "budgetKobo",
@@ -22501,10 +22511,10 @@
             "title": "Name",
             "type": "string"
           },
-          "passUpliftPercent": {
+          "passBonusPercent": {
             "anyOf": [
               {
-                "maximum": 90.0,
+                "maximum": 100.0,
                 "minimum": 0.0,
                 "type": "integer"
               },
@@ -22512,7 +22522,7 @@
                 "type": "null"
               }
             ],
-            "title": "Passupliftpercent"
+            "title": "Passbonuspercent"
           },
           "perParticipantCapKobo": {
             "anyOf": [
@@ -22619,8 +22629,8 @@
             "title": "Minwithdrawalkobo",
             "type": "integer"
           },
-          "passUpliftPercent": {
-            "title": "Passupliftpercent",
+          "passBonusPercent": {
+            "title": "Passbonuspercent",
             "type": "integer"
           },
           "perParticipantCapKobo": {
@@ -22666,7 +22676,7 @@
           "budgetKobo",
           "perParticipantCapKobo",
           "minWithdrawalKobo",
-          "passUpliftPercent",
+          "passBonusPercent",
           "submissionDailyLimit",
           "countryAllowlist",
           "rewardMatrix",
@@ -22890,8 +22900,8 @@
             "title": "Name",
             "type": "string"
           },
-          "passUpliftPercent": {
-            "title": "Passupliftpercent",
+          "passBonusPercent": {
+            "title": "Passbonuspercent",
             "type": "integer"
           },
           "perParticipantCapKobo": {
@@ -22943,7 +22953,7 @@
           "countryAllowlist",
           "perParticipantCapKobo",
           "minWithdrawalKobo",
-          "passUpliftPercent",
+          "passBonusPercent",
           "rulesVersion",
           "submissionDailyLimit"
         ],
@@ -23016,10 +23026,10 @@
             ],
             "title": "Name"
           },
-          "passUpliftPercent": {
+          "passBonusPercent": {
             "anyOf": [
               {
-                "maximum": 90.0,
+                "maximum": 100.0,
                 "minimum": 0.0,
                 "type": "integer"
               },
@@ -23027,7 +23037,7 @@
                 "type": "null"
               }
             ],
-            "title": "Passupliftpercent"
+            "title": "Passbonuspercent"
           },
           "perParticipantCapKobo": {
             "anyOf": [
@@ -38095,7 +38105,7 @@
     },
     "/api/v1/bug-hunt/wallet/redemption-options": {
       "get": {
-        "description": "The passes this balance can buy, cheapest first. **Available with no season open.**\n\nAn earned balance is permanent and the gap between seasons is most of the year, so a rail that closed\nwith the season would strand money for months. Between seasons the uplift falls back to the default.",
+        "description": "The passes this balance can buy, cheapest first. **Available with no season open.**\n\nAn earned balance is permanent and the gap between seasons is most of the year, so a rail that closed\nwith the season would strand money for months. Between seasons the bonus falls back to the default.",
         "operationId": "get_redemption_options_api_v1_bug_hunt_wallet_redemption_options_get",
         "responses": {
           "200": {

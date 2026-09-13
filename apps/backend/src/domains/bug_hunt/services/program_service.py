@@ -163,7 +163,7 @@ async def defaults_for_next() -> dict[str, Any]:
             "budgetKobo": rewards.DEFAULT_BUDGET_KOBO,
             "perParticipantCapKobo": rewards.DEFAULT_PER_PARTICIPANT_CAP_KOBO,
             "minWithdrawalKobo": rewards.DEFAULT_MIN_WITHDRAWAL_KOBO,
-            "passUpliftPercent": rewards.DEFAULT_PASS_UPLIFT_PERCENT,
+            "passBonusPercent": rewards.DEFAULT_PASS_BONUS_PERCENT,
             "submissionDailyLimit": rewards.DEFAULT_SUBMISSION_DAILY_LIMIT,
             "countryAllowlist": ["NG"],
             "rewardMatrix": rewards.default_matrix(),
@@ -175,7 +175,7 @@ async def defaults_for_next() -> dict[str, Any]:
         "budgetKobo": previous.budget_kobo,
         "perParticipantCapKobo": previous.per_participant_cap_kobo,
         "minWithdrawalKobo": previous.min_withdrawal_kobo,
-        "passUpliftPercent": previous.pass_uplift_percent,
+        "passBonusPercent": previous.pass_bonus_percent,
         "submissionDailyLimit": previous.submission_daily_limit,
         "countryAllowlist": list(previous.country_allowlist or ["NG"]),
         "rewardMatrix": dict(previous.reward_matrix or {}),
@@ -193,7 +193,7 @@ async def create(
     budget_kobo: int | None = None,
     per_participant_cap_kobo: int | None = None,
     min_withdrawal_kobo: int | None = None,
-    pass_uplift_percent: int | None = None,
+    pass_bonus_percent: int | None = None,
     submission_daily_limit: int | None = None,
     country_allowlist: list[str] | None = None,
     reward_matrix: dict | None = None,
@@ -244,10 +244,8 @@ async def create(
             if min_withdrawal_kobo is not None
             else fallback["minWithdrawalKobo"]
         ),
-        pass_uplift_percent=(
-            pass_uplift_percent
-            if pass_uplift_percent is not None
-            else fallback["passUpliftPercent"]
+        pass_bonus_percent=(
+            pass_bonus_percent if pass_bonus_percent is not None else fallback["passBonusPercent"]
         ),
         submission_daily_limit=(
             submission_daily_limit
@@ -288,7 +286,7 @@ _EDITABLE: dict[str, str] = {
     "budgetKobo": "budget_kobo",
     "perParticipantCapKobo": "per_participant_cap_kobo",
     "minWithdrawalKobo": "min_withdrawal_kobo",
-    "passUpliftPercent": "pass_uplift_percent",
+    "passBonusPercent": "pass_bonus_percent",
     "submissionDailyLimit": "submission_daily_limit",
     "countryAllowlist": "country_allowlist",
     "rewardMatrix": "reward_matrix",

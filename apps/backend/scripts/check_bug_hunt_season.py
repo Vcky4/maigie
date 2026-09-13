@@ -104,7 +104,7 @@ async def main() -> int:
             )
             print(f"  per-tester cap  {naira(program.per_participant_cap_kobo)}")
             print(f"  min withdrawal  {naira(program.min_withdrawal_kobo)}")
-            print(f"  pass uplift     {program.pass_uplift_percent}%")
+            print(f"  pass bonus      +{program.pass_bonus_percent}% duration (full price charged)")
             print(f"  daily limit     {program.submission_daily_limit}")
             print(f"  rules version   {program.rules_version}")
             print(f"  participants    {counts or 'none'}")

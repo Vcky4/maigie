@@ -212,10 +212,10 @@ class TestProgramConstraints:
     def test_the_window_must_be_ordered(self):
         assert "BugHuntProgram_window_check" in check_names("BugHuntProgram")
 
-    def test_the_uplift_cannot_reach_a_hundred_percent(self):
-        """A 100% uplift is a free pass, and a redemption rail configured to charge nothing is a
-        redemption rail with no balance check."""
-        assert "BugHuntProgram_uplift_check" in check_names("BugHuntProgram")
+    def test_the_pass_bonus_is_bounded(self):
+        """At most a doubled pass, beyond which the allowance stops resembling the product being
+        tested. Under the pre-`084` discount meaning the ceiling was 90, because 100% off was free."""
+        assert "BugHuntProgram_bonus_check" in check_names("BugHuntProgram")
 
     def test_every_season_varying_value_is_a_column(self):
         """Decision 12, asserted. If a value that could differ between seasons is not here, opening
@@ -228,7 +228,7 @@ class TestProgramConstraints:
             "budgetKobo",
             "perParticipantCapKobo",
             "minWithdrawalKobo",
-            "passUpliftPercent",
+            "passBonusPercent",
             "countryAllowlist",
             "rewardMatrix",
             "rulesVersion",

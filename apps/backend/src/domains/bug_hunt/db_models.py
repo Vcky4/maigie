@@ -155,14 +155,24 @@ class BugHuntProgram(Base, TimestampMixin):
         "perParticipantCapKobo", Integer, nullable=False
     )
 
-    #: Smallest cash request this season will accept, and the discount for taking a pass instead.
-    #: The uplift is a percentage off the pass's catalogue price: 25 means a tester spends 75 kobo of
-    #: balance per ₦1 of pass. Both per-season so they can be tuned between runs without a deploy.
+    #: Smallest cash request this season will accept.
     min_withdrawal_kobo: Mapped[int] = mapped_column(
         "minWithdrawalKobo", Integer, nullable=False, default=100_000, server_default="100000"
     )
-    pass_uplift_percent: Mapped[int] = mapped_column(
-        "passUpliftPercent", Integer, nullable=False, default=25, server_default="25"
+
+    #: **How much *more* pass a balance buys, not how much less it costs.** At 25, a ₦1,500 balance is
+    #: charged the full ₦1,500 catalogue price and receives a 9-day pass instead of a 7-day one.
+    #:
+    #: It was a price discount until `084`, and the change is worth the paragraph. A discount left cash
+    #: liability on the books: ₦1,500 buying a ₦1,125 pass hands over the pass *and* still owes ₦375,
+    #: converting a compute cost into a naira one and stranding a stub below the withdrawal minimum. A
+    #: duration bonus extinguishes the whole balance and pays the premium in the currency that costs us
+    #: least. A premium of some kind is still necessary, because cash is fungible and a pass is not, so
+    #: at parity a rational tester always takes the cash.
+    #:
+    #: Per-season, so it can be tuned between runs without a deploy.
+    pass_bonus_percent: Mapped[int] = mapped_column(
+        "passBonusPercent", Integer, nullable=False, default=25, server_default="25"
     )
 
     #: ISO alpha-2 codes this season is open to. An array from the start, so widening past Nigeria is
@@ -204,11 +214,12 @@ class BugHuntProgram(Base, TimestampMixin):
         ),
         CheckConstraint('"perParticipantCapKobo" > 0', name="BugHuntProgram_cap_check"),
         CheckConstraint('"minWithdrawalKobo" > 0', name="BugHuntProgram_min_withdrawal_check"),
-        # Capped below 100 because a 100% uplift is a free pass, and a pass rail that can be
-        # configured to charge nothing is a pass rail with no balance check.
+        # 100 is a doubled pass, which is generous but coherent. Above it the allowance stops
+        # resembling the product being tested. Under the pre-`084` discount meaning the ceiling was 90,
+        # because 100% off was a free pass.
         CheckConstraint(
-            '"passUpliftPercent" >= 0 AND "passUpliftPercent" <= 90',
-            name="BugHuntProgram_uplift_check",
+            '"passBonusPercent" >= 0 AND "passBonusPercent" <= 100',
+            name="BugHuntProgram_bonus_check",
         ),
         CheckConstraint('"rulesVersion" >= 1', name="BugHuntProgram_rules_version_check"),
         CheckConstraint('"submissionDailyLimit" > 0', name="BugHuntProgram_daily_limit_check"),

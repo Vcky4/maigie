@@ -103,7 +103,7 @@ def _season_summary(program: BugHuntProgram) -> models.SeasonSummary:
         countryAllowlist=list(program.country_allowlist or []),
         perParticipantCapKobo=program.per_participant_cap_kobo,
         minWithdrawalKobo=program.min_withdrawal_kobo,
-        passUpliftPercent=program.pass_uplift_percent,
+        passBonusPercent=program.pass_bonus_percent,
         rulesVersion=program.rules_version,
         submissionDailyLimit=program.submission_daily_limit,
     )
@@ -640,7 +640,7 @@ async def get_redemption_options(
     """The passes this balance can buy, cheapest first. **Available with no season open.**
 
     An earned balance is permanent and the gap between seasons is most of the year, so a rail that closed
-    with the season would strand money for months. Between seasons the uplift falls back to the default.
+    with the season would strand money for months. Between seasons the bonus falls back to the default.
     """
     options = await redemption_service.options(user_id=current_user.id)
     return models.RedemptionOptionsResponse(
@@ -650,7 +650,9 @@ async def get_redemption_options(
                 label=option.label,
                 priceKobo=option.price_kobo,
                 chargeKobo=option.charge_kobo,
-                upliftPercent=option.uplift_percent,
+                bonusPercent=option.bonus_percent,
+                baseDurationMinutes=option.base_duration_minutes,
+                baseUnitsAllowance=option.base_units_allowance,
                 durationMinutes=option.duration_minutes,
                 unitsAllowance=option.units_allowance,
                 affordable=option.affordable,
@@ -870,7 +872,7 @@ async def admin_create_season(
         budget_kobo=body.budgetKobo,
         per_participant_cap_kobo=body.perParticipantCapKobo,
         min_withdrawal_kobo=body.minWithdrawalKobo,
-        pass_uplift_percent=body.passUpliftPercent,
+        pass_bonus_percent=body.passBonusPercent,
         submission_daily_limit=body.submissionDailyLimit,
         country_allowlist=body.countryAllowlist,
         reward_matrix=body.rewardMatrix,
