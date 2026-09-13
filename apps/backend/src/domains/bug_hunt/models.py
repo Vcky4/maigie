@@ -480,6 +480,24 @@ class CarryForwardPreviewResponse(BaseModel):
     count: int
 
 
+class AnnouncePreviewResponse(BaseModel):
+    """How many people the season announcement would reach."""
+
+    recipientCount: int
+
+
+class AnnounceResponse(BaseModel):
+    """What the announcement actually did.
+
+    `skipped` is not padding. A learner with no notification policy row, or one whose address is
+    suppressed after a bounce, is skipped rather than retried, and an operator who sends to 200 and sees
+    40 skipped has learned something worth knowing before Season 2.
+    """
+
+    sent: int
+    skipped: int
+
+
 class CarryForwardResponse(BaseModel):
     fromProgramId: str
     intoProgramId: str

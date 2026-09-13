@@ -1,0 +1,22 @@
+Sent: {{ amount }} to your bank
+
+Hi{% if name %} {{ name }}{% endif %},
+
+We have sent {{ amount }} to your bank. Thank you for the work you did to earn it.
+
+  {{ amount }}
+  to {{ bank_name }}, account ending {{ account_last4 }}
+
+  Bank reference: {{ reference }}
+
+That reference is what your bank will show. Keep it, and if the money has not
+arrived within two working days of this email, reply with it and we will chase
+the transfer.
+
+You are responsible for any tax on what you earn.
+
+Open my wallet: {{ wallet_url }}
+
+Questions about this payment? Reply to this email and a human will read it.
+
+{{ app_name }} Bug Hunt

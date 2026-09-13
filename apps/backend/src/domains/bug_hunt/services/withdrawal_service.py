@@ -46,7 +46,7 @@ from ..db_models import (
     BugHuntPayoutAccount,
     BugHuntWithdrawal,
 )
-from . import ledger_service, program_service
+from . import ledger_service, notify_service, program_service
 
 logger = logging.getLogger(__name__)
 
@@ -496,6 +496,11 @@ async def decide(
             )
 
     logger.info("bug_hunt: withdrawal %s %s by %s", withdrawal_id, row.status, staff_user_id)
+
+    # Approvals only, and note this is after the early `return row` above: re-approving an already
+    # approved request is a no-op and must not send a second email. A refusal sends nothing from here
+    # on purpose; see `notify_service.withdrawal_decided`.
+    await notify_service.withdrawal_decided(withdrawal_id=withdrawal_id)
     return row
 
 
@@ -562,6 +567,10 @@ async def mark_paid(
         reference,
         staff_user_id,
     )
+
+    # The receipt, carrying the bank reference. Past the early `return row` for an already-paid
+    # request, so recording the same payment twice cannot email the tester twice.
+    await notify_service.withdrawal_paid(withdrawal_id=withdrawal_id)
     return row
 
 

@@ -103,6 +103,12 @@ class Settings(BaseSettings):
     ALLOWED_HOSTS: ListStr = ["localhost", "127.0.0.1"]
     FRONTEND_BASE_URL: str = ""  # For OAuth redirects
 
+    #: Where the Bug Hunt participant app is served. Its own setting rather than `FRONTEND_BASE_URL`,
+    #: because that one points at the learner app and every link in a Bug Hunt email needs to land on
+    #: the programme site instead. A payout confirmation linking to `app.maigie.com/wallet`, which does
+    #: not exist, would read as a broken promise about money.
+    BUG_HUNT_BASE_URL: str = "https://issues.maigie.com"
+
     # --- CORS ---
     CORS_ORIGINS: ListStr = [
         "http://localhost:4200",

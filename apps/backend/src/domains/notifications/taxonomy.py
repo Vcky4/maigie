@@ -900,6 +900,31 @@ NOTIFICATION_SPECS: dict[str, NotificationSpec] = {
         allowed_channels=ALL_CHANNELS,
         transactional=True,
     ),
+    # A new Bug Hunt season is open, to people who took part in an earlier one or are holding a
+    # balance. **The only Bug Hunt message that belongs in this registry at all**: the rest of that
+    # programme's email states what somebody was paid or owed and goes straight to the transport, the
+    # same way auth mail does, because a preference about study reminders must not swallow a statement
+    # about money (see `bug_hunt/emails.py`).
+    #
+    # This one is different in kind. It is a broadcast to a warm list who are owed nothing at the time
+    # of sending, which makes it marketing, so it is consent-gated and unsubscribable like the product
+    # updates it sits beside. `OPERATIONS` puts it in the `PRODUCT_UPDATES` settings group, which is
+    # where somebody would look to switch it off.
+    #
+    # `transactional=False`, stated by omission and meant: nobody is locked out of anything by missing
+    # it. `dedupe` is 14 days rather than None because a season runs a fortnight, so within one season
+    # a repeated send is a mistake and across seasons it is the point. `NONE` action because the
+    # destination is another origin entirely and the backend does not emit client routes.
+    "bug_hunt.season_open": _spec(
+        "OPERATIONS",
+        "NORMAL",
+        IN_APP_EMAIL,
+        ("NONE",),
+        "accept the new season's terms and file a finding",
+        ttl=timedelta(days=14),
+        dedupe=timedelta(days=14),
+        allowed_channels=IN_APP_EMAIL,
+    ),
     # --- Digests -----------------------------------------------------------------
     #
     # One per settings category, because consent is expressed per category: a learner who asked

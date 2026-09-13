@@ -1,0 +1,27 @@
+Accepted: {{ amount }} for your finding
+
+Hi{% if name %} {{ name }}{% endif %},
+
+We accepted your finding, "{{ title }}".
+
+Graded {{ grade }}
+{{ amount }}
+Your balance is now {{ balance }}
+{% if response %}
+From the reviewer:
+{{ response }}
+{% endif %}
+{% if blocked %}
+One note: the amount has not landed in your balance yet, because {{ blocked }}.
+The finding is accepted and the money is owed. We are on it, and you do not need
+to do anything.
+{% else %}
+It is yours to spend now. A Plus pass appears in your {{ app_name }} app
+immediately, or you can request cash to your bank once you reach the minimum.
+{% endif %}
+Open my wallet: {{ wallet_url }}
+
+The grade sets the amount, from the published table for this season. If you think
+the grade is wrong, reply to this email and say why. A person will read it again.
+
+{{ app_name }} Bug Hunt

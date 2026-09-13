@@ -43,11 +43,13 @@ from .exceptions import (
     CountryNotEligibleError,
     CountryNotSetError,
     NoOpenSeasonError,
+    SeasonStateError,
 )
 from .services import (
     bank_service,
     eligibility_service,
     ledger_service,
+    notify_service,
     program_service,
     redemption_service,
     reward_service,
@@ -940,6 +942,53 @@ async def admin_close_season(program_id: str, admin_user: SuperAdminUser) -> mod
         details={"seasonNumber": program.season_number},
     )
     return await _season_admin_view(program)
+
+
+@admin_router.get("/seasons/{program_id}/announce", response_model=models.AnnouncePreviewResponse)
+async def admin_announce_preview(
+    program_id: str, admin_user: StaffUser
+) -> models.AnnouncePreviewResponse:
+    """How many people the season announcement would reach.
+
+    A read, and staff rather than super admin, because knowing the size of the warm list is not a
+    privileged act. The send below is.
+    """
+    return models.AnnouncePreviewResponse(
+        recipientCount=await notify_service.announce_audience_size(program_id=program_id)
+    )
+
+
+@admin_router.post("/seasons/{program_id}/announce", response_model=models.AnnounceResponse)
+async def admin_announce_season(
+    program_id: str, admin_user: SuperAdminUser
+) -> models.AnnounceResponse:
+    """Tell previous participants and balance holders that this season is open.
+
+    **A separate act from opening the season**, and that separation is deliberate. Opening is a
+    precondition for filing; announcing is a broadcast to a warm list that cannot be recalled. An
+    operator usually wants a few minutes between the two to check the live season looks right, and
+    fusing them would remove that option from everybody to save one click.
+
+    Refuses unless the season is actually open: an announcement pointing at a draft would send the
+    programme's most valuable list to a season the API will turn them away from.
+
+    Safe to press twice. The notification type's idempotency key is the season and the recipient, so a
+    second press reaches only people the first one missed.
+    """
+    result = await notify_service.announce_season(program_id=program_id)
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_announce_season",
+        resource_type="bug_hunt_program",
+        resource_id=program_id,
+        details=result,
+    )
+    if result["reason"] == "SEASON_NOT_OPEN":
+        raise SeasonStateError(
+            message="Open the season before announcing it.",
+            detail=f"program_id={program_id}",
+        )
+    return models.AnnounceResponse(sent=result["sent"], skipped=result["skipped"])
 
 
 @admin_router.get(

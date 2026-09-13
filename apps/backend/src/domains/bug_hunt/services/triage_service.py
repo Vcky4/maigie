@@ -51,7 +51,7 @@ from ..db_models import (
     BugHuntProgram,
     BugHuntSubmission,
 )
-from . import program_service, reward_service
+from . import notify_service, program_service, reward_service
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +121,17 @@ async def decide_application(
 
     logger.info(
         "bug_hunt: participant %s %s by %s", participant_id, participant.status, staff_user_id
+    )
+
+    # After the commit, and it cannot fail this call: `notify_service` swallows everything. An
+    # applicant who is approved in the database but never emailed is a fixable annoyance; a decision
+    # that appears to fail and gets made twice is not.
+    await notify_service.application_decided(
+        user_id=participant.user_id,
+        program_id=participant.program_id,
+        status=participant.status,
+        reason=participant.rejection_reason,
+        attempt_count=participant.attempt_count,
     )
     return participant
 
@@ -392,6 +403,20 @@ async def triage(
         season_number,
         staff_user_id,
         f" — award blocked: {award.blocked}" if award and award.blocked else "",
+    )
+
+    # Last, after both transactions. The email quotes the award, so it cannot be sent before the award
+    # step has either landed or failed, and it must not be able to undo either of them.
+    # **The owed amount, not the credited one.** When the award is blocked, `creditedKobo` is 0 while the
+    # season's table still says the finding is worth ₦2,000, and the email's whole job in that case is to
+    # say "accepted, ₦2,000, not yet in your balance". Sending the credited figure would email somebody
+    # "accepted: ₦0" for a critical bug, which reads as the programme refusing to pay.
+    await notify_service.submission_triaged(
+        submission_id=submission_id,
+        award_kobo=(award.matrix_kobo if award and award.blocked else award.credited_kobo)
+        if award
+        else 0,
+        blocked_reason=award.message if award and award.blocked else None,
     )
     return {
         "submission": submission,

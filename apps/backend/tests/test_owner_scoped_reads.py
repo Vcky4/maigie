@@ -61,6 +61,16 @@ ALLOWED: dict[str, str] = {
         "ownership. It reads no participant identity — title, platform, severity, season — and the "
         "endpoint is not reachable from the participant app, which has no admin surface."
     ),
+    "domains/bug_hunt/services/notify_service.py::_withdrawal": (
+        "Private to `notify_service`, whose two callers are `withdrawal_service.decide` and "
+        "`mark_paid` — both reached only from `POST /admin/bug-hunt/withdrawals/{id}/...`, gated by "
+        "`SuperAdminUser` and audited. It re-reads the withdrawal an admin has just acted on in order "
+        "to email its owner, so an owner filter would need the owner it is fetching *to find*. "
+        "Nothing it reads reaches anybody but that owner: the row's own `userId` resolves the address, "
+        "and the only fields sent are the amount, the bank name, the last four digits and the "
+        "reference, all of which the recipient already knows. The participant-facing reads of this "
+        "table are `withdrawal_service.list_own`, scoped in the query."
+    ),
     "domains/admin/services/courses_service.py::delete_course": (
         "Its only caller is the `DELETE /admin/courses/{id}` route, gated by `SuperAdminUser` and "
         "audited. Admin course deletion is deliberately cross-learner — a super admin removes any "

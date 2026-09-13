@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Accepted: {{ amount }} for your finding{% endblock %}
+
+{% block preheader %}{{ title }} was accepted and {{ amount }} is in your balance.{% endblock %}
+
+{% block heading %}Accepted{% endblock %}
+
+{% block content %}
+<p style="margin:0 0 16px 0;">Hi{% if name %} {{ name }}{% endif %},</p>
+
+<p style="margin:0 0 20px 0;">We accepted your finding, <strong style="color:#111827;">{{ title }}</strong>.</p>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0; background-color:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px;">
+    <tr>
+        <td style="padding:20px; font-family:Helvetica,Arial,sans-serif; text-align:center;">
+            <div style="font-size:12px; text-transform:uppercase; letter-spacing:1px; color:#047857;">Graded {{ grade }}</div>
+            <div style="margin-top:6px; font-size:30px; font-weight:bold; line-height:1.1; color:#064e3b;">{{ amount }}</div>
+            <div style="margin-top:8px; font-size:13px; color:#047857;">Your balance is now {{ balance }}</div>
+        </td>
+    </tr>
+</table>
+
+{% if response %}
+<p style="margin:0 0 6px 0; font-weight:bold; color:#111827;">From the reviewer</p>
+<p style="margin:0 0 24px 0; color:#374151;">{{ response }}</p>
+{% endif %}
+
+{% if blocked %}
+<p style="margin:0 0 24px 0; color:#92400e;">One note: the amount has not landed in your balance yet, because {{ blocked }}. The finding is accepted and the money is owed. We are on it, and you do not need to do anything.</p>
+{% else %}
+<p style="margin:0 0 16px 0;">It is yours to spend now. A Plus pass appears in your {{ app_name }} app immediately, or you can request cash to your bank once you reach the minimum.</p>
+{% endif %}
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+    <tr>
+        <td align="center" bgcolor="#4F46E5" style="background-color:#4F46E5; border-radius:8px;">
+            <a href="{{ wallet_url }}" style="display:inline-block; padding:14px 28px; font-family:Helvetica,Arial,sans-serif; font-size:15px; font-weight:bold; line-height:1; color:#ffffff; text-decoration:none;">Open my wallet</a>
+        </td>
+    </tr>
+</table>
+
+<p style="margin:0; color:#6b7280; font-size:14px;">
+    The grade sets the amount, from the published table for this season. If you think the grade is wrong, reply to this email and say why. A person will read it again.
+</p>
+{% endblock %}
+
+{% block footnote %}You are getting this because you filed a finding in the {{ app_name }} Bug Hunt.{% endblock %}

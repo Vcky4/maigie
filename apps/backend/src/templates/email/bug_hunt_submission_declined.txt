@@ -1,0 +1,21 @@
+{{ headline }}
+
+Hi{% if name %} {{ name }}{% endif %},
+
+We reviewed your finding, "{{ title }}".
+
+{{ headline }}
+{{ explainer }}
+{% if response %}
+From the reviewer:
+{{ response }}
+{% endif %}
+This one does not pay, and nothing about it counts against you. Your standing in
+the programme and your next finding are unaffected.
+
+My findings: {{ dashboard_url }}
+
+If you think we have read it wrongly, reply to this email and say why. A person
+will look again.
+
+{{ app_name }} Bug Hunt

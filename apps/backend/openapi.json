@@ -1640,6 +1640,39 @@
         "title": "AiAgentTaskListResponse",
         "type": "object"
       },
+      "AnnouncePreviewResponse": {
+        "description": "How many people the season announcement would reach.",
+        "properties": {
+          "recipientCount": {
+            "title": "Recipientcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "recipientCount"
+        ],
+        "title": "AnnouncePreviewResponse",
+        "type": "object"
+      },
+      "AnnounceResponse": {
+        "description": "What the announcement actually did.\n\n`skipped` is not padding. A learner with no notification policy row, or one whose address is\nsuppressed after a bounce, is skipped rather than retried, and an operator who sends to 200 and sees\n40 skipped has learned something worth knowing before Season 2.",
+        "properties": {
+          "sent": {
+            "title": "Sent",
+            "type": "integer"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sent",
+          "skipped"
+        ],
+        "title": "AnnounceResponse",
+        "type": "object"
+      },
       "AnswerResultResponse": {
         "description": "Result for the one question just submitted, including its key.\n\nThis is the only place an answer key is disclosed before the session\ncompletes, and only for a question the learner has now answered.",
         "properties": {
@@ -31141,6 +31174,102 @@
           }
         ],
         "summary": "Admin Update Season",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/seasons/{program_id}/announce": {
+      "get": {
+        "description": "How many people the season announcement would reach.\n\nA read, and staff rather than super admin, because knowing the size of the warm list is not a\nprivileged act. The send below is.",
+        "operationId": "admin_announce_preview_api_v1_admin_bug_hunt_seasons__program_id__announce_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnnouncePreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Announce Preview",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      },
+      "post": {
+        "description": "Tell previous participants and balance holders that this season is open.\n\n**A separate act from opening the season**, and that separation is deliberate. Opening is a\nprecondition for filing; announcing is a broadcast to a warm list that cannot be recalled. An\noperator usually wants a few minutes between the two to check the live season looks right, and\nfusing them would remove that option from everybody to save one click.\n\nRefuses unless the season is actually open: an announcement pointing at a draft would send the\nprogramme's most valuable list to a season the API will turn them away from.\n\nSafe to press twice. The notification type's idempotency key is the season and the recipient, so a\nsecond press reaches only people the first one missed.",
+        "operationId": "admin_announce_season_api_v1_admin_bug_hunt_seasons__program_id__announce_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnnounceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Announce Season",
         "tags": [
           "bug-hunt-admin",
           "bug-hunt-admin"

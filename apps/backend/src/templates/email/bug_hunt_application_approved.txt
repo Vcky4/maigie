@@ -1,0 +1,24 @@
+You're in the {{ season_name }} Bug Hunt
+
+Hi{% if name %} {{ name }}{% endif %},
+
+We read your report and accepted your application to {{ season_name }} of the
+{{ app_name }} Bug Hunt. You can file findings from now until {{ ends_at }}.
+
+Your application's own finding is being graded like any other. You will get a
+separate email with the outcome and the amount.
+
+Worth knowing:
+
+  1. Up to {{ daily_limit }} findings a day, and up to {{ cap }} in total this season.
+  2. One finding per report. Two bugs written up together are graded as one,
+     which costs you money.
+  3. Only the first report of a bug pays, so filing early beats filing
+     thoroughly late.
+
+File a finding: {{ submit_url }}
+The full rules: {{ rules_url }}
+
+Questions? Reply to this email and a human will read it.
+
+{{ app_name }} Bug Hunt
