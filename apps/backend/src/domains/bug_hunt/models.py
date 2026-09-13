@@ -480,6 +480,67 @@ class CarryForwardPreviewResponse(BaseModel):
     count: int
 
 
+class SeasonReportResponse(BaseModel):
+    """What one season cost and what it bought.
+
+    Rates are `None` rather than `0` wherever the denominator is empty: a cost per accepted finding of ₦0
+    on the morning a season opens is not a triumph, and an acceptance rate of 0% reads as "we reject
+    everything" rather than "nothing has been decided yet".
+
+    The `lifetime*` fields are **programme-wide, not per season**, and the names say so. A balance is
+    permanent, so a tester spending Season 1 earnings during Season 2 cannot honestly be attributed to
+    either one.
+    """
+
+    programId: str
+    seasonNumber: int
+    seasonName: str
+    applications: int
+    approvedParticipants: int
+    approvalRate: float | None
+    submissions: int
+    submissionsPerApprovedParticipant: float | None
+    submissionsByStatus: dict[str, int]
+    acceptanceRate: float | None
+    acceptanceRateByPlatform: dict[str, float | None]
+    submissionsByPlatform: dict[str, int]
+    #: Should rise season on season as the cheap bugs run out. A flat figure means we are paying the
+    #: same rate for progressively less value.
+    costPerAcceptedFindingKobo: int | None
+    #: A metric about us rather than about testers: a rising rate means we are collecting reports faster
+    #: than we are shipping fixes.
+    knownIssueRate: float | None
+    budgetKobo: int
+    awardedKobo: int
+    creditedKobo: int
+    remainingBudgetKobo: int
+    lifetimePassSpendKobo: int
+    lifetimeCashSpendKobo: int
+    lifetimePassSharePercent: float | None
+
+
+class RetentionRow(BaseModel):
+    """One season pair.
+
+    `returned` counts people who **filed something**, not people who were carried forward. Carry-forward
+    seeds everybody, so counting the seeding would report 100% retention while nobody came back.
+    """
+
+    fromSeason: int
+    toSeason: int
+    priorApproved: int
+    returned: int
+    retentionRate: float | None
+    #: If returners are no better than newcomers, the carry-forward machinery is buying convenience
+    #: rather than quality, which is worth knowing before building more of it.
+    returnerAcceptanceRate: float | None
+    newcomerAcceptanceRate: float | None
+
+
+class RetentionResponse(BaseModel):
+    seasons: list[RetentionRow]
+
+
 class AnnouncePreviewResponse(BaseModel):
     """How many people the season announcement would reach."""
 

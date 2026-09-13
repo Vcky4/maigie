@@ -70,6 +70,32 @@ def db():
 
 
 @pytest.fixture(scope="function", autouse=True)
+def no_outbound_email(request, monkeypatch):
+    """No test sends real email. Ever.
+
+    ``.env`` can reach ``os.environ`` as a side effect of collection, which is how a populated
+    ``RESEND_API_KEY`` ends up configured during a test run. Any domain that emails as part of a
+    committed action then makes a live HTTP call to a third party from the test suite — observed after
+    Bug Hunt triage started sending outcome email: `pytest tests/test_bug_hunt_reports.py` posted a
+    dozen messages to Resend, which refused them with a 422 only because the recipients were
+    ``@example.com``. With plausible addresses in a fixture it would have emailed real people.
+
+    Clearing both providers makes ``_email_transport_configured()`` false, so every sender takes its
+    documented "skip quietly" path. That is the correct default for a test: the sending is somebody
+    else's tested behaviour, and what a domain test cares about is that it did not raise.
+
+    Tests that *are* about email opt out by requesting the ``transport`` fixture, which sets the
+    credentials it needs. Ordering works because this runs first and ``transport`` overwrites it.
+    """
+    if "transport" in request.fixturenames:
+        return
+    from src.config import settings
+
+    monkeypatch.setattr(settings, "SMTP_HOST", "", raising=False)
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "", raising=False)
+
+
+@pytest.fixture(scope="function", autouse=True)
 async def db_lifecycle(request):
     """Connect/disconnect the SQLAlchemy async engine, for tests that need one.
 

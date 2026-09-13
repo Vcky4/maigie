@@ -52,6 +52,7 @@ from .services import (
     notify_service,
     program_service,
     redemption_service,
+    report_service,
     reward_service,
     submission_service,
     triage_service,
@@ -1040,6 +1041,34 @@ async def admin_carry_forward(
 # severity, the season's matrix decides the kobo. That is what makes it safe to let a content manager work
 # the queue, and it is why a two-click money flow was not worth the friction across a 14-day season.
 # ===========================================================================
+
+
+@admin_router.get("/seasons/{program_id}/report", response_model=models.SeasonReportResponse)
+async def admin_season_report(
+    program_id: str, admin_user: StaffUser
+) -> models.SeasonReportResponse:
+    """What this season cost and what it bought.
+
+    Separate from `GET /stats`, which is the morning queue dashboard. This is the slower question: cost
+    per accepted finding, acceptance rate per platform, and the `known_issue` rate that says whether we
+    are fixing things as fast as testers are finding them.
+    """
+    data = await report_service.season_report(program_id)
+    program = data.pop("season")
+    return models.SeasonReportResponse(
+        programId=program.id, seasonNumber=program.season_number, seasonName=program.name, **data
+    )
+
+
+@admin_router.get("/retention", response_model=models.RetentionResponse)
+async def admin_retention(admin_user: StaffUser) -> models.RetentionResponse:
+    """Season-over-season retention, and whether returning reporters file better findings.
+
+    Empty until a second season exists, which is the honest answer rather than a row of zeros.
+    """
+    return models.RetentionResponse(
+        seasons=[models.RetentionRow(**row) for row in await report_service.retention_report()]
+    )
 
 
 @admin_router.get("/stats", response_model=models.TriageStatsResponse)

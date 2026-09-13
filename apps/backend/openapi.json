@@ -21860,6 +21860,87 @@
         "title": "ResourceType",
         "type": "string"
       },
+      "RetentionResponse": {
+        "properties": {
+          "seasons": {
+            "items": {
+              "$ref": "#/components/schemas/RetentionRow"
+            },
+            "title": "Seasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "seasons"
+        ],
+        "title": "RetentionResponse",
+        "type": "object"
+      },
+      "RetentionRow": {
+        "description": "One season pair.\n\n`returned` counts people who **filed something**, not people who were carried forward. Carry-forward\nseeds everybody, so counting the seeding would report 100% retention while nobody came back.",
+        "properties": {
+          "fromSeason": {
+            "title": "Fromseason",
+            "type": "integer"
+          },
+          "newcomerAcceptanceRate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newcomeracceptancerate"
+          },
+          "priorApproved": {
+            "title": "Priorapproved",
+            "type": "integer"
+          },
+          "retentionRate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retentionrate"
+          },
+          "returned": {
+            "title": "Returned",
+            "type": "integer"
+          },
+          "returnerAcceptanceRate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returneracceptancerate"
+          },
+          "toSeason": {
+            "title": "Toseason",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "fromSeason",
+          "toSeason",
+          "priorApproved",
+          "returned",
+          "retentionRate",
+          "returnerAcceptanceRate",
+          "newcomerAcceptanceRate"
+        ],
+        "title": "RetentionRow",
+        "type": "object"
+      },
       "RevertPaidRequest": {
         "properties": {
           "reason": {
@@ -22608,6 +22689,178 @@
           "seasons"
         ],
         "title": "SeasonListResponse",
+        "type": "object"
+      },
+      "SeasonReportResponse": {
+        "description": "What one season cost and what it bought.\n\nRates are `None` rather than `0` wherever the denominator is empty: a cost per accepted finding of ₦0\non the morning a season opens is not a triumph, and an acceptance rate of 0% reads as \"we reject\neverything\" rather than \"nothing has been decided yet\".\n\nThe `lifetime*` fields are **programme-wide, not per season**, and the names say so. A balance is\npermanent, so a tester spending Season 1 earnings during Season 2 cannot honestly be attributed to\neither one.",
+        "properties": {
+          "acceptanceRate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acceptancerate"
+          },
+          "acceptanceRateByPlatform": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Acceptanceratebyplatform",
+            "type": "object"
+          },
+          "applications": {
+            "title": "Applications",
+            "type": "integer"
+          },
+          "approvalRate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approvalrate"
+          },
+          "approvedParticipants": {
+            "title": "Approvedparticipants",
+            "type": "integer"
+          },
+          "awardedKobo": {
+            "title": "Awardedkobo",
+            "type": "integer"
+          },
+          "budgetKobo": {
+            "title": "Budgetkobo",
+            "type": "integer"
+          },
+          "costPerAcceptedFindingKobo": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Costperacceptedfindingkobo"
+          },
+          "creditedKobo": {
+            "title": "Creditedkobo",
+            "type": "integer"
+          },
+          "knownIssueRate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knownissuerate"
+          },
+          "lifetimeCashSpendKobo": {
+            "title": "Lifetimecashspendkobo",
+            "type": "integer"
+          },
+          "lifetimePassSharePercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifetimepasssharepercent"
+          },
+          "lifetimePassSpendKobo": {
+            "title": "Lifetimepassspendkobo",
+            "type": "integer"
+          },
+          "programId": {
+            "title": "Programid",
+            "type": "string"
+          },
+          "remainingBudgetKobo": {
+            "title": "Remainingbudgetkobo",
+            "type": "integer"
+          },
+          "seasonName": {
+            "title": "Seasonname",
+            "type": "string"
+          },
+          "seasonNumber": {
+            "title": "Seasonnumber",
+            "type": "integer"
+          },
+          "submissions": {
+            "title": "Submissions",
+            "type": "integer"
+          },
+          "submissionsByPlatform": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Submissionsbyplatform",
+            "type": "object"
+          },
+          "submissionsByStatus": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Submissionsbystatus",
+            "type": "object"
+          },
+          "submissionsPerApprovedParticipant": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submissionsperapprovedparticipant"
+          }
+        },
+        "required": [
+          "programId",
+          "seasonNumber",
+          "seasonName",
+          "applications",
+          "approvedParticipants",
+          "approvalRate",
+          "submissions",
+          "submissionsPerApprovedParticipant",
+          "submissionsByStatus",
+          "acceptanceRate",
+          "acceptanceRateByPlatform",
+          "submissionsByPlatform",
+          "costPerAcceptedFindingKobo",
+          "knownIssueRate",
+          "budgetKobo",
+          "awardedKobo",
+          "creditedKobo",
+          "remainingBudgetKobo",
+          "lifetimePassSpendKobo",
+          "lifetimeCashSpendKobo",
+          "lifetimePassSharePercent"
+        ],
+        "title": "SeasonReportResponse",
         "type": "object"
       },
       "SeasonSummary": {
@@ -30973,6 +31226,34 @@
         ]
       }
     },
+    "/api/v1/admin/bug-hunt/retention": {
+      "get": {
+        "description": "Season-over-season retention, and whether returning reporters file better findings.\n\nEmpty until a second season exists, which is the honest answer rather than a row of zeros.",
+        "operationId": "admin_retention_api_v1_admin_bug_hunt_retention_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Retention",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
     "/api/v1/admin/bug-hunt/seasons": {
       "get": {
         "description": "Every season including drafts, newest first, with money and cohort counts.",
@@ -31483,6 +31764,55 @@
           }
         ],
         "summary": "Admin Open Season",
+        "tags": [
+          "bug-hunt-admin",
+          "bug-hunt-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/bug-hunt/seasons/{program_id}/report": {
+      "get": {
+        "description": "What this season cost and what it bought.\n\nSeparate from `GET /stats`, which is the morning queue dashboard. This is the slower question: cost\nper accepted finding, acceptance rate per platform, and the `known_issue` rate that says whether we\nare fixing things as fast as testers are finding them.",
+        "operationId": "admin_season_report_api_v1_admin_bug_hunt_seasons__program_id__report_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Season Report",
         "tags": [
           "bug-hunt-admin",
           "bug-hunt-admin"
