@@ -1,0 +1,29 @@
+Your {{ season_name }} Bug Hunt application
+
+Hi{% if name %} {{ name }}{% endif %},
+
+Thank you for applying to {{ season_name }} of the {{ app_name }} Bug Hunt. We
+read your report properly, and we are not accepting this application.
+
+Why:
+{{ reason }}
+
+{% if can_retry %}You get one more attempt this season. Send something different rather than the
+same finding rewritten, because the reason above is the specific thing to
+address.
+
+Most applications we turn down are ones we could not reproduce from the steps
+given. Numbered steps from a fresh start, plus a screenshot, is usually the
+difference.
+
+Try again: {{ apply_url }}
+{% else %}You have used both attempts for {{ season_name }}, so this is where it ends for
+now. That is a limit on applications rather than a mark against you, and the
+next season is a clean slate. We would be glad to see you apply again.
+{% endif %}
+The full rules: {{ rules_url }}
+
+If you think we have read your report wrongly, reply to this email and a person
+will look again.
+
+{{ app_name }} Bug Hunt

@@ -103,6 +103,12 @@ class Settings(BaseSettings):
     ALLOWED_HOSTS: ListStr = ["localhost", "127.0.0.1"]
     FRONTEND_BASE_URL: str = ""  # For OAuth redirects
 
+    #: Where the Bug Hunt participant app is served. Its own setting rather than `FRONTEND_BASE_URL`,
+    #: because that one points at the learner app and every link in a Bug Hunt email needs to land on
+    #: the programme site instead. A payout confirmation linking to `app.maigie.com/wallet`, which does
+    #: not exist, would read as a broken promise about money.
+    BUG_HUNT_BASE_URL: str = "https://issues.maigie.com"
+
     # --- CORS ---
     CORS_ORIGINS: ListStr = [
         "http://localhost:4200",
@@ -113,6 +119,13 @@ class Settings(BaseSettings):
         "https://admin.maigie.com",
         "https://dev-admin.maigie.com",
         "http://localhost:4201",
+        # The Bug Hunt participant app: local dev server, the deployed dev site, and production.
+        # `bughunt.maigie.com` is the dev host and `issues.maigie.com` is production, which is the right
+        # way round: the dev name can date itself against a recurring programme because nobody outside
+        # the team ever types it, and the durable name is the one testers are given.
+        "http://localhost:4203",
+        "https://bughunt.maigie.com",
+        "https://issues.maigie.com",
     ]
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: ListStr = ["*"]
@@ -758,6 +771,10 @@ def get_settings() -> Settings:
         "https://maigie.com",
         "https://www.maigie.com",
         "https://app.maigie.com",
+        # The Bug Hunt participant app. Merged unconditionally like the others above, so a deploy that
+        # sets CORS_ORIGINS to a shorter list cannot silently take the programme offline — a CORS failure
+        # there reads to a tester as "the site is broken", not as a configuration mistake.
+        "https://issues.maigie.com",
     ]
 
     # Local dev frontends often call staging/prod API (e.g. VITE_API_BASE_URL=staging-api).
@@ -776,6 +793,9 @@ def get_settings() -> Settings:
         # like a broken API rather than a missing origin.
         "http://localhost:4321",
         "http://127.0.0.1:4321",
+        # The Bug Hunt participant app's dev server (apps/bughunt, vite port 4203).
+        "http://localhost:4203",
+        "http://127.0.0.1:4203",
     ]
 
     # Merge environment-provided origins with required production origins

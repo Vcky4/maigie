@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}You're in the {{ season_name }} Bug Hunt{% endblock %}
+
+{% block preheader %}Your application was accepted. You can start filing findings now.{% endblock %}
+
+{% block heading %}You're in{% endblock %}
+
+{% block content %}
+<p style="margin:0 0 16px 0;">Hi{% if name %} {{ name }}{% endif %},</p>
+
+<p style="margin:0 0 16px 0;">We read your report and accepted your application to {{ season_name }} of the {{ app_name }} Bug Hunt. You can file findings from now until {{ ends_at }}.</p>
+
+<p style="margin:0 0 16px 0;">Your application's own finding is being graded like any other. You will get a separate email with the outcome and the amount.</p>
+
+<p style="margin:0 0 8px 0; font-weight:bold; color:#111827;">Worth knowing</p>
+<ul style="margin:0 0 24px 0; padding-left:20px; color:#374151;">
+    <li style="padding-bottom:6px;">Up to {{ daily_limit }} findings a day, and up to {{ cap }} in total this season.</li>
+    <li style="padding-bottom:6px;">One finding per report. Two bugs written up together are graded as one, which costs you money.</li>
+    <li>Only the first report of a bug pays, so filing early beats filing thoroughly late.</li>
+</ul>
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+    <tr>
+        <td align="center" bgcolor="#4F46E5" style="background-color:#4F46E5; border-radius:8px;">
+            <a href="{{ submit_url }}" style="display:inline-block; padding:14px 28px; font-family:Helvetica,Arial,sans-serif; font-size:15px; font-weight:bold; line-height:1; color:#ffffff; text-decoration:none;">File a finding</a>
+        </td>
+    </tr>
+</table>
+
+<p style="margin:0; color:#6b7280; font-size:14px;">
+    The full rules are at <a href="{{ rules_url }}" style="color:#4F46E5;">{{ rules_url }}</a>. Questions? Reply to this email and a human will read it.
+</p>
+{% endblock %}
+
+{% block footnote %}You are getting this because you applied to the {{ app_name }} Bug Hunt.{% endblock %}

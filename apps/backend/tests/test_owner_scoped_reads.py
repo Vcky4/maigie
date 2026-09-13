@@ -43,6 +43,46 @@ OWNER_PARAMS = {"user_id", "userId", "owner_id", "current_user", "user"}
 #: that does it. If a caller is added that does not, the entry is wrong and the read becomes a hole — so
 #: read the reason before adding a caller, not after.
 ALLOWED: dict[str, str] = {
+    "domains/bug_hunt/services/triage_service.py::_resolve_duplicate_target": (
+        "Private to `triage_service.triage`, whose only caller is "
+        "`POST /admin/bug-hunt/submissions/{id}/triage`, gated by `StaffUser` and audited. It reads the "
+        "submission a triager is pointing a duplicate *at*, which is by definition somebody else's "
+        "finding — filtering to an owner would make it impossible to mark a duplicate at all, and "
+        "filtering to the staff member's id would be nonsense. Nothing it reads reaches a learner: the "
+        "row is fetched to validate that the target exists and is not itself a duplicate, and only the "
+        "id is stored. The participant-facing reads of the same table are in `submission_service`, "
+        "where `get_own` and `list_own` are scoped in the query."
+    ),
+    "domains/bug_hunt/services/triage_service.py::known_issues": (
+        "Its only caller is `GET /admin/bug-hunt/known-issues`, gated by `StaffUser`. Cross-learner by "
+        "design: it lists accepted findings from earlier seasons so a triager can mark a repeat as "
+        "`known_issue` rather than blaming the reporter for our backlog, and every one of those "
+        "findings belongs to a different tester. The authorisation is the role gate, not row "
+        "ownership. It reads no participant identity — title, platform, severity, season — and the "
+        "endpoint is not reachable from the participant app, which has no admin surface."
+    ),
+    "domains/bug_hunt/services/notify_service.py::_withdrawal": (
+        "Private to `notify_service`, whose two callers are `withdrawal_service.decide` and "
+        "`mark_paid` — both reached only from `POST /admin/bug-hunt/withdrawals/{id}/...`, gated by "
+        "`SuperAdminUser` and audited. It re-reads the withdrawal an admin has just acted on in order "
+        "to email its owner, so an owner filter would need the owner it is fetching *to find*. "
+        "Nothing it reads reaches anybody but that owner: the row's own `userId` resolves the address, "
+        "and the only fields sent are the amount, the bank name, the last four digits and the "
+        "reference, all of which the recipient already knows. The participant-facing reads of this "
+        "table are `withdrawal_service.list_own`, scoped in the query."
+    ),
+    "domains/admin/services/courses_service.py::delete_course": (
+        "Its only caller is the `DELETE /admin/courses/{id}` route, gated by `SuperAdminUser` and "
+        "audited. Admin course deletion is deliberately cross-learner — a super admin removes any "
+        "course by id — so the authorisation is the role gate, not row ownership, and there is no "
+        "owner to filter to. The read fetches the row only to delete it; nothing reaches a learner."
+    ),
+    "domains/feedback/routes.py::get_feedback": (
+        "Staff-only triage endpoint: the dependency is `StaffUser`, so the caller is platform staff "
+        "reviewing submitted feedback, not the learner who filed it — there is no owner to filter to "
+        "and filtering by the staff member's id would be wrong. Feedback is deliberately readable "
+        "across learners by staff; the authorisation is the role gate, not row ownership."
+    ),
     "domains/intelligence/repository.py::find_chat_session": (
         "Two callers, both authorise: `conversation_service.get_conversation` compares "
         "`session.user_id` and raises `NotFoundError`, and the WebSocket handler goes through "

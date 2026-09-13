@@ -58,6 +58,57 @@ RENDERABLE: dict[str, dict[str, object]] = {
     "verification": {"name": "Ada", "otp_code": "123456"},
     "welcome": {"name": "Ada", "login_url": "https://maigie.com/login"},
     "reset_password": {"name": "Ada", "otp_code": "654321"},
+    # Bug Hunt. Every one is sent from `src/domains/bug_hunt/emails.py`.
+    "bug_hunt_application_approved": {
+        "name": "Ada",
+        "season_name": "Season 1",
+        "ends_at": "26 September 2026",
+        "daily_limit": 10,
+        "cap": "₦15,000",
+        "submit_url": "https://issues.maigie.com/submit",
+        "rules_url": "https://issues.maigie.com/rules",
+    },
+    "bug_hunt_application_rejected": {
+        "name": "Ada",
+        "season_name": "Season 1",
+        "reason": "We could not reproduce this from the steps given.",
+        "can_retry": True,
+        "apply_url": "https://issues.maigie.com/apply",
+        "rules_url": "https://issues.maigie.com/rules",
+    },
+    "bug_hunt_submission_accepted": {
+        "name": "Ada",
+        "title": "Session timer keeps running after the tab closes",
+        "grade": "high",
+        "amount": "₦1,500",
+        "balance": "₦1,500",
+        "response": "Reproduced on Chrome. Fix is going out this week.",
+        "blocked": None,
+        "wallet_url": "https://issues.maigie.com/wallet",
+    },
+    "bug_hunt_submission_declined": {
+        "name": "Ada",
+        "title": "Login button is the wrong shade",
+        "headline": "We already knew about this one",
+        "explainer": "It is on our list and not yet fixed.",
+        "response": None,
+        "dashboard_url": "https://issues.maigie.com/dashboard",
+    },
+    "bug_hunt_withdrawal_approved": {
+        "name": "Ada",
+        "amount": "₦2,000",
+        "bank_name": "Guaranty Trust Bank",
+        "account_last4": "4321",
+        "wallet_url": "https://issues.maigie.com/wallet",
+    },
+    "bug_hunt_withdrawal_paid": {
+        "name": "Ada",
+        "amount": "₦2,000",
+        "bank_name": "Guaranty Trust Bank",
+        "account_last4": "4321",
+        "reference": "TRF-9F2K1D",
+        "wallet_url": "https://issues.maigie.com/wallet",
+    },
 }
 
 #: Templates deleted with their senders. Named individually because the failure being guarded

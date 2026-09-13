@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Sent: {{ amount }} to your bank{% endblock %}
+
+{% block preheader %}{{ amount }} is on its way, with reference {{ reference }}.{% endblock %}
+
+{% block heading %}Sent{% endblock %}
+
+{% block content %}
+<p style="margin:0 0 16px 0;">Hi{% if name %} {{ name }}{% endif %},</p>
+
+<p style="margin:0 0 20px 0;">We have sent <strong style="color:#111827;">{{ amount }}</strong> to your bank. Thank you for the work you did to earn it.</p>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0; background-color:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px;">
+    <tr>
+        <td style="padding:20px; font-family:Helvetica,Arial,sans-serif; font-size:14px; line-height:1.7; color:#065f46;">
+            <div style="font-size:24px; font-weight:bold; color:#064e3b;">{{ amount }}</div>
+            <div style="margin-top:6px;">to {{ bank_name }}, account ending {{ account_last4 }}</div>
+            <div style="margin-top:10px; padding-top:10px; border-top:1px solid #a7f3d0;">
+                <span style="font-size:12px; text-transform:uppercase; letter-spacing:1px; color:#047857;">Bank reference</span><br>
+                <strong style="font-size:15px; color:#064e3b;">{{ reference }}</strong>
+            </div>
+        </td>
+    </tr>
+</table>
+
+<p style="margin:0 0 16px 0;">That reference is what your bank will show. Keep it, and if the money has not arrived within two working days of this email, reply with it and we will chase the transfer.</p>
+
+<p style="margin:0 0 24px 0;">You are responsible for any tax on what you earn.</p>
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+    <tr>
+        <td align="center" bgcolor="#4F46E5" style="background-color:#4F46E5; border-radius:8px;">
+            <a href="{{ wallet_url }}" style="display:inline-block; padding:14px 28px; font-family:Helvetica,Arial,sans-serif; font-size:15px; font-weight:bold; line-height:1; color:#ffffff; text-decoration:none;">Open my wallet</a>
+        </td>
+    </tr>
+</table>
+
+<p style="margin:0; color:#6b7280; font-size:14px;">
+    Questions about this payment? Reply to this email and a human will read it.
+</p>
+{% endblock %}
+
+{% block footnote %}You are getting this because you requested cash from your {{ app_name }} Bug Hunt balance.{% endblock %}

@@ -41,6 +41,10 @@ NON_ORM_VARS = {
     # literal camelCase field names rather than an alias generator, so `goal_response.targetDate` is the
     # attribute and the snake_case spelling would be the AttributeError.
     "goal_response",
+    # An `admin.models.AtRiskUser` Pydantic item (from `analytics_service.users_at_risk`), not an ORM
+    # row. Its field is literally `userId`, so `at_risk_user.userId` is the attribute and `user_id`
+    # would be the AttributeError. Named distinctively so the exemption cannot mask a real ORM loop.
+    "at_risk_user",
 }
 
 #: Matches SQLAlchemy's column accessor — `subquery.c.someColumn` — where a camelCase name is the

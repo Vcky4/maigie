@@ -1,0 +1,1568 @@
+"""Bug Hunt — API routes.
+
+Two routers, mounted at different prefixes by `src/app.py`:
+
+- `router` → `/api/v1/bug-hunt`. `GET /program` and `GET /seasons` take no token, because the landing
+  page renders the reward table from them and a marketing page behind auth is a marketing page nobody
+  reads. Everything else is `CurrentUser`.
+- `admin_router` → `/api/v1/admin/bug-hunt`. `StaffUser` for reads, `SuperAdminUser` for anything that
+  changes a season or moves money, matching the split the rest of `/api/v1/admin` uses.
+
+Phase 1 scope: seasons and standing. Applications, submissions, triage, the ledger and payouts land in
+Phases 2–6 — see `docs/implementation/bug-hunt-program-plan.md`.
+
+Copyright (C) 2025 Maigie
+
+Licensed under the Business Source License 1.1 (BUSL-1.1).
+See LICENSE file in the repository root for details.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+
+from src.domains.admin.services.audit_service import log_admin_action
+from src.domains.identity.db_models import User
+from src.shared.auth import CurrentUser, StaffUser, SuperAdminUser
+from src.shared.exceptions import ValidationError
+from src.shared.infrastructure.storage import StorageError, storage_service
+
+from . import attachments as attachment_rules
+from . import models
+from .db_models import (
+    BugHuntAttachment,
+    BugHuntLedgerEntry,
+    BugHuntParticipant,
+    BugHuntProgram,
+    BugHuntSubmission,
+    BugHuntWithdrawal,
+)
+from .exceptions import (
+    CountryNotEligibleError,
+    CountryNotSetError,
+    NoOpenSeasonError,
+    SeasonStateError,
+)
+from .services import (
+    bank_service,
+    eligibility_service,
+    ledger_service,
+    notify_service,
+    program_service,
+    redemption_service,
+    report_service,
+    reward_service,
+    submission_service,
+    triage_service,
+    withdrawal_service,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["bug-hunt"])
+admin_router = APIRouter(tags=["bug-hunt-admin"])
+
+
+# ===========================================================================
+# Serialisation
+# ===========================================================================
+
+
+def _reward_tiers(program: BugHuntProgram) -> list[models.RewardTier]:
+    """Flatten a season's matrix into the published table.
+
+    Sorted by amount, descending, because that is how the landing page reads it — the thing worth the
+    most first. Deriving the table from the row rather than from a constant is what stops the page
+    advertising amounts the server will not pay.
+    """
+    flat = [
+        (amount, category, severity)
+        for category, row in (program.reward_matrix or {}).items()
+        if isinstance(row, dict)
+        for severity, amount in row.items()
+        if isinstance(amount, int) and not isinstance(amount, bool)
+    ]
+    return [
+        models.RewardTier(category=category, severity=severity, amountKobo=amount)
+        for amount, category, severity in sorted(flat, key=lambda t: (-t[0], t[1], t[2]))
+    ]
+
+
+def _season_summary(program: BugHuntProgram) -> models.SeasonSummary:
+    return models.SeasonSummary(
+        id=program.id,
+        seasonNumber=program.season_number,
+        slug=program.slug,
+        name=program.name,
+        status=program.status,
+        startsAt=program.starts_at,
+        endsAt=program.ends_at,
+        rewards=_reward_tiers(program),
+        countryAllowlist=list(program.country_allowlist or []),
+        perParticipantCapKobo=program.per_participant_cap_kobo,
+        minWithdrawalKobo=program.min_withdrawal_kobo,
+        passBonusPercent=program.pass_bonus_percent,
+        rulesVersion=program.rules_version,
+        submissionDailyLimit=program.submission_daily_limit,
+    )
+
+
+async def _season_admin_view(program: BugHuntProgram) -> models.SeasonAdminView:
+    summary = _season_summary(program)
+    return models.SeasonAdminView(
+        **summary.model_dump(),
+        budgetKobo=program.budget_kobo,
+        awardedKobo=program.awarded_kobo,
+        remainingBudgetKobo=program_service.remaining_budget_kobo(program),
+        participantCounts=await program_service.participant_counts(program.id),
+        rewardMatrix=dict(program.reward_matrix or {}),
+    )
+
+
+def _attachment_view(row: BugHuntAttachment) -> models.AttachmentView:
+    return models.AttachmentView(
+        id=row.id,
+        url=row.url,
+        contentType=row.content_type,
+        sizeBytes=row.size_bytes,
+        createdAt=row.created_at,
+    )
+
+
+def _submission_view(
+    submission: BugHuntSubmission,
+    *,
+    season_number: int,
+    award_kobo: int | None = None,
+) -> models.SubmissionView:
+    """A submission as its reporter sees it.
+
+    `adminNotes` is not passed through, and cannot be: it is not a field on `SubmissionView`. Building this
+    explicitly rather than with `from_attributes` is what makes that guarantee readable — a triager's
+    private note reaching the person it is about is the kind of leak that only happens through a generic
+    serialiser.
+    """
+    return models.SubmissionView(
+        id=submission.id,
+        programId=submission.program_id,
+        seasonNumber=season_number,
+        platform=submission.platform,
+        appVersion=submission.app_version,
+        buildNumber=submission.build_number,
+        deviceModel=submission.device_model,
+        osVersion=submission.os_version,
+        route=submission.route,
+        title=submission.title,
+        stepsToReproduce=submission.steps_to_reproduce,
+        expectedResult=submission.expected_result,
+        actualResult=submission.actual_result,
+        reportedSeverity=submission.reported_severity,
+        category=submission.category,
+        type=submission.type,
+        severity=submission.severity,
+        status=submission.status,
+        isApplication=submission.is_application,
+        duplicateOfId=submission.duplicate_of_id,
+        publicResponse=submission.public_response,
+        awardKobo=award_kobo,
+        attachments=[_attachment_view(a) for a in submission.attachments],
+        createdAt=submission.created_at,
+        triagedAt=submission.triaged_at,
+    )
+
+
+def _submission_admin_view(
+    submission: BugHuntSubmission,
+    *,
+    season_number: int,
+    email: str | None,
+    name: str | None,
+    award_kobo: int | None,
+) -> models.SubmissionAdminView:
+    """The staff view: everything the reporter sees, plus `adminNotes` and who they are.
+
+    A separate function from `_submission_view` rather than a flag on it, because the difference between the
+    two is a private note reaching the person it is about. A boolean parameter is one inverted condition away
+    from leaking it; two functions are not.
+    """
+    return models.SubmissionAdminView(
+        id=submission.id,
+        programId=submission.program_id,
+        seasonNumber=season_number,
+        participantId=submission.participant_id,
+        userId=submission.user_id,
+        email=email,
+        name=name,
+        platform=submission.platform,
+        appVersion=submission.app_version,
+        buildNumber=submission.build_number,
+        deviceModel=submission.device_model,
+        osVersion=submission.os_version,
+        route=submission.route,
+        title=submission.title,
+        stepsToReproduce=submission.steps_to_reproduce,
+        expectedResult=submission.expected_result,
+        actualResult=submission.actual_result,
+        reportedSeverity=submission.reported_severity,
+        category=submission.category,
+        type=submission.type,
+        severity=submission.severity,
+        status=submission.status,
+        isApplication=submission.is_application,
+        duplicateOfId=submission.duplicate_of_id,
+        publicResponse=submission.public_response,
+        adminNotes=submission.admin_notes,
+        awardKobo=award_kobo,
+        attachments=[_attachment_view(a) for a in submission.attachments],
+        createdAt=submission.created_at,
+        triagedAt=submission.triaged_at,
+        triagedByUserId=submission.triaged_by_user_id,
+    )
+
+
+def _participant_admin_view(
+    participant: BugHuntParticipant, email: str, name: str | None, season_number: int
+) -> models.ParticipantAdminView:
+    return models.ParticipantAdminView(
+        id=participant.id,
+        programId=participant.program_id,
+        seasonNumber=season_number,
+        userId=participant.user_id,
+        email=email,
+        name=name,
+        status=participant.status,
+        attemptCount=participant.attempt_count,
+        carriedForward=participant.carried_from_program_id is not None,
+        acceptedRulesVersion=participant.accepted_rules_version,
+        rejectionReason=participant.rejection_reason,
+        createdAt=participant.created_at,
+        decidedAt=participant.decided_at,
+    )
+
+
+def _participation_view(
+    participant: BugHuntParticipant, program: BugHuntProgram
+) -> models.ParticipationView:
+    return models.ParticipationView(
+        id=participant.id,
+        programId=participant.program_id,
+        seasonNumber=program.season_number,
+        seasonName=program.name,
+        seasonStatus=program.status,
+        status=participant.status,
+        attemptCount=participant.attempt_count,
+        carriedForward=participant.carried_from_program_id is not None,
+        acceptedRulesVersion=participant.accepted_rules_version,
+        rejectionReason=participant.rejection_reason,
+        createdAt=participant.created_at,
+        decidedAt=participant.decided_at,
+    )
+
+
+def _wallet_summary(summary: ledger_service.WalletSummary) -> models.WalletSummary:
+    return models.WalletSummary(
+        balanceKobo=summary.balance_kobo,
+        lifetimeAwardedKobo=summary.lifetime_awarded_kobo,
+        openWithdrawalKobo=summary.open_withdrawal_kobo,
+        earnedThisSeasonKobo=summary.earned_this_season_kobo,
+        capRemainingKobo=summary.cap_remaining_kobo,
+    )
+
+
+def _ledger_entry_view(
+    entry: BugHuntLedgerEntry, season_number: int | None
+) -> models.LedgerEntryView:
+    return models.LedgerEntryView(
+        id=entry.id,
+        kind=entry.kind,
+        amountKobo=entry.amount_kobo,
+        seasonNumber=season_number,
+        submissionId=entry.submission_id,
+        withdrawalId=entry.withdrawal_id,
+        passId=entry.pass_id,
+        note=entry.note,
+        createdAt=entry.created_at,
+    )
+
+
+def _payout_account_view(
+    account: withdrawal_service.PayoutAccountView,
+) -> models.PayoutAccountView:
+    return models.PayoutAccountView(
+        id=account.id,
+        bankCode=account.bank_code,
+        bankName=account.bank_name,
+        accountName=account.account_name,
+        accountNumberLast4=account.account_number_last4,
+        verifiedAt=account.verified_at,
+        heldUntil=account.held_until,
+    )
+
+
+def _withdrawal_view(row: BugHuntWithdrawal) -> models.WithdrawalView:
+    """The owner's view. Reads only the snapshot fields, never the payout account.
+
+    That is what makes it impossible for this shape to leak an account number: it has no path to the
+    ciphertext, so no future edit here can accidentally decrypt one.
+    """
+    return models.WithdrawalView(
+        id=row.id,
+        amountKobo=row.amount_kobo,
+        status=row.status,
+        bankName=row.bank_name_snapshot,
+        accountName=row.account_name_snapshot,
+        accountLast4=row.account_last4_snapshot,
+        providerReference=row.provider_reference,
+        rejectionReason=row.rejection_reason,
+        createdAt=row.created_at,
+        decidedAt=row.decided_at,
+        paidAt=row.paid_at,
+    )
+
+
+def _withdrawal_admin_view(
+    row: BugHuntWithdrawal, *, email: str | None, name: str | None
+) -> models.WithdrawalAdminView:
+    return models.WithdrawalAdminView(
+        **_withdrawal_view(row).model_dump(),
+        userId=row.user_id,
+        email=email,
+        name=name,
+        decidedByUserId=row.decided_by_user_id,
+        financeEntryId=row.finance_entry_id,
+    )
+
+
+def _eligibility(program: BugHuntProgram | None, user: User) -> models.EligibilityView:
+    """The caller's standing, as a value rather than an exception.
+
+    `GET /me` reports eligibility instead of raising it: the app asks this to decide which screen to
+    render, and a 403 for the ordinary case of "you are not in Nigeria" would make the boot path an
+    error path. The refusals in `exceptions.py` cover the *write* attempts, and the codes are shared so
+    both routes explain themselves the same way.
+    """
+    if program is None:
+        return models.EligibilityView(
+            eligible=False, country=user.country, reasonCode="NO_OPEN_SEASON"
+        )
+    if not user.country:
+        return models.EligibilityView(eligible=False, country=None, reasonCode="COUNTRY_NOT_SET")
+    if not eligibility_service.country_allowed(program, user.country):
+        return models.EligibilityView(
+            eligible=False, country=user.country, reasonCode="COUNTRY_NOT_ELIGIBLE"
+        )
+    return models.EligibilityView(eligible=True, country=user.country)
+
+
+# ===========================================================================
+# Public — the programme itself
+# ===========================================================================
+
+
+@router.get("/program", response_model=models.ProgramStateResponse)
+async def get_program_state() -> models.ProgramStateResponse:
+    """The current state of the programme. **Unauthenticated.**
+
+    Answers all three states the landing page has to render, and says which one it is in `state` rather
+    than leaving the client to infer a page from a null season. The between-seasons case is not an edge
+    case: it is the state the programme spends most of the year in, and it goes live the day a season
+    closes.
+    """
+    open_season = await program_service.current()
+    upcoming = await program_service.next_scheduled()
+    latest = await program_service.latest_any()
+
+    if open_season is not None:
+        state = "open"
+    elif upcoming is not None:
+        state = "scheduled"
+    else:
+        state = "between"
+
+    return models.ProgramStateResponse(
+        state=state,
+        season=_season_summary(open_season) if open_season is not None else None,
+        nextSeason=_season_summary(upcoming) if upcoming is not None else None,
+        latestSeasonNumber=latest.season_number if latest is not None else None,
+    )
+
+
+@router.get("/seasons", response_model=models.SeasonListResponse)
+async def list_seasons() -> models.SeasonListResponse:
+    """Seasons that have run or are running, newest first. **Unauthenticated.**
+
+    Drafts are excluded: a draft's amounts are still being decided, and publishing a reward table we
+    might revise is worse than publishing nothing. A *scheduled* season is still announced — by
+    `GET /program`, which carries its dates without implying its numbers are final.
+    """
+    seasons = await program_service.list_all(include_draft=False)
+    return models.SeasonListResponse(seasons=[_season_summary(s) for s in seasons])
+
+
+@router.get("/me", response_model=models.MeResponse)
+async def get_me(current_user: CurrentUser) -> models.MeResponse:
+    """Everything the participant app needs to choose a screen, in one request.
+
+    Reports rather than refuses (see `_eligibility`). The wallet is `null` until Phase 4; the field is in
+    the contract from the start so adding it later is not a shape change for the client.
+    """
+    open_season = await program_service.current()
+    upcoming = await program_service.next_scheduled()
+    state = "open" if open_season else ("scheduled" if upcoming else "between")
+
+    # Seasons are fetched once and indexed rather than looked up per participation. There are only ever
+    # a handful of them, and a query per row would make the app's boot call scale with how loyal the
+    # tester is — the people we most want a fast first paint for.
+    seasons = {season.id: season for season in await program_service.list_all(include_draft=True)}
+    participations = await program_service.participations(user_id=current_user.id)
+
+    history = [
+        _participation_view(participant, seasons[participant.program_id])
+        for participant in participations
+        if participant.program_id in seasons
+    ]
+
+    current_participation = None
+    needs_terms = False
+    if open_season is not None:
+        # Matched on the ORM rows, not on the serialised views, so the terms comparison reads the same
+        # attributes `eligibility_service.assert_terms_accepted` does. Two ways of deciding "do they owe
+        # an acknowledgement" is how the boot response and the write refusal come to disagree.
+        row = next((p for p in participations if p.program_id == open_season.id), None)
+        if row is not None:
+            current_participation = _participation_view(row, open_season)
+            if row.status == "approved":
+                needs_terms = (
+                    row.accepted_rules_version is None
+                    or row.accepted_rules_version < open_season.rules_version
+                )
+
+    # Only for people who have actually taken part. A learner who wandered onto the programme site gets no
+    # wallet read at all rather than a row created for a zero balance they will never use.
+    wallet = None
+    if history:
+        wallet = _wallet_summary(
+            await ledger_service.summary(user_id=current_user.id, program=open_season)
+        )
+
+    return models.MeResponse(
+        state=state,
+        season=_season_summary(open_season) if open_season is not None else None,
+        eligibility=_eligibility(open_season, current_user),
+        participation=current_participation,
+        history=history,
+        wallet=wallet,
+        needsTermsAcceptance=needs_terms,
+    )
+
+
+# ===========================================================================
+# Participant — applying and submitting
+# ===========================================================================
+
+
+@router.post(
+    "/applications",
+    response_model=models.ApplicationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_application(
+    body: models.ApplicationCreateRequest, current_user: CurrentUser
+) -> models.ApplicationResponse:
+    """Register for the open season by submitting a first finding.
+
+    **The application is the submission.** One transaction writes the participation and the finding, and
+    nothing downstream treats that finding specially — it is triaged and paid like any other. An
+    application form whose content is read and discarded would ask a tester to do the work of finding a
+    bug and then decline to pay for it, which is a poor first impression for a programme whose whole
+    proposition is that findings are worth money.
+
+    Refused for anyone already `approved`, including a carried-forward participant: their route is
+    straight to `POST /submissions`, and showing them a form they passed last season would read as though
+    we had lost their record.
+    """
+    if not body.acceptTerms:
+        raise ValidationError("You need to accept the programme terms to take part.")
+
+    participant, submission = await submission_service.create_application(
+        user=current_user,
+        fields=body.model_dump(),
+        accepted_rules_version=body.acceptedRulesVersion,
+    )
+    program = await program_service.get(participant.program_id)
+    return models.ApplicationResponse(
+        participation=_participation_view(participant, program),
+        submission=_submission_view(submission, season_number=program.season_number),
+    )
+
+
+@router.post("/terms-acceptance", response_model=models.ParticipationView)
+async def accept_terms(
+    body: models.TermsAcceptanceRequest, current_user: CurrentUser
+) -> models.ParticipationView:
+    """Accept this season's terms as an already-approved participant.
+
+    The one screen a returning tester sees before submitting. Carry-forward seeds them `approved` with no
+    accepted version on purpose — this season's amounts, dates and possibly country scope differ, and
+    consent to the last season is not consent to this one.
+    """
+    if not body.accept:
+        raise ValidationError("You need to accept this season's terms to carry on.")
+
+    participant = await submission_service.accept_terms(
+        user=current_user, rules_version=body.rulesVersion
+    )
+    program = await program_service.get(participant.program_id)
+    return _participation_view(participant, program)
+
+
+@router.post(
+    "/submissions", response_model=models.SubmissionView, status_code=status.HTTP_201_CREATED
+)
+async def create_submission(
+    body: models.SubmissionCreateRequest, current_user: CurrentUser
+) -> models.SubmissionView:
+    """File a finding. Approved participants, open season, within the season's daily limit."""
+    submission = await submission_service.create_submission(
+        user=current_user, fields=body.model_dump()
+    )
+    program = await program_service.get(submission.program_id)
+    return _submission_view(submission, season_number=program.season_number)
+
+
+@router.get("/submissions", response_model=models.SubmissionListResponse)
+async def list_submissions(
+    current_user: CurrentUser,
+    programId: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
+    platform: str | None = None,
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=20, ge=1, le=100),
+) -> models.SubmissionListResponse:
+    """The caller's own submissions, newest first.
+
+    No `programId` means **every season**, not the current one. The dashboard passes the open season when
+    there is one; a tester reading their history between seasons would otherwise be shown an empty page
+    because the filter defaulted to a season that does not exist.
+    """
+    rows, total = await submission_service.list_own(
+        user_id=current_user.id,
+        program_id=programId,
+        status=status_filter,
+        platform=platform,
+        page=page,
+        page_size=pageSize,
+    )
+    seasons = {s.id: s for s in await program_service.list_all(include_draft=True)}
+    awards = await submission_service.awards_for([r.id for r in rows])
+    return models.SubmissionListResponse(
+        submissions=[
+            _submission_view(
+                row,
+                season_number=seasons[row.program_id].season_number,
+                award_kobo=awards.get(row.id),
+            )
+            for row in rows
+            if row.program_id in seasons
+        ],
+        total=total,
+        page=page,
+        pageSize=pageSize,
+        hasMore=(page * pageSize) < total,
+    )
+
+
+@router.get("/submissions/{submission_id}", response_model=models.SubmissionView)
+async def get_submission(submission_id: str, current_user: CurrentUser) -> models.SubmissionView:
+    """One of the caller's own submissions, from any season.
+
+    Someone else's id answers 404, not 403 — scoped in the query rather than checked after the fact, so a
+    foreign id is indistinguishable from one that does not exist. In a programme where findings describe
+    unfixed security bugs, a 403 that confirms a row exists is not a small oracle.
+    """
+    submission = await submission_service.get_own(
+        user_id=current_user.id, submission_id=submission_id
+    )
+    program = await program_service.get(submission.program_id)
+    awards = await submission_service.awards_for([submission.id])
+    return _submission_view(
+        submission,
+        season_number=program.season_number,
+        award_kobo=awards.get(submission.id),
+    )
+
+
+@router.get("/wallet", response_model=models.WalletSummary)
+async def get_wallet(current_user: CurrentUser) -> models.WalletSummary:
+    """The caller's balance. **Lifetime, spanning every season.**
+
+    Reachable with no season open, which is the point of a per-user wallet: money earned in Season 1 is
+    still theirs in the gap before Season 2, and a wallet that four-oh-fours between seasons would be a
+    wallet that appears to have eaten their balance.
+    """
+    return _wallet_summary(
+        await ledger_service.summary(
+            user_id=current_user.id, program=await program_service.current()
+        )
+    )
+
+
+@router.get("/wallet/ledger", response_model=models.LedgerResponse)
+async def get_wallet_ledger(
+    current_user: CurrentUser,
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=50, ge=1, le=100),
+) -> models.LedgerResponse:
+    """Every entry, newest first, across every season.
+
+    The whole ledger rather than a filtered view: the wallet explains its own number, and a balance a tester
+    cannot account for line by line is a support conversation waiting to happen.
+    """
+    rows, total = await ledger_service.history(
+        user_id=current_user.id, page=page, page_size=pageSize
+    )
+    return models.LedgerResponse(
+        entries=[_ledger_entry_view(entry, season_number) for entry, season_number in rows],
+        total=total,
+        page=page,
+        pageSize=pageSize,
+        hasMore=(page * pageSize) < total,
+        balanceKobo=await ledger_service.balance(current_user.id),
+    )
+
+
+@router.get("/wallet/redemption-options", response_model=models.RedemptionOptionsResponse)
+async def get_redemption_options(
+    current_user: CurrentUser,
+) -> models.RedemptionOptionsResponse:
+    """The passes this balance can buy, cheapest first. **Available with no season open.**
+
+    An earned balance is permanent and the gap between seasons is most of the year, so a rail that closed
+    with the season would strand money for months. Between seasons the bonus falls back to the default.
+    """
+    options = await redemption_service.options(user_id=current_user.id)
+    return models.RedemptionOptionsResponse(
+        options=[
+            models.RedemptionOptionView(
+                productId=option.product_id,
+                label=option.label,
+                priceKobo=option.price_kobo,
+                chargeKobo=option.charge_kobo,
+                bonusPercent=option.bonus_percent,
+                baseDurationMinutes=option.base_duration_minutes,
+                baseUnitsAllowance=option.base_units_allowance,
+                durationMinutes=option.duration_minutes,
+                unitsAllowance=option.units_allowance,
+                affordable=option.affordable,
+            )
+            for option in options
+        ],
+        balanceKobo=await ledger_service.balance(current_user.id),
+    )
+
+
+@router.post("/wallet/redeem-pass", response_model=models.RedeemPassResponse)
+async def redeem_pass(
+    body: models.RedeemPassRequest, current_user: CurrentUser
+) -> models.RedeemPassResponse:
+    """Spend a balance on a Plus pass. It appears in the learner's own app, unactivated.
+
+    Debit, then grant, then annotate — and the debit is reversed if the grant fails. Granting first is the
+    ordering that hands out free passes when the debit is refused, so it is not the ordering used.
+    """
+    result = await redemption_service.redeem(user_id=current_user.id, product_id=body.productId)
+    granted = result["pass"]
+    return models.RedeemPassResponse(
+        **{
+            "pass": models.RedeemedPassView(
+                id=granted.id,
+                productId=granted.product_id,
+                status=granted.status,
+                durationMinutes=granted.duration_minutes,
+                unitsAllowance=granted.units_allowance,
+                source=granted.source,
+                createdAt=granted.created_at,
+            )
+        },
+        chargeKobo=result["chargeKobo"],
+        balanceKobo=result["balanceKobo"],
+        entry=_ledger_entry_view(result["entry"], None),
+    )
+
+
+@router.get("/banks", response_model=models.BankListResponse)
+async def list_banks(current_user: CurrentUser) -> models.BankListResponse:
+    """Nigerian banks and their codes, for the payout-account picker. Cached for a day.
+
+    Returns an empty list when the provider is unreachable, and the client falls back to free-text entry: a
+    tester who knows their bank name should not be blocked from being paid because a third-party API is
+    having a minute.
+    """
+    banks = await bank_service.nigerian_banks()
+    return models.BankListResponse(
+        banks=[models.BankView(code=bank["code"], name=bank["name"]) for bank in banks]
+    )
+
+
+@router.get("/payout-account", response_model=models.PayoutAccountView | None)
+async def get_payout_account(current_user: CurrentUser) -> models.PayoutAccountView | None:
+    """The caller's bank details, masked. `null` if they have not added any."""
+    account = await withdrawal_service.get_account(current_user.id)
+    return _payout_account_view(account) if account is not None else None
+
+
+@router.put("/payout-account", response_model=models.PayoutAccountView)
+async def set_payout_account(
+    body: models.PayoutAccountRequest, current_user: CurrentUser
+) -> models.PayoutAccountView:
+    """Store or replace bank details. Encrypted at rest; only the last four are ever read back.
+
+    Changing the bank or the number starts a 24-hour hold on new cash requests. Correcting a spelling in the
+    account name does not — that is not a redirection, and holding somebody's payout for a typo fix would be
+    friction with nothing behind it.
+    """
+    account = await withdrawal_service.set_account(
+        user_id=current_user.id,
+        bank_code=body.bankCode,
+        bank_name=body.bankName,
+        account_number=body.accountNumber,
+        account_name=body.accountName,
+    )
+    return _payout_account_view(account)
+
+
+@router.get("/withdrawals", response_model=models.WithdrawalListResponse)
+async def list_withdrawals(current_user: CurrentUser) -> models.WithdrawalListResponse:
+    """The caller's cash requests, newest first, with this season's minimum and their balance.
+
+    One call, because the withdrawal form needs all three: what they have, what the floor is, and whether a
+    request is already open.
+    """
+    rows = await withdrawal_service.list_own(user_id=current_user.id)
+    program = await program_service.current()
+    return models.WithdrawalListResponse(
+        withdrawals=[_withdrawal_view(row) for row in rows],
+        minimumKobo=withdrawal_service.minimum_kobo(program),
+        balanceKobo=await ledger_service.balance(current_user.id),
+    )
+
+
+@router.post(
+    "/withdrawals", response_model=models.WithdrawalView, status_code=status.HTTP_201_CREATED
+)
+async def request_withdrawal(
+    body: models.WithdrawalRequest, current_user: CurrentUser
+) -> models.WithdrawalView:
+    """Ask for cash. **Debits immediately**, so a pending request cannot be spent twice over.
+
+    Refused when the balance will not cover it, when there is no payout account, while the 24-hour hold after
+    a details change is running, and when a request is already open — that last one by a partial unique index
+    rather than by a check the caller could race.
+    """
+    row = await withdrawal_service.request(user_id=current_user.id, amount_kobo=body.amountKobo)
+    return _withdrawal_view(row)
+
+
+@router.post(
+    "/submissions/{submission_id}/attachments",
+    response_model=models.AttachmentView,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_attachment(
+    submission_id: str, current_user: CurrentUser, file: UploadFile = File(...)
+) -> models.AttachmentView:
+    """Attach a screenshot or a short screen recording to one of the caller's own submissions.
+
+    Authorised by **ownership rather than approval**, because the application's own finding belongs to a
+    `pending` applicant who is not yet an approved participant, and they must still be able to attach the
+    screenshot that supports it.
+
+    Validated before it is stored, then stored, then recorded. Storage is the slow external step, so it
+    happens outside any transaction: the cost is that a refused fourth file can leave an object in the
+    bucket with no row. That is a small orphan at an identifiable path rather than a fourth attachment on
+    the finding, which is the right way round.
+    """
+    content = await file.read()
+    rejection = attachment_rules.validate(content_type=file.content_type, size=len(content))
+    if rejection is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": rejection.code, "message": rejection.message},
+        )
+
+    submission = await submission_service.attachable_submission(
+        user_id=current_user.id, submission_id=submission_id
+    )
+
+    await file.seek(0)
+    try:
+        stored = await storage_service.upload_upload_file(
+            file,
+            path_prefix=attachment_rules.upload_path(
+                user_id=current_user.id, submission_id=submission.id
+            ),
+        )
+    except StorageError as error:
+        # A 503, because nothing the tester did is wrong and a retry is the correct response. Returning a
+        # 400 here would tell them their screenshot was invalid when our CDN was down.
+        logger.error("bug_hunt: attachment upload failed for %s: %s", current_user.id, error)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="That upload did not go through. Please try again.",
+        ) from error
+
+    row = await submission_service.add_attachment(
+        submission=submission,
+        url=stored["url"],
+        content_type=(file.content_type or "application/octet-stream"),
+        size_bytes=int(stored.get("size") or len(content)),
+    )
+    return _attachment_view(row)
+
+
+# ===========================================================================
+# Admin — seasons
+#
+# The endpoints below are the whole of Decision 12: if a season cannot be created, opened and populated
+# from here, then opening Season 2 needs an engineer, and the multi-season design was decorative.
+# ===========================================================================
+
+
+@admin_router.get("/seasons", response_model=models.SeasonAdminListResponse)
+async def admin_list_seasons(admin_user: StaffUser) -> models.SeasonAdminListResponse:
+    """Every season including drafts, newest first, with money and cohort counts."""
+    seasons = await program_service.list_all(include_draft=True)
+    return models.SeasonAdminListResponse(seasons=[await _season_admin_view(s) for s in seasons])
+
+
+@admin_router.get("/seasons/defaults", response_model=models.SeasonDefaultsResponse)
+async def admin_season_defaults(admin_user: StaffUser) -> models.SeasonDefaultsResponse:
+    """The next season's suggested configuration, copied from the last one.
+
+    Served rather than assembled in the browser so there is one rule for what Season *n+1* starts from.
+    A blank form is how a season opens with a budget of zero or with a matrix retyped from a document.
+    """
+    return models.SeasonDefaultsResponse(**await program_service.defaults_for_next())
+
+
+@admin_router.get("/seasons/{program_id}", response_model=models.SeasonAdminView)
+async def admin_get_season(program_id: str, admin_user: StaffUser) -> models.SeasonAdminView:
+    return await _season_admin_view(await program_service.get(program_id))
+
+
+@admin_router.post(
+    "/seasons", response_model=models.SeasonAdminView, status_code=status.HTTP_201_CREATED
+)
+async def admin_create_season(
+    body: models.SeasonCreateRequest, admin_user: SuperAdminUser
+) -> models.SeasonAdminView:
+    """Create a season, in `draft`.
+
+    Draft rather than open, because a season needs its matrix reviewed and its copy checked before
+    testers can see it — and because `POST` plus an automatic open is how a half-configured season goes
+    live at the moment somebody hits Save.
+    """
+    program = await program_service.create(
+        name=body.name,
+        slug=body.slug,
+        starts_at=body.startsAt,
+        ends_at=body.endsAt,
+        budget_kobo=body.budgetKobo,
+        per_participant_cap_kobo=body.perParticipantCapKobo,
+        min_withdrawal_kobo=body.minWithdrawalKobo,
+        pass_bonus_percent=body.passBonusPercent,
+        submission_daily_limit=body.submissionDailyLimit,
+        country_allowlist=body.countryAllowlist,
+        reward_matrix=body.rewardMatrix,
+        rules_version=body.rulesVersion,
+        season_number=body.seasonNumber,
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_create_season",
+        resource_type="bug_hunt_program",
+        resource_id=program.id,
+        details={
+            "seasonNumber": program.season_number,
+            "slug": program.slug,
+            "budgetKobo": program.budget_kobo,
+        },
+    )
+    return await _season_admin_view(program)
+
+
+@admin_router.patch("/seasons/{program_id}", response_model=models.SeasonAdminView)
+async def admin_update_season(
+    program_id: str, body: models.SeasonUpdateRequest, admin_user: SuperAdminUser
+) -> models.SeasonAdminView:
+    """Edit a `draft` or `open` season. A closed one is immutable — it is a record of what it paid."""
+    changes = body.model_dump(exclude_none=True)
+    program = await program_service.edit(program_id, changes)
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_update_season",
+        resource_type="bug_hunt_program",
+        resource_id=program_id,
+        details={"fields": ",".join(sorted(changes))},
+    )
+    return await _season_admin_view(program)
+
+
+@admin_router.post("/seasons/{program_id}/open", response_model=models.SeasonAdminView)
+async def admin_open_season(program_id: str, admin_user: SuperAdminUser) -> models.SeasonAdminView:
+    """Open a season for intake.
+
+    Its own endpoint rather than a field on `PATCH`, so opening a season is one deliberate act with one
+    audit entry, and the preconditions (a budget, a complete matrix, no other open season) are checked
+    at exactly the moment they matter.
+    """
+    program = await program_service.open_season(program_id)
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_open_season",
+        resource_type="bug_hunt_program",
+        resource_id=program_id,
+        details={"seasonNumber": program.season_number},
+    )
+    return await _season_admin_view(program)
+
+
+@admin_router.post("/seasons/{program_id}/close", response_model=models.SeasonAdminView)
+async def admin_close_season(program_id: str, admin_user: SuperAdminUser) -> models.SeasonAdminView:
+    """Close a season to new submissions.
+
+    Stops intake and nothing else: triage continues and pays this season's rates, and redemption and
+    withdrawal stay open indefinitely because the wallet belongs to the tester, not to the season.
+    """
+    program = await program_service.close_season(program_id)
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_close_season",
+        resource_type="bug_hunt_program",
+        resource_id=program_id,
+        details={"seasonNumber": program.season_number},
+    )
+    return await _season_admin_view(program)
+
+
+@admin_router.get("/seasons/{program_id}/announce", response_model=models.AnnouncePreviewResponse)
+async def admin_announce_preview(
+    program_id: str, admin_user: StaffUser
+) -> models.AnnouncePreviewResponse:
+    """How many people the season announcement would reach.
+
+    A read, and staff rather than super admin, because knowing the size of the warm list is not a
+    privileged act. The send below is.
+    """
+    return models.AnnouncePreviewResponse(
+        recipientCount=await notify_service.announce_audience_size(program_id=program_id)
+    )
+
+
+@admin_router.post("/seasons/{program_id}/announce", response_model=models.AnnounceResponse)
+async def admin_announce_season(
+    program_id: str, admin_user: SuperAdminUser
+) -> models.AnnounceResponse:
+    """Tell previous participants and balance holders that this season is open.
+
+    **A separate act from opening the season**, and that separation is deliberate. Opening is a
+    precondition for filing; announcing is a broadcast to a warm list that cannot be recalled. An
+    operator usually wants a few minutes between the two to check the live season looks right, and
+    fusing them would remove that option from everybody to save one click.
+
+    Refuses unless the season is actually open: an announcement pointing at a draft would send the
+    programme's most valuable list to a season the API will turn them away from.
+
+    Safe to press twice. The notification type's idempotency key is the season and the recipient, so a
+    second press reaches only people the first one missed.
+    """
+    result = await notify_service.announce_season(program_id=program_id)
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_announce_season",
+        resource_type="bug_hunt_program",
+        resource_id=program_id,
+        details=result,
+    )
+    if result["reason"] == "SEASON_NOT_OPEN":
+        raise SeasonStateError(
+            message="Open the season before announcing it.",
+            detail=f"program_id={program_id}",
+        )
+    return models.AnnounceResponse(sent=result["sent"], skipped=result["skipped"])
+
+
+@admin_router.get(
+    "/seasons/{program_id}/carry-forward", response_model=models.CarryForwardPreviewResponse
+)
+async def admin_carry_forward_preview(
+    program_id: str, fromProgramId: str, admin_user: StaffUser
+) -> models.CarryForwardPreviewResponse:
+    """How many participants would be seeded. A count before a bulk approval, not after."""
+    count = await program_service.carry_forward_preview(
+        into_program_id=program_id, from_program_id=fromProgramId
+    )
+    return models.CarryForwardPreviewResponse(
+        fromProgramId=fromProgramId, intoProgramId=program_id, count=count
+    )
+
+
+@admin_router.post(
+    "/seasons/{program_id}/carry-forward", response_model=models.CarryForwardResponse
+)
+async def admin_carry_forward(
+    program_id: str, body: models.CarryForwardRequest, admin_user: SuperAdminUser
+) -> models.CarryForwardResponse:
+    """Seed a previous season's approved participants into this one as approved.
+
+    Idempotent, so a double-click adds nobody twice. They arrive with no accepted terms, which is what
+    the app's acknowledgement screen exists for — this season's amounts and dates are not the ones they
+    agreed to last time.
+    """
+    added = await program_service.carry_forward(
+        into_program_id=program_id, from_program_id=body.fromProgramId
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_carry_forward",
+        resource_type="bug_hunt_program",
+        resource_id=program_id,
+        details={"fromProgramId": body.fromProgramId, "added": added},
+    )
+    return models.CarryForwardResponse(
+        fromProgramId=body.fromProgramId, intoProgramId=program_id, added=added
+    )
+
+
+# ===========================================================================
+# Admin — triage
+#
+# Staff, not super admin. The amount is not theirs to choose (Decision 6): a triager sets category and
+# severity, the season's matrix decides the kobo. That is what makes it safe to let a content manager work
+# the queue, and it is why a two-click money flow was not worth the friction across a 14-day season.
+# ===========================================================================
+
+
+@admin_router.get("/seasons/{program_id}/report", response_model=models.SeasonReportResponse)
+async def admin_season_report(
+    program_id: str, admin_user: StaffUser
+) -> models.SeasonReportResponse:
+    """What this season cost and what it bought.
+
+    Separate from `GET /stats`, which is the morning queue dashboard. This is the slower question: cost
+    per accepted finding, acceptance rate per platform, and the `known_issue` rate that says whether we
+    are fixing things as fast as testers are finding them.
+    """
+    data = await report_service.season_report(program_id)
+    program = data.pop("season")
+    return models.SeasonReportResponse(
+        programId=program.id, seasonNumber=program.season_number, seasonName=program.name, **data
+    )
+
+
+@admin_router.get("/retention", response_model=models.RetentionResponse)
+async def admin_retention(admin_user: StaffUser) -> models.RetentionResponse:
+    """Season-over-season retention, and whether returning reporters file better findings.
+
+    Empty until a second season exists, which is the honest answer rather than a row of zeros.
+    """
+    return models.RetentionResponse(
+        seasons=[models.RetentionRow(**row) for row in await report_service.retention_report()]
+    )
+
+
+@admin_router.get("/stats", response_model=models.TriageStatsResponse)
+async def admin_stats(
+    admin_user: StaffUser, programId: str | None = None
+) -> models.TriageStatsResponse:
+    """Queue depths, spend against budget, and turnaround. Defaults to the open season.
+
+    Every figure is a live query rather than a cached number: the queue depths are the thing being managed,
+    and a dashboard that says the queue is empty when it is not is worse than no dashboard.
+    """
+    data = await triage_service.stats(programId)
+    season = data.pop("season")
+    return models.TriageStatsResponse(
+        seasonId=season.id if season else None,
+        seasonNumber=season.season_number if season else None,
+        seasonStatus=season.status if season else None,
+        **data,
+    )
+
+
+@admin_router.get("/participants", response_model=models.ParticipantAdminListResponse)
+async def admin_list_participants(
+    admin_user: StaffUser,
+    programId: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
+    search: str | None = None,
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=25, ge=1, le=100),
+) -> models.ParticipantAdminListResponse:
+    """The application queue, **oldest first**.
+
+    Oldest first because a review queue is worked front to back. Newest-first ordering is how the applicant
+    who has waited longest keeps getting pushed down the page, which is the opposite of a 48-hour promise.
+    """
+    rows, total = await triage_service.list_participants(
+        program_id=programId,
+        status=status_filter,
+        search=search,
+        page=page,
+        page_size=pageSize,
+    )
+    seasons = {s.id: s for s in await program_service.list_all(include_draft=True)}
+    return models.ParticipantAdminListResponse(
+        participants=[
+            _participant_admin_view(
+                participant, email, name, seasons[participant.program_id].season_number
+            )
+            for participant, email, name in rows
+            if participant.program_id in seasons
+        ],
+        total=total,
+        page=page,
+        pageSize=pageSize,
+        hasMore=(page * pageSize) < total,
+    )
+
+
+@admin_router.get("/participants/{participant_id}", response_model=models.ParticipantAdminDetail)
+async def admin_get_participant(
+    participant_id: str, admin_user: StaffUser
+) -> models.ParticipantAdminDetail:
+    """One participant, with every season they have taken part in.
+
+    The cross-season history is the point. "Is this a good reporter" is not answerable from the season they
+    are applying to, and a returning applicant's previous record is the most useful thing on this screen.
+    """
+    data = await triage_service.participant_detail(participant_id)
+    participant = data["participant"]
+    program = await program_service.get(participant.program_id)
+    history: list[models.ParticipationView] = []
+    for row in data["history"]:
+        history.append(_participation_view(row, await program_service.get(row.program_id)))
+    return models.ParticipantAdminDetail(
+        participant=_participant_admin_view(
+            participant, data["email"], data["name"], program.season_number
+        ),
+        country=data["country"],
+        submissionCounts=data["submissionCounts"],
+        earnedThisSeasonKobo=data["earnedThisSeasonKobo"],
+        earnedLifetimeKobo=data["earnedLifetimeKobo"],
+        history=history,
+    )
+
+
+@admin_router.post(
+    "/participants/{participant_id}/decision", response_model=models.ParticipantAdminView
+)
+async def admin_decide_participant(
+    participant_id: str, body: models.ParticipantDecisionRequest, admin_user: StaffUser
+) -> models.ParticipantAdminView:
+    """Approve or reject an applicant.
+
+    Separate from triaging their application's finding, deliberately: a report can be good enough to pay for
+    while the applicant is wrong for the programme, and the reverse. Collapsing the two would make one
+    judgement stand in for the other.
+    """
+    participant = await triage_service.decide_application(
+        participant_id=participant_id,
+        decision=body.decision,
+        reason=body.reason,
+        staff_user_id=admin_user.id,
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_decide_application",
+        resource_type="bug_hunt_participant",
+        resource_id=participant_id,
+        details={"decision": body.decision, "reason": body.reason},
+    )
+    detail = await triage_service.participant_detail(participant_id)
+    program = await program_service.get(participant.program_id)
+    return _participant_admin_view(
+        participant, detail["email"], detail["name"], program.season_number
+    )
+
+
+@admin_router.post(
+    "/participants/{participant_id}/suspend", response_model=models.ParticipantAdminView
+)
+async def admin_suspend_participant(
+    participant_id: str, body: models.ParticipantSuspendRequest, admin_user: SuperAdminUser
+) -> models.ParticipantAdminView:
+    """Suspend a participation. Stops submitting, blocks carry-forward, **does not touch the balance.**
+
+    Super admin rather than staff, because it is the one participation decision that cannot be undone by a
+    later approval — and because confiscation is the obvious next thing somebody would ask for. Whatever
+    they earned before the suspension, they earned; the ledger is append-only so that no single act can
+    quietly reverse a payment.
+    """
+    participant = await triage_service.suspend_participant(
+        participant_id=participant_id, reason=body.reason, staff_user_id=admin_user.id
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_suspend_participant",
+        resource_type="bug_hunt_participant",
+        resource_id=participant_id,
+        details={"reason": body.reason},
+    )
+    detail = await triage_service.participant_detail(participant_id)
+    program = await program_service.get(participant.program_id)
+    return _participant_admin_view(
+        participant, detail["email"], detail["name"], program.season_number
+    )
+
+
+@admin_router.get("/submissions", response_model=models.SubmissionAdminListResponse)
+async def admin_list_submissions(
+    admin_user: StaffUser,
+    programId: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
+    platform: str | None = None,
+    severity: str | None = None,
+    category: str | None = None,
+    participantId: str | None = None,
+    isApplication: bool | None = None,
+    search: str | None = None,
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=25, ge=1, le=100),
+) -> models.SubmissionAdminListResponse:
+    """The triage queue, oldest first, filterable by season, status, platform, severity and reporter."""
+    rows, total = await triage_service.list_submissions(
+        program_id=programId,
+        status=status_filter,
+        platform=platform,
+        severity=severity,
+        category=category,
+        participant_id=participantId,
+        is_application=isApplication,
+        search=search,
+        page=page,
+        page_size=pageSize,
+    )
+    seasons = {s.id: s for s in await program_service.list_all(include_draft=True)}
+    awards = await submission_service.awards_for([row[0].id for row in rows])
+    return models.SubmissionAdminListResponse(
+        submissions=[
+            _submission_admin_view(
+                submission,
+                season_number=seasons[submission.program_id].season_number,
+                email=email,
+                name=name,
+                award_kobo=awards.get(submission.id),
+            )
+            for submission, email, name in rows
+            if submission.program_id in seasons
+        ],
+        total=total,
+        page=page,
+        pageSize=pageSize,
+        hasMore=(page * pageSize) < total,
+    )
+
+
+@admin_router.get("/submissions/{submission_id}", response_model=models.SubmissionAdminDetail)
+async def admin_get_submission(
+    submission_id: str, admin_user: StaffUser
+) -> models.SubmissionAdminDetail:
+    """One finding, with the reward table of **its own** season beside it.
+
+    Not the current season's table. A triager grading a late Season 1 finding needs to see the amounts it
+    was reported under, because those are the amounts it will be paid.
+    """
+    data = await triage_service.submission_detail(submission_id)
+    return models.SubmissionAdminDetail(
+        submission=_submission_admin_view(
+            data["submission"],
+            season_number=data["seasonNumber"],
+            email=data["email"],
+            name=data["name"],
+            award_kobo=data["awardKobo"],
+        ),
+        reporterSubmissionCount=data["reporterSubmissionCount"],
+        duplicateOfTitle=data["duplicateOfTitle"],
+        rewardMatrix=data["rewardMatrix"],
+    )
+
+
+@admin_router.post("/submissions/{submission_id}/triage", response_model=models.TriageResponse)
+async def admin_triage_submission(
+    submission_id: str, body: models.TriageRequest, admin_user: StaffUser
+) -> models.TriageResponse:
+    """Grade a finding. The season's matrix decides what the grading is worth.
+
+    **No amount crosses this boundary.** Accepting a grading the season does not price is refused rather
+    than paid as zero, because "accepted, ₦0" is the one outcome that is both wrong and hard to notice.
+    """
+    result = await triage_service.triage(
+        submission_id=submission_id,
+        status=body.status,
+        category=body.category,
+        type_=body.type,
+        severity=body.severity,
+        duplicate_of_id=body.duplicateOfId,
+        public_response=body.publicResponse,
+        admin_notes=body.adminNotes,
+        staff_user_id=admin_user.id,
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_triage_submission",
+        resource_type="bug_hunt_submission",
+        resource_id=submission_id,
+        details={
+            "status": body.status,
+            "category": body.category,
+            "severity": body.severity,
+            "awardKobo": result["awardKobo"],
+        },
+    )
+    detail = await triage_service.submission_detail(submission_id)
+    return models.TriageResponse(
+        submission=_submission_admin_view(
+            result["submission"],
+            season_number=result["seasonNumber"],
+            email=detail["email"],
+            name=detail["name"],
+            award_kobo=detail["awardKobo"],
+        ),
+        awardKobo=result["awardKobo"],
+        matrixKobo=result["matrixKobo"],
+        awardBlocked=result["awardBlocked"],
+        awardMessage=result["awardMessage"],
+    )
+
+
+@admin_router.post(
+    "/participants/{participant_id}/adjustment", response_model=models.AdjustmentResponse
+)
+async def admin_adjust_balance(
+    participant_id: str, body: models.AdjustmentRequest, admin_user: SuperAdminUser
+) -> models.AdjustmentResponse:
+    """Credit or claw back kobo by hand. **Super admin, and the only typed amount in the programme.**
+
+    Everything else on the reward path traces to a season's published table. This does not, which is exactly
+    why it needs the higher guard, a mandatory reason, and an audit row: it is the one lever that can put
+    money on a ledger without a rule behind it.
+
+    Attributed to the participation's season, so it counts against that tester's cap. A clawback cannot take
+    a balance below zero — it takes the wallet lock like any other spend.
+    """
+    detail = await triage_service.participant_detail(participant_id)
+    participant = detail["participant"]
+
+    entry = await reward_service.adjust(
+        user_id=participant.user_id,
+        amount_kobo=body.amountKobo,
+        note=body.note,
+        staff_user_id=admin_user.id,
+        program_id=participant.program_id,
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_adjust_balance",
+        resource_type="bug_hunt_participant",
+        resource_id=participant_id,
+        details={"amountKobo": body.amountKobo, "note": body.note, "entryId": entry.id},
+    )
+    program = await program_service.get(participant.program_id)
+    return models.AdjustmentResponse(
+        entry=_ledger_entry_view(entry, program.season_number),
+        balanceKobo=await ledger_service.balance(participant.user_id),
+    )
+
+
+# ===========================================================================
+# Admin — the payout queue
+#
+# Super admin throughout, unlike triage. Triage is safe for a content manager because the amount is not
+# theirs to choose; this is the surface where real money leaves a real bank account, and one of these
+# endpoints is the only place a full account number is disclosed.
+# ===========================================================================
+
+
+@admin_router.get("/withdrawals", response_model=models.WithdrawalAdminListResponse)
+async def admin_list_withdrawals(
+    admin_user: SuperAdminUser,
+    status_filter: str | None = Query(default=None, alias="status"),
+    search: str | None = None,
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=25, ge=1, le=100),
+) -> models.WithdrawalAdminListResponse:
+    """The payout queue, **oldest first**.
+
+    Oldest first because this is a queue of people waiting for money — the one queue where being pushed down
+    the page has a direct cost to somebody.
+    """
+    rows, total = await withdrawal_service.list_all(
+        status=status_filter, search=search, page=page, page_size=pageSize
+    )
+    return models.WithdrawalAdminListResponse(
+        withdrawals=[
+            _withdrawal_admin_view(row, email=email, name=name) for row, email, name in rows
+        ],
+        total=total,
+        page=page,
+        pageSize=pageSize,
+        hasMore=(page * pageSize) < total,
+    )
+
+
+@admin_router.get("/withdrawals/{withdrawal_id}", response_model=models.WithdrawalAdminDetail)
+async def admin_get_withdrawal(
+    withdrawal_id: str, admin_user: SuperAdminUser
+) -> models.WithdrawalAdminDetail:
+    """The payout console. **The only endpoint that returns a full account number.**
+
+    Audited on *read*, not just on write, because the disclosure is the sensitive act here — the transfer
+    happens in somebody's banking app where we cannot see it, so a record of who looked at the number is the
+    only trace this system can offer.
+    """
+    data = await withdrawal_service.detail(withdrawal_id)
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_view_payout_details",
+        resource_type="bug_hunt_withdrawal",
+        resource_id=withdrawal_id,
+        details={"disclosedAccountNumber": data["accountNumber"] is not None},
+    )
+    return models.WithdrawalAdminDetail(
+        withdrawal=_withdrawal_admin_view(
+            data["withdrawal"], email=data["email"], name=data["name"]
+        ),
+        accountNumber=data["accountNumber"],
+        accountNumberUnreadable=data["accountNumberUnreadable"],
+        payoutCount=data["payoutCount"],
+        paidBeforeKobo=data["paidBeforeKobo"],
+    )
+
+
+@admin_router.post(
+    "/withdrawals/{withdrawal_id}/decision", response_model=models.WithdrawalAdminView
+)
+async def admin_decide_withdrawal(
+    withdrawal_id: str, body: models.WithdrawalDecisionRequest, admin_user: SuperAdminUser
+) -> models.WithdrawalAdminView:
+    """Approve a request, or refuse it and give the money back.
+
+    Approval moves nothing: the debit was written when the request was made, so this is a statement that
+    somebody is going to make the transfer. A refusal writes a compensating credit rather than deleting the
+    debit, so the tester's history shows the request and its refund.
+    """
+    row = await withdrawal_service.decide(
+        withdrawal_id=withdrawal_id,
+        decision=body.decision,
+        reason=body.reason,
+        staff_user_id=admin_user.id,
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_decide_withdrawal",
+        resource_type="bug_hunt_withdrawal",
+        resource_id=withdrawal_id,
+        details={"decision": body.decision, "reason": body.reason, "amountKobo": row.amount_kobo},
+    )
+    data = await withdrawal_service.detail(withdrawal_id)
+    return _withdrawal_admin_view(row, email=data["email"], name=data["name"])
+
+
+@admin_router.post(
+    "/withdrawals/{withdrawal_id}/mark-paid", response_model=models.WithdrawalAdminView
+)
+async def admin_mark_withdrawal_paid(
+    withdrawal_id: str, body: models.MarkPaidRequest, admin_user: SuperAdminUser
+) -> models.WithdrawalAdminView:
+    """Record a transfer **that has already been made.** This moves no money.
+
+    It is the operator writing down what they just did in their banking app. The reference is required,
+    because a payout that cannot be matched to a statement line is indistinguishable from one that never
+    happened — and no ledger entry is written here, because the debit was recorded at request time. Writing
+    one now would pay the same request twice: once out of the wallet and once out of the bank.
+    """
+    row = await withdrawal_service.mark_paid(
+        withdrawal_id=withdrawal_id,
+        provider_reference=body.providerReference,
+        staff_user_id=admin_user.id,
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_record_payout",
+        resource_type="bug_hunt_withdrawal",
+        resource_id=withdrawal_id,
+        details={"providerReference": body.providerReference, "amountKobo": row.amount_kobo},
+    )
+    data = await withdrawal_service.detail(withdrawal_id)
+    return _withdrawal_admin_view(row, email=data["email"], name=data["name"])
+
+
+@admin_router.post(
+    "/withdrawals/{withdrawal_id}/revert-to-approved", response_model=models.WithdrawalAdminView
+)
+async def admin_revert_withdrawal(
+    withdrawal_id: str, body: models.RevertPaidRequest, admin_user: SuperAdminUser
+) -> models.WithdrawalAdminView:
+    """For a transfer the bank refused after we had written it down, or a recording mistake.
+
+    Moves no money and touches no ledger entry — nothing left the wallet at this stage, so nothing needs
+    putting back. It only says the payout is not settled after all.
+    """
+    row = await withdrawal_service.revert_to_approved(
+        withdrawal_id=withdrawal_id, reason=body.reason, staff_user_id=admin_user.id
+    )
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action="bug_hunt_revert_payout",
+        resource_type="bug_hunt_withdrawal",
+        resource_id=withdrawal_id,
+        details={"reason": body.reason},
+    )
+    data = await withdrawal_service.detail(withdrawal_id)
+    return _withdrawal_admin_view(row, email=data["email"], name=data["name"])
+
+
+@admin_router.get("/known-issues", response_model=models.KnownIssueListResponse)
+async def admin_known_issues(
+    admin_user: StaffUser,
+    platform: str | None = None,
+    excludeProgramId: str | None = None,
+    limit: int = Query(default=100, ge=1, le=300),
+) -> models.KnownIssueListResponse:
+    """Accepted findings from other seasons, for marking a repeat as `known_issue`.
+
+    This endpoint is what keeps that fairness rule practical rather than aspirational. Without it, deciding
+    whether a Season 2 report repeats an unfixed Season 1 one is a memory test — and the reliable outcome of
+    a memory test under queue pressure is `duplicate`, which blames the reporter for our backlog.
+    """
+    rows = await triage_service.known_issues(
+        platform=platform, exclude_program_id=excludeProgramId, limit=limit
+    )
+    return models.KnownIssueListResponse(
+        knownIssues=[
+            models.KnownIssueView(
+                id=submission.id,
+                seasonNumber=season_number,
+                platform=submission.platform,
+                title=submission.title,
+                severity=submission.severity,
+                category=submission.category,
+                createdAt=submission.created_at,
+            )
+            for submission, season_number in rows
+        ]
+    )
+
+
+# Re-exported so later phases' routes can raise them without importing from two places, and so a reader of
+# this module can see which refusals the participant surface speaks.
+__all__ = [
+    "router",
+    "admin_router",
+    "CountryNotEligibleError",
+    "CountryNotSetError",
+    "NoOpenSeasonError",
+]
