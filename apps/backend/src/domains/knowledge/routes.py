@@ -26,6 +26,7 @@ from src.shared.auth import CurrentUser
 from . import models
 from .repository import knowledge_repo
 from .services import (
+    course_material_context,
     course_service,
     illustration_service,
     lesson_service,
@@ -74,6 +75,16 @@ async def generate_course_outline(body: models.CourseOutlineRequest, current_use
     # reviewed for as long as the learner likes, and the limit can be reached in another tab in between.
     await course_service.ensure_can_create_course(current_user)
 
+    # Material the learner already attached to this course, when they named one. Ownership is
+    # checked inside the query, so an id belonging to someone else selects nothing rather than
+    # leaking a syllabus into this learner's prompt.
+    source_material: str | None = None
+    if body.sourceCourseId:
+        context = await course_material_context.for_course(
+            course_id=body.sourceCourseId, user_id=current_user.id
+        )
+        source_material = course_material_context.as_prompt_material(context)
+
     # `fallback` is what comes back on failure, and `None` means "no fallback — raise". Passing `None` here
     # meaning "give me nothing and I will handle it" is what turned a truncated model reply into an
     # unhandled `JSONDecodeError` and a `500`, which the browser then reported as a CORS error because an
@@ -88,6 +99,7 @@ async def generate_course_outline(body: models.CourseOutlineRequest, current_use
             level=body.difficulty.value if body.difficulty else None,
             teaching_style=body.teachingStyle,
             category=body.category,
+            source_material=source_material,
         ),
         # An outline is a dozen titles and a few outcomes, but a model that writes generous descriptions
         # runs long, and a reply cut mid-string is the one failure this endpoint cannot recover from.

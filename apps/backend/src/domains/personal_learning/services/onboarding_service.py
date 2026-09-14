@@ -121,11 +121,15 @@ async def set_skill_details(
     subjects: list[str] | None = None,
     goals: str | None = None,
     trigger_auto_setup: bool = True,
+    defer_generation: bool = False,
 ) -> Any:
-    """Set skill-building details, optionally starting content generation.
+    """Set skill-building details, create the course, optionally start content generation.
 
-    Normal onboarding keeps the default. Temporary landing-draft claims disable it so applying
-    deterministic answers cannot silently trigger LLM work.
+    Normal onboarding keeps `trigger_auto_setup`. Temporary landing-draft claims disable it so
+    applying deterministic answers cannot silently trigger LLM work.
+
+    `defer_generation` is different and narrower: the client *will* want generation, just not
+    yet, because it is about to upload the material the generation should read.
     """
     profile = await repo.get_profile_by_user(user_id)
     if not profile:
@@ -152,7 +156,12 @@ async def set_skill_details(
 
     profile = await repo.update_profile(user_id, update_data)
 
-    if trigger_auto_setup:
+    # The course exists before anything is generated, so the learner's own material has
+    # somewhere to go. Cheap: one insert, no model call. A failure here is not fatal — auto-setup
+    # will try again — so the learner is not blocked on it.
+    profile = await _ensure_course_for_profile(user_id=user_id, profile=profile) or profile
+
+    if trigger_auto_setup and not defer_generation:
         try:
             _spawn_content_generation(
                 user_id=user_id,
@@ -165,6 +174,69 @@ async def set_skill_details(
             logger.error(f"Failed to start content generation: {e}")
 
     return profile
+
+
+async def _ensure_course_for_profile(*, user_id: str, profile: Any) -> Any:
+    """Create the Learn path's course now, and return the profile carrying its id.
+
+    Only for the purposes that build a course (`auto_setup_service.COURSE_FIRST_PURPOSES`); the
+    dated purposes get a preparation and never reach here. Returns `None` when nothing changed,
+    so the caller keeps the profile it already has.
+    """
+    from . import auto_setup_service
+
+    if (profile.purpose or "") not in auto_setup_service.COURSE_FIRST_PURPOSES:
+        return None
+    if getattr(profile, "onboarding_course_id", None):
+        return None
+
+    subject = auto_setup_service._primary_subject(profile)
+    if not subject:
+        return None
+
+    course = await auto_setup_service._ensure_onboarding_course(
+        user_id=user_id,
+        profile=profile,
+        subject=subject,
+        goals=profile.goals_text or "",
+    )
+    if course is None:
+        # Includes the free-tier course limit. Onboarding continues; the learner keeps their
+        # profile and lands on their workspace rather than on an error in a flow they cannot retry.
+        return None
+    return await repo.get_profile_by_user(user_id)
+
+
+async def start_content_generation(*, user_id: str) -> dict[str, Any]:
+    """Begin generating the learner's first content, unless it already exists.
+
+    Paired with `deferGeneration` on the details calls: the client uploads its material between
+    the two, so by the time this runs the outline has something to read.
+
+    The guard is the existing status read rather than a flag, because a flag written by a
+    background task is exactly what used to strand learners — `content_ready` never arrived and
+    the screen polled forever. Asking what content exists cannot go stale.
+    """
+    status = await get_onboarding_status(user_id=user_id)
+    if status["state"] in ("content_ready", "completed"):
+        return status
+
+    profile = await repo.get_profile_by_user(user_id)
+    if not profile:
+        raise NotFoundError("Learning profile", user_id)
+
+    try:
+        _spawn_content_generation(
+            user_id=user_id,
+            skill_name=profile.skill_name,
+            current_level=profile.current_level,
+            subjects=list(profile.subjects or []),
+            goals=profile.goals_text,
+        )
+    except Exception as e:
+        logger.error(f"Failed to start content generation: {e}")
+
+    return await get_onboarding_status(user_id=user_id)
 
 
 #: Strong references to running content-generation tasks.
@@ -264,18 +336,37 @@ async def get_onboarding_status(*, user_id: str) -> dict[str, Any]:
     flashcard_count = await repo.count_flashcards(user_id)
     plan_count = await repo.count_study_plans(user_id)
 
+    # The Learn path builds a course instead of a preparation, so readiness has to be asked of
+    # whichever one this learner's onboarding was building. Reading the recorded course rather
+    # than "their newest course" matters: a returning learner sent back through onboarding to
+    # state a goal already owns courses, and any of those would answer "yes, a course exists"
+    # while this onboarding had produced nothing.
+    course = None
+    module_count = 0
+    if getattr(profile, "onboarding_course_id", None):
+        from src.domains.knowledge.repository import knowledge_repo
+
+        course = await knowledge_repo.find_course_with_modules(
+            profile.onboarding_course_id, user_id
+        )
+        module_count = len(getattr(course, "modules", None) or []) if course else 0
+
     progress = {
         "preparation": first_prep is not None,
         "topics": topic_count > 0,
+        "course": course is not None,
+        "outline": module_count > 0,
         "flashcards": flashcard_count > 0,
         "studyPlan": plan_count > 0,
     }
 
-    # A preparation with topics is enough to open. Flashcards and a study plan are
-    # both best-effort in `auto_setup_for_learner` — each is wrapped in its own
-    # `try` and returns empty on failure — so requiring them would strand a learner
-    # whose content is perfectly usable.
-    content_is_usable = progress["preparation"] and progress["topics"]
+    # A preparation with topics is enough to open, and so is a course with an outline. Flashcards
+    # and a study plan are both best-effort in `auto_setup_for_learner` — each is wrapped in its
+    # own `try` and returns empty on failure — so requiring them would strand a learner whose
+    # content is perfectly usable.
+    content_is_usable = (progress["preparation"] and progress["topics"]) or (
+        progress["course"] and progress["outline"]
+    )
 
     # Derived, not just read. `content_ready` is written by a background task, and
     # anything that stops that task from reaching its last line — a crash, a deploy,
@@ -305,6 +396,9 @@ async def get_onboarding_status(*, user_id: str) -> dict[str, Any]:
         "estimatedSecondsRemaining": estimated_seconds,
         "firstPreparation": (
             {"id": first_prep.id, "subject": first_prep.subject} if first_prep else None
+        ),
+        "firstCourse": (
+            {"id": course.id, "title": course.title or ""} if course is not None else None
         ),
     }
 

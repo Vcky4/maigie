@@ -873,6 +873,9 @@ class LearningProfileResponse(CamelModel):
     skill_name: str | None = None
     current_level: SkillLevel | None = None
     preferred_explanation_style: str | None = None
+    #: The course onboarding built on the Learn path. Published because the client needs it
+    #: twice: to upload the learner's material to it, and to open it when setup finishes.
+    onboarding_course_id: str | None = None
     onboarding_completed_at: datetime | None = None
     maturity_days: int = 0
     quiet_hours_start: str | None = None
@@ -908,13 +911,30 @@ class SkillDetailsRequest(CamelModel):
     current_level: SkillLevel | None = None
     subjects: list[str] = Field(default_factory=list)
     goals: str | None = None
+    #: Hold generation until the client asks for it with `POST /onboarding/generate`.
+    #:
+    #: A client that is about to upload a syllabus sets this. Without it, generation starts
+    #: while the file is still being uploaded and the outline is designed from the brief alone —
+    #: the material arrives seconds after the curriculum it was supposed to shape. The course
+    #: itself is still created immediately, because the upload needs something to attach to.
+    defer_generation: bool = False
 
 
 class OnboardingStatusResponse(CamelModel):
+    """Where a learner's first-run setup has got to.
+
+    `progress` carries both paths' keys. `preparation`/`topics` are populated when onboarding
+    built a preparation, `course`/`outline` when it built a course; the two are never both true,
+    and a client shows the steps for the path it started. Sending both rather than reusing one
+    set of names keeps "your preparation is ready" from appearing over a course.
+    """
+
     state: OnboardingState
     progress: dict[str, bool] = Field(default_factory=dict)
     estimated_seconds_remaining: int | None = None
     first_preparation: dict[str, str] | None = None
+    #: The course built on the Learn path, and the thing that path should open.
+    first_course: dict[str, str] | None = None
 
 
 # ===========================================================================

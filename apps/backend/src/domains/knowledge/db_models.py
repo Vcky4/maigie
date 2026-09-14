@@ -276,7 +276,12 @@ class TopicCheckAttempt(Base):
 
     __tablename__ = "TopicCheckAttempt"
     __table_args__ = (
-        Index("TopicCheckAttempt_userId_topicId_createdAt_idx", "userId", "topicId", "createdAt"),
+        Index(
+            "TopicCheckAttempt_userId_topicId_createdAt_idx",
+            "userId",
+            "topicId",
+            "createdAt",
+        ),
     )
 
     id: Mapped[str] = mapped_column(
@@ -347,7 +352,12 @@ class TopicIllustration(Base):
 
     __tablename__ = "TopicIllustration"
     __table_args__ = (
-        Index("TopicIllustration_topicId_userId_createdAt_idx", "topicId", "userId", "createdAt"),
+        Index(
+            "TopicIllustration_topicId_userId_createdAt_idx",
+            "topicId",
+            "userId",
+            "createdAt",
+        ),
         # At least one of the two must hold something. A row with neither renders as an empty panel, which
         # reads as a broken feature rather than as an absent one — the same reason `generate_for_topic`
         # raises instead of returning a blank diagram.
@@ -471,6 +481,14 @@ class Resource(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     type: Mapped[str] = mapped_column(String, default="OTHER", server_default="OTHER")
     metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    #: Text pulled out of an uploaded file, when the format allowed it (migration 085).
+    #:
+    #: The course-side counterpart of `PrepMaterial.extractedText`: it is what grounds an
+    #: outline in the syllabus a learner attached, and it is deliberately absent from
+    #: `ResourceResponse` because a resource listing has no business shipping twenty
+    #: thousand characters per row. `NULL` means "nothing readable", which covers links
+    #: and images as well as scanned PDFs with no text layer.
+    extracted_text: Mapped[str | None] = mapped_column("extractedText", Text, nullable=True)
     is_recommended: Mapped[bool] = mapped_column(
         "isRecommended", Boolean, default=False, server_default="false"
     )

@@ -648,6 +648,13 @@ class LearningProfile(Base, TimestampMixin):
         "preferredExplanationStyle", String, nullable=True
     )
     proficiency_map: Mapped[dict | None] = mapped_column("proficiencyMap", JSON, nullable=True)
+    #: The course onboarding built for this learner, when they came in through "Learn"
+    #: (migration 086). Written before any model call so an uploaded document has somewhere to
+    #: attach, and read on retry so a second attempt extends that course instead of creating
+    #: another one. `NULL` for anyone who onboarded through the preparation path.
+    onboarding_course_id: Mapped[str | None] = mapped_column(
+        "onboardingCourseId", String, nullable=True
+    )
     onboarding_completed_at: Mapped[datetime | None] = mapped_column(
         "onboardingCompletedAt", DateTime(timezone=True), nullable=True
     )
