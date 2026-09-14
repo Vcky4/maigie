@@ -10,6 +10,7 @@ import logging
 from datetime import UTC, datetime, timezone
 from typing import Any
 
+from src.shared import files as shared_files
 from src.shared.exceptions import ConflictError, MaigieError, NotFoundError
 
 from ..repository import personal_learning_repo as repo
@@ -263,65 +264,14 @@ async def upload_material(*, user_id: str, prep_id: str, data: dict[str, Any]) -
     return material
 
 
-# Uploads are capped well below what a textbook would be. The cap exists because
-# extraction reads the whole file into memory, and because a 200MB scan is not
-# material a learner is going to revise from.
-MAX_MATERIAL_UPLOAD_BYTES = 25 * 1024 * 1024
-
-# Text is extracted for these, so topic extraction has something to read. Other
-# types are stored and downloadable but contribute nothing to extraction, and
-# `hasExtractedText` says so rather than the client having to guess from the
-# extension.
-_TEXT_EXTENSIONS = (".txt", ".md", ".markdown", ".csv")
-
-
-def _safe_filename(raw: str | None) -> str:
-    """Reduce a client-supplied filename to something safe to use as a path segment.
-
-    Only the basename is kept and the character set is restricted, so a name like
-    `../../other-user/notes.pdf` cannot write outside the preparation's own prefix.
-    """
-    import re
-
-    candidate = (raw or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
-    candidate = re.sub(r"[^A-Za-z0-9._-]+", "_", candidate).strip("._")
-    return candidate[:200] or "material"
-
-
-def _extract_upload_text(content: bytes, filename: str, content_type: str | None) -> str | None:
-    """Pull readable text out of an uploaded file, or return None.
-
-    Returning `None` is a normal outcome, not an error: an image or a slide deck is
-    still worth storing. Extraction failure is also `None` rather than an
-    exception, because a file the learner can open is worth keeping even if we
-    cannot read it.
-    """
-    lowered = filename.lower()
-
-    if lowered.endswith(_TEXT_EXTENSIONS) or (content_type or "").startswith("text/"):
-        try:
-            return content.decode("utf-8", errors="replace").strip() or None
-        except Exception:  # noqa: BLE001 - a file we cannot decode is still storable
-            return None
-
-    if lowered.endswith(".pdf") or (content_type or "") == "application/pdf":
-        try:
-            import io
-
-            from pypdf import PdfReader
-
-            reader = PdfReader(io.BytesIO(content))
-            pages = [page.extract_text() or "" for page in reader.pages]
-            text = "\n\n".join(part.strip() for part in pages if part.strip())
-            return text or None
-        except Exception as e:  # noqa: BLE001 - a scanned PDF has no text layer
-            logger.info(
-                "PDF text extraction produced nothing",
-                extra={"filename": filename, "error": type(e).__name__},
-            )
-            return None
-
-    return None
+# Filename hygiene, the upload cap and text extraction live in `shared.files` because
+# course materials need the identical treatment — see that module for why there is one
+# implementation rather than two. The names stay bound here so this module reads the same
+# as it did when it owned them.
+MAX_MATERIAL_UPLOAD_BYTES = shared_files.MAX_MATERIAL_UPLOAD_BYTES
+_TEXT_EXTENSIONS = shared_files.TEXT_EXTENSIONS
+_safe_filename = shared_files.safe_filename
+_extract_upload_text = shared_files.extract_upload_text
 
 
 async def upload_material_file(

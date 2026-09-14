@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from src.domains.identity.db_models import User
+from src.shared import files as shared_files
 from src.shared.events import emit
 from src.shared.exceptions import ForbiddenError, NotFoundError, ValidationError
 
@@ -175,7 +176,10 @@ async def get_dashboard(*, user_id: str) -> dict[str, Any]:
     "resume" means. Not the most recently *updated* course: renaming a course would promote it above
     the one the learner is actually working through.
     """
-    from src.shared.time.learner_timezone import resolve_learner_timezone, to_learner_local
+    from src.shared.time.learner_timezone import (
+        resolve_learner_timezone,
+        to_learner_local,
+    )
 
     learner_timezone = await resolve_learner_timezone(user_id)
     now_local = to_learner_local(datetime.now(UTC), learner_timezone)
@@ -368,6 +372,89 @@ async def create_course_with_outline(
     return course
 
 
+async def apply_generated_outline(
+    *,
+    user_id: str,
+    course_id: str,
+    modules: list[dict[str, Any]],
+) -> int:
+    """Write a generated outline onto a course that already exists. Returns modules written.
+
+    `create_course_with_outline` covers the wizard, where the course and its outline are decided
+    together and saved in one transaction. Onboarding cannot use it: the course row has to exist
+    *before* generation so the learner's uploaded syllabus has something to attach to, and the
+    outline is then designed from that upload. The course comes first and the curriculum arrives
+    afterwards.
+
+    **A course that already has modules is left alone**, and that is the guard that makes
+    generation safe to retry. Onboarding's steps are individually best-effort, so a learner whose
+    outline call timed out will come back through here; without this check the retry would append
+    a second full curriculum to the same course. Reported as `0` rather than raised, because
+    "already outlined" is a success from the caller's point of view.
+
+    Topics keep `kind` and `estimatedHours`, which `create_course_with_outline` discards when it
+    normalises topics to bare titles. There is no reason to lose them here: the outline generator
+    produces them, the topic rows have columns for them, and a Practice topic that arrives labelled
+    as a plain Lesson is a worse first course for no saving.
+    """
+    if not modules:
+        return 0
+
+    course = await knowledge_repo.find_course_with_modules(course_id, user_id)
+    if course is None:
+        raise NotFoundError("Course", course_id)
+    if getattr(course, "modules", None):
+        logger.info(
+            "Course already has an outline; generated outline not applied",
+            extra={"courseId": course_id},
+        )
+        return 0
+
+    written = 0
+    for module_index, module in enumerate(modules):
+        title = str(module.get("title") or "").strip()
+        topics = module.get("topics") or []
+        if not title or not topics:
+            continue
+
+        module_row = await knowledge_repo.create_module(
+            {
+                "courseId": course_id,
+                "title": title,
+                "description": module.get("description"),
+                "order": float(module_index),
+            }
+        )
+
+        items: list[dict[str, Any]] = []
+        for topic_index, topic in enumerate(topics):
+            # The generator returns dicts; a plain string is accepted so a caller holding a
+            # normalised outline does not have to re-inflate it.
+            topic_title = (
+                str(topic.get("title") or "").strip()
+                if isinstance(topic, dict)
+                else str(topic).strip()
+            )
+            if not topic_title:
+                continue
+            duration = topic.get("durationMinutes") if isinstance(topic, dict) else None
+            items.append(
+                {
+                    "title": topic_title,
+                    "order": float(topic_index),
+                    "kind": topic.get("kind") if isinstance(topic, dict) else None,
+                    # Topic rows store hours; the generator thinks in minutes.
+                    "estimatedHours": (round(duration / 60, 2) if duration else None),
+                }
+            )
+
+        if items:
+            await knowledge_repo.create_topics(module_row.id, items)
+        written += 1
+
+    return written
+
+
 async def update_course(*, course_id: str, user_id: str, data: dict[str, Any]) -> Any:
     """Update course metadata. An explicit null clears the field; an omitted key leaves it alone.
 
@@ -404,7 +491,7 @@ async def archive_course(*, course_id: str, user_id: str) -> Any:
 
 
 async def add_course_material(*, user_id: str, course_id: str, file: Any) -> Any:
-    """Store a reference file against a course, as a resource.
+    """Store a reference file against a course, as a resource, and keep its text.
 
     The create wizard has a file drop whose own caption reads "names only in prototype": filenames were
     held in browser memory and thrown away on submit. This is where they go.
@@ -416,16 +503,41 @@ async def add_course_material(*, user_id: str, course_id: str, file: Any) -> Any
 
     The row is written only after the upload succeeds, so a failed upload leaves no resource pointing at
     a URL that holds nothing — the same ordering `study_plan_service.add_material` uses.
+
+    **Text is extracted on the way in.** Until it was, a syllabus attached to a course was a download
+    link: `build_outline_prompt` had nothing to read, so the one file that says what a course should
+    cover could not shape it. This now mirrors `exam_prep_service.upload_material_file` — same shared
+    extractor, same 25MB cap, same filename hygiene — and the text lands on `Resource.extractedText`
+    where `course_material_context` can budget it into an outline prompt. A file we cannot read (an
+    image, a scanned PDF, a slide deck) is still stored and still downloadable; it simply grounds
+    nothing, and a null column says so.
+
+    Reading the bytes here rather than streaming to storage is what the cap is for: extraction needs the
+    whole file in memory, and `upload_bytes` is the same call the preparation path makes for this reason.
     """
     from src.shared.infrastructure.storage import StorageError, storage_service
 
     await check_course_ownership(course_id, user_id)
 
+    filename = shared_files.safe_filename(getattr(file, "filename", None))
+    content = await file.read()
+    if not content:
+        raise ValidationError("That file is empty.")
+    if len(content) > shared_files.MAX_MATERIAL_UPLOAD_BYTES:
+        raise ValidationError(
+            "That file is larger than the "
+            f"{shared_files.MAX_MATERIAL_UPLOAD_BYTES // (1024 * 1024)}MB limit."
+        )
+
+    content_type = getattr(file, "content_type", None) or "application/octet-stream"
+
     try:
         # Scoped by learner and course, so two courses can hold files of the same name and one learner's
         # upload cannot overwrite another's.
-        stored = await storage_service.upload_upload_file(
-            file, path_prefix=f"courses/{user_id}/{course_id}"
+        stored = await storage_service.upload_bytes(
+            content,
+            f"courses/{user_id}/{course_id}/{filename}",
+            content_type=content_type,
         )
     except StorageError as error:
         raise ValueError(f"Upload failed: {error}") from error
@@ -433,10 +545,11 @@ async def add_course_material(*, user_id: str, course_id: str, file: Any) -> Any
     return await knowledge_repo.create_resource(
         {
             "userId": user_id,
-            "title": stored["filename"],
+            "title": stored.get("filename") or filename,
             "url": stored["url"],
             "type": "DOCUMENT",
             "courseId": course_id,
+            "extractedText": shared_files.extract_upload_text(content, filename, content_type),
         }
     )
 
@@ -478,7 +591,10 @@ async def toggle_topic_completion(
     # and streak both read this column — they would count a reopened topic as still done.
     updated = await knowledge_repo.update_topic(
         topic_id,
-        {"completed": completed, "completedAt": datetime.now(UTC) if completed else None},
+        {
+            "completed": completed,
+            "completedAt": datetime.now(UTC) if completed else None,
+        },
     )
 
     # `Course.progress` is stored as well as computed, and this is what keeps it true. It used to be

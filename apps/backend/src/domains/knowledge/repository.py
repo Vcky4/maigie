@@ -1052,7 +1052,12 @@ class KnowledgeRepository:
     # -----------------------------------------------------------------------
 
     async def list_resources(
-        self, *, where: dict[str, Any], skip: int = 0, take: int = 20, order: dict | None = None
+        self,
+        *,
+        where: dict[str, Any],
+        skip: int = 0,
+        take: int = 20,
+        order: dict | None = None,
     ) -> tuple[list[Resource], int]:
         async with await self._session() as session:
             conditions = self._build_resource_conditions(where)
@@ -1072,6 +1077,28 @@ class KnowledgeRepository:
 
             result = await session.execute(stmt)
             return list(result.scalars().all()), total
+
+    async def list_course_materials_with_text(self, course_id: str, user_id: str) -> list[Resource]:
+        """The course's uploaded resources that have readable text, newest first.
+
+        Scoped by owner as well as by course: the caller is building a prompt out of these,
+        and a course id is not on its own proof that the requester may read what is attached
+        to it. Rows with no extracted text are excluded here rather than downstream, because
+        they cannot contribute to a prompt and counting them would make an ungrounded
+        generation look grounded.
+        """
+        async with await self._session() as session:
+            stmt = (
+                select(Resource)
+                .where(
+                    Resource.course_id == course_id,
+                    Resource.user_id == user_id,
+                    Resource.extracted_text.isnot(None),
+                    func.length(func.trim(Resource.extracted_text)) > 0,
+                )
+                .order_by(Resource.created_at.desc())
+            )
+            return list((await session.execute(stmt)).scalars().all())
 
     async def find_resources_by_urls(self, user_id: str, urls: list[str]) -> list[Resource]:
         """The learner's resources matching any of these URLs.
@@ -1117,6 +1144,9 @@ class KnowledgeRepository:
                 course_id=data.get("courseId"),
                 topic_id=data.get("topicId"),
                 space_id=data.get("spaceId"),
+                # Uploaded-file text, when the format allowed it. Absent for links, which is
+                # every resource that is not an upload.
+                extracted_text=data.get("extractedText"),
             )
             session.add(resource)
             await session.commit()
