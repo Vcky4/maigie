@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import func, select
 
 from src.shared.auth import SuperAdminUser
-from src.shared.database import get_session_factory
+from src.shared.database import enum_text, get_session_factory
 
 from . import models
 from .db_models import LedgerLine
@@ -164,7 +164,9 @@ async def list_ledger(
     """List ledger lines newest first, with GBP totals over the same filters (super admin only)."""
     conditions = []
     if kind:
-        conditions.append(LedgerLine.kind == kind)
+        # `enum_text`, because `LedgerLine.kind` is a Postgres enum in production and a `varchar` on
+        # staging. See `shared/database/enums.py`.
+        conditions.append(enum_text(LedgerLine.kind) == kind)
     from_dt = _parse_date(fromDate)
     to_dt = _parse_date(toDate)
     if from_dt:
@@ -194,21 +196,21 @@ async def list_ledger(
         income = (
             await session.execute(
                 select(func.coalesce(func.sum(LedgerLine.amount_gbp), 0)).where(
-                    *conditions, LedgerLine.kind == "INCOME"
+                    *conditions, enum_text(LedgerLine.kind) == "INCOME"
                 )
             )
         ).scalar() or Decimal(0)
         expense = (
             await session.execute(
                 select(func.coalesce(func.sum(LedgerLine.amount_gbp), 0)).where(
-                    *conditions, LedgerLine.kind == "EXPENSE"
+                    *conditions, enum_text(LedgerLine.kind) == "EXPENSE"
                 )
             )
         ).scalar() or Decimal(0)
         exp_bounds = (
             await session.execute(
                 select(func.min(LedgerLine.occurred_at), func.max(LedgerLine.occurred_at)).where(
-                    *conditions, LedgerLine.kind == "EXPENSE"
+                    *conditions, enum_text(LedgerLine.kind) == "EXPENSE"
                 )
             )
         ).one()

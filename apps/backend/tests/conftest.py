@@ -69,6 +69,52 @@ def db():
     return None
 
 
+#: Hosts a destructive test suite may point at. Everything else is refused.
+_LOCAL_DB_HOSTS = frozenset(
+    {"localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal", "db", "postgres"}
+)
+
+
+def _refuse_non_local_database(database_url: str) -> None:
+    """Fail loudly rather than let a destructive suite run against a remote database.
+
+    **This is a hard error, not a skip.** A skip is what you want when an environment simply cannot run a
+    test; here the environment *can*, and doing so would be a catastrophe. Silently skipping would also
+    hide the mistake, and a green run against no tests looks exactly like a green run against all of them.
+
+    The near-miss that prompted it, 2026-09-14: `.env` was repointed at **production** to diagnose a
+    prod-only enum failure, while `DATABASE_URL` is read from that same file. The Bug Hunt suites open
+    with ``DELETE FROM "BugHuntLedgerEntry"``, ``DELETE FROM "BugHuntWithdrawal"`` and a ``DELETE FROM
+    "User"`` filtered only by an email pattern, in an autouse fixture that runs before *every* test in the
+    file. One ``RUN_DB_TESTS=1 pytest`` would have deleted live financial rows. Nothing in the suite
+    prevented it; the only protection was remembering, and the whole point of a guard is to not have to.
+
+    An escape hatch exists because a legitimate remote scratch database is a real thing, but it is
+    deliberately awkward to type and names what it is doing.
+    """
+    from urllib.parse import urlparse
+
+    if os.getenv("ALLOW_DESTRUCTIVE_TESTS_ON_REMOTE_DB", "").lower() in ("1", "true", "yes"):
+        return
+
+    # Parse rather than substring-match: `postgresql://user@prod-host/localhost_lookalike` contains the
+    # string "localhost" and is not local.
+    host = (urlparse(database_url).hostname or "").lower()
+    if host in _LOCAL_DB_HOSTS:
+        return
+
+    pytest.fail(
+        "Refusing to run database tests against a non-local host.\n\n"
+        f"  DATABASE_URL host: {host or '(unparseable)'}\n\n"
+        "These suites truncate tables and delete User rows. Point DATABASE_URL at a local scratch\n"
+        "database, for example:\n\n"
+        '  RUN_DB_TESTS=1 DATABASE_URL="postgresql://$(whoami)@localhost:5432/scratch" pytest ...\n\n'
+        "If the target really is a disposable remote database, set\n"
+        "ALLOW_DESTRUCTIVE_TESTS_ON_REMOTE_DB=1 and be certain.",
+        pytrace=False,
+    )
+
+
 @pytest.fixture(scope="function", autouse=True)
 def no_outbound_email(request, monkeypatch):
     """No test sends real email. Ever.
@@ -127,8 +173,10 @@ async def db_lifecycle(request):
 
     if os.getenv("RUN_DB_TESTS", "").lower() not in ("1", "true", "yes"):
         pytest.skip("RUN_DB_TESTS not set — skipping database-dependent test")
-    if not os.getenv("DATABASE_URL", ""):
+    database_url = os.getenv("DATABASE_URL", "")
+    if not database_url:
         pytest.skip("DATABASE_URL not set — skipping database-dependent test")
+    _refuse_non_local_database(database_url)
 
     from src.shared.database.session import connect_db, disconnect_db
 

@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from src.shared.auth import StaffUser
-from src.shared.database import get_session_factory, ilike_any
+from src.shared.database import enum_text, get_session_factory, ilike_any
 
 from . import models
 from .db_models import CareerApplication, JobPosting
@@ -241,7 +241,7 @@ async def list_applications(
     """List career applications, paginated and filterable (staff only)."""
     conditions = []
     if status:
-        conditions.append(CareerApplication.status == status)
+        conditions.append(enum_text(CareerApplication.status) == status)
     if jobId:
         conditions.append(CareerApplication.job_id == jobId)
     if search:
