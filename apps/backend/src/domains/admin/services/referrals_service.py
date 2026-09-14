@@ -1,10 +1,31 @@
 """Admin referrals — reshaped onto the points model.
 
-The Prisma-era `ReferralReward`/`ReferralRewardClaim` tables are empty; referrals now earn points
-(`PointsLedgerEntry` with `kind='referral_qualified'`, per `MAIGIE_PLUS_COMMERCIAL_PLAN.md`). So this
-reads the points ledger, not the retired token tables, and maps it into the client's referral shape:
-`tokens` is the points granted, and a grant is a realised reward (there is no separate claim step in
-the points model), so `isClaimed` is True with `claimedAt` = the grant time.
+Referrals earn **points**, per `docs/MAIGIE_PLUS_COMMERCIAL_PLAN.md` §6.9 and Decision O: 100 points on
+qualification, and one qualified referral is exactly one 5-hour pass. So this reads `PointsLedgerEntry`
+with `kind='referral_qualified'` and maps it into the client's referral shape. `tokens` is the points
+granted, and a grant is a realised reward — there is no separate claim step in the points model — so
+`isClaimed` is True with `claimedAt` = the grant time.
+
+**Correction, 2026-09-14.** This docstring used to claim the Prisma-era `ReferralReward` /
+`ReferralRewardClaim` tables "are empty". They are not: production holds **60** `ReferralReward` rows
+(all `rewardType='signup'`, January to April 2026) and **29** `ReferralRewardClaim` rows. The claim was
+presumably checked on staging, where they are empty, and generalised. Reading the points ledger is still
+correct — the plan is explicit that those tables are "kept but no longer written", and that the referral
+link tables plus `User.referralCode` survive as the **input to qualification** rather than as the reward
+record — but the stated reason was false, and it is the kind of false premise that gets a later reader to
+"repoint this at the real table", which would be wrong.
+
+**Why this surface reads as all zeros in production, which is not a bug here.** Qualification requires the
+referred learner's 7th distinct day with a billable operation, evaluated from `UsageEvent`. `UsageEvent`
+only began being written on **7 September 2026**; every referral signup predates it by five months. The
+historic cohort therefore cannot qualify — the evidence of their activity was never recorded — and there
+have been no new referral signups since 13 April. `PointsLedgerEntry` is empty in production as a result.
+
+What is genuinely missing is the **pending** half of the picture. The plan's §"API" specifies
+`GET /referrals` as "code, qualified count, pending count with each one's days-active progress", and
+nothing here reports pending referrals or their progress. With it, this page would have said "60 pending,
+0 qualified, best progress 0/7 days" instead of a screen of zeros that looks like an outage. The plan also
+records at Phase 4b that referral monitoring is still open: the jobs run, but nothing reads them.
 """
 
 from __future__ import annotations
