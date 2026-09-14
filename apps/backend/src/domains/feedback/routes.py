@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import func, select
 
 from src.shared.auth import CurrentUser, StaffUser
-from src.shared.database import get_session_factory, ilike_any
+from src.shared.database import enum_text, get_session_factory, ilike_any
 
 from . import models
 from .db_models import Feedback
@@ -86,9 +86,9 @@ async def list_feedback(
     """List feedback, paginated and filterable (staff only)."""
     conditions = []
     if status:
-        conditions.append(Feedback.status == status)
+        conditions.append(enum_text(Feedback.status) == status)
     if type:
-        conditions.append(Feedback.type == type)
+        conditions.append(enum_text(Feedback.type) == type)
     if search:
         conditions.append(ilike_any(search, Feedback.title, Feedback.description))
 

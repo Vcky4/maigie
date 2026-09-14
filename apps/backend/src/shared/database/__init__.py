@@ -1,6 +1,7 @@
 """Database lifecycle management — SQLAlchemy async engine."""
 
 from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from .enums import ENUM_BACKED_COLUMNS, enum_text
 from .search import LIKE_ESCAPE, contains_pattern, escape_like, ilike_any
 from .session import (
     check_db_health,
@@ -14,6 +15,8 @@ __all__ = [
     "Base",
     "TimestampMixin",
     "UUIDPrimaryKeyMixin",
+    "ENUM_BACKED_COLUMNS",
+    "enum_text",
     "LIKE_ESCAPE",
     "escape_like",
     "contains_pattern",

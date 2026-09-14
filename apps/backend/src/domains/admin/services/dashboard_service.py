@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 
-from src.shared.database import get_session_factory
+from src.shared.database import enum_text, get_session_factory
 
 from . import analytics_service
 
@@ -124,7 +124,9 @@ async def overview() -> dict:
 
         # --- Feedback / content -----------------------------------------
         pending_feedback = await _count(
-            select(func.count()).select_from(Feedback).where(Feedback.status == "PENDING")
+            select(func.count())
+            .select_from(Feedback)
+            .where(enum_text(Feedback.status) == "PENDING")
         )
         blog_published = await _count(
             select(func.count()).select_from(BlogPost).where(BlogPost.published.is_(True))
