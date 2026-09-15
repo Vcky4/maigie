@@ -20060,112 +20060,6 @@
         "title": "RedemptionOptionsResponse",
         "type": "object"
       },
-      "ReferralItem": {
-        "properties": {
-          "claimedAt": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Claimedat"
-          },
-          "createdAt": {
-            "format": "date-time",
-            "title": "Createdat",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "isClaimed": {
-            "title": "Isclaimed",
-            "type": "boolean"
-          },
-          "referredUserEmail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Referreduseremail"
-          },
-          "referredUserId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Referreduserid"
-          },
-          "referredUserName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Referredusername"
-          },
-          "referrerEmail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Referreremail"
-          },
-          "referrerId": {
-            "title": "Referrerid",
-            "type": "string"
-          },
-          "referrerName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Referrername"
-          },
-          "rewardType": {
-            "title": "Rewardtype",
-            "type": "string"
-          },
-          "tokens": {
-            "title": "Tokens",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "referrerId",
-          "rewardType",
-          "tokens",
-          "isClaimed",
-          "createdAt"
-        ],
-        "title": "ReferralItem",
-        "type": "object"
-      },
       "ReferralListResponse": {
         "properties": {
           "page": {
@@ -20178,7 +20072,7 @@
           },
           "rewards": {
             "items": {
-              "$ref": "#/components/schemas/ReferralItem"
+              "$ref": "#/components/schemas/src__domains__admin__models__ReferralItem"
             },
             "title": "Rewards",
             "type": "array"
@@ -20254,11 +20148,39 @@
         "type": "object"
       },
       "ReferralsResponse": {
-        "description": "A learner's referral standing.\n\n`totalTokens*`, `claimedRewards` and `unclaimedRewards` are gone with the token currency they\nsummed (§6.9). What is left is the code to share and how many learners it brought — the reward\nitself is now points, read from `GET /billing/points`, not a token total reported here. Keeping the\ntwo questions on separate endpoints is deliberate: \"who did I bring\" and \"what can I spend\" are\ndifferent, and conflating them is what produced the retired token fields.",
+        "description": "A learner's referral standing.\n\n`totalTokens*`, `claimedRewards` and `unclaimedRewards` are gone with the token currency they\nsummed (§6.9). The code and the people it brought live here; the spendable balance stays on\n`GET /billing/points`. `referrals` is the staged list the wallet and the Refer a Friend page\nboth render — pending progress is days of billable study, not an app-open streak.",
         "properties": {
+          "pendingReferrals": {
+            "default": 0,
+            "title": "Pendingreferrals",
+            "type": "integer"
+          },
+          "pointsPerQualifiedReferral": {
+            "default": 100,
+            "title": "Pointsperqualifiedreferral",
+            "type": "integer"
+          },
+          "qualifiedReferrals": {
+            "default": 0,
+            "title": "Qualifiedreferrals",
+            "type": "integer"
+          },
           "referralCode": {
             "title": "Referralcode",
             "type": "string"
+          },
+          "referrals": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/src__domains__billing__models__ReferralItem"
+            },
+            "title": "Referrals",
+            "type": "array"
+          },
+          "requiredStudyDays": {
+            "default": 7,
+            "title": "Requiredstudydays",
+            "type": "integer"
           },
           "totalReferrals": {
             "title": "Totalreferrals",
@@ -30224,6 +30146,179 @@
         "title": "WithdrawalView",
         "type": "object"
       },
+      "src__domains__admin__models__ReferralItem": {
+        "properties": {
+          "claimedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimedat"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isClaimed": {
+            "title": "Isclaimed",
+            "type": "boolean"
+          },
+          "referredUserEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referreduseremail"
+          },
+          "referredUserId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referreduserid"
+          },
+          "referredUserName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referredusername"
+          },
+          "referrerEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referreremail"
+          },
+          "referrerId": {
+            "title": "Referrerid",
+            "type": "string"
+          },
+          "referrerName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referrername"
+          },
+          "rewardType": {
+            "title": "Rewardtype",
+            "type": "string"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "referrerId",
+          "rewardType",
+          "tokens",
+          "isClaimed",
+          "createdAt"
+        ],
+        "title": "ReferralItem",
+        "type": "object"
+      },
+      "src__domains__billing__models__ReferralItem": {
+        "description": "One learner this code brought, and where they sit on the seven-day gate.\n\n`displayName` is a first name or the generic `Friend` — never an email. `studyDays` is capped at\n`requiredStudyDays` so a client can render `3 of 7` without doing the clamp itself. Qualification\nis a ledger fact, not a day count: a referral can sit at 7/7 still `pending` until the nightly\njob grants points.",
+        "properties": {
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "joinedAt": {
+            "format": "date-time",
+            "title": "Joinedat",
+            "type": "string"
+          },
+          "pointsAwarded": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pointsawarded"
+          },
+          "qualifiedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qualifiedat"
+          },
+          "requiredStudyDays": {
+            "title": "Requiredstudydays",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "qualified"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "studyDays": {
+            "title": "Studydays",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "displayName",
+          "status",
+          "studyDays",
+          "requiredStudyDays",
+          "joinedAt"
+        ],
+        "title": "ReferralItem",
+        "type": "object"
+      },
       "src__domains__identity__models__MessageResponse": {
         "description": "Generic success message.",
         "properties": {
@@ -36980,7 +37075,7 @@
     },
     "/api/v1/billing/referrals": {
       "get": {
-        "description": "The learner's referral code and how many learners it has brought.\n\nThe reward itself — points earned when a referred learner stays — is read from `GET /billing/points`,\nnot reported here. `referral_service.get_referral_stats` survives from before; its retired token\ntotals are dropped from the response shape (§6.9).",
+        "description": "The learner's referral code, who it brought, and each invite's stage on the seven-day gate.\n\nThe spendable reward is still `GET /billing/points`. This read is the standing: the code to share\nand a list a client can render without reconstructing progress from the ledger.",
         "operationId": "get_referrals_api_v1_billing_referrals_get",
         "responses": {
           "200": {
