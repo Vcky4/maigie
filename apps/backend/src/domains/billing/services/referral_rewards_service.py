@@ -191,27 +191,118 @@ async def track_referral_signup(referred_user_id: str, referral_code: str) -> st
     return referrer_id
 
 
-async def get_referral_stats(user_id: str) -> dict[str, Any]:
-    """Referral counts and the learner's own code.
+def referral_display_name(full_name: str | None) -> str:
+    """First name only, or `Friend` when the referred learner has no name to show.
 
-    `totalTokensEarned` and `totalTokensClaimed` are gone: they summed a currency being retired, and
-    reporting a token total beside a window allowance would invite a learner to convert between two
-    units that no longer relate. The points balance replaces them in Phase 4b, read from the ledger
-    rather than summed out of these rows.
+    The list is for the referrer, not a directory: an email or a full legal name would be more than
+    this surface is allowed to leak.
     """
+    if not full_name:
+        return "Friend"
+    first = full_name.strip().split(None, 1)[0] if full_name.strip() else ""
+    return first or "Friend"
+
+
+def referral_progress(
+    *, distinct_days: int, qualified: bool, required: int
+) -> tuple[str, int]:
+    """Status plus a day count a client can put next to `required` without clamping."""
+    capped = min(max(int(distinct_days), 0), required)
+    if qualified:
+        return "qualified", required
+    return "pending", capped
+
+
+async def get_referral_stats(user_id: str) -> dict[str, Any]:
+    """Referral code, counts, and each referred learner's stage on the seven-day gate.
+
+    `totalTokensEarned` and `totalTokensClaimed` are gone: they summed a currency being retired.
+    Progress is derived at read time from `ReferralReward` + `UsageEvent` + the points ledger, so a
+    client never has to reconstruct a status the three tables could disagree about.
+    """
+    from src.domains.billing.db_models import PointsLedgerEntry, UsageEvent
+    from src.domains.billing.services.points_service import (
+        KIND_REFERRAL,
+        POINTS_PER_QUALIFIED_REFERRAL,
+        QUALIFICATION_DISTINCT_DAYS,
+    )
+    from src.domains.identity.db_models import User
+
     referral_code = await get_or_create_referral_code(user_id)
 
     factory = get_session_factory()
     async with factory() as session:
-        total_referrals = (
+        reward_rows = (
             await session.execute(
-                select(func.count())
-                .select_from(ReferralReward)
-                .where(ReferralReward.referrer_id == user_id)
+                select(ReferralReward, User.name)
+                .join(User, User.id == ReferralReward.referred_user_id)
+                .where(
+                    ReferralReward.referrer_id == user_id,
+                    ReferralReward.reward_type == "signup",
+                )
+                .order_by(ReferralReward.created_at.desc())
             )
-        ).scalar() or 0
+        ).all()
 
+        referred_ids = [reward.referred_user_id for reward, _name in reward_rows]
+        day_counts: dict[str, int] = {}
+        grants: dict[str, PointsLedgerEntry] = {}
+        if referred_ids:
+            day_rows = (
+                await session.execute(
+                    select(
+                        UsageEvent.user_id,
+                        func.count(func.distinct(func.date(UsageEvent.created_at))),
+                    )
+                    .where(UsageEvent.user_id.in_(referred_ids))
+                    .group_by(UsageEvent.user_id)
+                )
+            ).all()
+            day_counts = {uid: int(n or 0) for uid, n in day_rows}
+
+            grant_rows = (
+                (
+                    await session.execute(
+                        select(PointsLedgerEntry).where(
+                            PointsLedgerEntry.user_id == user_id,
+                            PointsLedgerEntry.kind == KIND_REFERRAL,
+                            PointsLedgerEntry.source_ref.in_(referred_ids),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            grants = {row.source_ref: row for row in grant_rows if row.source_ref}
+
+    referrals: list[dict[str, Any]] = []
+    for reward, name in reward_rows:
+        grant = grants.get(reward.referred_user_id)
+        status, study_days = referral_progress(
+            distinct_days=day_counts.get(reward.referred_user_id, 0),
+            qualified=grant is not None,
+            required=QUALIFICATION_DISTINCT_DAYS,
+        )
+        referrals.append(
+            {
+                "id": reward.id,
+                "displayName": referral_display_name(name),
+                "status": status,
+                "studyDays": study_days,
+                "requiredStudyDays": QUALIFICATION_DISTINCT_DAYS,
+                "joinedAt": reward.created_at,
+                "qualifiedAt": grant.created_at if grant else None,
+                "pointsAwarded": grant.points if grant else None,
+            }
+        )
+
+    qualified_count = sum(1 for item in referrals if item["status"] == "qualified")
     return {
         "referralCode": referral_code,
-        "totalReferrals": total_referrals,
+        "totalReferrals": len(referrals),
+        "pendingReferrals": len(referrals) - qualified_count,
+        "qualifiedReferrals": qualified_count,
+        "requiredStudyDays": QUALIFICATION_DISTINCT_DAYS,
+        "pointsPerQualifiedReferral": POINTS_PER_QUALIFIED_REFERRAL,
+        "referrals": referrals,
     }

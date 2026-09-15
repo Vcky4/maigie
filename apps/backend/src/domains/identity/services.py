@@ -113,18 +113,7 @@ async def signup(
     await emit_user_registered(user.id, email, "email")
 
     if referral_code and referral_code.strip():
-        # Billing's `record_referral_relationship` writes the `signup` row that the nightly
-        # qualification job walks. It grants nothing — the 100 points wait on seven distinct billable
-        # days (Decision O).
-        try:
-            from src.shared.events import BillingEvents, emit
-
-            await emit(
-                BillingEvents.REFERRAL_LINKED,
-                {"user_id": user.id, "referral_code": referral_code},
-            )
-        except Exception as e:
-            logger.error(f"Failed to link referral at signup for {user.id}: {e}")
+        await _record_referral_link(user_id=user.id, referral_code=referral_code)
 
     # Send verification email (fire-and-forget)
     try:
@@ -281,15 +270,7 @@ async def get_or_create_oauth_user(info: OAuthUserInfo) -> User:
     await emit_user_registered(user.id, info.email, info.provider)
 
     if info.referral_code and info.referral_code.strip():
-        try:
-            from src.shared.events import BillingEvents, emit
-
-            await emit(
-                BillingEvents.REFERRAL_LINKED,
-                {"user_id": user.id, "referral_code": info.referral_code},
-            )
-        except Exception as e:
-            logger.error(f"Failed to link referral at oauth signup for {user.id}: {e}")
+        await _record_referral_link(user_id=user.id, referral_code=info.referral_code)
 
     return user
 
@@ -366,6 +347,32 @@ async def change_password(*, user: User, current_password: str, new_password: st
 # ===========================================================================
 
 
+async def _record_referral_link(*, user_id: str, referral_code: str) -> None:
+    """Write the relationship immediately, then emit so existing listeners stay in the loop.
+
+    Direct write first: the event bus swallows handler failures, and a lost `ReferralReward` row is
+    how a real referral used to vanish. `track_referral_signup` is idempotent, so a later emit that
+    also lands is a no-op rather than a double grant. Unknown or self-referral codes still do not
+    fail the caller — that refusal belongs at signup/OAuth, not here.
+    """
+    try:
+        from src.domains.billing.services.referral_rewards_service import track_referral_signup
+
+        await track_referral_signup(user_id, referral_code)
+    except Exception as e:
+        logger.error(f"Failed to record referral relationship for {user_id}: {e}")
+
+    try:
+        from src.shared.events import BillingEvents, emit
+
+        await emit(
+            BillingEvents.REFERRAL_LINKED,
+            {"user_id": user_id, "referral_code": referral_code},
+        )
+    except Exception as e:
+        logger.error(f"Failed to emit referral_linked for {user_id}: {e}")
+
+
 async def link_referral(*, user: User, referral_code: str) -> dict:
     """Link a referral code to user (immutable once set)."""
     if user.referred_by_code:
@@ -382,22 +389,7 @@ async def link_referral(*, user: User, referral_code: str) -> dict:
     if not referrer or referrer.id == user.id:
         raise ValidationError("Invalid referral code")
 
-    await identity_repo.set_referred_by(user.id, code)
-
-    # Track referral reward via domain event (billing domain handles rewards)
-    try:
-        from src.shared.events import BillingEvents, emit
-
-        await emit(
-            BillingEvents.REFERRAL_LINKED,
-            {
-                "user_id": user.id,
-                "referral_code": code,
-                "referrer_id": referrer.id,
-            },
-        )
-    except Exception as e:
-        logger.error(f"Error tracking referral: {e}")
+    await _record_referral_link(user_id=user.id, referral_code=code)
 
     return {
         "message": "Referral code linked successfully",

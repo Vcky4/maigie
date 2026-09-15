@@ -441,18 +441,41 @@ class PaginatedPurchaseHistory(BaseModel):
 # ===========================================================================
 
 
+class ReferralItem(CamelModel):
+    """One learner this code brought, and where they sit on the seven-day gate.
+
+    `displayName` is a first name or the generic `Friend` — never an email. `studyDays` is capped at
+    `requiredStudyDays` so a client can render `3 of 7` without doing the clamp itself. Qualification
+    is a ledger fact, not a day count: a referral can sit at 7/7 still `pending` until the nightly
+    job grants points.
+    """
+
+    id: str
+    display_name: str
+    status: Literal["pending", "qualified"]
+    study_days: int
+    required_study_days: int
+    joined_at: datetime
+    qualified_at: datetime | None = None
+    points_awarded: int | None = None
+
+
 class ReferralsResponse(CamelModel):
     """A learner's referral standing.
 
     `totalTokens*`, `claimedRewards` and `unclaimedRewards` are gone with the token currency they
-    summed (§6.9). What is left is the code to share and how many learners it brought — the reward
-    itself is now points, read from `GET /billing/points`, not a token total reported here. Keeping the
-    two questions on separate endpoints is deliberate: "who did I bring" and "what can I spend" are
-    different, and conflating them is what produced the retired token fields.
+    summed (§6.9). The code and the people it brought live here; the spendable balance stays on
+    `GET /billing/points`. `referrals` is the staged list the wallet and the Refer a Friend page
+    both render — pending progress is days of billable study, not an app-open streak.
     """
 
     referral_code: str
     total_referrals: int
+    pending_referrals: int = 0
+    qualified_referrals: int = 0
+    required_study_days: int = 7
+    points_per_qualified_referral: int = 100
+    referrals: list[ReferralItem] = []
 
 
 # ===========================================================================
