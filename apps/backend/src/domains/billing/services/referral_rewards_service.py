@@ -203,9 +203,7 @@ def referral_display_name(full_name: str | None) -> str:
     return first or "Friend"
 
 
-def referral_progress(
-    *, distinct_days: int, qualified: bool, required: int
-) -> tuple[str, int]:
+def referral_progress(*, distinct_days: int, qualified: bool, required: int) -> tuple[str, int]:
     """Status plus a day count a client can put next to `required` without clamping."""
     capped = min(max(int(distinct_days), 0), required)
     if qualified:
