@@ -603,11 +603,10 @@ async def redeem_points(body: models.RedeemPointsRequest, current_user: CurrentU
 
 @router.get("/referrals", response_model=models.ReferralsResponse)
 async def get_referrals(current_user: CurrentUser):
-    """The learner's referral code and how many learners it has brought.
+    """The learner's referral code, who it brought, and each invite's stage on the seven-day gate.
 
-    The reward itself — points earned when a referred learner stays — is read from `GET /billing/points`,
-    not reported here. `referral_service.get_referral_stats` survives from before; its retired token
-    totals are dropped from the response shape (§6.9).
+    The spendable reward is still `GET /billing/points`. This read is the standing: the code to share
+    and a list a client can render without reconstructing progress from the ledger.
     """
     from .services import referral_service
 
@@ -615,6 +614,11 @@ async def get_referrals(current_user: CurrentUser):
     return models.ReferralsResponse(
         referralCode=stats["referralCode"],
         totalReferrals=stats["totalReferrals"],
+        pendingReferrals=stats["pendingReferrals"],
+        qualifiedReferrals=stats["qualifiedReferrals"],
+        requiredStudyDays=stats["requiredStudyDays"],
+        pointsPerQualifiedReferral=stats["pointsPerQualifiedReferral"],
+        referrals=[models.ReferralItem.model_validate(item) for item in stats["referrals"]],
     )
 
 

@@ -91,7 +91,7 @@ class TestTheEventHasSomewhereToLand:
         from src.domains.identity import services
 
         source = inspect.getsource(services.get_or_create_oauth_user)
-        assert "BillingEvents.REFERRAL_LINKED" in source
+        assert "_record_referral_link" in source
         assert "info.referral_code" in source
 
 
@@ -365,3 +365,57 @@ class TestTheWholeWalk:
                 assert await points_service.qualify_referral(candidate) is not None
 
         assert await world.points_balance(referrer_id) == 100
+
+
+class TestReferralList:
+    @pytest.mark.asyncio
+    async def test_a_new_code_has_an_empty_list(self, world):
+        from src.domains.billing.services.referral_rewards_service import get_referral_stats
+
+        referrer_id, _code = await world.make_referrer()
+        stats = await get_referral_stats(referrer_id)
+        assert stats["totalReferrals"] == 0
+        assert stats["pendingReferrals"] == 0
+        assert stats["qualifiedReferrals"] == 0
+        assert stats["referrals"] == []
+        assert stats["requiredStudyDays"] == 7
+        assert stats["pointsPerQualifiedReferral"] == 100
+
+    @pytest.mark.asyncio
+    async def test_pending_shows_study_day_progress(self, world):
+        from src.domains.billing.services.referral_rewards_service import get_referral_stats
+
+        referrer_id, code = await world.make_referrer()
+        await world.sign_up(referral_code=code)
+        referred_id = await world.sign_up(referral_code=code)
+        await world.study_for_days(referred_id, 3)
+
+        stats = await get_referral_stats(referrer_id)
+        assert stats["totalReferrals"] == 2
+        assert stats["pendingReferrals"] == 2
+        assert stats["qualifiedReferrals"] == 0
+
+        by_days = {item["studyDays"]: item for item in stats["referrals"]}
+        assert by_days[3]["status"] == "pending"
+        assert by_days[3]["requiredStudyDays"] == 7
+        assert by_days[3]["displayName"] == "Referral"
+        assert by_days[3]["pointsAwarded"] is None
+        assert by_days[0]["status"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_qualified_referral_is_marked_on_the_list(self, world):
+        from src.domains.billing.services.referral_rewards_service import get_referral_stats
+
+        referrer_id, code = await world.make_referrer()
+        referred_id = await world.sign_up(referral_code=code)
+        await world.study_for_days(referred_id, 7)
+        await points_service.qualify_referral(referred_id)
+
+        stats = await get_referral_stats(referrer_id)
+        assert stats["qualifiedReferrals"] == 1
+        assert stats["pendingReferrals"] == 0
+        item = stats["referrals"][0]
+        assert item["status"] == "qualified"
+        assert item["studyDays"] == 7
+        assert item["pointsAwarded"] == 100
+        assert item["qualifiedAt"] is not None

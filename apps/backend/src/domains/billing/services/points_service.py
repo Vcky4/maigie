@@ -558,18 +558,32 @@ async def qualify_referral(referred_user_id: str) -> PointsLedgerEntry | None:
     # stamped `User.referred_by_code`; the referrer is whoever owns that code.
     repo = IdentityRepository()
     learner = await repo.find_by_id(referred_user_id)
-    if learner is None or not learner.referred_by_code:
+    if learner is None:
         return None
 
     factory = get_session_factory()
     async with factory() as session:
+        from src.domains.billing.db_models import ReferralReward
         from src.domains.identity.db_models import User
 
-        referrer_id = (
-            await session.execute(
-                select(User.id).where(User.referral_code == learner.referred_by_code)
-            )
-        ).scalar_one_or_none()
+        referrer_id = None
+        if learner is not None and learner.referred_by_code:
+            referrer_id = (
+                await session.execute(
+                    select(User.id).where(User.referral_code == learner.referred_by_code)
+                )
+            ).scalar_one_or_none()
+        if not referrer_id:
+            # The nightly job walks `ReferralReward`; `referred_by_code` can be missing if linking
+            # wrote the row and then failed to stamp the user. Either record is enough to pay.
+            referrer_id = (
+                await session.execute(
+                    select(ReferralReward.referrer_id).where(
+                        ReferralReward.referred_user_id == referred_user_id,
+                        ReferralReward.reward_type == "signup",
+                    )
+                )
+            ).scalar_one_or_none()
         if not referrer_id or referrer_id == referred_user_id:
             return None
 
