@@ -107,14 +107,36 @@ async def set_exam_details(body: models.ExamDetailsRequest, current_user: Curren
     response_model=models.LearningProfileResponse,
 )
 async def set_skill_details(body: models.SkillDetailsRequest, current_user: CurrentUser):
-    """Set skill building details. For SKILL_BUILDING purpose learners."""
+    """Say what the learner wants to learn, and get back the course being built for it.
+
+    The response carries `onboardingCourseId`. That course row exists by the time this returns
+    and before any model call, which is what lets a client upload the learner's own material to
+    it — `POST /knowledge/courses/{id}/materials` — and have the outline generated from that
+    material rather than in parallel with it. Clients that intend to upload send
+    `deferGeneration: true` and then call `POST /onboarding/generate`.
+    """
     return await onboarding_service.set_skill_details(
         user_id=current_user.id,
         skill_name=body.skill_name,
         current_level=body.current_level,
         subjects=body.subjects,
         goals=body.goals,
+        defer_generation=body.defer_generation,
     )
+
+
+@router.post("/onboarding/generate", response_model=models.OnboardingStatusResponse)
+async def start_onboarding_generation(current_user: CurrentUser):
+    """Start building the learner's first content, now that their material is uploaded.
+
+    The other half of `deferGeneration`. Safe to call more than once: generation is skipped when
+    the learner already has usable content, so a client that retries after a dropped connection
+    does not pay for a second outline.
+
+    Returns the same shape as `GET /onboarding/status`, so a client can start rendering progress
+    from this response instead of waiting for its first poll.
+    """
+    return await onboarding_service.start_content_generation(user_id=current_user.id)
 
 
 @router.get(

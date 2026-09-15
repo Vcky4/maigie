@@ -88,6 +88,10 @@ class TestProgressReflectsRealContent:
         assert status["progress"] == {
             "preparation": True,
             "topics": True,
+            # The Learn path's two keys, false because this learner is on the preparation path.
+            # Both sets are always sent so a client renders the steps for the path it started.
+            "course": False,
+            "outline": False,
             "flashcards": True,
             "studyPlan": True,
         }

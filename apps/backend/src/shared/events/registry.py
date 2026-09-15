@@ -44,6 +44,7 @@ HANDLER_MODULES: tuple[str, ...] = (
     "src.domains.personal_learning.events",
     "src.domains.intelligence.observation.tracker",
     "src.domains.progress.listeners",
+    "src.domains.billing.listeners",
 )
 
 

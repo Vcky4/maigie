@@ -445,12 +445,19 @@ def build_outline_prompt(
     level: str | None = None,
     teaching_style: str | None = None,
     category: str | None = None,
+    source_material: str | None = None,
 ) -> str:
     """Ask for a course outline as JSON, from the learner's own brief.
 
     The brief is the thing being answered, so it goes in first and verbatim. Level, style and category are
     context rather than instructions — a learner who asked for something specific should get that, shaped
     by their preferences, not a generic course about their category.
+
+    `source_material` is the text of what the learner uploaded, already selected and budgeted by
+    `course_material_context`. It is placed *after* the brief and given precedence over it in the rules,
+    because a learner who attaches their syllabus has handed over the actual scope: a brief is a sentence
+    about what they want, while the document is the authority on what the course contains. Absent
+    material, the prompt is exactly what it was.
     """
     prompt = f"""Design a course outline for this learner.
 
@@ -463,6 +470,13 @@ What they asked for, in their words: "{brief}"
         prompt += f"Target level: {level}\n"
     if guidance := _STYLE_GUIDANCE.get(teaching_style or ""):
         prompt += f"Preferred teaching style: {teaching_style}. {guidance}\n"
+
+    if source_material:
+        prompt += f"""
+The learner uploaded their own material for this course. Excerpts follow, labelled by filename:
+
+{source_material}
+"""
 
     prompt += f"""
 Return ONLY a JSON object, no prose around it:
@@ -493,6 +507,14 @@ Rules:
 - `durationMinutes` between 5 and 90, realistic for the topic.
 - Between 3 and 5 outcomes, each a concrete capability rather than a topic restated.
 - Answer the learner's brief specifically. Do not produce a generic course about the subject area."""
+
+    if source_material:
+        prompt += """
+- Build the outline from the uploaded material: follow the scope, terminology and ordering it uses, and do
+  not introduce major areas it does not mention. Where the material and the brief disagree on scope, the
+  material wins. The excerpts may be partial, so cover the whole subject they describe rather than stopping
+  where an excerpt was cut."""
+
     return prompt
 
 

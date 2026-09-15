@@ -70,8 +70,27 @@ _DELETION_DAYS = 90
 # ===========================================================================
 
 
-async def signup(*, email: str, password: str, name: str, country: str | None = None) -> User:
-    """Register a new user with email/password. Returns inactive user pending OTP."""
+async def signup(
+    *,
+    email: str,
+    password: str,
+    name: str,
+    country: str | None = None,
+    referral_code: str | None = None,
+) -> User:
+    """Register a new user with email/password. Returns inactive user pending OTP.
+
+    Args:
+        referral_code: The code the learner arrived with, if any. `SignupRequest` has accepted this
+            field all along and the route dropped it on the floor, so a learner who signed up through
+            a share link was never recorded as referred and the referrer could never earn. Emitting
+            `REFERRAL_LINKED` here puts signup on the same path as `link_referral` rather than giving
+            it a second, divergent one.
+
+            An unknown or self-referring code does **not** fail the signup: the handler resolves it and
+            logs, and the bus isolates handler failures either way. Refusing an account over a mistyped
+            code would be the wrong trade.
+    """
     existing = await identity_repo.find_by_email(email)
     if existing:
         raise ValidationError("Email already registered")
@@ -92,6 +111,20 @@ async def signup(*, email: str, password: str, name: str, country: str | None = 
     )
 
     await emit_user_registered(user.id, email, "email")
+
+    if referral_code and referral_code.strip():
+        # Billing's `record_referral_relationship` writes the `signup` row that the nightly
+        # qualification job walks. It grants nothing — the 100 points wait on seven distinct billable
+        # days (Decision O).
+        try:
+            from src.shared.events import BillingEvents, emit
+
+            await emit(
+                BillingEvents.REFERRAL_LINKED,
+                {"user_id": user.id, "referral_code": referral_code},
+            )
+        except Exception as e:
+            logger.error(f"Failed to link referral at signup for {user.id}: {e}")
 
     # Send verification email (fire-and-forget)
     try:
@@ -246,6 +279,18 @@ async def get_or_create_oauth_user(info: OAuthUserInfo) -> User:
         provider_id=info.provider_user_id,
     )
     await emit_user_registered(user.id, info.email, info.provider)
+
+    if info.referral_code and info.referral_code.strip():
+        try:
+            from src.shared.events import BillingEvents, emit
+
+            await emit(
+                BillingEvents.REFERRAL_LINKED,
+                {"user_id": user.id, "referral_code": info.referral_code},
+            )
+        except Exception as e:
+            logger.error(f"Failed to link referral at oauth signup for {user.id}: {e}")
+
     return user
 
 

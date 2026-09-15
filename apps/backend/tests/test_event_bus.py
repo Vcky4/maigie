@@ -148,10 +148,6 @@ EMITTERS_WITHOUT_A_LISTENER: dict[str, tuple[str, str]] = {
         "fires",
         "Emitted inline by `subscription_service`.",
     ),
-    "billing.referral_linked": (
-        "fires",
-        "Emitted inline by `identity.services` when a referral lands.",
-    ),
     "classroom.created": ("fires", "Emitted inline by `classroom_service`."),
     "classroom.session_started": ("fires", "Emitted inline by `session_service`."),
     "space.created": ("fires", "Emitted by `space_service` as well as the wrapper."),

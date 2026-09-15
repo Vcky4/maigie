@@ -2243,6 +2243,7 @@ class PersonalLearningRepository:
             "onboardingState": "onboarding_state",
             "preferredExplanationStyle": "preferred_explanation_style",
             "proficiencyMap": "proficiency_map",
+            "onboardingCourseId": "onboarding_course_id",
             "onboardingCompletedAt": "onboarding_completed_at",
             "maturityDays": "maturity_days",
             "quietHoursStart": "quiet_hours_start",

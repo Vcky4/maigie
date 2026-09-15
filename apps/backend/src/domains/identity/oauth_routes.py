@@ -86,6 +86,7 @@ async def google_native_callback(data: NativeGoogleCallbackRequest):
         full_name=claims.get("name"),
         provider="google",
         provider_user_id=claims.get("sub", ""),
+        referral_code=data.referral_code,
     )
     user = await get_or_create_oauth_user(oauth_info)
 
@@ -130,6 +131,7 @@ async def apple_native_callback(data: NativeAppleCallbackRequest):
         full_name=data.full_name,
         provider="apple",
         provider_user_id=provider_user_id,
+        referral_code=data.referral_code,
     )
     user = await get_or_create_oauth_user(oauth_info)
 

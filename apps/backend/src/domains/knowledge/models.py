@@ -710,6 +710,13 @@ class CourseOutlineRequest(BaseModel):
     difficulty: DifficultyLevel | None = None
     teachingStyle: str | None = Field(None, max_length=60)
     category: str | None = Field(None, max_length=120)
+    #: Ground the outline in the material already uploaded to this course.
+    #:
+    #: An id rather than the text itself: the server holds the extracted text, so a client
+    #: cannot inflate a prompt with content of its own choosing, and ownership is checked
+    #: before a single character is read. Ignored when the course has no readable uploads,
+    #: which is the common case.
+    sourceCourseId: str | None = Field(None, max_length=64)
 
 
 class GeneratedOutlineTopic(CamelModel):

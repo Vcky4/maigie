@@ -8,9 +8,9 @@ raise their *daily credit limit* for that calendar day. Five functions implement
 
 Three reasons, in order of weight:
 
-1. **Nothing tops up a window (§6.3).** The reward's mechanism was `creditsDailyLimit`, which Phase 3
-   dropped. A rolling 5-hour allowance has nowhere to put a bonus that isn't either invisible (spent
-   within the window it lands in) or unbounded.
+1. **Nothing tops up a window (§6.3).** The reward's mechanism was `creditsDailyLimit`, which
+   Phase 3 dropped. A rolling 5-hour allowance has nowhere to put a bonus that isn't either
+   invisible (spent within the window it lands in) or unbounded.
 2. **A subscription is the wrong trigger.** Paying us is something the *referred* learner does;
    rewarding the referrer for it pays out on the signal easiest to game and says nothing about
    whether the referral was any good.
@@ -39,6 +39,7 @@ See LICENSE file in the repository root for details.
 import logging
 import secrets
 import string
+from typing import Any
 
 from sqlalchemy import func, select, update
 
@@ -53,7 +54,8 @@ def generate_referral_code(length: int = 8) -> str:
     """Generate a candidate referral code.
 
     Uppercase letters and digits only, so it survives being read aloud, typed on a phone keyboard
-    and printed on a share card. Collisions are handled by the caller, not by making the code longer.
+    and printed on a share card. Collisions are handled by the caller, not by making the code
+    longer.
     """
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
@@ -96,7 +98,8 @@ async def get_or_create_referral_code(user_id: str) -> str:
             )
             await session.commit()
 
-        if result.rowcount:
+        rowcount = getattr(result, "rowcount", 0)
+        if rowcount:
             logger.info("Generated referral code %s for user %s", code, user_id)
             return code
 
@@ -118,8 +121,8 @@ async def track_referral_signup(referred_user_id: str, referral_code: str) -> st
     """Record that `referred_user_id` signed up on someone's code.
 
     Records the relationship and **grants nothing**. The grant now waits on the referred learner
-    studying for seven distinct days (Decision O), which this row is the precondition for rather than
-    the trigger of.
+    studying for seven distinct days (Decision O), which this row is the precondition for
+    rather than the trigger of.
 
     Args:
         referred_user_id: The learner who just signed up.
@@ -128,6 +131,13 @@ async def track_referral_signup(referred_user_id: str, referral_code: str) -> st
     Returns:
         The referrer's id, or `None` if the code is unknown or self-referral was attempted.
     """
+    # Normalised here rather than at each caller. Codes are minted uppercase, and one arriving
+    # from a URL or a share sheet is routinely lowercase — an exact match on the raw value
+    # silently loses a real referral, which is the least visible way for this to fail.
+    referral_code = (referral_code or "").strip().upper()
+    if not referral_code:
+        return None
+
     factory = get_session_factory()
     async with factory() as session:
         referrer_id = (
@@ -146,7 +156,6 @@ async def track_referral_signup(referred_user_id: str, referral_code: str) -> st
         already = (
             await session.execute(
                 select(ReferralReward.id).where(
-                    ReferralReward.referrer_id == referrer_id,
                     ReferralReward.referred_user_id == referred_user_id,
                     ReferralReward.reward_type == "signup",
                 )
@@ -166,7 +175,9 @@ async def track_referral_signup(referred_user_id: str, referral_code: str) -> st
             )
         )
         await session.execute(
-            update(User).where(User.id == referred_user_id).values(referred_by_code=referral_code)
+            update(User)
+            .where(User.id == referred_user_id, User.referred_by_code.is_(None))
+            .values(referred_by_code=referral_code)
         )
         try:
             await session.commit()
@@ -180,7 +191,7 @@ async def track_referral_signup(referred_user_id: str, referral_code: str) -> st
     return referrer_id
 
 
-async def get_referral_stats(user_id: str) -> dict:
+async def get_referral_stats(user_id: str) -> dict[str, Any]:
     """Referral counts and the learner's own code.
 
     `totalTokensEarned` and `totalTokensClaimed` are gone: they summed a currency being retired, and

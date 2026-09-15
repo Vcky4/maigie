@@ -169,43 +169,56 @@ async def grant(
 async def balance(user_id: str) -> PointsBalance:
     """Spendable points and the next expiry. Excludes expired grants without needing the sweep.
 
-    `SUM(points)` over live entries: every positive grant not yet past its `expiresAt`, plus every
-    negative entry (redemptions and expiries, which have no `expiresAt` and are always counted). So a
-    grant that expired an hour ago stops counting here whether or not the nightly sweep has written its
-    `expiry` row — the sweep makes the ledger self-explaining, it does not make the expiry true.
+    `SUM(points)` over live entries: every positive grant not yet past its `expiresAt`, plus the
+    redemptions, which carry no `expiresAt` and are always counted. So a grant that expired an hour ago
+    stops counting here whether or not the nightly sweep has written its `expiry` row — the sweep makes
+    the ledger self-explaining, it does not make the expiry true.
+
+    **`expiry` entries are deliberately not summed.** They are the sweep's explanation of a drop that
+    this query has already applied by excluding the grant, so counting them subtracts the same points a
+    second time. That is not hypothetical: a referrer who earned 100 points and let them lapse read as
+    **-100** once the sweep ran, and a negative balance then suppressed every later grant from ever
+    becoming spendable. `expire_due`'s own docstring states the invariant this restores ("the balance is
+    already correct without this ... this exists to make the ledger *explain* the drop rather than to
+    cause it"); the sum was simply not honouring it.
     """
     now = datetime.now(UTC)
     factory = get_session_factory()
     async with factory() as session:
-        total = (
-            await session.execute(
-                select(func.coalesce(func.sum(PointsLedgerEntry.points), 0)).where(
-                    PointsLedgerEntry.user_id == user_id,
-                    # A live grant, or any spend/expiry entry. The `OR expiresAt IS NULL` is what lets
-                    # the negatives through — they never carry an expiry.
-                    (PointsLedgerEntry.expires_at.is_(None)) | (PointsLedgerEntry.expires_at > now),
-                )
-            )
-        ).scalar() or 0
+        total = await _live_balance(session, user_id, now)
 
-        # The soonest-expiring live grant, for the wallet's "expires on" line and the notification.
-        next_grant = (
-            await session.execute(
-                select(PointsLedgerEntry)
-                .where(
-                    PointsLedgerEntry.user_id == user_id,
-                    PointsLedgerEntry.kind == KIND_REFERRAL,
-                    PointsLedgerEntry.expires_at > now,
+        # The soonest-expiring grant that still holds something. A drained grant keeps its row and its
+        # date, so filtering on the date alone would announce "100 points expire on the 24th" for
+        # points the learner has already spent — the wallet's most alarming line, and wrong.
+        live_grants = list(
+            (
+                await session.execute(
+                    select(PointsLedgerEntry)
+                    .where(
+                        PointsLedgerEntry.user_id == user_id,
+                        PointsLedgerEntry.kind == KIND_REFERRAL,
+                        PointsLedgerEntry.expires_at > now,
+                    )
+                    .order_by(PointsLedgerEntry.expires_at)
                 )
-                .order_by(PointsLedgerEntry.expires_at)
-                .limit(1)
             )
-        ).scalar_one_or_none()
+            .scalars()
+            .all()
+        )
+        next_expiry_points: int | None = None
+        next_expiry_at: datetime | None = None
+        for grant_entry in live_grants:
+            remaining = await _grant_remaining(session, grant_entry)
+            if remaining > 0:
+                # Reports what is left, not the face value: a grant of 100 with 50 spent expires 50.
+                next_expiry_points = remaining
+                next_expiry_at = grant_entry.expires_at
+                break
 
     return PointsBalance(
         balance=int(total),
-        next_expiry_points=(next_grant.points if next_grant else None),
-        next_expiry_at=(next_grant.expires_at if next_grant else None),
+        next_expiry_points=next_expiry_points,
+        next_expiry_at=next_expiry_at,
     )
 
 
@@ -630,11 +643,18 @@ async def _grant_remaining(session, grant_entry: PointsLedgerEntry) -> int:
 
 
 async def _live_balance(session, user_id: str, now: datetime) -> int:
-    """Spendable total inside an open session — live grants minus everything spent or expired."""
+    """Spendable total inside an open session — live grants minus what was spent against them.
+
+    `expiry` entries are excluded: expiry is applied by *omitting* the expired grant from this sum, so
+    also adding the sweep's negative entry charges the same points twice and drives the balance below
+    zero. See `balance()` for the full account. `redeem` reads through here, so the exclusion keeps the
+    affordability check and the displayed balance agreeing on one number.
+    """
     total = (
         await session.execute(
             select(func.coalesce(func.sum(PointsLedgerEntry.points), 0)).where(
                 PointsLedgerEntry.user_id == user_id,
+                PointsLedgerEntry.kind != KIND_EXPIRY,
                 (PointsLedgerEntry.expires_at.is_(None)) | (PointsLedgerEntry.expires_at > now),
             )
         )

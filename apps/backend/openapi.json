@@ -5361,6 +5361,18 @@
               }
             ]
           },
+          "sourceCourseId": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcecourseid"
+          },
           "teachingStyle": {
             "anyOf": [
               {
@@ -11967,6 +11979,17 @@
             ],
             "title": "Onboardingcompletedat"
           },
+          "onboardingCourseId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Onboardingcourseid"
+          },
           "onboardingState": {
             "default": "not_started",
             "enum": [
@@ -13086,6 +13109,17 @@
           "identity_token": {
             "title": "Identity Token",
             "type": "string"
+          },
+          "referralCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referralcode"
           }
         },
         "required": [
@@ -13100,6 +13134,17 @@
           "id_token": {
             "title": "Id Token",
             "type": "string"
+          },
+          "referralCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referralcode"
           }
         },
         "required": [
@@ -14356,6 +14401,7 @@
         "type": "object"
       },
       "OnboardingStatusResponse": {
+        "description": "Where a learner's first-run setup has got to.\n\n`progress` carries both paths' keys. `preparation`/`topics` are populated when onboarding\nbuilt a preparation, `course`/`outline` when it built a course; the two are never both true,\nand a client shows the steps for the path it started. Sending both rather than reusing one\nset of names keeps \"your preparation is ready\" from appearing over a course.",
         "properties": {
           "estimatedSecondsRemaining": {
             "anyOf": [
@@ -14367,6 +14413,20 @@
               }
             ],
             "title": "Estimatedsecondsremaining"
+          },
+          "firstCourse": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firstcourse"
           },
           "firstPreparation": {
             "anyOf": [
@@ -23242,6 +23302,11 @@
               }
             ],
             "title": "Currentlevel"
+          },
+          "deferGeneration": {
+            "default": false,
+            "title": "Defergeneration",
+            "type": "boolean"
           },
           "goals": {
             "anyOf": [
@@ -46174,6 +46239,34 @@
         ]
       }
     },
+    "/api/v1/learning/onboarding/generate": {
+      "post": {
+        "description": "Start building the learner's first content, now that their material is uploaded.\n\nThe other half of `deferGeneration`. Safe to call more than once: generation is skipped when\nthe learner already has usable content, so a client that retries after a dropped connection\ndoes not pay for a second outline.\n\nReturns the same shape as `GET /onboarding/status`, so a client can start rendering progress\nfrom this response instead of waiting for its first poll.",
+        "operationId": "start_onboarding_generation_api_v1_learning_onboarding_generate_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Start Onboarding Generation",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/onboarding/purpose": {
       "post": {
         "description": "Set the learner's purpose. First step of onboarding.",
@@ -46224,7 +46317,7 @@
     },
     "/api/v1/learning/onboarding/skill-details": {
       "post": {
-        "description": "Set skill building details. For SKILL_BUILDING purpose learners.",
+        "description": "Say what the learner wants to learn, and get back the course being built for it.\n\nThe response carries `onboardingCourseId`. That course row exists by the time this returns\nand before any model call, which is what lets a client upload the learner's own material to\nit — `POST /knowledge/courses/{id}/materials` — and have the outline generated from that\nmaterial rather than in parallel with it. Clients that intend to upload send\n`deferGeneration: true` and then call `POST /onboarding/generate`.",
         "operationId": "set_skill_details_api_v1_learning_onboarding_skill_details_post",
         "requestBody": {
           "content": {
