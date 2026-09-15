@@ -57,7 +57,11 @@ users_router = APIRouter(tags=["users"])
 async def signup(data: SignupRequest):
     """Register a new user account."""
     user = await services.signup(
-        email=data.email, password=data.password, name=data.name, country=data.country
+        email=data.email,
+        password=data.password,
+        name=data.name,
+        country=data.country,
+        referral_code=data.referral_code,
     )
     return user
 

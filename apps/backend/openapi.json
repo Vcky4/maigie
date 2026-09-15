@@ -13109,6 +13109,17 @@
           "identity_token": {
             "title": "Identity Token",
             "type": "string"
+          },
+          "referralCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referralcode"
           }
         },
         "required": [
@@ -13123,6 +13134,17 @@
           "id_token": {
             "title": "Id Token",
             "type": "string"
+          },
+          "referralCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referralcode"
           }
         },
         "required": [

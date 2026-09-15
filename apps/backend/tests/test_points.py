@@ -267,6 +267,89 @@ class TestExpiry:
         assert any(e.kind == points_service.KIND_EXPIRY and e.points == -100 for e in entries)
         assert await world.points_balance(user_id) == 0
 
+    @pytest.mark.asyncio
+    async def test_a_swept_expiry_does_not_leave_the_balance_negative(self, world):
+        """The sweep explains a drop that `balance` has already applied by excluding the grant, so
+        summing its negative entry too charges the same points twice.
+
+        This ran as **-100**, and the sign is what made it more than a display bug: the next referral to
+        qualify granted 100 points and the learner's balance came back to zero, so a real earning was
+        silently absorbed by a phantom debt and no pass was ever affordable again.
+        """
+        now = datetime.now(UTC)
+        user_id = await world.make_user()
+        await world.add_grant(user_id, 100, source_ref="ref-1", expires_at=now - timedelta(days=1))
+        await points_service.expire_due()
+
+        assert await world.points_balance(user_id) == 0
+
+        # A fresh referral qualifies after the lapse. It must be spendable in full.
+        await world.add_grant(user_id, 100, source_ref="ref-2")
+
+        assert await world.points_balance(user_id) == 100
+        new_pass = await points_service.redeem(user_id=user_id, product_id="plus_pass_5h")
+        assert new_pass is not None
+
+    @pytest.mark.asyncio
+    async def test_the_sweep_is_idempotent_across_runs(self, world):
+        """The job runs nightly and re-examines the same grant, so a second run must not write a second
+        write-off. Cheap to assert, and the balance is what a repeat would corrupt."""
+        now = datetime.now(UTC)
+        user_id = await world.make_user()
+        await world.add_grant(user_id, 100, source_ref="ref-1", expires_at=now - timedelta(days=1))
+
+        await points_service.expire_due()
+        await points_service.expire_due()
+
+        entries = await points_service.history(user_id)
+        write_offs = [e for e in entries if e.kind == points_service.KIND_EXPIRY]
+        assert len(write_offs) == 1
+        assert await world.points_balance(user_id) == 0
+
+
+class TestTheNextExpiryLine:
+    """`next_expiry_*` is the wallet's "N points expire on <date>" line, and a wrong one is the most
+    alarming thing the wallet can say."""
+
+    @pytest.mark.asyncio
+    async def test_a_drained_grant_is_not_announced_as_expiring(self, world):
+        """A spent grant keeps its row and its date. Reporting the soonest date without checking what
+        is left announced 100 points expiring that the learner had already spent."""
+        now = datetime.now(UTC)
+        user_id = await world.make_user()
+        await world.add_grant(user_id, 100, source_ref="ref-1", expires_at=now + timedelta(days=10))
+        await world.add_grant(user_id, 100, source_ref="ref-2", expires_at=now + timedelta(days=30))
+
+        # Drains the first grant exactly.
+        await points_service.redeem(user_id=user_id, product_id="plus_pass_5h")
+
+        bal = await points_service.balance(user_id)
+        assert bal.balance == 100
+        assert bal.next_expiry_at == now + timedelta(days=30)
+        assert bal.next_expiry_points == 100
+
+    @pytest.mark.asyncio
+    async def test_a_partly_spent_grant_announces_only_what_is_left(self, world):
+        now = datetime.now(UTC)
+        user_id = await world.make_user()
+        await world.add_grant(user_id, 250, source_ref="ref-1", expires_at=now + timedelta(days=10))
+
+        await points_service.redeem(user_id=user_id, product_id="plus_pass_5h")  # spends 100
+
+        bal = await points_service.balance(user_id)
+        assert bal.balance == 150
+        assert bal.next_expiry_points == 150  # not the 250 face value
+        assert bal.next_expiry_at == now + timedelta(days=10)
+
+    @pytest.mark.asyncio
+    async def test_nothing_to_expire_reports_nothing(self, world):
+        user_id = await world.make_user()
+
+        bal = await points_service.balance(user_id)
+
+        assert bal.next_expiry_at is None
+        assert bal.next_expiry_points is None
+
 
 class TestOncePerReferral:
     @pytest.mark.asyncio

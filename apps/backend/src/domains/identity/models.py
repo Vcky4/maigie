@@ -97,6 +97,9 @@ class NativeGoogleCallbackRequest(BaseModel):
     """Google ID token from native mobile SDK."""
 
     id_token: str
+    referral_code: str | None = Field(default=None, alias="referralCode")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class NativeAppleCallbackRequest(BaseModel):
@@ -104,6 +107,9 @@ class NativeAppleCallbackRequest(BaseModel):
 
     identity_token: str
     full_name: str | None = Field(default=None, max_length=255)
+    referral_code: str | None = Field(default=None, alias="referralCode")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 # ===========================================================================
